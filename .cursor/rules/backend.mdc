@@ -1,0 +1,29 @@
+# Backend Rules
+
+## API
+- Use REST + WebSocket
+- Use typed responses
+- Use Zod validation
+
+## Security
+- Never expose secrets
+- Validate all inputs
+- Use rate limiting
+
+## Database
+- Use Prisma ORM
+- Use migrations properly
+- Avoid N+1 queries
+
+## Redis
+- Cache expensive API calls
+- Store websocket snapshots
+
+## Error Handling
+- Standard error response format
+- Add retry logic
+- Add logging
+
+## Performance
+- Use parallel API fetching
+- Avoid blocking operations

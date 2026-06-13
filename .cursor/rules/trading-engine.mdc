@@ -1,0 +1,39 @@
+# Trading Engine Rules
+
+## Signal Logic
+
+Trade suggestions should be based on:
+- RSI
+- MACD
+- EMA crossover
+- Funding rate
+- Open interest trend
+- Long/Short ratio
+- Volume breakout
+- Liquidation imbalance
+
+## Risk Management
+Every signal must include:
+- Entry price
+- Stop loss
+- Target
+- Risk reward ratio
+- Confidence score
+
+## Signal Types
+- LONG
+- SHORT
+- BUY
+- SELL
+- HOLD
+
+## Signal Confidence
+Use weighted scoring system:
+- Technical indicators
+- Sentiment indicators
+- Derivatives data
+
+## Data Freshness
+- Futures data refresh every few seconds
+- Sentiment every minute
+- Options every minute

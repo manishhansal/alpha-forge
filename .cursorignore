@@ -1,0 +1,68 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# next
+.next
+out
+build
+
+# logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# cache
+.cache
+.turbo
+.vercel
+
+# coverage
+coverage
+.nyc_output
+
+# prisma generated
+prisma/generated
+
+# uploads
+uploads
+public/uploads
+
+# redis dumps
+dump.rdb
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# temp
+*.tmp
+*.temp
+
+# generated files
+*.generated.ts
+*.generated.js
+
+# test artifacts
+playwright-report
+test-results
+
+# lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

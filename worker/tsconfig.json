@@ -1,0 +1,23 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    // DOM is needed so Next.js-flavored `fetch(input, { cache: "no-store" })`
+    // calls in shared service modules typecheck under the worker's tsconfig.
+    // The worker process itself never touches the DOM; the env.ts isServer
+    // check uses `"window" in globalThis` which evaluates correctly at runtime.
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["src/*"],
+      "@worker/*": ["worker/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

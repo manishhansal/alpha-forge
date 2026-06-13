@@ -1,0 +1,306 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SymbolEnum {
+  BTC
+  ETH
+  SOL
+}
+
+enum SignalTypeEnum {
+  LONG
+  SHORT
+  BUY
+  SELL
+  HOLD
+}
+
+enum RiskLevelEnum {
+  low
+  medium
+  high
+}
+
+enum AlertTypeEnum {
+  FUNDING_SPIKE
+  OI_BREAKOUT
+  PRICE_BREAKOUT
+  LIQUIDATION_SURGE
+  SIGNAL_CHANGE
+}
+
+enum AlertChannelEnum {
+  IN_APP
+  EMAIL
+  WEBHOOK
+}
+
+enum SignalOutcomeEnum {
+  OPEN
+  HIT_TARGET
+  HIT_STOP
+  EXPIRED
+}
+
+enum NotificationKindEnum {
+  ALERT
+  SYSTEM
+}
+
+enum ScalpDirectionEnum {
+  LONG
+  SHORT
+}
+
+enum PaperTradeStatusEnum {
+  OPEN
+  WIN
+  LOSS
+  EXPIRED
+  CANCELLED
+}
+
+enum StrategyBacktestPeriodEnum {
+  WEEK_1
+  MONTH_1
+  MONTH_6
+  YEAR_1
+  YEAR_5
+}
+
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  // bcrypt hash; null for OAuth-only accounts (forward-compat).
+  passwordHash  String?
+  name          String?
+  image         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  setting       UserSetting?
+  alerts        Alert[]
+  notifications Notification[]
+  strategies    Strategy[]
+}
+
+model SignalHistory {
+  id           String            @id @default(cuid())
+  symbol       SymbolEnum
+  type         SignalTypeEnum
+  confidence   Float
+  risk         RiskLevelEnum
+  entry        Float
+  stopLoss     Float
+  target       Float
+  riskReward   Float
+  rationale    String[]
+  features     Json
+  outcome      SignalOutcomeEnum @default(OPEN)
+  pnlPct       Float?
+  closedAt     DateTime?
+  generatedAt  DateTime          @default(now())
+
+  @@index([symbol, generatedAt])
+  @@index([type, generatedAt])
+  @@index([outcome, generatedAt])
+}
+
+model Alert {
+  id           String             @id @default(cuid())
+  userId       String
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol       SymbolEnum
+  type         AlertTypeEnum
+  threshold    Float
+  comparator   String
+  channels     AlertChannelEnum[]
+  webhookUrl   String?
+  // Minimum gap between consecutive triggers of this alert (cooldown).
+  cooldownSec  Int                @default(900)
+  active       Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  triggeredAt  DateTime?
+  triggerCount Int                @default(0)
+  notifications Notification[]
+
+  @@index([userId, active])
+  @@index([symbol, type, active])
+}
+
+model UserSetting {
+  id              String     @id @default(cuid())
+  userId          String     @unique
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme           String     @default("dark")
+  defaultPair    SymbolEnum @default(BTC)
+  // AES-256-GCM ciphertext payload for exchange API keys.
+  // Shape: { [exchange]: { iv, tag, ciphertext } } — see src/lib/crypto.ts
+  apiKeysEncrypted Json?
+  // Per-user data-source selection for the dashboard's two market surfaces.
+  // Shape: { india: { selected: string[], optionChain: string },
+  //          crypto: { selected: string[], primary: string } }
+  // See src/features/settings/data-sources-shared.ts for the canonical type.
+  dataSourcesJson Json?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model Notification {
+  id        String                @id @default(cuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      NotificationKindEnum  @default(ALERT)
+  alertId   String?
+  alert     Alert?                @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  symbol    SymbolEnum?
+  title     String
+  body      String
+  // Snapshot of the data that triggered the notification (price, threshold, etc.).
+  payload   Json?
+  readAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+/// One paper trade emitted by the scalper engine. Trades are global (no
+/// userId) so the public journal renders the same backtest for every viewer
+/// — keeping the scalper a transparent, shared track record.
+///
+/// `symbol` is intentionally a free-form `String` rather than the
+/// `SymbolEnum` used elsewhere in this schema: this single table is
+/// shared by the crypto scalper (BTC / ETH / SOL) and the India F&O
+/// scalper (NIFTY, BANKNIFTY, RELIANCE, …), and the latter cannot fit
+/// inside the enum. The two markets stay in their own lanes via the
+/// `source` column — crypto rows use `<id>:<tf>` while India rows use
+/// the `in:<id>:<tf>` prefix (see `src/features/india/scalping/types.ts`
+/// and the journal helpers in `src/features/{,india/}scalping/journal.ts`).
+model PaperTrade {
+  id           String                @id @default(cuid())
+  symbol       String
+  direction    ScalpDirectionEnum
+  status       PaperTradeStatusEnum  @default(OPEN)
+  /// Engine + timeframe that fired the signal, e.g. "SMC_UTBOT:5m".
+  source       String
+  /// Compact rationale strings shown in the journal UI.
+  rationale    String[]
+  /// Engine-level signal payload (ATR, sensitivity, trend bias, last close).
+  meta         Json
+
+  /// Sizing is purely notional — no fills, no slippage.
+  notional     Float                 @default(1000)
+  entry        Float
+  stopLoss     Float
+  target       Float
+  riskReward   Float
+  /// Trail level from the UT Bot ATR stop at trade open. Captured for replay.
+  atr          Float
+
+  exitPrice    Float?
+  pnlPct       Float?
+  pnlUsd       Float?
+  /// Free-form note set by the user (POST/PATCH).
+  note         String?
+
+  openedAt     DateTime              @default(now())
+  closedAt     DateTime?
+
+  @@index([symbol, openedAt])
+  @@index([status, openedAt])
+  @@index([source, openedAt])
+}
+
+/// User-saved trading strategy described in plain English. The natural-
+/// language `prompt` is parsed into a structured rule set (`parsed`) by
+/// `src/features/strategy-lab/parser.ts`. Backtests + live paper trades fan
+/// out from this row.
+model Strategy {
+  id          String                @id @default(cuid())
+  userId      String
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  /// The free-form English description the user typed. Source of truth.
+  prompt      String
+  /// `ParsedStrategy` JSON — the deterministic compiled rule set executed by
+  /// the backtest + paper-trader. Re-parsed from `prompt` on edit.
+  parsed      Json
+  /// Symbols the strategy applies to (subset of BTC/ETH/SOL).
+  symbols     SymbolEnum[]
+  /// Whether the worker should evaluate this strategy on every tick to open
+  /// live paper trades.
+  liveEnabled Boolean               @default(false)
+  liveStartedAt DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  backtests   StrategyBacktest[]
+  paperTrades StrategyPaperTrade[]
+
+  @@index([userId, updatedAt])
+  @@index([liveEnabled])
+}
+
+/// Result snapshot of running a strategy over a fixed historical window. We
+/// store the latest snapshot per (strategy, symbol, period) plus ad-hoc
+/// pre-save runs (where `strategyId` is null).
+model StrategyBacktest {
+  id            String                    @id @default(cuid())
+  strategyId    String?
+  strategy      Strategy?                 @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  /// Snapshot of the prompt at runtime — useful for ad-hoc runs that aren't
+  /// linked to a saved strategy.
+  prompt        String
+  symbol        SymbolEnum
+  period        StrategyBacktestPeriodEnum
+  /// Kline interval used (e.g. "1h", "4h", "1d"). Selected per-period to
+  /// keep total candle count manageable.
+  interval      String
+  /// `BacktestStats` JSON — winRate, totalReturn, maxDrawdown, sharpe, etc.
+  stats         Json
+  /// Compact equity curve (array of {ts, equity}) for the UI sparkline.
+  equityCurve   Json
+  /// Trade log — array of {entry, exit, side, pnlPct, openedAt, closedAt}.
+  trades        Json
+  generatedAt   DateTime                  @default(now())
+
+  @@index([strategyId, generatedAt])
+  @@index([symbol, period, generatedAt])
+}
+
+/// Live paper-trade emitted by the worker for an active Strategy. Mirrors
+/// `PaperTrade` shape but scoped to a user's saved strategy so the journal
+/// can render per-strategy P&L and win-rate.
+model StrategyPaperTrade {
+  id           String                @id @default(cuid())
+  strategyId   String
+  strategy     Strategy              @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  symbol       SymbolEnum
+  direction    ScalpDirectionEnum
+  status       PaperTradeStatusEnum  @default(OPEN)
+
+  notional     Float                 @default(1000)
+  entry        Float
+  stopLoss     Float
+  target       Float
+  riskReward   Float
+  /// Free-form bullets describing which rules fired.
+  rationale    String[]
+
+  exitPrice    Float?
+  pnlPct       Float?
+  pnlUsd       Float?
+  /// Reason the trade closed: TARGET / STOP / EXIT_RULE / EXPIRED / CANCELLED.
+  closeReason  String?
+
+  openedAt     DateTime              @default(now())
+  closedAt     DateTime?
+
+  @@index([strategyId, openedAt])
+  @@index([strategyId, status])
+}

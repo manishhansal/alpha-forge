@@ -1,0 +1,268 @@
+@import "tailwindcss";
+
+/* Tailwind v4 needs an explicit custom variant to opt into class-based dark
+   mode. The `<html>` element gets a `.dark` class toggled by
+   `<ThemeProvider>` — this directive lets every `dark:` utility in the
+   codebase (e.g. `dark:text-emerald-200`) resolve against that class. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Bind Tailwind utilities to the runtime CSS variables defined further down
+   in `:root` (light) and `.dark` (dark). This means every theme-aware token
+   (`bg-background`, `text-fg`, `border-border`, etc.) resolves through one
+   `var()` indirection, so swapping the `.dark` class on <html> instantly
+   re-themes the whole UI without a single component re-render. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+
+  --color-bull: var(--bull);
+  --color-bear: var(--bear);
+  --color-neutral: var(--neutral);
+
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+
+  --color-btc: var(--btc);
+  --color-eth: var(--eth);
+  --color-sol: var(--sol);
+
+  /* shadcn-style aliases — every UI primitive ported from the Indian-market
+     surface (and any future shadcn add) reads these. We point them at the
+     theme-aware vars above so both markets get a single consistent palette. */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--bg-elevated);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--fg);
+  --color-primary-foreground: var(--bg);
+  --color-secondary: var(--surface);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--surface);
+  --color-muted-foreground: var(--fg-muted);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--bear);
+  --color-destructive-foreground: var(--fg);
+  --color-input: var(--border);
+  --color-ring: var(--border-strong);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* Light theme — used when <html> has neither `.dark` nor the inline
+   `color-scheme:dark` set by the pre-hydration theme script. */
+:root {
+  --bg: oklch(0.99 0 0);
+  --bg-elevated: oklch(0.985 0 0);
+  --surface: oklch(0.97 0 0);
+  --surface-hover: oklch(0.945 0 0);
+  --border: oklch(0.9 0 0);
+  --border-strong: oklch(0.82 0 0);
+
+  --fg: oklch(0.185 0 0);
+  --fg-muted: oklch(0.42 0 0);
+  --fg-subtle: oklch(0.58 0 0);
+
+  --brand: oklch(0.62 0.18 145);
+  --brand-foreground: oklch(0.99 0 0);
+
+  --bull: oklch(0.56 0.18 152);
+  --bear: oklch(0.58 0.23 25);
+  --neutral: oklch(0.62 0.02 250);
+
+  --warning: oklch(0.7 0.17 75);
+  --info: oklch(0.6 0.16 240);
+
+  --btc: oklch(0.7 0.17 60);
+  --eth: oklch(0.6 0.16 250);
+  --sol: oklch(0.6 0.2 300);
+}
+
+/* Dark theme — applied by `<ThemeProvider>` by toggling `.dark` on <html>.
+   Matches the original crypto-dashboard palette so existing components stay
+   pixel-identical when dark is active. */
+.dark {
+  --bg: oklch(0.145 0 0);
+  --bg-elevated: oklch(0.18 0 0);
+  --surface: oklch(0.205 0 0);
+  --surface-hover: oklch(0.235 0 0);
+  --border: oklch(0.27 0 0);
+  --border-strong: oklch(0.34 0 0);
+
+  --fg: oklch(0.985 0 0);
+  --fg-muted: oklch(0.708 0 0);
+  --fg-subtle: oklch(0.556 0 0);
+
+  --brand: oklch(0.72 0.18 145);
+  --brand-foreground: oklch(0.145 0 0);
+
+  --bull: oklch(0.74 0.17 152);
+  --bear: oklch(0.65 0.22 25);
+  --neutral: oklch(0.7 0.02 250);
+
+  --warning: oklch(0.78 0.16 75);
+  --info: oklch(0.7 0.14 240);
+
+  --btc: oklch(0.78 0.16 60);
+  --eth: oklch(0.7 0.14 250);
+  --sol: oklch(0.7 0.18 300);
+}
+
+html,
+body {
+  background-color: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Soft cross-fade when the theme flips. Scoped to colors only so transforms,
+   layout, and animations aren't slowed down. */
+html,
+body {
+  transition:
+    background-color 240ms ease,
+    color 240ms ease;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  /* Clickable button-like affordances get an explicit pointer cursor across
+     the whole UI — covers the shared <Button> + <Tab> primitives, every raw
+     <button> (including role="radio"/"switch" toggles), role="button" divs,
+     and anchor links. The `:disabled` / `aria-disabled="true"` guards keep
+     the existing `disabled:cursor-not-allowed` behaviour intact, so nothing
+     regresses on disabled states. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]),
+  [role="radio"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  a[href],
+  summary,
+  label[for],
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+  ::selection {
+    background-color: color-mix(in oklch, var(--brand) 35%, transparent);
+    color: var(--fg);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-bull {
+  0%,
+  100% {
+    background-color: color-mix(in oklch, var(--bull) 0%, transparent);
+  }
+  50% {
+    background-color: color-mix(in oklch, var(--bull) 14%, transparent);
+  }
+}
+
+@keyframes pulse-bear {
+  0%,
+  100% {
+    background-color: color-mix(in oklch, var(--bear) 0%, transparent);
+  }
+  50% {
+    background-color: color-mix(in oklch, var(--bear) 14%, transparent);
+  }
+}
+
+@layer utilities {
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum", "zero";
+  }
+  /* Glassy card surface — opacity tuned to look correct on both light and
+     dark backgrounds via the surface var. */
+  .glass {
+    background: color-mix(in oklch, var(--surface) 78%, transparent);
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--border);
+  }
+  .text-bull {
+    color: var(--bull);
+  }
+  .text-bear {
+    color: var(--bear);
+  }
+  .bg-bull\/10 {
+    background-color: color-mix(in oklch, var(--bull) 10%, transparent);
+  }
+  .bg-bear\/10 {
+    background-color: color-mix(in oklch, var(--bear) 10%, transparent);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* 3D perspective helpers used by the Indian market hero cards. */
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  /* Soft glow ring on hover — adapts to either palette via the fg var. */
+  .glow-on-hover {
+    transition:
+      box-shadow 240ms ease,
+      transform 240ms ease;
+  }
+  .glow-on-hover:hover {
+    box-shadow:
+      0 12px 32px -12px color-mix(in oklch, var(--fg) 18%, transparent),
+      0 0 0 1px var(--border-strong);
+  }
+}

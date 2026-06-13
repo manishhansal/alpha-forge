@@ -1,0 +1,41 @@
+services:
+  postgres:
+    # NOTE: stay on the debian-based tag, not `17-alpine`. Alpine 3.23's musl
+    # binaries fail with "exec format error" on the current WSL2 kernel
+    # (6.6.114.1-microsoft-standard-WSL2). Switch back to `17-alpine` once WSL
+    # ships a newer kernel.
+    image: postgres:17
+    container_name: crypto-desk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crypto
+      POSTGRES_PASSWORD: crypto
+      POSTGRES_DB: crypto_dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto -d crypto_dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: crypto-desk-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

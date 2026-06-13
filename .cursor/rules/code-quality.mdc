@@ -1,0 +1,28 @@
+# Code Quality Rules
+
+## Standards
+
+- Strict TypeScript
+- No any type unless unavoidable
+- Use ESLint + Prettier
+
+## Components
+- Keep components small
+- Reusable logic via hooks
+- Avoid duplicate code
+
+## Async
+- Use async/await
+- Handle loading and errors properly
+
+## Naming
+- Clear naming conventions
+- No abbreviations unless common
+
+## Git
+- Small commits
+- Clear commit messages
+
+## Documentation
+- Add comments for complex logic
+- Keep README updated

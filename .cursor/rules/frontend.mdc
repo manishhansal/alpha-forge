@@ -1,0 +1,36 @@
+# Frontend Rules
+
+## General
+- Use TypeScript everywhere
+- Use functional React components only
+- Use App Router
+- Prefer server components where possible
+- Use client components only when needed
+
+## Styling
+- Use TailwindCSS
+- Use Shadcn UI
+- Dark mode first
+- Use responsive design
+
+## State Management
+- Use Zustand for global state
+- Use TanStack Query for server state
+
+## Charts
+- Use Lightweight Charts or Recharts
+- Charts should support realtime updates
+
+## Performance
+- Lazy load heavy components
+- Avoid unnecessary rerenders
+- Memoize expensive calculations
+
+## Folder Structure
+- Keep feature-based architecture
+- Reusable UI in components/ui
+
+## Naming
+- PascalCase for components
+- camelCase for variables/functions
+- kebab-case for folders
