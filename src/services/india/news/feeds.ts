@@ -12,30 +12,37 @@ export type NewsFeed = {
   category: NewsCategory;
 };
 
+// NOTE on Moneycontrol: their legacy `/rss/*.xml` feeds are deprecated and
+// serve stale (multi-year-old) snapshots, so they can't be the source of
+// "latest" news. We lead with Economic Times market feeds (verified fresh,
+// minute-level updates) for the domestic F&O tape and keep two Moneycontrol
+// feeds as best-effort extras — the recency filter in the service drops any
+// stale items regardless of source.
 const DEFAULT_FEEDS: NewsFeed[] = [
   {
-    url: "https://www.moneycontrol.com/rss/MCtopnews.xml",
-    source: "Moneycontrol · Top News",
+    url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    source: "Economic Times · Markets",
     category: "india",
   },
   {
-    url: "https://www.moneycontrol.com/rss/marketreports.xml",
-    source: "Moneycontrol · Markets",
+    url: "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+    source: "Economic Times · Stocks",
     category: "india",
   },
+  {
+    url: "https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms",
+    source: "Economic Times · Economy",
+    category: "india",
+  },
+  // Moneycontrol best-effort (often stale; recency filter removes old items).
   {
     url: "https://www.moneycontrol.com/rss/business.xml",
     source: "Moneycontrol · Business",
     category: "india",
   },
   {
-    url: "https://www.moneycontrol.com/rss/economy.xml",
-    source: "Moneycontrol · Economy",
-    category: "india",
-  },
-  {
-    url: "https://www.moneycontrol.com/rss/results.xml",
-    source: "Moneycontrol · Results",
+    url: "https://www.moneycontrol.com/rss/marketreports.xml",
+    source: "Moneycontrol · Markets",
     category: "india",
   },
   // Global macro / business — affects FII flows, commodities and risk appetite.
@@ -45,8 +52,8 @@ const DEFAULT_FEEDS: NewsFeed[] = [
     category: "global",
   },
   {
-    url: "https://www.cnbc.com/id/100727362/device/rss/rss.html",
-    source: "CNBC · World Markets",
+    url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
+    source: "WSJ · Markets",
     category: "global",
   },
 ];

@@ -22,7 +22,10 @@ import { getNewsFeeds, type NewsFeed } from "./feeds";
 import { parseRss } from "./rss";
 
 const FETCH_TIMEOUT_MS = 8_000;
-const CACHE_TTL_MS = 5 * 60_000;
+// Short TTL so "latest news" stays fresh; feeds update on the order of minutes.
+const CACHE_TTL_MS = 2 * 60_000;
+// Only surface recent headlines — drops stale items from deprecated feeds.
+const MAX_AGE_DAYS = 3;
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -69,15 +72,20 @@ export async function getIndiaNews(
 ): Promise<NewsFeedResponse> {
   const { category = "all", limit = 40 } = opts;
 
-  const raw = await cache.memo("news:raw", CACHE_TTL_MS, loadAllNews);
+  // `:v2` busts any payload cached under the previous (stale Moneycontrol)
+  // feed set so the switch to fresh feeds takes effect immediately.
+  const raw = await cache.memo("news:raw:v2", CACHE_TTL_MS, loadAllNews);
 
   const enriched = enrichNewsItems(raw);
 
-  // Aggregate risk read is computed across the impactful headlines from every
-  // category before we slice to the requested view.
-  const impactful = filterTopNews(enriched, { minImpact: "low" });
+  // Aggregate risk read is computed across the recent, impactful headlines
+  // from every category before we slice to the requested view.
+  const impactful = filterTopNews(enriched, {
+    minImpact: "low",
+    maxAgeDays: MAX_AGE_DAYS,
+  });
   const sentiment = computeMarketSentiment(
-    filterTopNews(enriched, { minImpact: "medium" }),
+    filterTopNews(enriched, { minImpact: "medium", maxAgeDays: MAX_AGE_DAYS }),
   );
 
   const scoped =

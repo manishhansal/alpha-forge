@@ -322,15 +322,20 @@ const IMPACT_RANK: Record<NewsImpact, number> = { high: 3, medium: 2, low: 1 };
 
 /**
  * Keep the most market-relevant headlines: dedupe by title, optionally drop
- * everything below `minImpact`, sort high-impact + most-recent first, and cap
- * to `limit`.
+ * everything below `minImpact`, drop anything older than `maxAgeDays` (so the
+ * feed always shows the *latest* news even if an upstream feed serves stale
+ * items), sort high-impact + most-recent first, and cap to `limit`.
  */
 export function filterTopNews(
   items: NewsItem[],
-  opts: { minImpact?: NewsImpact; limit?: number } = {},
+  opts: { minImpact?: NewsImpact; limit?: number; maxAgeDays?: number } = {},
 ): NewsItem[] {
-  const { minImpact = "low", limit } = opts;
+  const { minImpact = "low", limit, maxAgeDays } = opts;
   const minRank = IMPACT_RANK[minImpact];
+  const cutoff =
+    typeof maxAgeDays === "number"
+      ? Date.now() - maxAgeDays * 24 * 60 * 60_000
+      : null;
 
   const seen = new Set<string>();
   const deduped: NewsItem[] = [];
@@ -339,6 +344,10 @@ export function filterTopNews(
     if (seen.has(key)) continue;
     seen.add(key);
     if (IMPACT_RANK[it.impact] < minRank) continue;
+    if (cutoff !== null && it.publishedAt) {
+      const t = Date.parse(it.publishedAt);
+      if (!Number.isNaN(t) && t < cutoff) continue;
+    }
     deduped.push(it);
   }
 
@@ -395,11 +404,29 @@ export function computeMarketSentiment(items: NewsItem[]): MarketSentiment {
   const label: NewsSentimentLabel =
     score > 5 ? "bullish" : score < -5 ? "bearish" : "neutral";
 
-  const macroPenalty = Math.min(20, macroHits * 3);
+  // Macro-risk words tilt the risk meter, but only modestly — they must never
+  // flip a clearly bullish read into a red "risk-off" meter (the two should
+  // agree, the macro tilt just dials the bullishness/bearishness up or down).
+  const macroPenalty = Math.min(8, macroHits * 2);
   const riskRatio = clamp(Math.round(50 + score / 2 - macroPenalty), 0, 100);
 
+  // Regime is kept consistent with the headline sentiment: a bullish tape is
+  // never labelled risk-off (and vice-versa). Macro stress can pull a bullish
+  // tape down to "mixed", but not all the way to its opposite.
   const regime: NewsRegime =
-    riskRatio >= 60 ? "risk-on" : riskRatio <= 40 ? "risk-off" : "mixed";
+    label === "bullish"
+      ? riskRatio >= 45
+        ? "risk-on"
+        : "mixed"
+      : label === "bearish"
+        ? riskRatio <= 55
+          ? "risk-off"
+          : "mixed"
+        : riskRatio >= 60
+          ? "risk-on"
+          : riskRatio <= 40
+            ? "risk-off"
+            : "mixed";
 
   const headline = buildHeadline(label, regime, bullCount, bearCount);
 

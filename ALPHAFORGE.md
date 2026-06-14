@@ -136,9 +136,11 @@ the topbar.
 
 #### India-specific extras (kept under the shared core)
 
-- **News** (`/in/news`) — top market news scraped from Moneycontrol India
-  RSS feeds (top news / markets / business / economy / results) plus
-  global business feeds. Each headline is tagged with the F&O stocks /
+- **News** (`/in/news`) — top market news pulled from fresh Indian market
+  RSS feeds (Economic Times Markets / Stocks / Economy, with Moneycontrol
+  as a best-effort extra) plus global business feeds (WSJ), filtered to the
+  last few days so only the latest news surfaces. Each headline is tagged
+  with the F&O stocks /
   index underlyings / sectors it impacts (high / medium / low) and scored
   for bull/bear sentiment via a deterministic lexicon engine; the
   impactful set is folded into an overall market sentiment (bullish /

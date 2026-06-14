@@ -1087,9 +1087,11 @@ absent, the cache transparently falls back to in-memory.
       (`MIN_SNAPSHOTS` / `MIN_TRADES` guards); until then it cleanly falls
       back to the live paper-trade record.
 - [x] **India News + sentiment** — a new `/in/news` surface that fans out
-      across Moneycontrol India RSS feeds (top news / markets / business /
-      economy / results) plus global business feeds, parses them with a
-      dependency-free RSS parser (`services/india/news`), and runs each
+      across fresh Indian market RSS feeds (Economic Times Markets / Stocks /
+      Economy, with Moneycontrol kept as a best-effort extra) plus global
+      business feeds (WSJ), parses them with a dependency-free RSS parser
+      (`services/india/news`), drops anything older than 3 days so only the
+      latest news surfaces, and runs each
       headline through a pure, deterministic bull/bear lexicon engine
       (`features/india/news/engine.ts`). Every headline is tagged with the
       F&O stocks / index underlyings / sectors it impacts (high / medium /

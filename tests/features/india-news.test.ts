@@ -125,6 +125,26 @@ describe("features/india/news/engine", () => {
       expect(out).toHaveLength(1);
       expect(out.every((i) => i.impact !== "low")).toBe(true);
     });
+
+    it("drops items older than maxAgeDays so only the latest surface", () => {
+      const fresh = new Date().toISOString();
+      const old = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+      const items = enrichNewsItems([
+        raw({ title: "RELIANCE jumps today on results", publishedAt: fresh }),
+        raw({ title: "RELIANCE rallied two years ago", publishedAt: old }),
+      ]);
+      const out = filterTopNews(items, { maxAgeDays: 3 });
+      expect(out).toHaveLength(1);
+      expect(out[0].title).toBe("RELIANCE jumps today on results");
+    });
+
+    it("keeps undated items even when maxAgeDays is set", () => {
+      const items = enrichNewsItems([
+        raw({ title: "TCS jumps on upgrade", publishedAt: null }),
+      ]);
+      const out = filterTopNews(items, { maxAgeDays: 3 });
+      expect(out).toHaveLength(1);
+    });
   });
 
   describe("computeMarketSentiment", () => {
@@ -162,6 +182,20 @@ describe("features/india/news/engine", () => {
       expect(s.riskRatio).toBeLessThan(50);
       expect(s.regime).toBe("risk-off");
       expect(s.headline).toBeTruthy();
+    });
+
+    it("never reports a risk-off meter for a net-bullish tape (meter agrees with label)", () => {
+      // Net-bullish headlines that also mention macro-risk words. The macro
+      // tilt may pull the read toward 'mixed' but must not flip it to risk-off.
+      const items = enrichNewsItems([
+        raw({ title: "RELIANCE surges to record high on strong rally" }),
+        raw({ title: "TCS jumps after earnings beat and upgrade" }),
+        raw({ title: "Nifty rallies on buying optimism despite inflation fears" }),
+        raw({ title: "HDFCBANK gains as recovery boosts profit growth" }),
+      ]);
+      const s = computeMarketSentiment(items);
+      expect(s.label).toBe("bullish");
+      expect(s.regime).not.toBe("risk-off");
     });
 
     it("keeps riskRatio within [0, 100]", () => {
