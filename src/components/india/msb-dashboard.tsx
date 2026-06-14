@@ -28,6 +28,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/india/ui/button";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
+import { dataSourceLabels } from "@/features/settings/data-sources-shared";
 
 type IndexQuote = {
   name: string;
@@ -191,6 +192,9 @@ export default function MsbDashboard() {
     fetchedAt: undefined,
   };
   const setSnapshot = useIndiaMarketStore((s) => s.setSnapshot);
+  const snapshotSources = useIndiaMarketStore((s) => s.snapshot?.sources) ?? [];
+  const sourceBadge =
+    snapshotSources.length > 0 ? dataSourceLabels(snapshotSources).join(" + ") : null;
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   // In-flight tracking + a stable AbortController per mount keep us under
@@ -276,9 +280,19 @@ export default function MsbDashboard() {
           className="mb-4 flex items-end justify-between gap-3"
         >
           <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-              Market Pulse
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+                Market Pulse
+              </h1>
+              {sourceBadge && (
+                <span
+                  className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                  title="Live data source(s) actually serving this snapshot"
+                >
+                  {sourceBadge}
+                </span>
+              )}
+            </div>
             <p className="text-xs sm:text-sm text-muted-foreground">
               Live snapshot of Indian indices and sectoral momentum
             </p>

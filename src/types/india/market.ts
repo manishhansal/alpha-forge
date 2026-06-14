@@ -2,6 +2,8 @@
 // Designed to be broker-agnostic so a `BrokerAdapter` can be swapped
 // (Yahoo / NSE / Groww / Zerodha / Upstox) without changing consumers.
 
+import type { DataSourceId } from "@/features/settings/data-sources-shared";
+
 export type Quote = {
   symbol: string;
   name?: string | null;
@@ -13,6 +15,12 @@ export type Quote = {
   high?: number | null;
   low?: number | null;
   volume?: number | null;
+  /**
+   * True upstream that produced this value. Lets the route/UI show genuine
+   * provenance (e.g. "angel" vs a Yahoo backfill) rather than just the adapter
+   * that was selected. Undefined when no source could serve the symbol.
+   */
+  source?: DataSourceId;
   fetchedAt: string;
 };
 
@@ -24,6 +32,10 @@ export type IndexQuote = Quote & {
 export type Snapshot = {
   indices: IndexQuote[];
   sectors: IndexQuote[];
+  /** Primary selected source for the snapshot (highest-priority pick). */
+  source?: DataSourceId;
+  /** Distinct upstreams that actually produced the snapshot's quotes. */
+  sources?: DataSourceId[];
   fetchedAt: string;
 };
 

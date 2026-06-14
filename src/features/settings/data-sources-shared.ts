@@ -102,7 +102,7 @@ export const DATA_SOURCES: readonly DataSourceMeta[] = [
     market: "india",
     label: "Angel One SmartAPI",
     blurb:
-      "First-party broker REST — option chain via ScripMaster + Quote + Greeks (IV). Requires SmartAPI credentials.",
+      "First-party broker REST — live quotes, intraday/daily candles, polled feed, and option chain (ScripMaster + Quote + Greeks IV). Requires SmartAPI credentials.",
     capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
     requiresApiKey: true,
     implemented: true,
@@ -143,6 +143,36 @@ export const DATA_SOURCES_BY_ID = DATA_SOURCES.reduce(
 
 export function dataSourcesFor(market: Market): readonly DataSourceMeta[] {
   return DATA_SOURCES.filter((s) => s.market === market);
+}
+
+/**
+ * Footer copy for the India sidebar card, derived from the active quote-source
+ * chain (highest-priority first). Pure + client-safe so the sidebar and tests
+ * share one source of truth for the wording.
+ */
+export function indiaSourceFooter(labels: readonly string[]): {
+  title: string;
+  sub: string;
+} {
+  if (labels.length === 0) {
+    return {
+      title: "Live data via Yahoo Finance",
+      sub: "Public quotes — no broker keys required.",
+    };
+  }
+  const [primary, ...rest] = labels;
+  return {
+    title: `Live data via ${primary}`,
+    sub:
+      rest.length > 0
+        ? `Backfill stays within your selection: ${labels.join(" · ")}.`
+        : `Only ${primary} is selected — no fallback to other sources.`,
+  };
+}
+
+/** Map data-source ids to their display labels (unknown ids pass through). */
+export function dataSourceLabels(ids: readonly DataSourceId[]): string[] {
+  return ids.map((id) => DATA_SOURCES_BY_ID[id]?.label ?? id);
 }
 
 /**

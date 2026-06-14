@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { pickBroker } from "@/services/india/broker/factory";
+import { pickBrokerChain } from "@/services/india/broker/factory";
+import { resolveQuotes } from "@/services/india/resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
+import type { DataSourceId } from "@/features/settings/data-sources-shared";
 import {
   FNO_INDICES,
   SUPPLEMENTARY_INDICES,
@@ -30,15 +32,22 @@ const ALL_INDICES = [...FNO_INDICES, ...SUPPLEMENTARY_INDICES];
 
 export async function GET() {
   const selections = await getActiveSelections();
-  const broker = pickBroker(selections.india.selected);
+  const chain = pickBrokerChain(selections.india.selected);
 
   const indexSyms = ALL_INDICES.map((i) => i.symbol);
   const sectorSyms = SECTORS.map((s) => s.symbol);
 
-  const [indexQuotes, sectorQuotes] = await Promise.all([
-    broker.getQuotes(indexSyms),
-    broker.getQuotes(sectorSyms),
+  const [indexRes, sectorRes] = await Promise.all([
+    resolveQuotes(chain, indexSyms),
+    resolveQuotes(chain, sectorSyms),
   ]);
+  const indexQuotes = indexRes.quotes;
+  const sectorQuotes = sectorRes.quotes;
+
+  const sources: DataSourceId[] = [];
+  for (const s of [...indexRes.sources, ...sectorRes.sources]) {
+    if (!sources.includes(s)) sources.push(s);
+  }
 
   const indices: IndexQuote[] = ALL_INDICES.map((m, i) => {
     const q = indexQuotes[i];
@@ -58,11 +67,12 @@ export async function GET() {
     };
   });
 
-  const snapshot: Snapshot & { source: string } = {
+  const snapshot: Snapshot = {
     indices,
     sectors,
     fetchedAt: new Date().toISOString(),
-    source: broker.id,
+    source: (chain[0]?.id ?? "yahoo") as DataSourceId,
+    sources,
   };
 
   return NextResponse.json(snapshot, {

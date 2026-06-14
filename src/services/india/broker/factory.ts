@@ -21,6 +21,8 @@ export function getBroker(): BrokerAdapter {
       return groww;
     case "nse":
       return nse;
+    case "angel":
+      return angel;
     case "yahoo":
     default:
       return yahoo;
@@ -70,20 +72,64 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
 }
 
 /**
- * Walk a user's selection list and return the first adapter that's actually
- * wired up. Falls back to Yahoo so a brand-new user (no selections) still
- * gets a working dashboard.
+ * Live-data preference weight for the quote/history/feed routes. First-party
+ * broker adapters (Angel One, Groww) serve real-time data straight from the
+ * exchange, so when a user keeps them selected alongside the public defaults
+ * we auto-prefer them — no need to manually uncheck Yahoo/NSE to prioritise
+ * a broker. Equal-weight sources keep their selected order (stable sort), so
+ * the historical "first selected wins" behaviour is preserved for the public
+ * pair (yahoo/nse). Unconfigured brokers degrade gracefully to Yahoo inside
+ * their own adapter, so preferring a keyless broker is harmless.
+ */
+const INDIA_PICK_WEIGHT: Partial<Record<DataSourceId, number>> = {
+  angel: 3,
+  groww: 2,
+};
+
+function pickWeight(id: DataSourceId): number {
+  return INDIA_PICK_WEIGHT[id] ?? 1;
+}
+
+/**
+ * Walk a user's selection list and return the highest-priority adapter that's
+ * actually wired up (see {@link INDIA_PICK_WEIGHT}). Falls back to Yahoo so a
+ * brand-new user (no selections) still gets a working dashboard.
  */
 export function pickBroker(
   ids: readonly DataSourceId[] | undefined,
 ): BrokerAdapter {
-  if (ids) {
-    for (const id of ids) {
+  if (ids && ids.length > 0) {
+    const ordered = [...ids].sort((a, b) => pickWeight(b) - pickWeight(a));
+    for (const id of ordered) {
       const a = getBrokerById(id);
       if (a) return a;
     }
   }
   return yahoo;
+}
+
+/**
+ * Resolve a user's selection list into the ordered, de-duped chain of wired-up
+ * adapters (highest {@link INDIA_PICK_WEIGHT} first). The selected-source-only
+ * resolver walks this chain, so backfill only ever uses sources the user
+ * actually picked. Falls back to a Yahoo-only chain when nothing is selected
+ * so a brand-new user still gets data.
+ */
+export function pickBrokerChain(
+  ids: readonly DataSourceId[] | undefined,
+): BrokerAdapter[] {
+  if (!ids || ids.length === 0) return [yahoo];
+  const ordered = [...ids].sort((a, b) => pickWeight(b) - pickWeight(a));
+  const out: BrokerAdapter[] = [];
+  const seen = new Set<string>();
+  for (const id of ordered) {
+    const a = getBrokerById(id);
+    if (a && !seen.has(a.id)) {
+      out.push(a);
+      seen.add(a.id);
+    }
+  }
+  return out.length > 0 ? out : [yahoo];
 }
 
 export { yahoo, nse, groww, angel };

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { pickBroker } from "@/services/india/broker/factory";
+import { pickBrokerChain } from "@/services/india/broker/factory";
+import { resolveQuotes } from "@/services/india/resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
 
 export const dynamic = "force-dynamic";
@@ -19,12 +20,15 @@ export async function GET(req: Request) {
   }
 
   const selections = await getActiveSelections();
-  const broker = pickBroker(selections.india.selected);
-  const quotes = await broker.getQuotes(symbols);
+  const chain = pickBrokerChain(selections.india.selected);
+  const { quotes, sources } = await resolveQuotes(chain, symbols);
   return NextResponse.json(
     {
       quotes,
-      source: broker.id,
+      // `source` = the user's primary selected source; `sources` = the
+      // distinct upstreams that actually produced data (true provenance).
+      source: chain[0]?.id ?? "yahoo",
+      sources,
       fetchedAt: new Date().toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cache } from "@/services/india/cache";
+import { isAngelConfigured } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -35,6 +36,9 @@ export async function GET() {
     broker: process.env.INDIA_BROKER ?? process.env.BROKER ?? "yahoo",
     grow: {
       live: Boolean(process.env.GROWW_API_KEY && process.env.GROWW_API_SECRET),
+    },
+    angel: {
+      live: isAngelConfigured(),
     },
     fetchedAt: new Date().toISOString(),
   });

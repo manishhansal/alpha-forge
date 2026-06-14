@@ -23,6 +23,7 @@ import { usePathname } from "next/navigation";
 import { MarketSwitcher } from "@/components/dashboard/market-switcher";
 import { cn } from "@/lib/utils";
 import { marketFromPath, type Market } from "@/lib/market-mode";
+import { indiaSourceFooter } from "@/features/settings/data-sources-shared";
 
 export interface NavItem {
   href: string;
@@ -133,16 +134,21 @@ function BrandHeader({ market }: { market: Market }) {
   );
 }
 
-function FooterCard({ market }: { market: Market }) {
+function FooterCard({
+  market,
+  indiaSourceLabels = [],
+}: {
+  market: Market;
+  indiaSourceLabels?: string[];
+}) {
   if (market === "india") {
+    const { title, sub } = indiaSourceFooter(indiaSourceLabels);
     return (
       <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">
-          Live NSE data via Yahoo Finance
+          {title}
         </p>
-        <p className="mt-1 text-[10px] text-[var(--color-fg-subtle)]">
-          Option chains pulled directly from NSE — no broker keys required
-        </p>
+        <p className="mt-1 text-[10px] text-[var(--color-fg-subtle)]">{sub}</p>
       </div>
     );
   }
@@ -167,9 +173,16 @@ interface SidebarProps {
    * issues the redirect); this flag just keeps the visible nav honest.
    */
   isAuthed: boolean;
+  /**
+   * Display labels for the user's active India quote-source chain (primary
+   * first), computed server-side in the dashboard layout. Drives the footer
+   * card so it reflects the real provenance (e.g. "Live data via Angel One
+   * SmartAPI") instead of a hardcoded string.
+   */
+  indiaSourceLabels?: string[];
 }
 
-export function Sidebar({ isAuthed }: SidebarProps) {
+export function Sidebar({ isAuthed, indiaSourceLabels }: SidebarProps) {
   const pathname = usePathname();
   const market = marketFromPath(pathname);
   const fullNav = market === "india" ? INDIA_NAV : CRYPTO_NAV;
@@ -227,7 +240,7 @@ export function Sidebar({ isAuthed }: SidebarProps) {
         )}
       </nav>
 
-      <FooterCard market={market} />
+      <FooterCard market={market} indiaSourceLabels={indiaSourceLabels} />
     </aside>
   );
 }

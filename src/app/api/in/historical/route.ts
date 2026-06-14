@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { pickBroker } from "@/services/india/broker/factory";
+import { pickBrokerChain } from "@/services/india/broker/factory";
+import { resolveHistorical } from "@/services/india/resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
 import type { Interval } from "@/types/india";
 
@@ -26,10 +27,14 @@ export async function GET(req: Request) {
   }
 
   const selections = await getActiveSelections();
-  const broker = pickBroker(selections.india.selected);
-  const candles = await broker.getHistorical({ symbol, interval, range });
+  const chain = pickBrokerChain(selections.india.selected);
+  const { candles, source } = await resolveHistorical(chain, {
+    symbol,
+    interval,
+    range,
+  });
   return NextResponse.json(
-    { symbol, interval, range, candles, source: broker.id },
+    { symbol, interval, range, candles, source: source ?? chain[0]?.id ?? "yahoo" },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

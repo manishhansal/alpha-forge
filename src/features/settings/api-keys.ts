@@ -1,7 +1,6 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 
 import {
   decrypt,
@@ -16,18 +15,31 @@ import { getPrisma } from "@/lib/prisma";
 // The client form imports them directly from `./api-keys-shared` to avoid
 // pulling this module's server-only deps into the browser bundle.
 export {
+  DELETE_INPUT_SCHEMA,
   EXCHANGE_LABELS,
+  SAVE_INPUT_SCHEMA,
   SUPPORTED_EXCHANGES,
   type Exchange,
+  type SaveApiKeyInput,
   type StoredKeySummary,
 } from "./api-keys-shared";
-import { SUPPORTED_EXCHANGES, type Exchange, type StoredKeySummary } from "./api-keys-shared";
+import {
+  SUPPORTED_EXCHANGES,
+  usesSmartApiAuth,
+  type Exchange,
+  type SaveApiKeyInput,
+  type StoredKeySummary,
+} from "./api-keys-shared";
 
 interface StoredKeyEntry {
   /** Encrypted API key (the "public" half on most exchanges). */
   apiKey: EncryptedPayload;
-  /** Encrypted API secret (the "private" half). */
-  apiSecret: EncryptedPayload;
+  /** Encrypted API secret (the "private" half). Absent for SmartAPI logins. */
+  apiSecret?: EncryptedPayload;
+  /** Encrypted Angel One SmartAPI login triplet (SmartAPI exchanges only). */
+  clientCode?: EncryptedPayload;
+  pin?: EncryptedPayload;
+  totpSecret?: EncryptedPayload;
   /** Marker set by the user at save time. */
   readOnly: boolean;
   /** Last write time (ISO). Mirrors apiKey.ts for convenience. */
@@ -35,27 +47,6 @@ interface StoredKeyEntry {
 }
 
 type StoredKeyMap = Partial<Record<Exchange, StoredKeyEntry>>;
-
-export const SAVE_INPUT_SCHEMA = z.object({
-  exchange: z.enum(SUPPORTED_EXCHANGES),
-  apiKey: z
-    .string()
-    .trim()
-    .min(8, "API key looks too short")
-    .max(256, "API key looks too long"),
-  apiSecret: z
-    .string()
-    .trim()
-    .min(8, "API secret looks too short")
-    .max(512, "API secret looks too long"),
-  readOnly: z.boolean().optional().default(true),
-});
-
-export const DELETE_INPUT_SCHEMA = z.object({
-  exchange: z.enum(SUPPORTED_EXCHANGES),
-});
-
-export type SaveApiKeyInput = z.infer<typeof SAVE_INPUT_SCHEMA>;
 
 function parseStored(raw: Prisma.JsonValue | null | undefined): StoredKeyMap {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -137,10 +128,17 @@ export async function saveApiKey(userId: string, input: SaveApiKeyInput): Promis
 
   const entry: StoredKeyEntry = {
     apiKey: encrypt(input.apiKey),
-    apiSecret: encrypt(input.apiSecret),
     readOnly: input.readOnly,
     updatedAt: new Date().toISOString(),
   };
+  if (usesSmartApiAuth(input.exchange)) {
+    // Angel One SmartAPI: store the broker login triplet, not an apiSecret.
+    entry.clientCode = encrypt(input.clientCode);
+    entry.pin = encrypt(input.pin);
+    entry.totpSecret = encrypt(input.totpSecret);
+  } else {
+    entry.apiSecret = encrypt(input.apiSecret);
+  }
   await writeStoredMap(userId, { ...current, [input.exchange]: entry });
 }
 
@@ -177,7 +175,40 @@ export async function readApiKey(
   if (!entry) return null;
   return {
     apiKey: decrypt(entry.apiKey),
-    apiSecret: decrypt(entry.apiSecret),
+    apiSecret: entry.apiSecret ? decrypt(entry.apiSecret) : "",
     readOnly: entry.readOnly,
   };
+}
+
+/** Plaintext Angel One SmartAPI credential set for a user. Returns `null`
+ *  when no Angel One key is stored or the stored entry is incomplete. Never
+ *  expose the return value to the client. */
+export interface AngelStoredCredentials {
+  apiKey: string;
+  clientCode: string;
+  pin: string;
+  totpSecret: string;
+}
+
+export async function readAngelCredentials(
+  userId: string,
+): Promise<AngelStoredCredentials | null> {
+  const prisma = getPrisma();
+  const row = await prisma.userSetting.findUnique({
+    where: { userId },
+    select: { apiKeysEncrypted: true },
+  });
+  const entry = parseStored(row?.apiKeysEncrypted).angel;
+  if (!entry || !entry.clientCode || !entry.pin || !entry.totpSecret) return null;
+  try {
+    return {
+      apiKey: decrypt(entry.apiKey),
+      clientCode: decrypt(entry.clientCode),
+      pin: decrypt(entry.pin),
+      totpSecret: decrypt(entry.totpSecret),
+    };
+  } catch (err) {
+    console.warn(`[api-keys] failed to decrypt Angel One creds:`, (err as Error).message);
+    return null;
+  }
 }

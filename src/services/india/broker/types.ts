@@ -13,6 +13,17 @@ import type {
  * for Zerodha / Upstox / Angel One / Shoonya later, or run a hybrid (e.g.
  * Groww feed + NSE option chain), without touching consumers.
  */
+/**
+ * Per-call knobs shared across adapters. Today this only carries
+ * `allowFallback`: when `false`, an adapter must NOT reach for a different
+ * upstream (e.g. Angel One falling back to Yahoo) — it returns empty
+ * placeholders for anything it can't serve so the selected-source-only
+ * resolver can move to the next *selected* source instead.
+ */
+export interface BrokerFetchOptions {
+  allowFallback?: boolean;
+}
+
 export interface BrokerAdapter {
   /** Stable identifier — used in logs and in env-driven factory selection. */
   readonly id: "yahoo" | "nse" | "groww" | "zerodha" | "upstox" | "angel" | "shoonya";
@@ -20,10 +31,10 @@ export interface BrokerAdapter {
   getQuote(symbol: string): Promise<Quote>;
 
   /** Multi-symbol quote fetch — adapters should batch where possible. */
-  getQuotes(symbols: string[]): Promise<Quote[]>;
+  getQuotes(symbols: string[], opts?: BrokerFetchOptions): Promise<Quote[]>;
 
   /** Historical OHLCV. Throws if unsupported. */
-  getHistorical(req: HistoricalRequest): Promise<Candle[]>;
+  getHistorical(req: HistoricalRequest, opts?: BrokerFetchOptions): Promise<Candle[]>;
 
   /**
    * Option chain for an F&O underlying (NIFTY/BANKNIFTY/<stock>).

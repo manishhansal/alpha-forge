@@ -4,13 +4,16 @@ import {
   DATA_SOURCES,
   DATA_SOURCES_BY_ID,
   DEFAULT_SELECTIONS,
+  dataSourceLabels,
   dataSourcesFor,
+  indiaSourceFooter,
   INDIA_OI_SOURCES,
   normalizeSelections,
 } from "@/features/settings/data-sources-shared";
 import {
   EXCHANGE_LABELS,
   EXCHANGE_MARKET,
+  SAVE_INPUT_SCHEMA,
   SUPPORTED_EXCHANGES,
 } from "@/features/settings/api-keys-shared";
 
@@ -19,6 +22,35 @@ describe("features/settings/data-sources-shared", () => {
     for (const s of DATA_SOURCES) {
       expect(DATA_SOURCES_BY_ID[s.id]).toEqual(s);
     }
+  });
+
+  it("dataSourceLabels() maps ids to display labels", () => {
+    expect(dataSourceLabels(["angel", "yahoo"])).toEqual([
+      "Angel One SmartAPI",
+      "Yahoo Finance",
+    ]);
+  });
+
+  describe("indiaSourceFooter()", () => {
+    it("names the primary source and notes there is no fallback when only one is selected", () => {
+      const { title, sub } = indiaSourceFooter(["Angel One SmartAPI"]);
+      expect(title).toBe("Live data via Angel One SmartAPI");
+      expect(sub).toContain("no fallback");
+    });
+
+    it("lists every selected source when more than one is active", () => {
+      const { title, sub } = indiaSourceFooter([
+        "Angel One SmartAPI",
+        "Yahoo Finance",
+      ]);
+      expect(title).toBe("Live data via Angel One SmartAPI");
+      expect(sub).toContain("Angel One SmartAPI · Yahoo Finance");
+    });
+
+    it("falls back to the Yahoo default copy for an empty chain", () => {
+      const { title } = indiaSourceFooter([]);
+      expect(title).toBe("Live data via Yahoo Finance");
+    });
   });
 
   it("dataSourcesFor() filters by market", () => {
@@ -107,5 +139,60 @@ describe("features/settings/api-keys-shared", () => {
     expect(EXCHANGE_MARKET.deribit).toBe("crypto");
     expect(EXCHANGE_MARKET.groww).toBe("india");
     expect(EXCHANGE_MARKET.zerodha).toBe("india");
+  });
+
+  it("includes Angel One as an India exchange with a label", () => {
+    expect(SUPPORTED_EXCHANGES).toContain("angel");
+    expect(EXCHANGE_LABELS.angel).toMatch(/angel/i);
+    expect(EXCHANGE_MARKET.angel).toBe("india");
+  });
+});
+
+describe("features/settings/api-keys-shared SAVE_INPUT_SCHEMA", () => {
+  it("accepts a crypto key with apiKey + apiSecret", () => {
+    const res = SAVE_INPUT_SCHEMA.safeParse({
+      exchange: "binance",
+      apiKey: "publicKey123",
+      apiSecret: "secretValue123",
+      readOnly: true,
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects a crypto key with a too-short apiSecret", () => {
+    const res = SAVE_INPUT_SCHEMA.safeParse({
+      exchange: "binance",
+      apiKey: "publicKey123",
+      apiSecret: "x",
+    });
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.flatten().fieldErrors.apiSecret).toBeDefined();
+    }
+  });
+
+  it("accepts an Angel One key with apiKey + clientCode + pin + totpSecret (no apiSecret)", () => {
+    const res = SAVE_INPUT_SCHEMA.safeParse({
+      exchange: "angel",
+      apiKey: "smartApiKey123",
+      clientCode: "A12345",
+      pin: "1234",
+      totpSecret: "BASE32SECRET",
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects an Angel One key missing clientCode / pin / totpSecret", () => {
+    const res = SAVE_INPUT_SCHEMA.safeParse({
+      exchange: "angel",
+      apiKey: "smartApiKey123",
+    });
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      const errs = res.error.flatten().fieldErrors;
+      expect(errs.clientCode).toBeDefined();
+      expect(errs.pin).toBeDefined();
+      expect(errs.totpSecret).toBeDefined();
+    }
   });
 });

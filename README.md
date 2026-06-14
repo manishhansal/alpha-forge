@@ -95,7 +95,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Database         | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern with `pg`)    |
 | Realtime         | Active broker WS (Delta India ticker / Binance miniTicker + forceOrder) |
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
-| Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, Groww REST (opt-in via `INDIA_BROKER`) |
+| Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain) + Groww REST (opt-in via `INDIA_BROKER`) |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
 
 ## Quick start
@@ -825,7 +825,22 @@ render the same `SettingsForm`, `DataSourcesForm`, `ApiKeysForm` and
 
 ```bash
 # Pick the data source. Falls back to ACTIVE_BROKER, then "yahoo".
-INDIA_BROKER=yahoo        # yahoo | nse | groww
+INDIA_BROKER=yahoo        # yahoo | nse | groww | angel
+
+# Angel One SmartAPI (optional) — when these four are set the `angel` adapter
+# serves live quotes, intraday/daily candles, a polled live feed, and option
+# chains directly from your broker account. Missing creds → transparent
+# fallback to Yahoo (quotes/history) + NSE (option chain).
+#
+# These env vars apply to ALL users (worker + anonymous paths). Individual
+# signed-in users can instead save their own Angel One key under
+# Profile → API keys → "Angel One SmartAPI" (encrypted at rest with
+# AES-256-GCM); the adapter prefers env creds, then falls back to the
+# request user's stored key.
+SMARTAPI_API_KEY=
+SMARTAPI_CLIENT_CODE=
+SMARTAPI_PIN=
+SMARTAPI_TOTP_SECRET=    # the base32 secret shown when you enable TOTP 2FA
 
 # Optional Redis prefix so India + Crypto don't share keys when sharing a
 # Redis instance (defaults to `fno-pulse:`).

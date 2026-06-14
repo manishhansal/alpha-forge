@@ -74,6 +74,7 @@ function quoteFromYf(input: string, q: YfRawQuote | undefined): Quote {
     high: q?.regularMarketDayHigh ?? null,
     low: q?.regularMarketDayLow ?? null,
     volume: q?.regularMarketVolume ?? null,
+    source: "yahoo",
     fetchedAt: new Date().toISOString(),
   };
 }

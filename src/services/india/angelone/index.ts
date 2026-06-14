@@ -22,6 +22,7 @@ import { createHmac } from "node:crypto";
 import type {
   Candle,
   HistoricalRequest,
+  Interval,
   OptionChain,
   OptionChainAnalytics,
   OptionChainRow,
@@ -88,46 +89,64 @@ const INDEX_UNDERLYINGS = new Set([
 
 // ── Config + diagnostics ────────────────────────────────────────────────────
 
-interface SmartApiConfig {
+/** The four SmartAPI credentials needed to log in. */
+export interface AngelCredentials {
   apiKey: string;
   clientCode: string;
   pin: string;
   totpSecret: string;
+}
+
+interface SmartApiConfig extends AngelCredentials {
   /** Optional fixed local IP for headers. */
   localIp: string;
   publicIp: string;
   macAddress: string;
 }
 
-function readConfig(): SmartApiConfig | null {
-  const apiKey = process.env.SMARTAPI_API_KEY;
-  const clientCode = process.env.SMARTAPI_CLIENT_CODE;
-  const pin = process.env.SMARTAPI_PIN;
-  const totpSecret = process.env.SMARTAPI_TOTP_SECRET;
-  if (!apiKey || !clientCode || !pin || !totpSecret) return null;
+/** Wrap a credential set with the request-header IPs SmartAPI expects. */
+function buildConfig(creds: AngelCredentials): SmartApiConfig {
   return {
-    apiKey,
-    clientCode,
-    pin,
-    totpSecret,
+    ...creds,
     localIp: process.env.SMARTAPI_LOCAL_IP ?? "127.0.0.1",
     publicIp: process.env.SMARTAPI_PUBLIC_IP ?? "127.0.0.1",
     macAddress: process.env.SMARTAPI_MAC_ADDRESS ?? "00:00:00:00:00:00",
   };
 }
 
-export function isAngelConfigured(): boolean {
-  return readConfig() !== null;
+function readEnvCredentials(): AngelCredentials | null {
+  const apiKey = process.env.SMARTAPI_API_KEY;
+  const clientCode = process.env.SMARTAPI_CLIENT_CODE;
+  const pin = process.env.SMARTAPI_PIN;
+  const totpSecret = process.env.SMARTAPI_TOTP_SECRET;
+  if (!apiKey || !clientCode || !pin || !totpSecret) return null;
+  return { apiKey, clientCode, pin, totpSecret };
 }
 
-function requireConfig(): SmartApiConfig {
-  const c = readConfig();
-  if (!c) {
-    throw new Error(
-      "Angel One SmartAPI not configured — set SMARTAPI_API_KEY, SMARTAPI_CLIENT_CODE, SMARTAPI_PIN, SMARTAPI_TOTP_SECRET in your environment.",
-    );
+/** True when Angel One credentials are present in the **environment**. The
+ *  per-user DB credentials (entered via the API-keys UI) are resolved
+ *  asynchronously by {@link resolveConfig} and aren't reflected here. */
+export function isAngelConfigured(): boolean {
+  return readEnvCredentials() !== null;
+}
+
+/**
+ * Resolve a usable SmartAPI config for the current request. Environment
+ * credentials win (they cover the worker + unauthenticated paths); otherwise
+ * we lazily load the per-user DB resolver, which reads the encrypted Angel One
+ * key the signed-in user saved in their profile. Returns `null` when neither
+ * source has a complete credential set, so callers can fall back to Yahoo/NSE.
+ */
+async function resolveConfig(): Promise<SmartApiConfig | null> {
+  const envCreds = readEnvCredentials();
+  if (envCreds) return buildConfig(envCreds);
+  try {
+    const mod = await import("@/features/settings/angel-credentials");
+    const dbCreds = await mod.getAngelConfigForRequest();
+    return dbCreds ? buildConfig(dbCreds) : null;
+  } catch {
+    return null;
   }
-  return c;
 }
 
 // ── HTTP helper ─────────────────────────────────────────────────────────────
@@ -208,7 +227,9 @@ interface SessionState {
   expiresAt: number; // epoch ms
 }
 
-let session: SessionState | null = null;
+// JWT cache keyed per client code so two accounts (e.g. env vs a UI-entered
+// user key) never share a session token.
+const sessions = new Map<string, SessionState>();
 
 /** End-of-day expiry (midnight IST) — SmartAPI sessions die at 00:00 IST. */
 function midnightIstMs(): number {
@@ -220,7 +241,8 @@ function midnightIstMs(): number {
 }
 
 async function login(cfg: SmartApiConfig): Promise<string> {
-  if (session && Date.now() < session.expiresAt - 60_000) return session.jwt;
+  const cached = sessions.get(cfg.clientCode);
+  if (cached && Date.now() < cached.expiresAt - 60_000) return cached.jwt;
 
   const totp = generateTotp(cfg.totpSecret);
   const data = await smartApiPost<LoginResponse>(
@@ -236,8 +258,9 @@ async function login(cfg: SmartApiConfig): Promise<string> {
   if (!data?.jwtToken) {
     throw new Error("SmartAPI login: missing jwtToken in response");
   }
-  session = { jwt: data.jwtToken, expiresAt: midnightIstMs() };
-  return session.jwt;
+  const next: SessionState = { jwt: data.jwtToken, expiresAt: midnightIstMs() };
+  sessions.set(cfg.clientCode, next);
+  return next.jwt;
 }
 
 // ── Scrip Master (instrument dump) ─────────────────────────────────────────
@@ -245,7 +268,7 @@ async function login(cfg: SmartApiConfig): Promise<string> {
 // The dump is ~10MB / 60k rows. We cache the relevant subset (option contracts
 // only) for 12h to avoid re-downloading and re-filtering on every request.
 
-interface ScripMasterRow {
+export interface AngelScripRow {
   /** Trading symbol e.g. "NIFTY28MAY2624000CE" */
   symbol: string;
   /** Numeric exchange token, as a string. */
@@ -265,16 +288,240 @@ interface ScripMasterRow {
 
 const NFO_OPTION_TYPES = new Set(["OPTIDX", "OPTSTK"]);
 
-/** Download + cache the option-contract subset of the Scrip Master. */
-async function getOptionContracts(): Promise<ScripMasterRow[]> {
-  return cache.memo("angel:scripmaster:options", SCRIP_MASTER_TTL_MS, async () => {
+interface ScripSubsets {
+  /** NFO option contracts (OPTIDX / OPTSTK) — option-chain synthesis. */
+  options: AngelScripRow[];
+  /** NSE cash equities (the "-EQ" series) — quote + historical token lookup. */
+  cash: AngelScripRow[];
+}
+
+/**
+ * Download the ScripMaster once and split it into the two subsets we need
+ * (options for the chain, cash equities for quotes/history). Cached together
+ * so a quote request and an option-chain request never trigger two ~10MB
+ * downloads of the same dump.
+ */
+async function getScripSubsets(): Promise<ScripSubsets> {
+  return cache.memo("angel:scripmaster:subsets", SCRIP_MASTER_TTL_MS, async () => {
     const res = await timedFetch(SCRIP_MASTER_URL, { cache: "no-store" }, 30_000);
     if (!res.ok) throw new Error(`ScripMaster: HTTP ${res.status}`);
-    const all = (await res.json()) as ScripMasterRow[];
-    return all.filter(
-      (r) => r?.exch_seg === "NFO" && NFO_OPTION_TYPES.has(r?.instrumenttype),
-    );
+    const all = (await res.json()) as AngelScripRow[];
+    const options: AngelScripRow[] = [];
+    const cash: AngelScripRow[] = [];
+    for (const r of all) {
+      if (!r) continue;
+      if (r.exch_seg === "NFO" && NFO_OPTION_TYPES.has(r.instrumenttype)) {
+        options.push(r);
+      } else if (r.exch_seg === "NSE" && /-EQ$/.test(r.symbol ?? "")) {
+        cash.push(r);
+      }
+    }
+    return { options, cash };
   });
+}
+
+/** Download + cache the option-contract subset of the Scrip Master. */
+async function getOptionContracts(): Promise<AngelScripRow[]> {
+  return (await getScripSubsets()).options;
+}
+
+// ── Token resolution (quotes / historical) ──────────────────────────────────
+
+export type AngelExchange = "NSE" | "BSE" | "NFO";
+
+export interface AngelToken {
+  token: string;
+  exchange: AngelExchange;
+}
+
+/**
+ * Hardcoded index tokens — index instruments are stable on Angel One and are
+ * cleaner to resolve directly than by scanning the ScripMaster (where the
+ * index rows carry display names like "Nifty 50" rather than "NIFTY").
+ */
+export const INDEX_TOKENS: Record<string, AngelToken> = {
+  NIFTY: { token: "26000", exchange: "NSE" },
+  BANKNIFTY: { token: "26009", exchange: "NSE" },
+  FINNIFTY: { token: "26037", exchange: "NSE" },
+  MIDCPNIFTY: { token: "26074", exchange: "NSE" },
+  INDIAVIX: { token: "26017", exchange: "NSE" },
+};
+
+/**
+ * Maps the Yahoo-style index proxy tickers used across the app to the Angel
+ * One index name keyed in {@link INDEX_TOKENS}.
+ */
+export const SYMBOL_TO_INDEX: Record<string, keyof typeof INDEX_TOKENS> = {
+  "^NSEI": "NIFTY",
+  "^NSEBANK": "BANKNIFTY",
+  "^CNXFIN": "FINNIFTY",
+  "^NSEMDCP50": "MIDCPNIFTY",
+  "^INDIAVIX": "INDIAVIX",
+  NIFTY: "NIFTY",
+  BANKNIFTY: "BANKNIFTY",
+  FINNIFTY: "FINNIFTY",
+  MIDCPNIFTY: "MIDCPNIFTY",
+};
+
+/** Build a `NAME → token` map from the NSE cash-equity ScripMaster subset. */
+export function buildEqTokenMap(rows: AngelScripRow[]): Map<string, AngelToken> {
+  const out = new Map<string, AngelToken>();
+  for (const r of rows) {
+    if (r?.exch_seg !== "NSE" || !/-EQ$/.test(r.symbol ?? "")) continue;
+    const name = (r.name ?? "").toUpperCase();
+    if (!name || out.has(name)) continue;
+    out.set(name, { token: r.token, exchange: "NSE" });
+  }
+  return out;
+}
+
+/**
+ * Resolve an app-internal symbol (index proxy like `^NSEI`, or a bare NSE
+ * stock like `RELIANCE` / `RELIANCE.NS`) to an Angel One `{ token, exchange }`.
+ * Returns `null` when the symbol can't be served by Angel One (e.g. `^BSESN`),
+ * so callers fall back to Yahoo for that symbol.
+ */
+export function resolveAngelToken(
+  symbol: string,
+  eqTokenMap: Map<string, AngelToken>,
+): AngelToken | null {
+  const idxKey = SYMBOL_TO_INDEX[symbol] ?? SYMBOL_TO_INDEX[symbol.toUpperCase()];
+  if (idxKey) return INDEX_TOKENS[idxKey];
+  if (symbol.startsWith("^")) return null;
+  const name = symbol.replace(/\.NS$/i, "").toUpperCase();
+  return eqTokenMap.get(name) ?? null;
+}
+
+// ── Quote + candle mapping (pure, testable) ─────────────────────────────────
+
+/** A row from the SmartAPI FULL-mode market-quote response (`data.fetched[]`). */
+export interface AngelQuoteRow {
+  exchange?: string;
+  tradingSymbol?: string;
+  symbolToken: string;
+  ltp: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  /** Previous day's close. */
+  close?: number;
+  netChange?: number;
+  percentChange?: number;
+  tradeVolume?: number;
+  opnInterest?: number;
+}
+
+/** A single OHLCV tuple from SmartAPI getCandleData: `[isoTs, o, h, l, c, v]`. */
+export type AngelCandleTuple = [string, number, number, number, number, number];
+
+const num = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/** Placeholder quote used when neither Angel One nor Yahoo could resolve a
+ *  symbol — keeps the consumer's array length aligned with the request. */
+function emptyAngelQuote(symbol: string): Quote {
+  return {
+    symbol,
+    name: null,
+    price: null,
+    change: null,
+    changePct: null,
+    prevClose: null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+/** Map a FULL-mode quote row into the canonical broker-agnostic `Quote`. */
+export function quoteFromQuoteRow(symbol: string, row: AngelQuoteRow): Quote {
+  return {
+    symbol,
+    name: row.tradingSymbol ?? null,
+    price: num(row.ltp),
+    change: num(row.netChange),
+    changePct: num(row.percentChange),
+    prevClose: num(row.close),
+    open: num(row.open),
+    high: num(row.high),
+    low: num(row.low),
+    volume: num(row.tradeVolume),
+    source: "angel",
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+/** Parse SmartAPI candle tuples into `Candle[]`, skipping malformed rows. */
+export function candlesFromCandleData(rows: AngelCandleTuple[]): Candle[] {
+  const out: Candle[] = [];
+  for (const r of rows) {
+    if (!Array.isArray(r) || r.length < 6) continue;
+    const ts = Date.parse(r[0]);
+    const open = num(r[1]);
+    const high = num(r[2]);
+    const low = num(r[3]);
+    const close = num(r[4]);
+    if (!Number.isFinite(ts) || open == null || high == null || low == null || close == null) {
+      continue;
+    }
+    out.push({
+      time: Math.floor(ts / 1_000),
+      open,
+      high,
+      low,
+      close,
+      volume: num(r[5]) ?? undefined,
+    });
+  }
+  return out;
+}
+
+/** Map an app `Interval` to a SmartAPI getCandleData enum, or null if weekly
+ *  (SmartAPI has no weekly candle — callers fall back to Yahoo). */
+export function intervalToSmartApi(interval: Interval): string | null {
+  switch (interval) {
+    case "1m":
+      return "ONE_MINUTE";
+    case "5m":
+      return "FIVE_MINUTE";
+    case "15m":
+      return "FIFTEEN_MINUTE";
+    case "30m":
+      return "THIRTY_MINUTE";
+    case "1h":
+      return "ONE_HOUR";
+    case "1d":
+      return "ONE_DAY";
+    case "1w":
+    default:
+      return null;
+  }
+}
+
+/** `from`/`to` window (epoch ms) for a getCandleData range string. */
+export function rangeToFromMs(range: string, now = Date.now()): number {
+  const m = /^(\d+)(m|d|mo|y)$/.exec(range);
+  if (!m) return now - 30 * 86_400_000;
+  const n = Number(m[1]);
+  const unit = m[2];
+  const ms =
+    unit === "m"
+      ? n * 60_000
+      : unit === "d"
+        ? n * 86_400_000
+        : unit === "mo"
+          ? n * 30 * 86_400_000
+          : n * 365 * 86_400_000;
+  return now - ms;
+}
+
+/** SmartAPI getCandleData expects `YYYY-MM-DD HH:mm` in IST. */
+export function toSmartApiDateTime(ms: number): string {
+  const ist = new Date(ms + 5.5 * 60 * 60 * 1_000);
+  const y = ist.getUTCFullYear();
+  const mo = String(ist.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(ist.getUTCDate()).padStart(2, "0");
+  const hh = String(ist.getUTCHours()).padStart(2, "0");
+  const mm = String(ist.getUTCMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${d} ${hh}:${mm}`;
 }
 
 /** SmartAPI expiry format normaliser — accepts DD-MMM-YYYY (our canonical) and
@@ -314,15 +561,15 @@ function fmtExpiryDmy(ms: number): string {
 
 interface ContractIndex {
   expiries: string[]; // sorted ascending, in DD-MMM-YYYY format
-  byExpiry: Map<string, ScripMasterRow[]>; // DD-MMM-YYYY → option rows for this expiry
+  byExpiry: Map<string, AngelScripRow[]>; // DD-MMM-YYYY → option rows for this expiry
 }
 
 function indexContractsForUnderlying(
-  rows: ScripMasterRow[],
+  rows: AngelScripRow[],
   upper: string,
 ): ContractIndex {
   const matching = rows.filter((r) => (r.name ?? "").toUpperCase() === upper);
-  const byExpiry = new Map<string, ScripMasterRow[]>();
+  const byExpiry = new Map<string, AngelScripRow[]>();
   for (const r of matching) {
     const ms = parseScripExpiryMs(r.expiry);
     if (!Number.isFinite(ms)) continue;
@@ -373,6 +620,67 @@ async function bulkQuote(
     }
   }
   return out;
+}
+
+/**
+ * FULL-mode quote for an arbitrary set of `{ token, exchange }` instruments
+ * (cash equities + indices). Returns a map keyed by `${exchange}:${token}`.
+ * Batched at the SmartAPI 50-token cap, grouped per exchange.
+ */
+async function bulkQuoteTokens(
+  cfg: SmartApiConfig,
+  jwt: string,
+  instruments: AngelToken[],
+): Promise<Map<string, AngelQuoteRow>> {
+  const out = new Map<string, AngelQuoteRow>();
+  const byExchange = new Map<AngelExchange, string[]>();
+  for (const ins of instruments) {
+    const list = byExchange.get(ins.exchange) ?? [];
+    list.push(ins.token);
+    byExchange.set(ins.exchange, list);
+  }
+  for (const [exchange, tokens] of byExchange) {
+    for (let i = 0; i < tokens.length; i += QUOTE_BATCH_SIZE) {
+      const batch = tokens.slice(i, i + QUOTE_BATCH_SIZE);
+      const data = await smartApiPost<{ fetched: AngelQuoteRow[] }>(
+        cfg,
+        "/rest/secure/angelbroking/market/v1/quote/",
+        { mode: "FULL", exchangeTokens: { [exchange]: batch } },
+        jwt,
+      );
+      for (const r of data?.fetched ?? []) {
+        out.set(`${r.exchange ?? exchange}:${r.symbolToken}`, r);
+      }
+      if (i + QUOTE_BATCH_SIZE < tokens.length) {
+        await new Promise((r) => setTimeout(r, 1_100));
+      }
+    }
+  }
+  return out;
+}
+
+/** SmartAPI getCandleData call → raw OHLCV tuples. */
+async function fetchCandleData(
+  cfg: SmartApiConfig,
+  jwt: string,
+  ins: AngelToken,
+  smartInterval: string,
+  fromMs: number,
+  toMs: number,
+): Promise<AngelCandleTuple[]> {
+  const data = await smartApiPost<AngelCandleTuple[]>(
+    cfg,
+    "/rest/secure/angelbroking/historical/v1/getCandleData",
+    {
+      exchange: ins.exchange,
+      symboltoken: ins.token,
+      interval: smartInterval,
+      fromdate: toSmartApiDateTime(fromMs),
+      todate: toSmartApiDateTime(toMs),
+    },
+    jwt,
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 interface GreekRow {
@@ -506,12 +814,23 @@ async function fetchUnderlyingSpot(
   jwt: string,
   upper: string,
 ): Promise<number | null> {
-  // We don't carry an NSE-equity token registry here; SmartAPI requires a
-  // numeric token. Index spots can be derived from the option leg LTPs +
-  // strike (out-of-the-money skew) but that's noisy. Cheapest fix: fall back
-  // to yahoo quote which is already available.
+  // Prefer a live SmartAPI quote (index tokens are hardcoded; stock tokens
+  // come from the cached cash subset). Fall back to Yahoo when the symbol
+  // can't be resolved on Angel One.
   try {
-    const q = await yahoo.getQuote(upper.startsWith("^") ? upper : upper);
+    const { cash } = await getScripSubsets();
+    const ins = resolveAngelToken(upper, buildEqTokenMap(cash));
+    if (ins) {
+      const quotes = await bulkQuoteTokens(cfg, jwt, [ins]);
+      const row = quotes.get(`${ins.exchange}:${ins.token}`);
+      const ltp = row ? num(row.ltp) : null;
+      if (ltp != null) return ltp;
+    }
+  } catch {
+    // fall through to Yahoo
+  }
+  try {
+    const q = await yahoo.getQuote(upper);
     return q?.price ?? null;
   } catch {
     return null;
@@ -520,6 +839,16 @@ async function fetchUnderlyingSpot(
 
 // ── Adapter ────────────────────────────────────────────────────────────────
 
+/**
+ * Controls cross-source fallback inside the adapter. The selected-source-only
+ * resolver passes `allowFallback: false` so Angel One never silently reaches
+ * for Yahoo when the user didn't select it; unservable symbols come back empty
+ * and the resolver tries the next *selected* source instead.
+ */
+export interface AngelFetchOptions {
+  allowFallback?: boolean;
+}
+
 export class AngelOneAdapter implements BrokerAdapter {
   readonly id = "angel" as const;
 
@@ -527,16 +856,110 @@ export class AngelOneAdapter implements BrokerAdapter {
     return isAngelConfigured();
   }
 
-  /** SmartAPI's per-token quote works but requires NSE-equity tokens; we
-   *  punt to Yahoo for non-option quote requests to keep the surface small. */
   async getQuote(symbol: string): Promise<Quote> {
-    return yahoo.getQuote(symbol);
+    const [q] = await this.getQuotes([symbol]);
+    return q ?? (await yahoo.getQuote(symbol));
   }
-  async getQuotes(symbols: string[]): Promise<Quote[]> {
-    return yahoo.getQuotes(symbols);
+
+  /**
+   * Live FULL-mode quotes from SmartAPI. By default, symbols Angel One can't
+   * resolve (or the whole batch if SmartAPI is unconfigured / errors)
+   * transparently fall back to Yahoo so a partial registry never blanks the
+   * dashboard. Pass `{ allowFallback: false }` to suppress that and get empty
+   * placeholders instead (used by the selected-source-only resolver).
+   */
+  async getQuotes(symbols: string[], opts?: AngelFetchOptions): Promise<Quote[]> {
+    if (symbols.length === 0) return [];
+    const allowFallback = opts?.allowFallback ?? true;
+    const cfg = await resolveConfig();
+    if (!cfg) {
+      return allowFallback ? yahoo.getQuotes(symbols) : symbols.map(emptyAngelQuote);
+    }
+
+    return cache.memo(
+      `angel:quotes:${allowFallback ? "fb" : "strict"}:${symbols.join(",")}`,
+      5_000,
+      async () => {
+        try {
+          const jwt = await login(cfg);
+          const { cash } = await getScripSubsets();
+          const eqMap = buildEqTokenMap(cash);
+
+          const resolved = new Map<string, AngelToken>();
+          const unresolved: string[] = [];
+          for (const s of symbols) {
+            const ins = resolveAngelToken(s, eqMap);
+            if (ins) resolved.set(s, ins);
+            else unresolved.push(s);
+          }
+
+          const rows =
+            resolved.size > 0
+              ? await bulkQuoteTokens(cfg, jwt, [...resolved.values()])
+              : new Map<string, AngelQuoteRow>();
+
+          // Yahoo backfill for anything Angel One couldn't resolve — only when
+          // fallback is allowed.
+          const fallback = new Map<string, Quote>();
+          if (allowFallback && unresolved.length > 0) {
+            const yq = await yahoo.getQuotes(unresolved);
+            unresolved.forEach((s, i) => fallback.set(s, yq[i]));
+          }
+
+          return symbols.map((s) => {
+            const ins = resolved.get(s);
+            const row = ins ? rows.get(`${ins.exchange}:${ins.token}`) : undefined;
+            if (row && num(row.ltp) != null) return quoteFromQuoteRow(s, row);
+            return fallback.get(s) ?? emptyAngelQuote(s);
+          });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`angelone.getQuotes:`, msg);
+          return allowFallback ? yahoo.getQuotes(symbols) : symbols.map(emptyAngelQuote);
+        }
+      },
+    );
   }
-  async getHistorical(req: HistoricalRequest): Promise<Candle[]> {
-    return yahoo.getHistorical(req);
+
+  async getHistorical(
+    req: HistoricalRequest,
+    opts?: AngelFetchOptions,
+  ): Promise<Candle[]> {
+    const allowFallback = opts?.allowFallback ?? true;
+    const smartInterval = intervalToSmartApi(req.interval);
+    // SmartAPI has no weekly candle — defer to Yahoo for that interval.
+    if (!smartInterval) return allowFallback ? yahoo.getHistorical(req) : [];
+    const cfg = await resolveConfig();
+    if (!cfg) return allowFallback ? yahoo.getHistorical(req) : [];
+
+    const cacheKey = `angel:hist:${allowFallback ? "fb" : "strict"}:${req.symbol}:${req.interval}:${req.range}`;
+    return cache.memo(cacheKey, 30_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const { cash } = await getScripSubsets();
+        const ins = resolveAngelToken(req.symbol, buildEqTokenMap(cash));
+        if (!ins) return allowFallback ? yahoo.getHistorical(req) : [];
+
+        const now = Date.now();
+        const tuples = await fetchCandleData(
+          cfg,
+          jwt,
+          ins,
+          smartInterval,
+          rangeToFromMs(req.range, now),
+          now,
+        );
+        const candles = candlesFromCandleData(tuples);
+        // Empty SmartAPI window (e.g. holiday / off-hours) → Yahoo backfill
+        // unless the caller restricted us to the selected source.
+        if (candles.length > 0) return candles;
+        return allowFallback ? await yahoo.getHistorical(req) : [];
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`angelone.getHistorical(${req.symbol}):`, msg);
+        return allowFallback ? yahoo.getHistorical(req) : [];
+      }
+    });
   }
 
   async getOptionChain(symbol: string, expiry?: string): Promise<OptionChain> {
@@ -544,7 +967,12 @@ export class AngelOneAdapter implements BrokerAdapter {
     const cacheKey = `angel:oc:${upper}:${expiry ?? "nearest"}`;
 
     return cache.memo(cacheKey, 20_000, async () => {
-      const cfg = requireConfig();
+      const cfg = await resolveConfig();
+      if (!cfg) {
+        throw new Error(
+          "Angel One SmartAPI not configured — set the SMARTAPI_* env vars or save an Angel One key in your profile.",
+        );
+      }
       const jwt = await login(cfg);
 
       // 1. Resolve the expiry list from the cached scrip master.
@@ -586,7 +1014,7 @@ export class AngelOneAdapter implements BrokerAdapter {
       // 4. Pivot legs → rows.
       const byStrike = new Map<
         number,
-        { ce?: ScripMasterRow; pe?: ScripMasterRow }
+        { ce?: AngelScripRow; pe?: AngelScripRow }
       >();
       for (const l of legs) {
         const strike = Number(l.strike) / 100; // ScripMaster ships strikes ×100
@@ -607,7 +1035,7 @@ export class AngelOneAdapter implements BrokerAdapter {
       }
 
       const toLeg = (
-        row: ScripMasterRow | undefined,
+        row: AngelScripRow | undefined,
         type: "CE" | "PE",
         strike: number,
       ): OptionLeg | null => {
@@ -653,6 +1081,41 @@ export class AngelOneAdapter implements BrokerAdapter {
         fetchedAt: new Date().toISOString(),
       } satisfies OptionChain;
     });
+  }
+
+  /**
+   * Live feed via SmartAPI quote polling. SmartAPI also offers a binary
+   * WebSocket 2.0 stream, but polling the FULL-mode quote endpoint reuses the
+   * same auth + token plumbing, matches the gateway's diff-based contract, and
+   * stays within the 1 req/s rate limit at the cadence the dashboard uses.
+   * Unconfigured credentials transparently fall back to the Yahoo poller.
+   */
+  subscribeFeed(
+    symbols: string[],
+    onTick: (q: Quote) => void,
+    intervalMs = 5_000,
+  ): () => void {
+    if (symbols.length === 0) return () => {};
+    // `getQuotes` resolves credentials itself and falls back to Yahoo when
+    // Angel One isn't configured, so the polling loop works in every case.
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const quotes = await this.getQuotes(symbols);
+        if (cancelled) return;
+        for (const q of quotes) onTick(q);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`angelone.subscribeFeed:`, msg);
+      }
+    };
+    void tick();
+    const id = setInterval(tick, Math.max(1_500, intervalMs));
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }
 }
 

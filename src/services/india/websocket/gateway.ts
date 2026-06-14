@@ -9,6 +9,12 @@ import { yahoo } from "@/services/india/yahoo";
 export type GatewayOptions = {
   symbols: string[];
   intervalMs?: number;
+  /**
+   * Quote fetcher backing the stream. Defaults to the Yahoo poller so the SSE
+   * feed works with zero credentials, but the route injects the user's active
+   * broker (e.g. Angel One SmartAPI) so the live feed reflects their choice.
+   */
+  fetchQuotes?: (symbols: string[]) => Promise<Quote[]>;
 };
 
 /**
@@ -20,6 +26,7 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
   const enc = new TextEncoder();
   const symbols = Array.from(new Set(opts.symbols)).slice(0, 100);
   const intervalMs = Math.max(1500, opts.intervalMs ?? 5000);
+  const fetchQuotes = opts.fetchQuotes ?? ((s: string[]) => yahoo.getQuotes(s));
   const last = new Map<string, FeedTick>();
 
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -59,7 +66,7 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
         safeEnqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
 
       try {
-        const quotes = await yahoo.getQuotes(symbols);
+        const quotes = await fetchQuotes(symbols);
         if (closed) return;
         const ticks = quotes.map(tickerToFeed);
         for (const t of ticks) last.set(t.symbol, t);
@@ -72,7 +79,7 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
       const poll = async () => {
         if (closed) return;
         try {
-          const quotes = await yahoo.getQuotes(symbols);
+          const quotes = await fetchQuotes(symbols);
           if (closed) return;
           const diffs: FeedTick[] = [];
           for (const q of quotes) {

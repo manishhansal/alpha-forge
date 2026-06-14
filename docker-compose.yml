@@ -5,7 +5,7 @@ services:
     # (6.6.114.1-microsoft-standard-WSL2). Switch back to `17-alpine` once WSL
     # ships a newer kernel.
     image: postgres:17
-    container_name: crypto-desk-postgres
+    container_name: alpha-forge-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: crypto
@@ -23,7 +23,7 @@ services:
 
   redis:
     image: redis:7
-    container_name: crypto-desk-redis
+    container_name: alpha-forge-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:

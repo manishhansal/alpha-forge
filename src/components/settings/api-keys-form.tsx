@@ -15,6 +15,7 @@ import {
 import {
   EXCHANGE_LABELS,
   SUPPORTED_EXCHANGES,
+  usesSmartApiAuth,
   type Exchange,
   type StoredKeySummary,
 } from "@/features/settings/api-keys-shared";
@@ -38,6 +39,7 @@ export function ApiKeysForm({ encryptionAvailable, stored }: ApiKeysFormProps) {
   >(deleteApiKeyAction, undefined);
 
   const saveFieldError = (name: string) => saveState?.fieldErrors?.[name]?.[0];
+  const isSmartApi = usesSmartApiAuth(exchange);
 
   return (
     <div className="flex flex-col gap-5">
@@ -94,46 +96,112 @@ export function ApiKeysForm({ encryptionAvailable, stored }: ApiKeysFormProps) {
           </div>
 
           <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor="api-key">API key</Label>
+            <Label htmlFor="api-key">{isSmartApi ? "SmartAPI key" : "API key"}</Label>
             <Input
               id="api-key"
               name="apiKey"
               autoComplete="off"
               spellCheck={false}
-              placeholder="Paste the public API key here"
+              placeholder={
+                isSmartApi
+                  ? "Paste your SmartAPI app key here"
+                  : "Paste the public API key here"
+              }
               disabled={!encryptionAvailable || savePending}
               required
             />
             <FieldError msg={saveFieldError("apiKey")} />
           </div>
 
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="api-secret">API secret</Label>
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="text-[11px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
-              >
-                {showSecret ? "Hide" : "Show"}
-              </button>
+          {isSmartApi ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="api-client-code">Client code</Label>
+                <Input
+                  id="api-client-code"
+                  name="clientCode"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="e.g. A12345"
+                  disabled={!encryptionAvailable || savePending}
+                  required
+                />
+                <FieldError msg={saveFieldError("clientCode")} />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="api-pin">PIN</Label>
+                <Input
+                  id="api-pin"
+                  name="pin"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Account MPIN"
+                  disabled={!encryptionAvailable || savePending}
+                  required
+                />
+                <FieldError msg={saveFieldError("pin")} />
+              </div>
+
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="api-totp-secret">TOTP secret</Label>
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret((v) => !v)}
+                    className="text-[11px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+                  >
+                    {showSecret ? "Hide" : "Show"}
+                  </button>
+                </div>
+                <Input
+                  id="api-totp-secret"
+                  name="totpSecret"
+                  type={showSecret ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Base32 secret shown when enabling TOTP 2FA"
+                  disabled={!encryptionAvailable || savePending}
+                  required
+                />
+                <FieldError msg={saveFieldError("totpSecret")} />
+                <p className="text-[11px] text-[var(--color-fg-subtle)]">
+                  The base32 string from the Angel One 2FA setup screen (not the
+                  6-digit code). Encrypted with AES-256-GCM; codes are generated
+                  server-side at request time.
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="api-secret">API secret</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowSecret((v) => !v)}
+                  className="text-[11px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+                >
+                  {showSecret ? "Hide" : "Show"}
+                </button>
+              </div>
+              <Input
+                id="api-secret"
+                name="apiSecret"
+                type={showSecret ? "text" : "password"}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Paste the API secret here"
+                disabled={!encryptionAvailable || savePending}
+                required
+              />
+              <FieldError msg={saveFieldError("apiSecret")} />
+              <p className="text-[11px] text-[var(--color-fg-subtle)]">
+                Encrypted with AES-256-GCM before being stored. The plaintext never touches the
+                database and is never logged.
+              </p>
             </div>
-            <Input
-              id="api-secret"
-              name="apiSecret"
-              type={showSecret ? "text" : "password"}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Paste the API secret here"
-              disabled={!encryptionAvailable || savePending}
-              required
-            />
-            <FieldError msg={saveFieldError("apiSecret")} />
-            <p className="text-[11px] text-[var(--color-fg-subtle)]">
-              Encrypted with AES-256-GCM before being stored. The plaintext never touches the
-              database and is never logged.
-            </p>
-          </div>
+          )}
         </div>
 
         {saveState?.error ? (

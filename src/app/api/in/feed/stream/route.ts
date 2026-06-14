@@ -1,4 +1,7 @@
 import { buildFeedStream } from "@/services/india/websocket/gateway";
+import { pickBrokerChain } from "@/services/india/broker/factory";
+import { resolveQuotes } from "@/services/india/resolve";
+import { getActiveSelections } from "@/features/settings/active-sources";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -7,9 +10,9 @@ export const revalidate = 0;
  * GET /api/in/feed/stream?symbols=RELIANCE,TCS&interval=5000
  *
  * Server-Sent Events stream emitting `FeedDiff` payloads. Behaves like a
- * broker WebSocket: only changed symbols are sent each cycle. Replace this
- * endpoint with a real Groww feed once credentials are wired — the client
- * (`hooks/india/useFeedStream`) doesn't need to change.
+ * broker WebSocket: only changed symbols are sent each cycle. The quote source
+ * is the user's active India broker (e.g. Angel One SmartAPI when selected,
+ * otherwise Yahoo) — the client (`hooks/india/useFeedStream`) doesn't change.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -20,7 +23,13 @@ export async function GET(req: Request) {
     .filter(Boolean);
   const intervalMs = Number(searchParams.get("interval") ?? 5000);
 
-  const stream = buildFeedStream({ symbols, intervalMs });
+  const selections = await getActiveSelections();
+  const chain = pickBrokerChain(selections.india.selected);
+  const stream = buildFeedStream({
+    symbols,
+    intervalMs,
+    fetchQuotes: (s) => resolveQuotes(chain, s).then((r) => r.quotes),
+  });
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
