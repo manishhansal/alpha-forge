@@ -1,6 +1,8 @@
 import { closePrisma, getPrisma } from "./db";
 import { startAlertsJob } from "./jobs/alerts";
 import { startLiquidationsJob, type LiquidationsJobHandle } from "./jobs/liquidations";
+import { startIndiaOptionChainCaptureJob } from "./jobs/india-oc-capture";
+import { startIndiaScalperJob } from "./jobs/india-scalper";
 import { startScalperJob } from "./jobs/scalper";
 import { startSignalIngestJob } from "./jobs/signal-ingest";
 import { startSignalOutcomeJob } from "./jobs/signal-outcome";
@@ -74,6 +76,12 @@ async function bootstrap(): Promise<void> {
 
   const scalper = startScalperJob();
   jobs.push({ name: scalper.name, stop: scalper.stop });
+
+  const indiaScalper = startIndiaScalperJob();
+  jobs.push({ name: indiaScalper.name, stop: indiaScalper.stop });
+
+  const indiaOcCapture = startIndiaOptionChainCaptureJob();
+  jobs.push({ name: indiaOcCapture.name, stop: indiaOcCapture.stop });
 
   const strategyLab = startStrategyLabJob();
   jobs.push({ name: strategyLab.name, stop: strategyLab.stop });

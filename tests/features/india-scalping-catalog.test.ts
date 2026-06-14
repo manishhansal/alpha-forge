@@ -14,7 +14,7 @@ import {
 } from "@/features/india/scalping/types";
 
 describe("features/india/scalping — strategy catalog", () => {
-  it("ships exactly the six F&O strategies that mirror the existing NSE scanners", () => {
+  it("ships the eight F&O strategies — six scanner-derived plus the two ILE-Pine ports", () => {
     expect([...INDIA_SCALP_STRATEGY_IDS]).toEqual([
       "RANGE_EXPANSION",
       "MOMENTUM",
@@ -22,8 +22,20 @@ describe("features/india/scalping — strategy catalog", () => {
       "OI_BUILDUP",
       "PCR_EXTREME",
       "IV_SPIKE",
+      "LIQUIDITY_EDGE",
+      "MAX_PAIN_GRAVITY",
     ]);
-    expect(INDIA_SCALP_STRATEGY_CATALOG).toHaveLength(6);
+    expect(INDIA_SCALP_STRATEGY_CATALOG).toHaveLength(8);
+  });
+
+  it("includes India Liquidity Edge + India Max-Pain Gravity with distinct categories", () => {
+    const ile = getIndiaStrategyMeta("LIQUIDITY_EDGE");
+    const impg = getIndiaStrategyMeta("MAX_PAIN_GRAVITY");
+    expect(ile.label).toMatch(/liquidity edge/i);
+    expect(impg.label).toMatch(/max.?pain/i);
+    // Distinct monograms so the picker chips don't collide.
+    const monograms = INDIA_SCALP_STRATEGY_CATALOG.map((m) => m.monogram);
+    expect(new Set(monograms).size).toBe(monograms.length);
   });
 
   it("every catalog entry has the full metadata the picker needs", () => {

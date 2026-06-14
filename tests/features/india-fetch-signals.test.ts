@@ -4,11 +4,18 @@ vi.mock("@/services/india/scanner/engine", () => ({
   runScanner: vi.fn(),
 }));
 
+vi.mock("@/features/india/scalping/strategies/positioning", () => ({
+  getIndiaPositioningSignals: vi.fn(),
+}));
+
 import { runScanner } from "@/services/india/scanner/engine";
+import { getIndiaPositioningSignals } from "@/features/india/scalping/strategies/positioning";
 import { getIndiaScalpSignals } from "@/features/india/scalping/fetch-signals";
 import type { ScannerHit, ScannerResult, ScannerType } from "@/types/india/scanner";
 
 const mockedRunScanner = runScanner as unknown as ReturnType<typeof vi.fn>;
+const mockedPositioning =
+  getIndiaPositioningSignals as unknown as ReturnType<typeof vi.fn>;
 
 function makeScanner(type: ScannerType, hits: ScannerHit[]): ScannerResult {
   return {
@@ -22,6 +29,11 @@ function makeScanner(type: ScannerType, hits: ScannerHit[]): ScannerResult {
 
 beforeEach(() => {
   mockedRunScanner.mockReset();
+  mockedPositioning.mockReset();
+  // Default: the option-positioning engine yields nothing so the
+  // scanner-focused assertions below stay deterministic. Individual
+  // tests override this when they exercise ILE / IMPG.
+  mockedPositioning.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -199,5 +211,73 @@ describe("features/india/scalping/fetch-signals — adapter shape", () => {
       timeframe: "1h" as unknown as "5m",
     });
     expect(res.timeframe).toBe("5m");
+  });
+
+  it("delegates the two ILE-Pine ports to the positioning engine and merges their signals", async () => {
+    mockedRunScanner.mockImplementation(async (type: ScannerType) =>
+      makeScanner(type, [
+        { symbol: "RELIANCE", price: 2900, changePct: 0.8, metric: 0.8, metricLabel: "+0.80%" },
+      ]),
+    );
+    mockedPositioning.mockResolvedValue([
+      {
+        strategyId: "MAX_PAIN_GRAVITY",
+        symbol: "NIFTY",
+        symbolName: "NIFTY 50",
+        timeframe: "5m",
+        direction: "SHORT",
+        price: 22300,
+        reference: 22000,
+        atr: 111,
+        confirmed: true,
+        entry: 22300,
+        stopLoss: 22411,
+        target: 22000,
+        riskReward: 2.7,
+        confidence: 0.6,
+        rationale: ["Max-Pain Gravity"],
+        triggeredAt: Date.now(),
+      },
+    ]);
+
+    const res = await getIndiaScalpSignals({ timeframe: "5m" });
+
+    // Six scanner-backed strategies still drive runScanner...
+    expect(mockedRunScanner).toHaveBeenCalledTimes(6);
+    // ...and the two non-scanner strategies are handed to the positioning engine.
+    expect(mockedPositioning).toHaveBeenCalledTimes(1);
+    const arg = mockedPositioning.mock.calls[0][0];
+    expect([...arg.strategies].sort()).toEqual([
+      "LIQUIDITY_EDGE",
+      "MAX_PAIN_GRAVITY",
+    ]);
+    expect(arg.timeframe).toBe("5m");
+    // 6 scanner rows + 1 positioning row.
+    expect(res.signals.length).toBe(7);
+    expect(res.signals.some((s) => s.strategyId === "MAX_PAIN_GRAVITY")).toBe(
+      true,
+    );
+  });
+
+  it("does NOT invoke the positioning engine when only scanner strategies are requested", async () => {
+    mockedRunScanner.mockImplementation(async (type: ScannerType) =>
+      makeScanner(type, []),
+    );
+
+    await getIndiaScalpSignals({ strategies: ["MOMENTUM", "PCR_EXTREME"] });
+    expect(mockedPositioning).not.toHaveBeenCalled();
+  });
+
+  it("runs only the positioning engine when only ILE / IMPG are requested", async () => {
+    mockedRunScanner.mockImplementation(async (type: ScannerType) =>
+      makeScanner(type, []),
+    );
+
+    await getIndiaScalpSignals({ strategies: ["LIQUIDITY_EDGE"] });
+    expect(mockedRunScanner).not.toHaveBeenCalled();
+    expect(mockedPositioning).toHaveBeenCalledTimes(1);
+    expect(mockedPositioning.mock.calls[0][0].strategies).toEqual([
+      "LIQUIDITY_EDGE",
+    ]);
   });
 });

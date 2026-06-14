@@ -304,3 +304,38 @@ model StrategyPaperTrade {
   @@index([strategyId, openedAt])
   @@index([strategyId, status])
 }
+
+/// Periodic capture of an NSE option-chain's aggregated analytics for one
+/// underlying. NSE only serves the *live* chain (no history endpoint), so
+/// the `india-oc-capture` worker snapshots it on a cadence during market
+/// hours. Over time this builds the history that lets the option-chain
+/// strategies (PCR / IV / OI build-up / Liquidity Edge / Max-Pain Gravity)
+/// become backtestable — the only feed that's missing today. The full
+/// `analytics` blob is retained for forward-compatible replay needs.
+model OptionChainSnapshot {
+  id              String   @id @default(cuid())
+  /// NSE underlying name (e.g. "NIFTY", "BANKNIFTY").
+  underlying      String
+  /// Expiry the analytics were computed against (NSE display string).
+  expiry          String
+  /// Underlying spot at capture.
+  spot            Float?
+  /// Underlying day change % — needed to replay OI build-up (price × OI).
+  changePct       Float?
+  pcrOi           Float?
+  pcrVolume       Float?
+  maxPain         Float?
+  atmIv           Float?
+  maxCeOiStrike   Float?
+  maxPeOiStrike   Float?
+  totalCeOi       Float    @default(0)
+  totalPeOi       Float    @default(0)
+  totalCeOiChange Float    @default(0)
+  totalPeOiChange Float    @default(0)
+  /// Full `OptionChainAnalytics` blob for forward-compatible replay.
+  analytics       Json
+  capturedAt      DateTime @default(now())
+
+  @@index([underlying, capturedAt])
+  @@index([capturedAt])
+}

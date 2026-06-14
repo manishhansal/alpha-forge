@@ -370,6 +370,49 @@ export async function getIndiaJournalStats(
   };
 }
 
+export interface IndiaClosedTrade {
+  pnlPct: number;
+  status: IndiaPaperTradeStatus;
+}
+
+/**
+ * Per-strategy series of closed India paper trades (WIN / LOSS / EXPIRED),
+ * ordered by close time so a chronological equity curve / drawdown can be
+ * built downstream. Powers the live paper-trade strategy score. Crypto
+ * rows can never leak in — the query is scoped to `ALL_INDIA_SOURCES`.
+ */
+export async function getIndiaClosedTradesByStrategy(
+  prisma?: PrismaClient,
+): Promise<Map<IndiaScalpStrategyId, IndiaClosedTrade[]>> {
+  const db = prisma ?? getPrisma();
+  const rows = await db.paperTrade.findMany({
+    where: {
+      source: { in: [...ALL_INDIA_SOURCES] },
+      status: { in: ["WIN", "LOSS", "EXPIRED"] },
+      pnlPct: { not: null },
+    },
+    orderBy: { closedAt: "asc" },
+    take: 5000,
+    select: { source: true, pnlPct: true, status: true },
+  });
+
+  const out = new Map<IndiaScalpStrategyId, IndiaClosedTrade[]>();
+  for (const r of rows) {
+    const parsed = parseIndiaTradeSource(r.source);
+    const id =
+      parsed && isIndiaScalpStrategyId(parsed.strategyId)
+        ? parsed.strategyId
+        : "MOMENTUM";
+    const bucket = out.get(id) ?? [];
+    bucket.push({
+      pnlPct: r.pnlPct as number,
+      status: r.status as IndiaPaperTradeStatus,
+    });
+    out.set(id, bucket);
+  }
+  return out;
+}
+
 export async function setIndiaTradeNote(
   id: string,
   note: string | null,

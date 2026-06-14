@@ -4,9 +4,11 @@ import { runScanner } from "@/services/india/scanner/engine";
 import type { ScannerHit, ScannerResult, ScannerType } from "@/types/india/scanner";
 
 import {
+  ALL_INDIA_STRATEGY_IDS,
   isIndiaScalpStrategyId,
   type IndiaScalpStrategyId,
 } from "@/features/india/scalping/strategies/catalog";
+import { getIndiaPositioningSignals } from "@/features/india/scalping/strategies/positioning";
 import type {
   IndiaScalpDirection,
   IndiaScalpSignal,
@@ -29,8 +31,22 @@ import type {
  * between markets and lets each engine evolve independently.
  */
 
-/** Mapping from the public `IndiaScalpStrategyId` to the scanner key. */
-const STRATEGY_TO_SCANNER: Record<IndiaScalpStrategyId, ScannerType> = {
+/**
+ * The subset of strategy ids that are backed by an NSE scanner. The two
+ * ILE-Pine ports (`LIQUIDITY_EDGE`, `MAX_PAIN_GRAVITY`) are intentionally
+ * absent — their signals come from the option-positioning engine
+ * (`strategies/positioning.ts`) rather than `runScanner`.
+ */
+type ScannerBackedStrategyId =
+  | "RANGE_EXPANSION"
+  | "MOMENTUM"
+  | "VOLUME_BREAKOUT"
+  | "OI_BUILDUP"
+  | "PCR_EXTREME"
+  | "IV_SPIKE";
+
+/** Mapping from a scanner-backed `IndiaScalpStrategyId` to the scanner key. */
+const STRATEGY_TO_SCANNER: Record<ScannerBackedStrategyId, ScannerType> = {
   RANGE_EXPANSION: "range-expansion",
   MOMENTUM: "momentum",
   VOLUME_BREAKOUT: "volume-breakout",
@@ -38,6 +54,12 @@ const STRATEGY_TO_SCANNER: Record<IndiaScalpStrategyId, ScannerType> = {
   PCR_EXTREME: "pcr",
   IV_SPIKE: "iv-spike",
 };
+
+function isScannerBacked(
+  id: IndiaScalpStrategyId,
+): id is ScannerBackedStrategyId {
+  return id in STRATEGY_TO_SCANNER;
+}
 
 /** Synthetic price band used for stop / target until the real ATR-driven
  *  paper-trader lands. 0.5% stop, 1.0% target → 2:1 reward / risk. */
@@ -81,19 +103,37 @@ export async function getIndiaScalpSignals(
   const requested =
     options.strategies && options.strategies.length > 0
       ? options.strategies.filter(isIndiaScalpStrategyId)
-      : (Object.keys(STRATEGY_TO_SCANNER) as IndiaScalpStrategyId[]);
+      : [...ALL_INDIA_STRATEGY_IDS];
 
-  const results = await Promise.allSettled(
-    requested.map(async (strategyId) => {
-      const scanner = await runScanner(STRATEGY_TO_SCANNER[strategyId], limit);
-      return { strategyId, scanner };
-    }),
-  );
+  // Split the request into the scanner-backed strategies (run via the NSE
+  // scanner engine) and the option-positioning strategies (the two
+  // ILE-Pine ports run via the dedicated positioning engine).
+  const scannerIds = requested.filter(isScannerBacked);
+  const positioningIds = requested.filter((id) => !isScannerBacked(id));
+
+  const [scannerResults, positioningSignals] = await Promise.all([
+    Promise.allSettled(
+      scannerIds.map(async (strategyId) => {
+        const scanner = await runScanner(STRATEGY_TO_SCANNER[strategyId], limit);
+        return { strategyId, scanner };
+      }),
+    ),
+    positioningIds.length > 0
+      ? getIndiaPositioningSignals({
+          strategies: positioningIds,
+          timeframe,
+          limit,
+        }).catch((err) => {
+          console.warn("[india/scalping/fetch-signals] positioning", err);
+          return [] as IndiaScalpSignal[];
+        })
+      : Promise.resolve([] as IndiaScalpSignal[]),
+  ]);
 
   const signals: IndiaScalpSignal[] = [];
   let latestFetchedAt = 0;
 
-  for (const r of results) {
+  for (const r of scannerResults) {
     if (r.status !== "fulfilled") {
       console.warn("[india/scalping/fetch-signals]", r.reason);
       continue;
@@ -105,6 +145,11 @@ export async function getIndiaScalpSignals(
       const sig = toSignal(strategyId, timeframe, hit, scanner, fetchedAtMs);
       if (sig) signals.push(sig);
     }
+  }
+
+  for (const sig of positioningSignals) {
+    signals.push(sig);
+    if (sig.triggeredAt > latestFetchedAt) latestFetchedAt = sig.triggeredAt;
   }
 
   signals.sort((a, b) => b.confidence - a.confidence);
@@ -122,7 +167,7 @@ export async function getIndiaScalpSignals(
  * without one and the card would render `$NaN`).
  */
 function toSignal(
-  strategyId: IndiaScalpStrategyId,
+  strategyId: ScannerBackedStrategyId,
   timeframe: IndiaScalpTimeframe,
   hit: ScannerHit,
   scanner: ScannerResult,
@@ -176,7 +221,7 @@ function toSignal(
 }
 
 function pickDirection(
-  strategyId: IndiaScalpStrategyId,
+  strategyId: ScannerBackedStrategyId,
   hit: ScannerHit,
 ): IndiaScalpDirection {
   switch (strategyId) {
@@ -205,7 +250,7 @@ function pickDirection(
 }
 
 function pickReference(
-  strategyId: IndiaScalpStrategyId,
+  strategyId: ScannerBackedStrategyId,
   hit: ScannerHit,
   scanner: ScannerResult,
 ): number {
@@ -227,7 +272,7 @@ function pickReference(
 }
 
 function pickConfidence(
-  strategyId: IndiaScalpStrategyId,
+  strategyId: ScannerBackedStrategyId,
   hit: ScannerHit,
 ): number {
   // Clamp helper so every strategy returns a number in [0, 1].
@@ -257,7 +302,7 @@ function pickConfidence(
 }
 
 function buildRationale(
-  strategyId: IndiaScalpStrategyId,
+  strategyId: ScannerBackedStrategyId,
   scanner: ScannerResult,
   hit: ScannerHit,
 ): string[] {

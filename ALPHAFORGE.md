@@ -81,9 +81,13 @@ the topbar.
   session hours.
 - **Strategies** (`/in/strategies`) — full structural mirror of the
   crypto Strategies page. Best-Time banner pinned to the active NSE
-  window, a six-strategy picker (Range Expansion, Momentum, Volume
+  window, an eight-strategy picker (Range Expansion, Momentum, Volume
   Breakout, OI Build-up, PCR Extreme, IV Spike — each derived from the
-  existing NSE scanners), per-strategy 1m / 5m / 15m timeframe toggles,
+  existing NSE scanners — plus India Liquidity Edge, a liquidity-first
+  quant framework ported from the ILE Pine indicator, and India
+  Max-Pain Gravity, an option-positioning mean-reversion play carved
+  from the same Pine framework), per-strategy
+  1m / 5m / 15m timeframe toggles,
   a live multi-timeframe signal feed served by `/api/in/scalper/signals`
   (cards in ₹ / NSE ticker form), and a "how the F&O strategies work"
   reference card. Replaces the legacy `/in/scalper` URL (308-redirects
@@ -96,10 +100,11 @@ the topbar.
   India-scoped journal helpers (`getIndia*` in
   `src/features/india/scalping/journal.ts`) that filter the shared
   `PaperTrade` table on the canonical `in:` source prefix so India and
-  crypto journals never collide. Reads are live today; the cards stay
-  empty until the F&O paper-trader worker books its first trade — a
-  pipeline tracked on the roadmap (per-signal ATR sizing, expiry-day
-  cooldown, INR tick rounding).
+  crypto journals never collide. The `india-scalper` worker job now fills
+  the journal: it books each signal with ATR-sized SL/TP (NSE 0.05-tick
+  rounded), an expiry-day gamma cooldown (Thursday ≥ 14:30 IST), and 5m
+  NSE-candle resolution — so the cards populate as soon as the worker
+  runs against a live session.
 - **Strategy Backtest** (`/in/strategy-backtest`) — live OHLCV scaffold
   against `/api/in/historical` with a selectable underlying (NIFTY,
   BANKNIFTY, FINNIFTY, MIDCPNIFTY + top F&O stocks) and timeframe
@@ -873,9 +878,13 @@ the crypto features, no shared stores, no shared API routes.
   layout, same signal-card layout, same "how the strategies work"
   reference card. India-scoped data.
 - India Best-Time banner pinning the active NSE window
-- Six-strategy picker — Range Expansion, Momentum, Volume Breakout, OI
+- Eight-strategy picker — Range Expansion, Momentum, Volume Breakout, OI
   Build-up, PCR Extreme, IV Spike — each backed by the corresponding
-  NSE scanner from `/api/in/scanner`
+  NSE scanner from `/api/in/scanner` — plus **India Liquidity Edge
+  (ILE)**, a liquidity-first quant framework ported from the *India
+  Liquidity Edge — Quant Framework* Pine indicator, and **India
+  Max-Pain Gravity (IMPG)**, an option-positioning mean-reversion play
+  carved from the same Pine framework (both detailed below)
 - Per-strategy 1m / 5m / 15m timeframe toggles (selection persisted to
   `localStorage` under the `india-scalper:strategy-timeframes:v1` key,
   fully isolated from crypto)
@@ -885,6 +894,74 @@ the crypto features, no shared stores, no shared API routes.
   crypto SMC ✓/✗ badge
 - Synthetic 0.5% stop / 1.0% target band per signal (2:1 RR) until the
   proper F&O paper-trader lands with ATR-sized sizing
+- **India Liquidity Edge (ILE)** strategy — port of the *India
+  Liquidity Edge — Quant Framework* Pine indicator. Unlike the six
+  scanner-derived strategies, ILE is a self-contained liquidity-first
+  confluence engine for NSE indices + F&O stocks that folds eight
+  modules into a single 0–10 bull/bear score:
+  1. **Liquidity-sweep detector** — pools equal swing highs/lows (pivot
+     legs, equal-H/L tolerance) over a lookback window, then fires only
+     when price sweeps a pool by the sweep buffer (stop hunt) AND closes
+     back inside, gated by a volume spike / VIX > 14 / sweep-window
+     (10:00–11:30 or 14:30–15:15 IST) confluence filter.
+  2. **OI walls + max-pain gravity** — CE/PE walls (strongest two each)
+     from the live NSE option chain, a put-floor→call-ceiling pinning
+     zone, PCR classification (>1.4 bullish / <0.8 bearish), and a
+     post-13:30 (or 14:00 on expiry) max-pain pull when price drifts
+     beyond the buffer.
+  3. **Gap-fill engine** — flags gap-up / gap-down opens vs PDC, takes
+     the first-candle reversal back toward PDC with a 50%-of-gap
+     invalidation, and distinguishes event gaps (fill less reliably)
+     from sentiment gaps.
+  4. **NSE session + expiry timing** — Trap Zone → Discovery → Prime
+     Window → Trend Ride → Dead Zone → Close Rush → Closing Risk, plus
+     an expiry-day (Nifty weekly Thu / BNF weekly Wed / monthly)
+     gamma-blast window (09:30–11:30) and a close countdown.
+  5. **India VIX regime + IV-crush + VIX divergence** — Low / Normal /
+     Elevated / Fear regime tint, IV-rank vs 52-week range, pre-event
+     IV-crush target (VIX × 0.72), and hidden weakness/strength on
+     price-vs-VIX divergence.
+  6. **Confluence score engine** — sums sweep / wall proximity / PCR /
+     gap / Prime-window / VIX / max-pain side / volume / VWAP side /
+     PDC side into a 0–10 score; STRONG BUY/SELL at ≥ 7, BUY/SELL at the
+     user-tunable min-confluence threshold.
+  7. **Auto ATR-sized SL/TP** — 0.25× ATR stop, 2.5× RR target on every
+     fired signal (and a PDC-targeted SL/TP on gap-fill setups).
+  8. **Instrument presets** — Auto (ATR-scaled, works for any F&O
+     stock) / Nifty / BankNifty / MidcapNifty / Custom (manual), so the
+     tolerance, sweep, proximity, max-pain and gap buffers all scale to
+     the underlying.
+- **India Max-Pain Gravity (IMPG)** strategy — a second port from the
+  same *India Liquidity Edge — Quant Framework* Pine indicator, but
+  intentionally distinct from ILE. Where ILE folds all eight Pine
+  modules into a broad liquidity-sweep confluence score, IMPG isolates
+  the **dealer-positioning** modules into a focused, fade-the-extreme
+  mean-reversion play for NSE indices + F&O stocks:
+  1. **Max-pain gravity** — the headline trigger. After 13:30 IST (or
+     14:00 on expiry day) it fades price back toward the max-pain
+     strike once spot has drifted beyond the (ATR-scaled) max-pain pull
+     buffer, on the thesis that dealers pin the underlying to max pain
+     into the close. The buffer is dropped on expiry-day override.
+  2. **OI-wall fade** — short rejections at the strongest CE wall and
+     long rejections off the strongest PE floor when price is within
+     the wall-proximity buffer, gated by PCR (> 1.4 favours PE-floor
+     longs, < 0.8 favours CE-wall shorts) — CE/PE walls (strongest two
+     each) come from the live NSE option chain.
+  3. **Pinning-zone mean reversion** — inside the put-floor →
+     call-ceiling box, fade the edges back toward the centre.
+  4. **Gap-fill toward PDC** — first-candle reversal back to the
+     previous-day close on a gap-up / gap-down open with a 50%-of-gap
+     invalidation, distinguishing event gaps (fill less reliably) from
+     sentiment gaps.
+  5. **Expiry-day gamma awareness** — flags the 09:30–11:30 gamma-blast
+     window and tightens to directional-options only on expiry (Nifty
+     weekly Thu / BNF weekly Wed / monthly).
+  6. **Auto ATR-sized SL with a positioning target** — the max-pain
+     strike (gravity / wall fades) or PDC (gap fills) is the natural
+     target, with an ATR-sized stop beyond the rejection wick.
+  7. **Instrument presets** — reuses ILE's Auto (ATR-scaled) / Nifty /
+     BankNifty / MidcapNifty / Custom presets so the wall-proximity,
+     max-pain and gap buffers all scale to the underlying.
 - Legacy `/in/scalper` URL 308-redirects here
 
 ### Paper Trading (`/in/paper-trading`)
@@ -913,9 +990,35 @@ the crypto features, no shared stores, no shared API routes.
   `20260518050000_papertrade_symbol_string`), so the journal symbol
   filter rides the Prisma equality path and the
   `PaperTrade_symbol_openedAt_idx` index instead of being applied
-  in-memory. Cards stay empty until the F&O paper-trader worker books
-  its first trade — the pipeline (per-signal ATR sizing, expiry-day
-  cooldown, INR tick rounding) is the next roadmap item
+  in-memory. The `india-scalper` worker books trades into the journal
+  with ATR-sized SL/TP (NSE 0.05-tick rounded), an expiry-day gamma
+  cooldown (Thursday ≥ 14:30 IST) and 5m NSE-candle resolution. Each
+  strategy chip on the Strategies page carries a 0–100 score + A+…F grade
+  (`score-board.ts` → `IndiaStrategyScoreBadge`) blended from two sources:
+  the 3 price strategies (Range Expansion / Momentum / Volume Breakout)
+  are scored from a real 5-year daily-OHLCV backtest (`backtest.ts` +
+  `backtest-core.ts`, scanner logic ported to candle-fed modules in
+  `strategies/price-modules.ts`) and tagged **5Y**; the 5 option-chain
+  strategies (PCR / IV / OI build-up / Liquidity Edge / Max-Pain Gravity)
+  have no historical option-chain feed, so they're scored from the live
+  paper-trade record and tagged **PT**. Both run through the one
+  risk-aware `scoreIndiaStrategy` engine (win rate, profit factor,
+  expectancy, sample size + drawdown / Sharpe when available). To make the
+  option-chain 5 backtestable, the `india-oc-capture` worker snapshots each
+  F&O index's chain analytics into `OptionChainSnapshot` every 5 min during
+  market hours (`option-chain-capture.ts`, gated by `isNseMarketOpenIST`) —
+  NSE has no history API, so this accrues the series the replay engine
+  scores off. That replay engine (`option-chain-replay-core.ts` +
+  `option-chain-replay.ts`) walks the captured snapshot series bar-by-bar,
+  reconstructing each of the 5 option-chain signals from a snapshot (it
+  reuses the exact `positioning-core` ILE/IMPG builders and the same
+  PCR/IV/OI direction thresholds as the live `fetch-signals`, so there is no
+  logic drift) and resolves trades against the forward spot path, flat at
+  the IST day boundary. Pooled across the four indices and graded on the
+  same `scoreIndiaStrategy` scale, it promotes those 5 strategies from the
+  **PT** badge to a true **5Y** backtest score once enough snapshots accrue
+  (`MIN_SNAPSHOTS` / `MIN_TRADES` guards); until then the board falls back
+  to the live paper-trade record.
 
 ### Strategy Backtest (`/in/strategy-backtest`)
 - Underlying picker (NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + top F&O stocks)
@@ -1061,9 +1164,11 @@ src/
  │        └── scalping/    Structural mirror of features/scalping for the
  │                         F&O surface: types (IndiaScalpSignal,
  │                         IndiaPaperTradeStatus + `in:<id>:<tf>` source
- │                         helpers), strategies/catalog (six entries —
+ │                         helpers), strategies/catalog (eight entries —
  │                         Range Expansion, Momentum, Volume Breakout, OI
- │                         Build-up, PCR Extreme, IV Spike), fetch-signals
+ │                         Build-up, PCR Extreme, IV Spike, India
+ │                         Liquidity Edge, India Max-Pain Gravity),
+ │                         fetch-signals
  │                         (wraps services/india/scanner/engine into
  │                         IndiaScalpSignal cards), journal (in:-prefixed
  │                         queries against the shared PaperTrade table —

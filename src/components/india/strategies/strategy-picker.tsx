@@ -2,24 +2,32 @@
 
 import { Check, Sparkles } from "lucide-react";
 
+import { IndiaStrategyScoreBadge } from "@/components/india/strategies/india-strategy-score-badge";
 import { useIndiaStrategyFilter } from "@/components/india/strategies/strategy-context";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { INDIA_SCALP_STRATEGY_CATALOG } from "@/features/india/scalping/strategies/catalog";
+import {
+  INDIA_SCALP_STRATEGY_CATALOG,
+  type IndiaScalpStrategyId,
+} from "@/features/india/scalping/strategies/catalog";
+import type { IndiaStrategyScore } from "@/features/india/scalping/strategy-score";
 import { INDIA_SCALP_TIMEFRAMES } from "@/features/india/scalping/types";
 import { cn } from "@/lib/utils";
+
+interface IndiaStrategyPickerProps {
+  /** Per-strategy paper-trade scores, computed server-side from the
+   *  journal. Strategies with no closed trades are absent → the chip
+   *  renders its neutral "no trades yet" placeholder. */
+  scores?: Partial<Record<IndiaScalpStrategyId, IndiaStrategyScore>>;
+}
 
 /**
  * Multi-select picker for the active India F&O strategies. Mirrors the
  * crypto `StrategyPicker` 1:1 in layout — strategy chips with monogram,
- * label, description, tags, and per-strategy 1m / 5m / 15m toggles.
- *
- * The per-strategy backtest score chip is intentionally omitted today
- * because the NSE 5y scoring engine is on the F&O roadmap. The slot
- * stays empty so the row heights line up across markets when the
- * scoring engine ships.
+ * label, description, tags, per-strategy 1m / 5m / 15m toggles, and the
+ * paper-trade score chip (fed from the F&O paper-trader's journal record).
  */
-export function IndiaStrategyPicker() {
+export function IndiaStrategyPicker({ scores }: IndiaStrategyPickerProps = {}) {
   const { selected, toggle, toggleTimeframe, timeframesFor, selectAll } =
     useIndiaStrategyFilter();
   const allOn = selected.size === INDIA_SCALP_STRATEGY_CATALOG.length;
@@ -148,6 +156,11 @@ export function IndiaStrategyPicker() {
                       );
                     })}
                   </div>
+                  <IndiaStrategyScoreBadge
+                    score={scores?.[s.id]}
+                    compact
+                    className="ml-auto"
+                  />
                 </div>
 
                 {isOn ? (

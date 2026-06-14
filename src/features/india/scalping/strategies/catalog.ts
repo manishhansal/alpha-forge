@@ -4,11 +4,20 @@
  * signal-card components stay structurally identical across markets —
  * only the data set differs.
  *
- * Today these six strategies map 1:1 onto the existing NSE scanners
+ * The first six strategies map 1:1 onto the existing NSE scanners
  * (`src/services/india/scanner/engine.ts`). The fetch-signals adapter
  * (`src/features/india/scalping/fetch-signals.ts`) wraps scanner output
  * into the `IndiaScalpSignal` shape so the live-signals feed renders
  * the same way the crypto feed does.
+ *
+ * The last two — `LIQUIDITY_EDGE` (India Liquidity Edge) and
+ * `MAX_PAIN_GRAVITY` (India Max-Pain Gravity) — are ports of the
+ * *India Liquidity Edge — Quant Framework* Pine indicator. They are NOT
+ * scanner-backed: their signals come from the option-chain positioning
+ * engine in `strategies/positioning.ts` (CE/PE walls, max-pain gravity,
+ * PCR, OI build-up) rather than `runScanner`. ILE folds the framework
+ * into a broad confluence score; IMPG isolates the max-pain / wall fade
+ * into a focused mean-reversion play.
  *
  * New strategies must add their id here so the type system catches any
  * missing picker / chip / badge mapping. Renaming an id is a breaking
@@ -22,6 +31,8 @@ export const INDIA_SCALP_STRATEGY_IDS = [
   "OI_BUILDUP",
   "PCR_EXTREME",
   "IV_SPIKE",
+  "LIQUIDITY_EDGE",
+  "MAX_PAIN_GRAVITY",
 ] as const;
 export type IndiaScalpStrategyId = (typeof INDIA_SCALP_STRATEGY_IDS)[number];
 
@@ -31,7 +42,8 @@ export type IndiaScalpStrategyCategory =
   | "volume"
   | "orderflow"
   | "options-flow"
-  | "volatility";
+  | "volatility"
+  | "liquidity";
 
 export type IndiaBadgeVariant =
   | "neutral"
@@ -117,6 +129,26 @@ export const INDIA_SCALP_STRATEGY_CATALOG: ReadonlyArray<IndiaScalpStrategyMeta>
       tags: ["IV", "India VIX", "Event risk"],
       badge: "warning",
       monogram: "I",
+    },
+    {
+      id: "LIQUIDITY_EDGE",
+      label: "India Liquidity Edge",
+      description:
+        "Liquidity-first confluence engine ported from the India Liquidity Edge — Quant Framework Pine indicator. Folds option-chain positioning into a single bull/bear score on F&O indices: PCR side (>1.2 bullish PE writing / <0.85 bearish CE writing), max-pain side (pain above spot = bullish pull), OI-wall proximity (at the PE floor = support / at the CE wall = resistance), ΔPE−ΔCE OI build-up, and the intraday trend vs the previous close. Fires only when the net edge clears the confluence threshold, with a 2.5× ATR-band reward target.",
+      category: "liquidity",
+      tags: ["Liquidity", "PCR", "OI walls", "Max pain", "Confluence"],
+      badge: "info",
+      monogram: "L",
+    },
+    {
+      id: "MAX_PAIN_GRAVITY",
+      label: "Max-Pain Gravity",
+      description:
+        "Option-positioning mean-reversion play carved from the same ILE Pine framework but distinct from Liquidity Edge. Fades price back toward the max-pain strike once spot has drifted beyond the pull buffer, on the thesis that dealers pin the underlying to max pain into the close. Confidence is boosted when a confirming OI wall (CE ceiling for shorts / PE floor for longs) and the PCR skew align with the fade. Targets the max-pain strike with an ATR-sized stop.",
+      category: "options-flow",
+      tags: ["Max pain", "Mean reversion", "OI walls", "Pinning"],
+      badge: "neutral",
+      monogram: "G",
     },
   ] as const;
 

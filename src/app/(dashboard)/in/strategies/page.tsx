@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { getIndiaScalpSignals } from "@/features/india/scalping/fetch-signals";
+import { getIndiaStrategyScores } from "@/features/india/scalping/score-board";
 import { INDIA_SCALP_STRATEGY_CATALOG } from "@/features/india/scalping/strategies/catalog";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export const revalidate = 0;
 export const metadata = {
   title: "Strategies · NSE F&O",
   description:
-    "Six NSE F&O strategies running in parallel — Range Expansion, Momentum, Volume Breakout, OI Build-up, PCR Extreme and IV Spike — with a live multi-timeframe signal feed pinned to the active NSE session.",
+    "Eight NSE F&O strategies running in parallel — Range Expansion, Momentum, Volume Breakout, OI Build-up, PCR Extreme, IV Spike, India Liquidity Edge and Max-Pain Gravity — with a live multi-timeframe signal feed pinned to the active NSE session.",
 };
 
 /**
@@ -28,9 +29,12 @@ export const metadata = {
  *
  * Data scope is India F&O — six strategies derived from the existing
  * NSE scanners (range expansion, momentum, volume breakout, OI build-
- * up, PCR, IV spike) so signals are live today. The proper F&O paper-
- * trader (ATR sizing, expiry-day cooldown, NSE tick rounding) is on
- * the roadmap but does not block the structural mirror.
+ * up, PCR, IV spike) plus two option-positioning ILE-Pine ports (India
+ * Liquidity Edge + Max-Pain Gravity) served by the positioning engine.
+ * The F&O paper-trader worker (ATR-sized SL/TP off NSE intraday OHLCV,
+ * expiry-day cooldown, NSE tick rounding) books these signals into the
+ * journal, and each strategy chip carries a paper-trade score derived
+ * from that record.
  */
 export default function IndiaStrategiesPage() {
   const bestTimeInitial = getBestTimeStatus();
@@ -63,12 +67,18 @@ export default function IndiaStrategiesPage() {
 
 async function SignalsSection() {
   // SSR the first signal batch so the cards paint on the initial render
-  // — the client polls for fresh data every 30s thereafter.
-  const signals = await getIndiaScalpSignals({ timeframe: "5m" });
+  // — the client polls for fresh data every 30s thereafter. Per-strategy
+  // scores blend a 5-year OHLCV backtest (price strategies) with the live
+  // paper-trade record (option-chain strategies); a failure in either
+  // source degrades gracefully rather than blanking the feed.
+  const [signals, scores] = await Promise.all([
+    getIndiaScalpSignals({ timeframe: "5m" }),
+    getIndiaStrategyScores().catch(() => ({})),
+  ]);
 
   return (
     <div className="flex flex-col gap-4">
-      <IndiaStrategyPicker />
+      <IndiaStrategyPicker scores={scores} />
       <IndiaLiveSignals initial={signals} />
       <HowItWorksCard />
     </div>
@@ -97,12 +107,13 @@ function HowItWorksCard() {
             <span className="font-semibold text-[var(--color-fg)]">
               Risk &amp; resolution.
             </span>{" "}
-            Each signal carries a synthetic 0.5%-band stop / 1.0%-band target
-            (2:1 RR) until the proper F&amp;O paper-trader ships with ATR-
-            sized sizing, expiry-day cooldowns and NSE tick rounding. Open
-            positions, the journal and per-strategy + per-underlying
-            performance live on the{" "}
-            <span className="font-semibold">Paper Trading</span> page.
+            The F&amp;O paper-trader worker sizes each trade&apos;s stop and
+            target off a real intraday ATR (snapped to the 0.05 NSE tick),
+            skips fresh entries inside the expiry-day gamma cooldown, and
+            resolves trades against 5m NSE candles. The score chip on each
+            strategy reflects its live paper-trade record. Open positions,
+            the journal and per-strategy + per-underlying performance live on
+            the <span className="font-semibold">Paper Trading</span> page.
           </li>
         </ol>
       </CardContent>

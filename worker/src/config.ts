@@ -90,6 +90,22 @@ export const workerConfig = {
     // not read. Users attach timeframes per-strategy from the picker.
   },
 
+  indiaScalper: {
+    // India F&O paper-trader. Defaults slower than the crypto scalper —
+    // the NSE option-chain + Yahoo intraday sources are heavier and the
+    // signals only refresh on 5m/15m snapshots, so a 60s cadence is plenty.
+    intervalMs: Number(process.env.WORKER_INDIA_SCALPER_INTERVAL_MS ?? 60_000),
+  },
+
+  indiaOptionChainCapture: {
+    // NSE option-chain snapshot capture. 5-minute cadence balances history
+    // resolution against NSE rate-limits; ticks outside market hours are
+    // skipped by the job itself.
+    intervalMs: Number(
+      process.env.WORKER_INDIA_OC_CAPTURE_INTERVAL_MS ?? 5 * 60_000,
+    ),
+  },
+
   strategyLab: {
     intervalMs: Number(process.env.WORKER_STRATEGY_LAB_INTERVAL_MS ?? 60_000),
   },
