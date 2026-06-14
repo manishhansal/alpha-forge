@@ -37,6 +37,7 @@
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio --config ./prisma.config.ts",
     "worker:dev": "tsx --conditions=react-server --env-file=.env.local worker/src/index.ts",
+    "worker:big": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsx --conditions=react-server --env-file=.env.local worker/src/index.ts",
     "worker:watch": "tsx watch --conditions=react-server --env-file=.env.local worker/src/index.ts",
     "worker:start": "tsx --conditions=react-server --env-file=.env.local worker/src/index.ts",
     "setup": "npm install && npm run docker:up && npm run db:migrate"

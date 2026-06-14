@@ -14,6 +14,7 @@ import {
   Layers,
   LayoutDashboard,
   LineChart,
+  Newspaper,
   Radar,
   Sparkles,
 } from "lucide-react";
@@ -85,6 +86,7 @@ export const INDIA_NAV: NavItem[] = [
   { href: "/in/strategy-backtest", label: "Strategy Backtest", icon: LineChart },
   { href: "/in/strategy-lab", label: "Strategy Lab", icon: Beaker },
   { href: "/in/heatmap", label: "Heatmap", icon: Flame, public: true },
+  { href: "/in/news", label: "News", icon: Newspaper },
   { href: "/in/scanner", label: "Scanner", icon: Radar },
   { href: "/in/watchlist", label: "Watchlist", icon: Eye },
   { href: "/in/chart/RELIANCE", label: "Chart", icon: BarChart3 },

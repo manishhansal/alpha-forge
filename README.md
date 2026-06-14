@@ -159,6 +159,7 @@ Runs `npm install && docker compose up -d && prisma migrate dev` for you.
 | `npm run db:reset`   | Drop, recreate, and re-migrate the database (destructive)          |
 | `npm run db:studio`  | Open Prisma Studio against the local DB                            |
 | `npm run worker:dev` | Background worker (one-shot tsx run) — liquidation WS, alerts, signals, strategy-lab + strategy paper trading. **No file watcher** — keeps the fork pressure low on Windows. |
+| `npm run worker:big` | Same as `worker:dev` but raises the V8 heap cap (`NODE_OPTIONS=--max-old-space-size=4096`). Use if the worker hits an out-of-memory crash. Note: a V8 *Zone* allocation failure is driven by the OS commit limit, not the heap cap — free system memory if raising the cap doesn't help. |
 | `npm run worker:watch` | Same as `worker:dev` but with `tsx watch` so saves auto-restart the worker. Heavy on Windows; only use it if you actively need it. |
 | `npm run worker:start`| Background worker (one-shot, for prod)                            |
 | `npm run dev:tdd`    | **TDD mode** — runs `next dev` AND `vitest --watch` in parallel via `concurrently`. Tests re-run on every file save. |
@@ -219,6 +220,9 @@ src/
         strategy-backtest/      F&O backtest scaffold over /api/in/historical
         strategy-lab/           Conversational F&O backtester intake + roadmap
         heatmap/                Sector + stock heatmap (continuous color-mix tints)
+        news/                   Top Moneycontrol + global market news (F&O /
+                                sector impact tags, per-headline sentiment,
+                                overall market sentiment + risk-on/off ratio)
         profile/                India-flavoured profile page (account,
                                 data sources, API keys, alerts, sign-out).
                                 Legacy /in/settings 308-redirects here.
@@ -235,7 +239,8 @@ src/
                                 fno-list, health, historical, market-snapshot,
                                 nifty-bias, option-chain, quote, scanner,
                                 sector-stocks, msb-signals, feed/stream (SSE),
-                                ai-signals (F&O AI multi-confluence engine)
+                                ai-signals (F&O AI multi-confluence engine),
+                                news (Moneycontrol + global RSS sentiment feed)
     layout.tsx, not-found.tsx
   proxy.ts                      Next 16 proxy (ex-`middleware.ts`) — Auth.js gate
   components/
@@ -808,7 +813,7 @@ redirect to `/login`. Rows below the table follow the same rule.
 | 8  | Strategy Backtest (`/strategy-backtest`)       | Strategy Backtest (`/in/strategy-backtest`)           | Protected   |
 | 9  | Strategy Lab (`/strategy-lab`)                 | Strategy Lab (`/in/strategy-lab`)                     | Protected   |
 | 10 | Heatmap (`/heatmap`)                           | Heatmap (`/in/heatmap`)                               | **Public**  |
-| +  | Futures (`/futures`) — crypto-only             | Scanner / Watchlist / Chart — India-only              | Protected   |
+| +  | Futures (`/futures`) — crypto-only             | News / Scanner / Watchlist / Chart — India-only       | Protected   |
 | ☰  | Profile (`/profile`) — via topbar avatar       | Profile (`/in/profile`) — via topbar avatar           | Protected   |
 
 The Best Time, Signals, AI Signals, Strategies, Paper Trading, Strategy
@@ -848,6 +853,11 @@ SMARTAPI_TOTP_SECRET=    # the base32 secret shown when you enable TOTP 2FA
 # Optional Redis prefix so India + Crypto don't share keys when sharing a
 # Redis instance (defaults to `fno-pulse:`).
 INDIA_REDIS_PREFIX=fno-pulse:
+
+# Optional override for the /in/news RSS feed list. Comma-separated list of
+# `url|source label|category` triples (category = india | global). When unset
+# the News surface ships a default set of Moneycontrol India + global feeds.
+INDIA_NEWS_FEEDS=
 
 # Optional override for the legacy MSB scanner CSV the dashboard tails.
 # When unset the API route scans a handful of sensible default locations,
@@ -1076,6 +1086,17 @@ absent, the cache transparently falls back to in-memory.
       **5Y**) — but only once enough real snapshots have accrued
       (`MIN_SNAPSHOTS` / `MIN_TRADES` guards); until then it cleanly falls
       back to the live paper-trade record.
+- [x] **India News + sentiment** — a new `/in/news` surface that fans out
+      across Moneycontrol India RSS feeds (top news / markets / business /
+      economy / results) plus global business feeds, parses them with a
+      dependency-free RSS parser (`services/india/news`), and runs each
+      headline through a pure, deterministic bull/bear lexicon engine
+      (`features/india/news/engine.ts`). Every headline is tagged with the
+      F&O stocks / index underlyings / sectors it impacts (high / medium /
+      low), and the impactful set is folded into an overall market sentiment
+      (bullish / bearish / neutral) and a 0-100 risk-on / risk-off ratio.
+      Feed URLs are env-overridable via `INDIA_NEWS_FEEDS`; live + Redis-cached
+      (5-min TTL), no DB or worker job.
 
 ## Troubleshooting
 

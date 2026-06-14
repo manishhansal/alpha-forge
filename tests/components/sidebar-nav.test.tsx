@@ -69,6 +69,24 @@ describe("components/dashboard/sidebar — Strategies + Paper Trading split", ()
     });
   });
 
+  describe("India News surface", () => {
+    it("includes a News item routed at /in/news", () => {
+      const item = INDIA_NAV.find((n) => n.label === "News");
+      expect(item).toBeDefined();
+      expect(item?.href).toBe("/in/news");
+    });
+
+    it("keeps News protected (not a public showroom surface)", () => {
+      const item = INDIA_NAV.find((n) => n.href === "/in/news");
+      expect(item?.public).toBeUndefined();
+    });
+
+    it("orders News after Heatmap among the India-only extras", () => {
+      const labels = INDIA_NAV.map((n) => n.label);
+      expect(labels.indexOf("News")).toBeGreaterThan(labels.indexOf("Heatmap"));
+    });
+  });
+
   it("Strategies + Paper Trading sit at the same index in both markets (sidebar parity)", () => {
     const crypto = CRYPTO_NAV.map((n) => n.label);
     const india = INDIA_NAV.map((n) => n.label);

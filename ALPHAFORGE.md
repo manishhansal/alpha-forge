@@ -136,6 +136,14 @@ the topbar.
 
 #### India-specific extras (kept under the shared core)
 
+- **News** (`/in/news`) — top market news scraped from Moneycontrol India
+  RSS feeds (top news / markets / business / economy / results) plus
+  global business feeds. Each headline is tagged with the F&O stocks /
+  index underlyings / sectors it impacts (high / medium / low) and scored
+  for bull/bear sentiment via a deterministic lexicon engine; the
+  impactful set is folded into an overall market sentiment (bullish /
+  bearish / neutral) and a 0-100 risk-on / risk-off ratio shown in a
+  banner above an India / Global filterable feed. Live + Redis-cached.
 - **Scanner** (`/in/scanner`) — single-mode scanner UI driven directly
   by `/api/in/scanner` (range-expansion default). Same data the unified
   Signals page consumes; different UX for users who want one source at
@@ -272,7 +280,7 @@ unauthenticated users *and* protected at the proxy level
 | 8  | Strategy Backtest (`/strategy-backtest`)| Strategy Backtest (`/in/strategy-backtest`) | Protected   |
 | 9  | Strategy Lab (`/strategy-lab`)          | Strategy Lab (`/in/strategy-lab`)           | Protected   |
 | 10 | Heatmap (`/heatmap`)                    | Heatmap (`/in/heatmap`)                     | **Public**  |
-| +  | Futures (crypto-only)                   | Scanner / Watchlist / Chart (India-only)    | Protected   |
+| +  | Futures (crypto-only)                   | News / Scanner / Watchlist / Chart (India-only) | Protected   |
 | ☰  | Profile (topbar avatar → `/profile`)    | Profile (topbar avatar → `/in/profile`)     | Protected   |
 
 The "Strategies" surface owns the live strategy picker + signal feed
@@ -1053,6 +1061,12 @@ the crypto features, no shared stores, no shared API routes.
 
 ### India-only extras
 
+- **News** (`/in/news`) — Moneycontrol India + global business RSS feeds,
+  parsed and enriched with per-headline bull/bear sentiment and F&O
+  stock / sector / index impact tags, plus an overall market-sentiment +
+  risk-on / risk-off ratio banner. Served by `/api/in/news`
+  (`services/india/news` scraper + `features/india/news/engine.ts` pure
+  engine); feed URLs are env-overridable via `INDIA_NEWS_FEEDS`.
 - **Scanner** (`/in/scanner`) — single-mode scanner UI driven directly
   by `/api/in/scanner` (range-expansion default).
 - **Watchlist** (`/in/watchlist`) — persistent F&O watchlist (Zustand
@@ -1090,6 +1104,7 @@ src/
  │    │       ├── heatmap/          Sector + stock heatmap
  │    │       ├── profile/         India-flavoured profile (topbar avatar)
  │    │       ├── settings/        308-redirect → /in/profile (legacy)
+ │    │       ├── news/             Moneycontrol + global news (India-only)
  │    │       ├── scanner/          (India-only)
  │    │       ├── watchlist/        (India-only)
  │    │       └── chart/[symbol]/   (India-only)
@@ -1161,6 +1176,9 @@ src/
  │        ├── best-time/   NSE-anchored session engine (mirrors features/
  │        │                best-time/engine.ts but with seven NSE windows,
  │        │                expiry-aware day quality, weekend "off" guard)
+ │        ├── news/        Pure news engine — bull/bear lexicon scoring,
+ │        │                F&O stock / sector / index impact tagging,
+ │        │                market sentiment + risk-on/off ratio aggregation
  │        └── scalping/    Structural mirror of features/scalping for the
  │                         F&O surface: types (IndiaScalpSignal,
  │                         IndiaPaperTradeStatus + `in:<id>:<tf>` source
@@ -1181,7 +1199,7 @@ src/
  │    ├── deribit/
  │    ├── coinglass/
  │    └── india/           Yahoo / NSE / Groww broker adapters, cache,
- │                         scanner, signals, websocket gateway
+ │                         scanner, signals, news (RSS), websocket gateway
  │
  ├── hooks/
  │    └── india/           useFetchPoll, useFeedStream, useLiveQuotes,
