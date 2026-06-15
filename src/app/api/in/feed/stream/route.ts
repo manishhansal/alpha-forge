@@ -2,6 +2,7 @@ import { buildFeedStream } from "@/services/india/websocket/gateway";
 import { pickBrokerChain } from "@/services/india/broker/factory";
 import { resolveQuotes } from "@/services/india/resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
+import { angel } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,10 +26,19 @@ export async function GET(req: Request) {
 
   const selections = await getActiveSelections();
   const chain = pickBrokerChain(selections.india.selected);
+
+  // When Angel One is the active broker, drive the feed off the SmartStream
+  // WebSocket 2.0 binary tick stream. `subscribeFeedWs` self-falls-back to the
+  // FULL-quote poll (→ Yahoo) on any setup failure, so this is always safe.
+  const useAngelWs = chain[0]?.id === "angel";
+
   const stream = buildFeedStream({
     symbols,
     intervalMs,
     fetchQuotes: (s) => resolveQuotes(chain, s).then((r) => r.quotes),
+    subscribe: useAngelWs
+      ? (onQuote) => angel.subscribeFeedWs(symbols, onQuote, intervalMs)
+      : undefined,
   });
   return new Response(stream, {
     headers: {

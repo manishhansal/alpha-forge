@@ -5,7 +5,9 @@ import {
   angel,
   buildEqTokenMap,
   candlesFromCandleData,
+  computeOiChanges,
   intervalToSmartApi,
+  orderBookImbalance,
   quoteFromQuoteRow,
   resolveAngelToken,
   type AngelCandleTuple,
@@ -153,6 +155,66 @@ describe("services/india/angelone helpers", () => {
       expect(q.change).toBeNull();
       expect(q.changePct).toBeNull();
       expect(q.prevClose).toBeNull();
+      expect(q.orderBookImbalance).toBeNull();
+    });
+
+    it("maps the FULL-mode enrichment fields (OI, 52w, circuits, depth qty)", () => {
+      const q = quoteFromQuoteRow("RELIANCE", {
+        tradingSymbol: "RELIANCE-EQ",
+        symbolToken: "2885",
+        ltp: 2950.5,
+        opnInterest: 120000,
+        "52WeekHigh": 3200,
+        "52WeekLow": 2200,
+        upperCircuit: 3245,
+        lowerCircuit: 2655,
+        totBuyQuan: 300000,
+        totSellQuan: 100000,
+      });
+      expect(q.oi).toBe(120000);
+      expect(q.weekHigh52).toBe(3200);
+      expect(q.weekLow52).toBe(2200);
+      expect(q.upperCircuit).toBe(3245);
+      expect(q.lowerCircuit).toBe(2655);
+      expect(q.totalBuyQty).toBe(300000);
+      expect(q.totalSellQty).toBe(100000);
+      // (300000 - 100000) / 400000 = 0.5
+      expect(q.orderBookImbalance).toBeCloseTo(0.5, 5);
+    });
+  });
+
+  describe("computeOiChanges()", () => {
+    it("diffs current OI against the session-open baseline per token", () => {
+      const current = { "1": 1500, "2": 800, "3": 200 };
+      const baseline = { "1": 1000, "2": 900 };
+      const changes = computeOiChanges(current, baseline);
+      expect(changes["1"]).toBe(500); // +500 build-up
+      expect(changes["2"]).toBe(-100); // -100 unwind
+      // Token "3" wasn't in the baseline (newly listed strike) → 0, not its full OI.
+      expect(changes["3"]).toBe(0);
+    });
+
+    it("returns all-zero changes when there is no baseline yet", () => {
+      const changes = computeOiChanges({ "1": 1500, "2": 800 }, null);
+      expect(changes).toEqual({ "1": 0, "2": 0 });
+    });
+
+    it("returns an empty map for empty current OI", () => {
+      expect(computeOiChanges({}, { "1": 100 })).toEqual({});
+    });
+  });
+
+  describe("orderBookImbalance()", () => {
+    it("returns the normalised buy/sell pressure in [-1, 1]", () => {
+      expect(orderBookImbalance(300, 100)).toBeCloseTo(0.5, 5);
+      expect(orderBookImbalance(100, 300)).toBeCloseTo(-0.5, 5);
+      expect(orderBookImbalance(200, 200)).toBe(0);
+    });
+
+    it("returns null when totals are missing or sum to zero", () => {
+      expect(orderBookImbalance(0, 0)).toBeNull();
+      expect(orderBookImbalance(null, 5)).toBeNull();
+      expect(orderBookImbalance(5, null)).toBeNull();
     });
   });
 

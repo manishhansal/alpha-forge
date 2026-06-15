@@ -106,6 +106,17 @@ export const workerConfig = {
     ),
   },
 
+  indiaDailyPicks: {
+    // India F&O Daily Picks. Freezes the day's top-3-per-bucket picks on the
+    // first in-session tick, then live-tracks them (P&L / progress / outcome)
+    // every cadence. Ticks outside market hours are skipped by the job. A
+    // 5-minute cadence keeps the live tracking fresh without hammering the
+    // Yahoo / NSE fan-out.
+    intervalMs: Number(
+      process.env.WORKER_INDIA_DAILY_PICKS_INTERVAL_MS ?? 5 * 60_000,
+    ),
+  },
+
   strategyLab: {
     intervalMs: Number(process.env.WORKER_STRATEGY_LAB_INTERVAL_MS ?? 60_000),
   },

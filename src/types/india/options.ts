@@ -3,6 +3,15 @@
 
 export type OptionType = "CE" | "PE";
 
+/** Per-strike option greeks (live-only — sourced from Angel One optionGreek). */
+export type OptionGreeks = {
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  iv: number | null;
+};
+
 export type OptionLeg = {
   strike: number;
   type: OptionType;
@@ -17,6 +26,14 @@ export type OptionLeg = {
   ltp: number | null;
   bid: number | null;
   ask: number | null;
+  /** Option delta (∂price/∂spot). Null when the greeks feed is unavailable. */
+  delta?: number | null;
+  /** Option gamma (∂delta/∂spot). */
+  gamma?: number | null;
+  /** Option theta (∂price/∂time, per day). */
+  theta?: number | null;
+  /** Option vega (∂price/∂IV). */
+  vega?: number | null;
 };
 
 export type OptionChainRow = {

@@ -23,6 +23,7 @@ describe("worker/config", () => {
       WORKER_LIQUIDATION_SYMBOLS: process.env.WORKER_LIQUIDATION_SYMBOLS,
       WORKER_SIGNAL_INGEST_INTERVAL_MS: process.env.WORKER_SIGNAL_INGEST_INTERVAL_MS,
       WORKER_ALERTS_INTERVAL_MS: process.env.WORKER_ALERTS_INTERVAL_MS,
+      WORKER_INDIA_DAILY_PICKS_INTERVAL_MS: process.env.WORKER_INDIA_DAILY_PICKS_INTERVAL_MS,
       NEXT_PUBLIC_BINANCE_FUTURES_WS: process.env.NEXT_PUBLIC_BINANCE_FUTURES_WS,
       NEXT_PUBLIC_DELTA_WS: process.env.NEXT_PUBLIC_DELTA_WS,
     };
@@ -141,18 +142,22 @@ describe("worker/config", () => {
       const { workerConfig } = await importConfig({
         WORKER_SIGNAL_INGEST_INTERVAL_MS: undefined,
         WORKER_ALERTS_INTERVAL_MS: undefined,
+        WORKER_INDIA_DAILY_PICKS_INTERVAL_MS: undefined,
       });
       expect(workerConfig.signalIngest.intervalMs).toBe(60_000);
       expect(workerConfig.alerts.intervalMs).toBe(30_000);
+      expect(workerConfig.indiaDailyPicks.intervalMs).toBe(5 * 60_000);
     });
 
     it("parses integer overrides", async () => {
       const { workerConfig } = await importConfig({
         WORKER_SIGNAL_INGEST_INTERVAL_MS: "5000",
         WORKER_ALERTS_INTERVAL_MS: "10000",
+        WORKER_INDIA_DAILY_PICKS_INTERVAL_MS: "120000",
       });
       expect(workerConfig.signalIngest.intervalMs).toBe(5_000);
       expect(workerConfig.alerts.intervalMs).toBe(10_000);
+      expect(workerConfig.indiaDailyPicks.intervalMs).toBe(120_000);
     });
   });
 });

@@ -136,6 +136,22 @@ the topbar.
 
 #### India-specific extras (kept under the shared core)
 
+- **Daily Picks** (`/in/daily-picks`) — the day's standout F&O signals
+  distilled into the **top three per bucket**: *Highly Momentum* (strongest
+  aligned trend + 5-day momentum + volume thrust), *Highly Scalping*
+  (cleanest intraday setups — expected range, sharp R:R, scanner agreement,
+  short horizon) and *Highly Potential* (highest conviction + win-probability
+  + blended payoff). Each pick carries entry, stop loss, target, **can move
+  upto** (stretch target) and **can expect** (% move to the stretch) plus the
+  logic for why it sits in its bucket. Picks are **frozen** once per IST
+  trading day (`IndiaDailyPick` table, one row per
+  `tradeDate × bucket × rank`) so entry/stop/target never move under the
+  user, then **tracked live** against the latest mark — current P&L and
+  progress-to-target update every refresh, resolving to TARGET_HIT /
+  STOP_HIT. Every past trading day's picks + outcomes are archived to a
+  queryable history. A symbol only ever appears in one bucket, so all nine
+  picks are distinct. DB-resilient: degrades to ephemeral live picks when
+  Postgres is unreachable.
 - **News** (`/in/news`) — top market news pulled from fresh Indian market
   RSS feeds (Economic Times Markets / Stocks / Economy, with Moneycontrol
   as a best-effort extra) plus global business feeds (WSJ), filtered to the
@@ -282,7 +298,7 @@ unauthenticated users *and* protected at the proxy level
 | 8  | Strategy Backtest (`/strategy-backtest`)| Strategy Backtest (`/in/strategy-backtest`) | Protected   |
 | 9  | Strategy Lab (`/strategy-lab`)          | Strategy Lab (`/in/strategy-lab`)           | Protected   |
 | 10 | Heatmap (`/heatmap`)                    | Heatmap (`/in/heatmap`)                     | **Public**  |
-| +  | Futures (crypto-only)                   | News / Scanner / Watchlist / Chart (India-only) | Protected   |
+| +  | Futures (crypto-only)                   | Daily Picks / News / Scanner / Watchlist / Chart (India-only) | Protected   |
 | ☰  | Profile (topbar avatar → `/profile`)    | Profile (topbar avatar → `/in/profile`)     | Protected   |
 
 The "Strategies" surface owns the live strategy picker + signal feed
@@ -508,6 +524,114 @@ UI components live in `src/components/ai-signals/`:
 - `ai-signals-board.tsx` — client polling shell with direction / horizon
   filters (persisted to localStorage) and manual refresh
 - `ai-market-context-banner.tsx` — regime banner above the grid
+
+## 5b. Daily Picks (India F&O — top 3 per bucket, frozen + live-tracked)
+
+A dedicated **Daily Picks** surface on the Indian F&O market
+(`/in/daily-picks`) that answers "what should I actually look at today?" by
+distilling the whole signal pool down to the **top three signals in each of
+three buckets**:
+
+- **Highly Momentum Stocks** — the strongest directional names: the daily
+  SMA trend stack, 5-day momentum and volume thrust all pushing the same way.
+- **Highly Scalping Stocks** — the cleanest intraday setups: enough expected
+  range, a sharp risk:reward, live scanner agreement and a short
+  (scalp / intraday) horizon.
+- **Highly Potential Stocks** — the highest-conviction, biggest-payoff
+  trades, ranked by confidence, calibrated win-probability and blended R:R.
+
+### What every pick contains
+- **Entry**, **stop loss** and **target** (realistic first target / TP1).
+- **Can move upto** — the stretch target (TP3) on a clean run.
+- **Can expect** — the % move from entry to the stretch target.
+- **Logic** — a human-readable "why it's here" line built from the signal's
+  top confluence reasons, framed for the bucket it landed in.
+- **Live tracking** — current P&L vs the frozen entry (direction-aware for
+  LONG vs SHORT), **achieved-till-now** (best progress toward target so far)
+  and a status that resolves OPEN → TARGET_HIT / STOP_HIT as price moves.
+
+### How it works
+- **Intraday-only.** Every candidate is pinned to an `intraday` horizon and
+  its stop/target are sized off a fraction of the daily ATR (a same-session
+  move, not a multi-day swing) — Daily Picks is a day-trading product.
+- **Institutional confluence stack.** Beyond the technical/derivatives reads,
+  the signal now weights the factors a desk actually trades on: **intraday
+  demand** (the day's move), **support/resistance breakout confirmed by
+  volume**, **OI build-up**, the **broad market tape** (so single names lean
+  *with* the index, not against it) and **news flow** (per-symbol headline
+  sentiment). The 1-year SMA trend is de-emphasised for intraday.
+- **Tape alignment.** In a strongly trending market, picks whose direction
+  fights the tape are demoted (`marketAlignment`), so a bullish session yields
+  longs — not shorts on names that merely look weak on the daily chart.
+- The candidate pool is the India AI universe (four F&O indices + AI leaders)
+  layered with a broad high-liquidity F&O stock set (~30 names), so the board
+  always has enough *distinct*, directional names to fill three buckets of
+  three (a symbol only ever appears in one bucket — round-robin by best-fit).
+- Picks are **frozen once per IST trading day** into the `IndiaDailyPick`
+  table (one row per `tradeDate × bucket × rank`) so entry / stop / target
+  never drift under the user. Every subsequent request **live-tracks** the
+  frozen picks against the latest mark and persists the updated P&L /
+  progress / outcome in place.
+- An `india-daily-picks` **worker job** (`worker/src/jobs/india-daily-picks.ts`,
+  default 5-min cadence, market-hours-gated) calls the same freeze-or-track
+  path so the day's picks are frozen at the open and tracked to the close even
+  if nobody opens the page — guaranteeing a complete daily history. Both the
+  worker and the on-read path are idempotent (unique constraint +
+  `skipDuplicates`), so they can't double-freeze.
+- A **history** archives every past trading day's picks with their final
+  outcome and the day's win rate, so the board is an auditable track record.
+- The whole feature is **DB-resilient**: when Postgres is unreachable it
+  degrades to ephemeral, still-live picks instead of hard-failing.
+
+### Engine architecture
+- `src/features/india/daily-picks/engine.ts` — pure, deterministic helpers
+  (bucketScores, selectDailyPicks, pickFromSignal, trackPick, groupDailyPicks,
+  istDateKey). No I/O.
+- `src/features/india/daily-picks/builder.ts` — `getIndiaDailyPicks()`
+  (freeze-or-track) and `getIndiaDailyPicksHistory()`, fed by
+  `getIndiaDailyPickCandidates()` in the AI india-builder. Cached + DB-backed.
+- API: `/api/in/daily-picks` (today's board) and
+  `/api/in/daily-picks/history` (past days). UI in
+  `src/components/india/daily-picks/` (board / card / history).
+- Worker: `worker/src/jobs/india-daily-picks.ts` (cadence in
+  `workerConfig.indiaDailyPicks`, env `WORKER_INDIA_DAILY_PICKS_INTERVAL_MS`)
+  freezes + tracks automatically during NSE hours.
+
+## 5c. Expiry-day index trades (Gamma Blast / Hero Zero)
+
+An **expiry-only** section on the Daily Picks page that surfaces the two
+desk playbooks for index option-buying on the actual expiry session — and
+shows **nothing on any other day**:
+
+- **Gamma Blast** — buy the ATM option in the trend direction. With one
+  expiry session of theta left, ATM gamma is maximal, so a clean directional
+  push expands the premium fast. ~2.2× target, ~50% hard stop.
+- **Hero / Zero** — buy a cheap far-OTM option (3 strikes out): a binary
+  lottery on a sharp move — multiplies into a "hero" or expires at "zero".
+  ~5× target, stop at 0.
+
+Coverage + detection:
+- **NIFTY** (NSE) — expiry is read **from the live option chain** (its nearest
+  expiry resolving to today is authoritative; handles holiday shifts). Premiums
+  use real chain LTPs.
+- **SENSEX** (BSE) — premiums come from the **live BSE option chain** synthesised
+  by the Angel One adapter (the BFO scrip subset + FULL-mode quoting), with the
+  chain's nearest expiry resolving to today as the authoritative gate. To avoid
+  the rate-limited per-strike quoting on non-expiry days, the chain fetch is
+  cheap-gated behind the fixed weekly weekday (**Thursday**, post-Sep-2025 SEBI
+  realignment; NIFTY = Tuesday). When Angel One isn't configured (or the chain
+  is unreachable) it falls back to a spot + India VIX Black-Scholes ATM estimate.
+- Direction (CE vs PE) is taken from the index's intraday bias.
+
+Engine/IO/UI:
+- `src/features/india/expiry-trades/engine.ts` — pure (expiry parsing, weekday,
+  premium estimate, strike math, trade assembly).
+- `src/features/india/expiry-trades/builder.ts` — `getIndiaExpiryTrades()`
+  (chain-or-estimate, resilient, cached).
+- API: `/api/in/expiry-trades`. UI:
+  `src/components/india/daily-picks/expiry-trades-section.tsx` (self-hides off
+  expiry; live-polls). Rendered on `/in/daily-picks` only when it's an expiry
+  day. Strictly defined-risk; the UI carries a prominent risk banner.
 
 ## 6. Alerts System
 Create alerts for:
@@ -1063,6 +1187,14 @@ the crypto features, no shared stores, no shared API routes.
 
 ### India-only extras
 
+- **Daily Picks** (`/in/daily-picks`) — top-3-per-bucket board (Highly
+  Momentum / Highly Scalping / Highly Potential) with entry, stop, target,
+  "can move upto" + "can expect" and per-pick logic, frozen per IST trading
+  day and live-tracked (P&L + progress-to-target → TARGET_HIT / STOP_HIT)
+  with a queryable daily history. Served by `/api/in/daily-picks` (+
+  `/history`); pure engine in `features/india/daily-picks/engine.ts`,
+  freeze/track/history I/O in `…/builder.ts`, persistence via the
+  `IndiaDailyPick` table.
 - **News** (`/in/news`) — Moneycontrol India + global business RSS feeds,
   parsed and enriched with per-headline bull/bear sentiment and F&O
   stock / sector / index impact tags, plus an overall market-sentiment +
@@ -1106,6 +1238,7 @@ src/
  │    │       ├── heatmap/          Sector + stock heatmap
  │    │       ├── profile/         India-flavoured profile (topbar avatar)
  │    │       ├── settings/        308-redirect → /in/profile (legacy)
+ │    │       ├── daily-picks/      Top-3-per-bucket picks + live tracking + history (India-only)
  │    │       ├── news/             Moneycontrol + global news (India-only)
  │    │       ├── scanner/          (India-only)
  │    │       ├── watchlist/        (India-only)
@@ -1137,6 +1270,8 @@ src/
  │    │                   inside the profile page's tab panels
  │    ├── india/          India UI (no cross-imports from crypto):
  │    │   ├── best-time/   india-best-time-banner, india-best-time-dashboard
+ │    │   ├── daily-picks/ daily-picks-board (live poller), daily-pick-card,
+ │    │   │                daily-picks-history (per-day outcomes table)
  │    │   ├── heatmap/     india-heatmap (continuous color-mix tints)
  │    │   ├── signals/     india-signals-board (multi-source poller)
  │    │   ├── strategies/  Mirrors crypto components/scalper for the F&O
@@ -1178,6 +1313,10 @@ src/
  │        ├── best-time/   NSE-anchored session engine (mirrors features/
  │        │                best-time/engine.ts but with seven NSE windows,
  │        │                expiry-aware day quality, weekend "off" guard)
+ │        ├── daily-picks/ Pure engine (bucket scoring, top-3 selection,
+ │        │                level extraction, live P&L / progress tracking) +
+ │        │                builder (freeze-per-day + track + history, backed
+ │        │                by the IndiaDailyPick table, DB-resilient)
  │        ├── news/        Pure news engine — bull/bear lexicon scoring,
  │        │                F&O stock / sector / index impact tagging,
  │        │                market sentiment + risk-on/off ratio aggregation

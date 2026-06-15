@@ -5,10 +5,13 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { AlertTriangle, Layers, RefreshCw } from "lucide-react";
 import { OptionChainTable } from "@/components/india/options/option-chain-table";
+import { UnderlyingFlow } from "@/components/india/options/underlying-flow";
 import { Button } from "@/components/india/ui/button";
 import { useIndiaOptionChainStore } from "@/store/india/optionChainStore";
 import { useOptionChain } from "@/hooks/india/useOptionChain";
+import { useFetchPoll, getJson } from "@/hooks/india/useFetchPoll";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
+import type { Quote } from "@/types/india";
 
 const SUGGESTED_STOCKS = [
   "RELIANCE",
@@ -41,6 +44,23 @@ function OptionsInner() {
   }, [initialSymbol]);
 
   useOptionChain(20_000);
+
+  // FULL-mode underlying enrichment (order-book imbalance / 52W / circuits)
+  // rides the quote endpoint, not the chain payload — poll it alongside.
+  const [underlying, setUnderlying] = React.useState<Quote | null>(null);
+  React.useEffect(() => {
+    setUnderlying(null);
+  }, [symbol]);
+  useFetchPoll<{ quotes: Quote[] }>(
+    (signal) =>
+      getJson<{ quotes: Quote[] }>(
+        `/api/in/quote?symbols=${encodeURIComponent(symbol)}`,
+        signal,
+      ),
+    (res) => setUnderlying(res.quotes?.[0] ?? null),
+    { intervalMs: 20_000 },
+    [symbol],
+  );
 
   const [search2, setSearch2] = React.useState("");
 
@@ -165,6 +185,8 @@ function OptionsInner() {
           </Button>
         </div>
       )}
+
+      <UnderlyingFlow quote={underlying} />
 
       {data ? (
         <OptionChainTable data={data} loading={loading} spread={10} />

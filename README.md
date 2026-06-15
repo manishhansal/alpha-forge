@@ -98,7 +98,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Database         | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern with `pg`)    |
 | Realtime         | Active broker WS (Delta India ticker / Binance miniTicker + forceOrder) |
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
-| Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain) + Groww REST (opt-in via `INDIA_BROKER`) |
+| Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain + greeks, first-party F&O gainers-losers / PCR / OI-buildup, FULL-quote enrichment + order-book imbalance) + Groww REST (opt-in via `INDIA_BROKER`) |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
 
 ## Quick start
@@ -220,6 +220,12 @@ src/
         strategy-backtest/      F&O backtest scaffold over /api/in/historical
         strategy-lab/           Conversational F&O backtester intake + roadmap
         heatmap/                Sector + stock heatmap (continuous color-mix tints)
+        daily-picks/            Top-3-per-bucket Daily Picks (Momentum /
+                                Scalping / Potential) — intraday, market-tape
+                                aligned, entry/stop/target + can-move-upto/
+                                can-expect, frozen per IST day, live-tracked,
+                                with a per-day outcome history. Hosts the
+                                expiry-only Gamma Blast / Hero Zero section.
         news/                   Top Moneycontrol + global market news (F&O /
                                 sector impact tags, per-headline sentiment,
                                 overall market sentiment + risk-on/off ratio)
@@ -240,6 +246,10 @@ src/
                                 nifty-bias, option-chain, quote, scanner,
                                 sector-stocks, msb-signals, feed/stream (SSE),
                                 ai-signals (F&O AI multi-confluence engine),
+                                daily-picks (+ /history) (top-3-per-bucket
+                                frozen + live-tracked picks),
+                                expiry-trades (expiry-only Gamma Blast /
+                                Hero Zero index option plays),
                                 news (Moneycontrol + global RSS sentiment feed)
     layout.tsx, not-found.tsx
   proxy.ts                      Next 16 proxy (ex-`middleware.ts`) — Auth.js gate
@@ -813,7 +823,7 @@ redirect to `/login`. Rows below the table follow the same rule.
 | 8  | Strategy Backtest (`/strategy-backtest`)       | Strategy Backtest (`/in/strategy-backtest`)           | Protected   |
 | 9  | Strategy Lab (`/strategy-lab`)                 | Strategy Lab (`/in/strategy-lab`)                     | Protected   |
 | 10 | Heatmap (`/heatmap`)                           | Heatmap (`/in/heatmap`)                               | **Public**  |
-| +  | Futures (`/futures`) — crypto-only             | News / Scanner / Watchlist / Chart — India-only       | Protected   |
+| +  | Futures (`/futures`) — crypto-only             | Daily Picks / News / Scanner / Watchlist / Chart — India-only | Protected   |
 | ☰  | Profile (`/profile`) — via topbar avatar       | Profile (`/in/profile`) — via topbar avatar           | Protected   |
 
 The Best Time, Signals, AI Signals, Strategies, Paper Trading, Strategy
@@ -1086,6 +1096,45 @@ absent, the cache transparently falls back to in-memory.
       **5Y**) — but only once enough real snapshots have accrued
       (`MIN_SNAPSHOTS` / `MIN_TRADES` guards); until then it cleanly falls
       back to the live paper-trade record.
+- [x] **India Daily Picks** — a new `/in/daily-picks` surface that distils the
+      whole F&O signal pool into the **top three per bucket**: *Highly
+      Momentum* (aligned trend + 5-day momentum + volume thrust), *Highly
+      Scalping* (expected range + sharp R:R + scanner agreement + short
+      horizon) and *Highly Potential* (confidence + win-probability + blended
+      payoff). Each pick ships entry / stop / target plus **can move upto**
+      (stretch target) and **can expect** (% move to it), with the logic for
+      why it's there. Picks are **frozen once per IST trading day**
+      (`IndiaDailyPick` table, one row per `tradeDate × bucket × rank`) so the
+      levels never drift, then **tracked live** against the latest mark
+      (direction-aware P&L, progress-to-target, TARGET_HIT / STOP_HIT). A
+      queryable **history** archives every past day's picks + outcomes + win
+      rate. Pure engine in `features/india/daily-picks/engine.ts`,
+      freeze/track/history I/O in `…/builder.ts`, served by
+      `/api/in/daily-picks` (+ `/history`); DB-resilient (degrades to
+      ephemeral live picks when Postgres is down). A symbol only ever appears
+      in one bucket, so all nine picks are distinct. An `india-daily-picks`
+      worker job (`worker/src/jobs/india-daily-picks.ts`, 5-min market-hours
+      cadence) runs the same freeze-or-track path so the day's picks are frozen
+      at the open and tracked to the close even when nobody opens the page.
+- [x] **Daily Picks — intraday + institutional signal upgrade** — every pick is
+      now pinned to an **intraday** horizon with same-session-sized stops/targets,
+      and the underlying signal trades the way a desk does: it weights **intraday
+      demand**, **volume-confirmed support/resistance breakouts**, **OI build-up**,
+      the **broad market tape** and **per-symbol news flow**, and de-emphasises the
+      1-year SMA trend. A `marketAlignment` filter demotes counter-tape picks, so a
+      bullish session produces longs (not shorts on weak-looking dailies). The
+      candidate pool widened to ~30 liquid F&O names so the board fills with real
+      directional setups instead of WAIT placeholders.
+- [x] **Expiry-day index trades (Gamma Blast / Hero Zero)** — an expiry-only
+      section on `/in/daily-picks` that appears **only** on a NIFTY (Tue) or
+      SENSEX (Thu) expiry day. **Gamma Blast** buys the ATM option in the trend
+      direction (~2.2× target / 50% stop); **Hero / Zero** buys a cheap far-OTM
+      lottery (~5× target / stop at 0). NIFTY expiry + premiums come from the live
+      NSE option chain; SENSEX uses the live **BSE (BFO) option chain** synthesised
+      by the Angel One adapter (cheap-gated behind its Thursday weekly weekday),
+      falling back to a spot + India VIX estimate when Angel One isn't configured.
+      Pure engine in `features/india/expiry-trades/engine.ts`, served by
+      `/api/in/expiry-trades`; defined-risk with a prominent risk banner.
 - [x] **India News + sentiment** — a new `/in/news` surface that fans out
       across fresh Indian market RSS feeds (Economic Times Markets / Stocks /
       Economy, with Moneycontrol kept as a best-effort extra) plus global
@@ -1099,6 +1148,76 @@ absent, the cache transparently falls back to in-memory.
       (bullish / bearish / neutral) and a 0-100 risk-on / risk-off ratio.
       Feed URLs are env-overridable via `INDIA_NEWS_FEEDS`; live + Redis-cached
       (5-min TTL), no DB or worker job.
+- [x] **SmartAPI first-party derivatives deepening** — the Angel One adapter
+      graduated from an option-chain backup to a first-party derivatives source.
+      All logic is pure + unit-tested (`services/india/angelone/derivatives.ts`);
+      every method degrades gracefully to the existing Yahoo/NSE path when
+      SmartAPI is unconfigured, so the default deployment is unchanged.
+      📖 **Full reference: [`SMARTAPI.md`](./SMARTAPI.md)** — configuration,
+      module map, auth, market data, derivatives, the SmartStream WebSocket 2.0
+      feed, the read-only account layer, endpoint table, fallback chain & tests.
+  - [x] **First-party F&O scanners** — `gainersLosers`, `putCallRatio` and
+        `OIBuildup` (`marketData/v1/*`) now back the Momentum, PCR and OI-Buildup
+        scanners when Angel is configured. The OI-Buildup scanner in particular
+        no longer depends on the (synthesised) per-strike ΔOI — it uses the
+        authoritative Long/Short Built Up · Short Covering · Long Unwinding lists
+        across the whole F&O segment (stocks + indices), not just the four
+        indices the NSE chain covers.
+  - [x] **AI Signals on first-party PCR/OI** — the India AI engine's `pcr` and
+        `oiBuildup` confluence factors prefer SmartAPI's whole-segment PCR and
+        OI build-up over the chain-derived values (the latter zeroed out
+        whenever Angel served the chain), with transparent fallback. PCR
+        rationale rows are tagged `(SmartAPI)` when first-party.
+  - [x] **Full option greeks** — the option chain now captures delta / gamma /
+        theta / vega per strike (was IV-only), plumbed through `OptionLeg` so the
+        `/api/in/option-chain` payload carries them — unlocking gamma-blast and
+        theta-decay-aware logic.
+  - [x] **FULL-quote enrichment + order-book imbalance** — the FULL-mode quote
+        now maps OI, 52-week high/low, daily circuit limits and total buy/sell
+        quantity onto `Quote`, plus a derived `orderBookImbalance` ∈ [-1, 1]
+        (buy-vs-sell pressure) — the micro-flow signal the crypto surface had via
+        liquidations but India lacked. Rides the existing `/api/in/quote` + SSE
+        feed payloads.
+  - [x] **Real per-leg `changeInOi`** — the Angel chain reported `changeInOi: 0`
+        on every strike (SmartAPI quotes ship no ΔOI and per-token historical OI
+        is rate-limit-prohibitive). It now diffs live per-token OI against a
+        session-open baseline cached until midnight IST, so the chain, its
+        aggregate `total{Ce,Pe}OiChange`, and the per-strike ΔOI column report
+        genuine intraday build-up / unwinding.
+  - [x] **Options UI** — the `/in/options` chain table now has a **Greeks**
+        toggle that reveals per-strike CE/PE delta columns, the ΔOI column
+        renders the real intraday build-up, and an `UnderlyingFlow` micro-strip
+        surfaces order-book imbalance (center-origin gauge), 52-week range and
+        daily circuit limits from the FULL-mode quote — hidden automatically for
+        index underlyings / non-Angel deployments that ship no depth.
+  - [x] **SmartAPI WebSocket 2.0** — the SSE feed is now driven by the
+        SmartStream binary tick stream when Angel One is the active broker. A
+        pure protocol layer (`angelone/smartstream.ts`) decodes the little-endian
+        LTP / Quote / SnapQuote frames (prices paisa→₹, OI, 52W, circuits) and
+        builds subscribe payloads — fully unit-tested. `SmartStreamClient` owns
+        the single `ws` socket with `ping` heartbeat + exponential-backoff
+        reconnect; `feedToken` is captured in the session at login. The feed
+        gateway grew an optional push `subscribe` source (poll remains the
+        snapshot + default path), and `angel.subscribeFeedWs` self-falls-back to
+        the 5s FULL-quote poll (→ Yahoo) on any setup failure — so the default
+        deployment is unchanged and the stream always flows.
+  - [~] **Portfolio / orders / margin** — graduating Paper Trading into optional
+        live execution, read-only foundation first.
+    - [x] **Read-only account layer** — pure, unit-tested parsers
+          (`angelone/portfolio.ts`) normalise SmartAPI's string-valued RMS
+          (funds/margin), `getAllHolding` (holdings + portfolio summary) and
+          `getPosition` (net positions, incl. the space-prefixed signed numbers
+          the API sometimes returns) into clean number-typed shapes. Backed by
+          `angel.getFunds()` / `getHoldings()` / `getPositions()` (authenticated
+          GET via a new `smartApiGet`, short-TTL cached) and surfaced read-only
+          at `GET /api/in/portfolio` — every section degrades to `null` (→ a
+          "connect Angel One" empty state) when unconfigured, so the default
+          deployment is unchanged.
+    - [ ] **Account UI** — a "Broker account" panel beside Paper Trading
+          (funds / holdings / live positions vs the simulated journal).
+    - [ ] **Live order placement** — `placeOrder` / `modifyOrder` /
+          `cancelOrder` + order/trade book, gated behind an explicit live-trading
+          opt-in (moves real money — deliberately deferred).
 
 ## Troubleshooting
 

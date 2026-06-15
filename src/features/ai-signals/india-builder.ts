@@ -16,6 +16,12 @@ import "server-only";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { yahoo } from "@/services/india/yahoo";
 import { nse } from "@/services/india/nse";
+import { angel, isAngelConfigured } from "@/services/india/angelone";
+import type {
+  DerivOiBuildup,
+  DerivPcr,
+  OiBuildupDataType,
+} from "@/services/india/angelone/derivatives";
 import { cache as indiaCache } from "@/services/india/cache";
 import {
   getBestTimeStatus,
@@ -23,14 +29,17 @@ import {
   type NextTradingSession,
 } from "@/features/india/best-time/engine";
 import { runScanner } from "@/services/india/scanner/engine";
+import { getIndiaNews } from "@/services/india/news";
+import type { MarketSentiment } from "@/types/india/news";
 import type {
   AiConfluenceFactor,
+  AiHorizon,
   AiMarketContext,
   AiMarketRegime,
   AiSignal,
   AiSignalsResponse,
 } from "@/types/ai-signals";
-import type { Candle, OptionChain, Quote } from "@/types/india";
+import type { Candle, OiBuildupKind, OptionChain, Quote } from "@/types/india";
 import {
   AI_MODEL_VERSION,
   buildReasons,
@@ -60,6 +69,44 @@ const DERIVATIVE_FACTOR_IDS = new Set([
   "oiBuildup",
   "maxPain",
 ]);
+
+/** Directional score in [-1, 1] for each first-party OI build-up kind. */
+const OI_KIND_SCORE: Record<OiBuildupKind, number> = {
+  LONG_BUILDUP: 1,
+  SHORT_COVERING: 0.6,
+  SHORT_BUILDUP: -1,
+  LONG_UNWINDING: -0.6,
+};
+
+/** Build a `symbol → PCR` map from the first-party PCR rows (first wins). */
+export function pcrMapFromRows(rows: DerivPcr[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    if (!out.has(r.symbol)) out.set(r.symbol, r.pcr);
+  }
+  return out;
+}
+
+/**
+ * Collapse the first-party OI build-up rows into a per-symbol directional
+ * read. When a symbol shows up under several build-up buckets we keep the one
+ * carrying the largest OI (the dominant positioning) and map it to a score.
+ */
+export function oiScoreMapFromRows(
+  rows: DerivOiBuildup[],
+): Map<string, { score: number; kind: OiBuildupKind }> {
+  const best = new Map<string, { oi: number; kind: OiBuildupKind }>();
+  for (const r of rows) {
+    const oi = r.oi ?? 0;
+    const cur = best.get(r.symbol);
+    if (!cur || oi > cur.oi) best.set(r.symbol, { oi, kind: r.kind });
+  }
+  const out = new Map<string, { score: number; kind: OiBuildupKind }>();
+  for (const [sym, { kind }] of best) {
+    out.set(sym, { score: OI_KIND_SCORE[kind], kind });
+  }
+  return out;
+}
 
 /**
  * NSE F&O tick size depends on the underlying price band. Stocks use
@@ -129,6 +176,37 @@ function sma(candles: Candle[], period: number): number | null {
   return last.reduce((s, c) => s + c.close, 0) / period;
 }
 
+/**
+ * Support/resistance breakout read in [-1, 1], the way a desk frames it:
+ * a close above the prior `lookback`-day high (resistance) is bullish, below
+ * the prior low (support) is bearish — but only when *volume confirms* the
+ * break (institutions leave a volume footprint; a low-volume poke through a
+ * level is a trap). Inside the range we return a small positional tilt toward
+ * whichever edge price is hugging. Null when history is too short.
+ */
+function breakoutScore(candles: Candle[], lookback = 20): number | null {
+  if (candles.length < lookback + 2) return null;
+  const prior = candles.slice(-(lookback + 1), -1);
+  const last = candles.at(-1);
+  if (!last) return null;
+  const hi = Math.max(...prior.map((c) => c.high));
+  const lo = Math.min(...prior.map((c) => c.low));
+  if (!Number.isFinite(hi) || !Number.isFinite(lo) || hi <= lo) return null;
+
+  const vol20 =
+    prior.map((c) => c.volume ?? 0).reduce((a, b) => a + b, 0) / prior.length;
+  const volRatio = vol20 > 0 ? (last.volume ?? 0) / vol20 : 1;
+  // Volume gate: a clean break needs ≥1.2× average; below that we fade it.
+  const volConf = clamp(volRatio / 1.2, 0.35, 1);
+
+  if (last.close > hi) return clamp(volConf, 0, 1);
+  if (last.close < lo) return -clamp(volConf, 0, 1);
+
+  const mid = (hi + lo) / 2;
+  const half = (hi - lo) / 2;
+  return clamp(((last.close - mid) / half) * 0.5, -0.6, 0.6);
+}
+
 /** Nearest ATM option strike from an NSE chain. */
 function nearestAtmStrike(chain: OptionChain | null, spot: number): number | null {
   if (!chain || chain.rows.length === 0) return null;
@@ -161,6 +239,43 @@ interface IndiaSignalInputs {
    * Null when the market is currently open.
    */
   nextSession: NextTradingSession | null;
+  /**
+   * First-party SmartAPI PCR for this underlying (whole-segment feed). When
+   * present it overrides the chain-derived PCR. Null/undefined → use the chain.
+   */
+  pcrOverride?: number | null;
+  /**
+   * First-party SmartAPI OI build-up read for this underlying. When present it
+   * overrides the chain-derived ΔPE−ΔCE skew (which depends on per-strike ΔOI
+   * the synthesised Angel chain can't supply).
+   */
+  oiOverride?: { score: number; kind: OiBuildupKind } | null;
+  /** Today's (or last-session's) % change for the underlying — intraday demand read. */
+  dayChangePct?: number | null;
+  /**
+   * Broad-market regime score in [-1, 1] (the NIFTY/BANKNIFTY/FINNIFTY tape +
+   * VIX). Folded in as a confluence factor so single names lean *with* the
+   * tape — a desk doesn't fight a strongly trending index intraday.
+   */
+  marketRegimeScore?: number | null;
+  /** Per-symbol news read: net lexicon score + matched-headline count. */
+  newsScore?: { score: number; count: number } | null;
+  /**
+   * Force a specific horizon (Daily Picks pin every pick to `intraday` so the
+   * board is an intraday product). When omitted the horizon is auto-picked.
+   */
+  horizonOverride?: AiHorizon;
+  /**
+   * Intraday framing: scale the daily ATR down to an intraday band so stops /
+   * targets are realistic for a same-session trade rather than a 3-day swing.
+   */
+  intraday?: boolean;
+  /**
+   * Minimum |score| before a signal commits to a direction (below it → WAIT).
+   * Daily Picks lowers this so borderline-but-real setups take a side rather
+   * than leaving the board padded with WAIT cards.
+   */
+  actionMinMagnitude?: number;
 }
 
 /**
@@ -184,6 +299,17 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
     else trendStack = clamp(((sma20 - sma50) / Math.max(sma50, 1)) * 10, -0.6, 0.6);
   }
 
+  // Intraday demand: today's (or last session's) % change. The single most
+  // important read for an intraday trade — a desk presses what's already
+  // working, not a name fighting the tape.
+  const dayChange = args.dayChangePct ?? quote?.changePct ?? null;
+  // Support/resistance breakout with volume confirmation.
+  const breakout = breakoutScore(dailies);
+  // Broad-market regime in [-1, 1].
+  const regime = args.marketRegimeScore ?? null;
+  // Per-symbol news lexicon read.
+  const news = args.newsScore ?? null;
+
   // 5-day momentum
   const mom5 =
     closes.length >= 6 && closes.at(-6)
@@ -201,11 +327,16 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
   const volRatio =
     vol20 && vol20 > 0 ? ((dailies.at(-1)?.volume ?? 0) / vol20) : null;
 
-  // PCR (open-interest based, indices only)
-  const pcr = chain?.analytics.pcrOi ?? null;
+  // PCR (open-interest based). First-party SmartAPI PCR wins when present, then
+  // the chain-derived value (indices only).
+  const pcr = args.pcrOverride ?? chain?.analytics.pcrOi ?? null;
+  const pcrIsFirstParty = args.pcrOverride != null;
   // ATM IV — high IV often precedes mean reversion in F&O indices
   const atmIv = chain?.analytics.atmIv ?? null;
-  // OI build-up direction: ΔPE OI − ΔCE OI (positive → bullish, indices only)
+  // OI build-up direction. First-party SmartAPI read wins when present;
+  // otherwise fall back to the chain-derived ΔPE OI − ΔCE OI skew (positive →
+  // bullish, indices only).
+  const oiOverride = args.oiOverride ?? null;
   const oiSkew =
     chain != null
       ? (chain.analytics.totalPeOiChange ?? 0) - (chain.analytics.totalCeOiChange ?? 0)
@@ -218,10 +349,74 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
 
   return [
     makeFactor({
+      id: "dayChange",
+      category: "flow",
+      label: "Intraday demand",
+      weight: 0.13,
+      raw: dayChange,
+      denominator: 1.5,
+      describe: (raw) =>
+        raw >= 0.75
+          ? `+${raw.toFixed(2)}% on the day — buyers in control`
+          : raw <= -0.75
+            ? `${raw.toFixed(2)}% on the day — sellers in control`
+            : raw >= 0
+              ? `+${raw.toFixed(2)}% — mild bid`
+              : `${raw.toFixed(2)}% — mild offer`,
+    }),
+    makeFactor({
+      id: "breakout",
+      category: "chart",
+      label: "S/R breakout (vol-confirmed)",
+      weight: 0.13,
+      raw: breakout,
+      denominator: 1,
+      describe: (raw) =>
+        raw >= 0.6
+          ? `Broke 20-day resistance on volume — continuation`
+          : raw <= -0.6
+            ? `Broke 20-day support on volume — breakdown`
+            : raw > 0.15
+              ? `Pressing the upper range — coiling for a break`
+              : raw < -0.15
+                ? `Hugging the lower range — distribution`
+                : `Mid-range — no level in play`,
+    }),
+    makeFactor({
+      id: "marketRegime",
+      category: "macro",
+      label: "Market tape",
+      weight: 0.12,
+      raw: regime,
+      denominator: 1,
+      describe: (raw) =>
+        raw >= 0.4
+          ? `Broad tape risk-on — trade with the longs`
+          : raw <= -0.4
+            ? `Broad tape risk-off — favour shorts`
+            : `Tape mixed — name-specific edge only`,
+    }),
+    makeFactor({
+      id: "news",
+      category: "news",
+      label: "News flow",
+      weight: 0.08,
+      raw: news ? news.score : null,
+      denominator: 2,
+      describe: () =>
+        !news || news.count === 0
+          ? "No fresh headlines"
+          : news.score > 0
+            ? `${news.count} headline(s) skew bullish`
+            : news.score < 0
+              ? `${news.count} headline(s) skew bearish`
+              : `${news.count} headline(s) — neutral`,
+    }),
+    makeFactor({
       id: "trend",
       category: "technical",
       label: "Daily SMA trend",
-      weight: 0.14,
+      weight: 0.08,
       raw: trendStack,
       denominator: 1,
       describe: (raw) =>
@@ -237,7 +432,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "rsi",
       category: "technical",
       label: "Daily RSI(14)",
-      weight: 0.1,
+      weight: 0.05,
       raw: rsi != null ? 50 - rsi : null,
       denominator: 25,
       describe: () =>
@@ -253,7 +448,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "momentum",
       category: "technical",
       label: "5-day momentum",
-      weight: 0.1,
+      weight: 0.08,
       raw: mom5,
       denominator: 4,
       describe: (raw) =>
@@ -281,23 +476,24 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "pcr",
       category: "derivatives",
       label: "PCR (OI)",
-      weight: 0.12,
+      weight: 0.08,
       raw: pcr != null ? pcr - 1 : null,
       denominator: 0.5,
-      describe: () =>
-        pcr == null
-          ? "Unavailable"
-          : pcr > 1.3
-            ? `PCR ${pcr.toFixed(2)} — heavy PE write, bullish bias`
-            : pcr < 0.7
-              ? `PCR ${pcr.toFixed(2)} — heavy CE write, bearish bias`
-              : `PCR ${pcr.toFixed(2)} — balanced`,
+      describe: () => {
+        if (pcr == null) return "Unavailable";
+        const src = pcrIsFirstParty ? " (SmartAPI)" : "";
+        return pcr > 1.3
+          ? `PCR ${pcr.toFixed(2)}${src} — heavy PE write, bullish bias`
+          : pcr < 0.7
+            ? `PCR ${pcr.toFixed(2)}${src} — heavy CE write, bearish bias`
+            : `PCR ${pcr.toFixed(2)}${src} — balanced`;
+      },
     }),
     makeFactor({
       id: "ivAtm",
       category: "derivatives",
       label: "ATM IV",
-      weight: 0.06,
+      weight: 0.04,
       raw: atmIv != null ? atmIv - 15 : null,
       denominator: 12,
       // High IV → wider expected range; we treat it as a *bearish* tilt for
@@ -316,10 +512,12 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "oiBuildup",
       category: "derivatives",
       label: "OI build-up Δ",
-      weight: 0.12,
-      raw: oiSkew,
-      denominator: 5e5,
+      weight: 0.1,
+      raw: oiOverride ? oiOverride.score : oiSkew,
+      denominator: oiOverride ? 1 : 5e5,
       describe: () => {
+        if (oiOverride)
+          return `First-party OI: ${oiOverride.kind.replace(/_/g, " ")}`;
         if (oiSkew == null) return "Unavailable";
         if (oiSkew > 0)
           return `PE writers > CE writers (${(oiSkew / 1e5).toFixed(1)}L) — bullish OI`;
@@ -330,7 +528,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "maxPain",
       category: "derivatives",
       label: "Max-pain pull",
-      weight: 0.08,
+      weight: 0.05,
       raw: maxPainPull,
       denominator: 1.5,
       describe: () =>
@@ -346,7 +544,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "scanner",
       category: "flow",
       label: "Scanner agreement",
-      weight: 0.1,
+      weight: 0.08,
       raw: args.scannerScore?.score ?? null,
       denominator: 1,
       describe: () => {
@@ -361,7 +559,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "session",
       category: "macro",
       label: "NSE session",
-      weight: 0.1,
+      weight: 0.04,
       raw: args.inActiveWindow ? 1 : -0.5,
       denominator: 1,
       describe: () =>
@@ -420,30 +618,123 @@ async function loadScannerScores(): Promise<
   return out;
 }
 
+interface NewsScores {
+  /** symbol → { net lexicon score, matched-headline count }. */
+  symbols: Map<string, { score: number; count: number }>;
+  /** Aggregate market sentiment read (drives the regime tilt). */
+  sentiment: MarketSentiment | null;
+}
+
+const EMPTY_NEWS: NewsScores = { symbols: new Map(), sentiment: null };
+
+/**
+ * Pull the enriched India + global news set and collapse it into a per-symbol
+ * directional read (weighted by headline impact) plus the aggregate market
+ * sentiment. Never throws — degrades to empty maps so the engine simply drops
+ * the news factor when feeds are down.
+ */
+async function loadNewsScores(): Promise<NewsScores> {
+  try {
+    const feed = await getIndiaNews({ limit: 80 });
+    const symbols = new Map<string, { score: number; count: number }>();
+    const impactWeight = { high: 1, medium: 0.6, low: 0.3 } as const;
+    for (const item of feed.items) {
+      if (item.sentiment.score === 0) continue;
+      const dir = Math.sign(item.sentiment.score);
+      const w = impactWeight[item.impact];
+      for (const sym of item.symbols) {
+        const cur = symbols.get(sym) ?? { score: 0, count: 0 };
+        cur.score += dir * w;
+        cur.count += 1;
+        symbols.set(sym, cur);
+      }
+    }
+    return { symbols, sentiment: feed.sentiment };
+  } catch (e) {
+    console.warn("[ai-signals/india] news read failed:", (e as Error).message);
+    return EMPTY_NEWS;
+  }
+}
+
+interface FirstPartyDerivatives {
+  pcr: Map<string, number>;
+  oi: Map<string, { score: number; kind: OiBuildupKind }>;
+}
+
+const EMPTY_DERIVATIVES: FirstPartyDerivatives = {
+  pcr: new Map(),
+  oi: new Map(),
+};
+
+/**
+ * Pull Angel One's first-party PCR + OI build-up across the F&O segment and
+ * collapse them into per-symbol lookups. No-op (empty maps) when SmartAPI is
+ * unconfigured, so the AI engine transparently keeps using the chain-derived
+ * values. Never throws.
+ */
+async function loadFirstPartyDerivatives(): Promise<FirstPartyDerivatives> {
+  if (!isAngelConfigured()) return EMPTY_DERIVATIVES;
+  try {
+    const datatypes: OiBuildupDataType[] = [
+      "Long Built Up",
+      "Short Built Up",
+      "Short Covering",
+      "Long Unwinding",
+    ];
+    const [pcrRows, ...oiResults] = await Promise.all([
+      angel.getPutCallRatio(),
+      ...datatypes.map((d) => angel.getOiBuildup(d, "NEAR")),
+    ]);
+    return {
+      pcr: pcrMapFromRows(pcrRows),
+      oi: oiScoreMapFromRows(oiResults.flat()),
+    };
+  } catch (e) {
+    console.warn(
+      "[ai-signals/india] first-party derivatives failed:",
+      (e as Error).message,
+    );
+    return EMPTY_DERIVATIVES;
+  }
+}
+
 function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
   const factors = indiaFactors(args);
   const composite = compositeScore(factors);
   const derivShare = derivativeShare(factors, DERIVATIVE_FACTOR_IDS);
   // F&O — always LONG/SHORT (perp-style), even for spot stocks, because the
   // tradeable instrument is the future / option.
-  const action = classifyAction(composite.score, derivShare, {
+  const rawAction = classifyAction(composite.score, derivShare, {
     allowPerps: true,
+    ...(args.actionMinMagnitude != null
+      ? { minMagnitude: args.actionMinMagnitude }
+      : {}),
   });
+  // India F&O is always traded as the future/option — normalise the spot-style
+  // BUY/SELL the generic classifier can emit into LONG/SHORT.
+  const action: typeof rawAction =
+    rawAction === "BUY" ? "LONG" : rawAction === "SELL" ? "SHORT" : rawAction;
   const direction = directionFromAction(action);
   const isWait = action === "WAIT";
   const bullish = direction === "BULLISH";
 
-  const horizon = pickHorizon({
-    inActiveWindow: args.inActiveWindow,
-    derivativeShare: derivShare,
-    scoreMagnitude: Math.abs(composite.score),
-  });
+  const horizon =
+    args.horizonOverride ??
+    pickHorizon({
+      inActiveWindow: args.inActiveWindow,
+      derivativeShare: derivShare,
+      scoreMagnitude: Math.abs(composite.score),
+    });
 
   const price = args.quote?.price ?? args.dailies.at(-1)?.close ?? 0;
   const atrRaw = dailyAtr(args.dailies) ?? price * 0.012;
   // Index ATRs can come out small relative to spot in compressed regimes;
-  // bound to a sensible band so the TPs/stops aren't trivially close.
-  const atr = clamp(atrRaw, price * 0.005, price * 0.06);
+  // bound to a sensible band so the TPs/stops aren't trivially close. For
+  // intraday picks we work off a fraction of the daily ATR so stops/targets
+  // are sized for a same-session move, not a multi-day swing.
+  const atr = args.intraday
+    ? clamp(atrRaw * 0.55, price * 0.003, price * 0.022)
+    : clamp(atrRaw, price * 0.005, price * 0.06);
 
   const levels = buildTradeLevels({
     underlyingPrice: price,
@@ -567,6 +858,7 @@ function buildIndiaContext(args: {
   inActiveWindow: boolean;
   windowLabel: string;
   nextSession: NextTradingSession | null;
+  newsSentiment?: MarketSentiment | null;
 }): AiMarketContext {
   const avgChange =
     args.indexQuotes.length > 0
@@ -580,6 +872,11 @@ function buildIndiaContext(args: {
     if (vix > 20) regimeScore -= 0.3;
     else if (vix < 12) regimeScore += 0.2;
   }
+  // Fold the news tape in as a modest tilt (±0.15) so a strongly bullish or
+  // bearish headline flow nudges — but never single-handedly flips — the
+  // price-derived regime.
+  const news = args.newsSentiment ?? null;
+  if (news) regimeScore += clamp(news.score / 100, -1, 1) * 0.15;
   regimeScore = clamp(regimeScore, -1, 1);
 
   let regime: AiMarketRegime;
@@ -593,6 +890,9 @@ function buildIndiaContext(args: {
     `NIFTY/BANKNIFTY/FINNIFTY avg ${avgChange >= 0 ? "+" : ""}${avgChange.toFixed(2)}%`,
   );
   if (vix != null) bullets.push(`India VIX ${vix.toFixed(2)}`);
+  if (news && news.bullCount + news.bearCount > 0) {
+    bullets.push(`News ${news.bullCount}↑ / ${news.bearCount}↓`);
+  }
   if (args.inActiveWindow) {
     bullets.push(`Inside ${args.windowLabel} — F&O execution OK`);
   } else if (args.nextSession) {
@@ -665,124 +965,271 @@ function buildUniverse(): UniverseEntry[] {
   return [...indexEntries, ...stockEntries];
 }
 
-export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
-  return indiaCache.memo("ai-signals:india:v1", CACHE_TTL_MS, async () => {
-    const universe = buildUniverse();
-    const yahooSymbols = universe.map((u) => u.yahooSymbol);
+/**
+ * Broader high-liquidity F&O stock set layered on top of the AI universe so
+ * the Daily Picks board has a deep enough pool to fill three buckets of three
+ * *distinct* names. These are spot-traded for technicals only — option chains
+ * are fetched just for the indices + AI leaders (see `getIndiaDailyPickCandidates`).
+ */
+const DAILY_PICK_STOCKS = [
+  "ICICIBANK",
+  "INFY",
+  "SBIN",
+  "AXISBANK",
+  "KOTAKBANK",
+  "BHARTIARTL",
+  "ITC",
+  "LT",
+  "TATAMOTORS",
+  "MARUTI",
+  "BAJFINANCE",
+  "SUNPHARMA",
+  "HINDUNILVR",
+  "HCLTECH",
+  "WIPRO",
+  "TITAN",
+  "ULTRACEMCO",
+  "ASIANPAINT",
+  "TATASTEEL",
+  "JSWSTEEL",
+  "POWERGRID",
+  "NTPC",
+  "ONGC",
+  "COALINDIA",
+  "ADANIENT",
+  "ADANIPORTS",
+  "BAJAJFINSV",
+  "TECHM",
+  "GRASIM",
+  "HINDALCO",
+] as const;
 
-    const [quotes, vixQuoteRes, scannerScoresRes] = await Promise.allSettled([
+function buildDailyPickUniverse(): UniverseEntry[] {
+  const base = buildUniverse();
+  const seen = new Set(base.map((u) => u.symbol));
+  const extra: UniverseEntry[] = [];
+  for (const s of DAILY_PICK_STOCKS) {
+    if (seen.has(s)) continue;
+    seen.add(s);
+    extra.push({ symbol: s, displayName: s, isIndex: false, yahooSymbol: s });
+  }
+  return [...base, ...extra];
+}
+
+interface IndiaUniverseResult {
+  signals: AiSignal[];
+  context: AiMarketContext;
+  generatedAt: number;
+  inActiveWindow: boolean;
+  nextSession: NextTradingSession | null;
+  stats: AiSignalsResponse["stats"];
+}
+
+/**
+ * Fan out across a universe of underlyings and fold every one into a rich
+ * `AiSignal`. Shared by the AI Signals board (`getIndiaAiSignals`) and the
+ * Daily Picks board (`getIndiaDailyPickCandidates`). Pass `fetchChainFor` to
+ * skip the (slow, rate-limited) NSE option-chain call for symbols where it
+ * adds little — the engine degrades gracefully when the chain is null.
+ */
+async function computeIndiaUniverse(
+  universe: UniverseEntry[],
+  opts?: {
+    fetchChainFor?: (u: UniverseEntry) => boolean;
+    /** Pin every signal to this horizon (Daily Picks → intraday). */
+    forceHorizon?: AiHorizon;
+    /** Size stops/targets for a same-session intraday trade. */
+    intraday?: boolean;
+    /** Lower the WAIT threshold so borderline setups still take a side. */
+    actionMinMagnitude?: number;
+  },
+): Promise<IndiaUniverseResult> {
+  const fetchChainFor = opts?.fetchChainFor ?? (() => true);
+  const yahooSymbols = universe.map((u) => u.yahooSymbol);
+
+  const [quotes, vixQuoteRes, scannerScoresRes, derivRes, newsRes] =
+    await Promise.allSettled([
       yahoo.getQuotes(yahooSymbols),
       yahoo.getQuote("^INDIAVIX"),
       loadScannerScores(),
+      loadFirstPartyDerivatives(),
+      loadNewsScores(),
     ]);
 
-    const quoteList = quotes.status === "fulfilled" ? quotes.value : [];
-    const vixQuote = vixQuoteRes.status === "fulfilled" ? vixQuoteRes.value : null;
-    const scannerMap =
-      scannerScoresRes.status === "fulfilled"
-        ? scannerScoresRes.value
-        : new Map<string, { score: number; tags: string[] }>();
+  const quoteList = quotes.status === "fulfilled" ? quotes.value : [];
+  const vixQuote = vixQuoteRes.status === "fulfilled" ? vixQuoteRes.value : null;
+  const scannerMap =
+    scannerScoresRes.status === "fulfilled"
+      ? scannerScoresRes.value
+      : new Map<string, { score: number; tags: string[] }>();
+  const deriv =
+    derivRes.status === "fulfilled" ? derivRes.value : EMPTY_DERIVATIVES;
+  const news = newsRes.status === "fulfilled" ? newsRes.value : EMPTY_NEWS;
 
-    const dailiesByYf = new Map<string, Candle[]>();
-    const chainBySymbol = new Map<string, OptionChain | null>();
+  const dailiesByYf = new Map<string, Candle[]>();
+  const chainBySymbol = new Map<string, OptionChain | null>();
 
-    await Promise.all(
-      universe.map(async (u, idx) => {
-        const yfSym = yahooSymbols[idx];
-        try {
-          const candles = await yahoo.getHistorical({
-            symbol: u.yahooSymbol,
-            interval: "1d",
-            range: "1y",
-          });
-          dailiesByYf.set(yfSym, candles);
-        } catch (err) {
-          console.warn(
-            `[ai-signals/india] hist failed for ${u.symbol}:`,
-            (err as Error).message,
-          );
-          dailiesByYf.set(yfSym, []);
-        }
-
-        // Option chain only available for the four F&O index underlyings + the
-        // F&O stocks NSE serves. Fail-soft on shadow-bans / 401s.
-        try {
-          const chain = await nse.getOptionChain(u.symbol);
-          chainBySymbol.set(u.symbol, chain);
-        } catch (err) {
-          console.warn(
-            `[ai-signals/india] option-chain failed for ${u.symbol}:`,
-            (err as Error).message,
-          );
-          chainBySymbol.set(u.symbol, null);
-        }
-      }),
-    );
-
-    const status = getBestTimeStatus();
-    const inActiveWindow =
-      status.active.slug !== "off" && status.active.slug !== "worst";
-    const windowLabel = status.active.label;
-
-    // When NSE is currently closed (off-hours, weekend, auction), resolve
-    // the next 09:15 IST open so per-signal timing windows + the context
-    // banner can frame every signal as "queued for the next session"
-    // rather than "fired at a dead-zone timestamp".
-    const nextSession = inActiveWindow ? null : getNextTradingSessionOpen();
-
-    const now = Date.now();
-
-    const signals: AiSignal[] = universe.map((u, idx) => {
+  await Promise.all(
+    universe.map(async (u, idx) => {
       const yfSym = yahooSymbols[idx];
-      const quote = quoteList[idx] ?? null;
-      const dailies = dailiesByYf.get(yfSym) ?? [];
-      const chain = chainBySymbol.get(u.symbol) ?? null;
-      const scannerScore = scannerMap.get(u.symbol) ?? null;
-      return buildIndiaSignal({
-        symbol: u.symbol,
-        displayName: u.displayName,
-        isIndex: u.isIndex,
-        quote,
-        dailies,
-        chain,
-        scannerScore,
-        now,
-        inActiveWindow,
-        windowLabel,
-        nextSession,
-      });
-    });
+      try {
+        const candles = await yahoo.getHistorical({
+          symbol: u.yahooSymbol,
+          interval: "1d",
+          range: "1y",
+        });
+        dailiesByYf.set(yfSym, candles);
+      } catch (err) {
+        console.warn(
+          `[ai-signals/india] hist failed for ${u.symbol}:`,
+          (err as Error).message,
+        );
+        dailiesByYf.set(yfSym, []);
+      }
 
-    const context = buildIndiaContext({
-      vixQuote,
-      indexQuotes: quoteList.slice(0, FNO_INDICES.length),
+      // Option chain only available for the four F&O index underlyings + the
+      // F&O stocks NSE serves. Fail-soft on shadow-bans / 401s.
+      if (!fetchChainFor(u)) {
+        chainBySymbol.set(u.symbol, null);
+        return;
+      }
+      try {
+        const chain = await nse.getOptionChain(u.symbol);
+        chainBySymbol.set(u.symbol, chain);
+      } catch (err) {
+        console.warn(
+          `[ai-signals/india] option-chain failed for ${u.symbol}:`,
+          (err as Error).message,
+        );
+        chainBySymbol.set(u.symbol, null);
+      }
+    }),
+  );
+
+  const status = getBestTimeStatus();
+  const inActiveWindow =
+    status.active.slug !== "off" && status.active.slug !== "worst";
+  const windowLabel = status.active.label;
+
+  // When NSE is currently closed (off-hours, weekend, auction), resolve
+  // the next 09:15 IST open so per-signal timing windows + the context
+  // banner can frame every signal as "queued for the next session"
+  // rather than "fired at a dead-zone timestamp".
+  const nextSession = inActiveWindow ? null : getNextTradingSessionOpen();
+
+  const now = Date.now();
+
+  // Build the market context first so every single-name signal can lean *with*
+  // the broad tape (regimeScore) — a desk doesn't fight a strongly trending
+  // index intraday.
+  const context = buildIndiaContext({
+    vixQuote,
+    indexQuotes: quoteList.slice(0, FNO_INDICES.length),
+    inActiveWindow,
+    windowLabel,
+    nextSession,
+    newsSentiment: news.sentiment,
+  });
+
+  const signals: AiSignal[] = universe.map((u, idx) => {
+    const yfSym = yahooSymbols[idx];
+    const quote = quoteList[idx] ?? null;
+    const dailies = dailiesByYf.get(yfSym) ?? [];
+    const chain = chainBySymbol.get(u.symbol) ?? null;
+    const scannerScore = scannerMap.get(u.symbol) ?? null;
+    return buildIndiaSignal({
+      symbol: u.symbol,
+      displayName: u.displayName,
+      isIndex: u.isIndex,
+      quote,
+      dailies,
+      chain,
+      scannerScore,
+      now,
       inActiveWindow,
       windowLabel,
       nextSession,
+      pcrOverride: deriv.pcr.get(u.symbol) ?? null,
+      oiOverride: deriv.oi.get(u.symbol) ?? null,
+      dayChangePct: quote?.changePct ?? null,
+      marketRegimeScore: context.regimeScore,
+      newsScore: news.symbols.get(u.symbol) ?? null,
+      horizonOverride: opts?.forceHorizon,
+      intraday: opts?.intraday,
+      actionMinMagnitude: opts?.actionMinMagnitude,
     });
+  });
 
-    let bullish = 0;
-    let bearish = 0;
-    let wait = 0;
-    let confSum = 0;
-    let topGrade: AiSignal["grade"] | null = null;
-    const gradeRank = { S: 5, A: 4, B: 3, C: 2, D: 1 } as const;
-    for (const s of signals) {
-      if (s.direction === "BULLISH") bullish++;
-      else if (s.direction === "BEARISH") bearish++;
-      else wait++;
-      confSum += s.confidence;
-      if (!topGrade || gradeRank[s.grade] > gradeRank[topGrade]) topGrade = s.grade;
-    }
-    const avgConfidence = signals.length > 0 ? confSum / signals.length : 0;
+  let bullish = 0;
+  let bearish = 0;
+  let wait = 0;
+  let confSum = 0;
+  let topGrade: AiSignal["grade"] | null = null;
+  const gradeRank = { S: 5, A: 4, B: 3, C: 2, D: 1 } as const;
+  for (const s of signals) {
+    if (s.direction === "BULLISH") bullish++;
+    else if (s.direction === "BEARISH") bearish++;
+    else wait++;
+    confSum += s.confidence;
+    if (!topGrade || gradeRank[s.grade] > gradeRank[topGrade]) topGrade = s.grade;
+  }
+  const avgConfidence = signals.length > 0 ? confSum / signals.length : 0;
 
+  return {
+    signals,
+    context,
+    generatedAt: now,
+    inActiveWindow,
+    nextSession,
+    stats: { bullish, bearish, wait, avgConfidence, topGrade },
+  };
+}
+
+export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
+  return indiaCache.memo("ai-signals:india:v1", CACHE_TTL_MS, async () => {
+    const r = await computeIndiaUniverse(buildUniverse());
     return {
       market: "india",
-      generatedAt: now,
+      generatedAt: r.generatedAt,
       modelVersion: AI_MODEL_VERSION,
-      context,
-      signals,
-      stats: { bullish, bearish, wait, avgConfidence, topGrade },
+      context: r.context,
+      signals: r.signals,
+      stats: r.stats,
+    };
+  });
+}
+
+export interface IndiaDailyPickCandidates {
+  signals: AiSignal[];
+  context: AiMarketContext;
+  generatedAt: number;
+  inActiveWindow: boolean;
+}
+
+/**
+ * Candidate signal pool for the Daily Picks board — the AI index/leader
+ * universe plus a broader high-liquidity F&O stock set so the engine has
+ * enough distinct names to fill three buckets of three. Option chains are
+ * fetched only for the indices + AI leaders to keep the fan-out fast.
+ */
+export async function getIndiaDailyPickCandidates(): Promise<IndiaDailyPickCandidates> {
+  return indiaCache.memo("daily-picks:candidates:v3", CACHE_TTL_MS, async () => {
+    const r = await computeIndiaUniverse(buildDailyPickUniverse(), {
+      fetchChainFor: (u) =>
+        u.isIndex || (FNO_STOCK_LEADERS as readonly string[]).includes(u.symbol),
+      // Daily Picks is an intraday product — pin every candidate to an
+      // intraday horizon and size levels for a same-session move. The lower
+      // action threshold keeps the board filled with real directional setups
+      // rather than WAIT placeholders.
+      forceHorizon: "intraday",
+      intraday: true,
+      actionMinMagnitude: 0.1,
+    });
+    return {
+      signals: r.signals,
+      context: r.context,
+      generatedAt: r.generatedAt,
+      inActiveWindow: r.inActiveWindow,
     };
   });
 }
@@ -793,5 +1240,8 @@ export const __internals = {
   dailyAtr,
   dailyRsi,
   sma,
+  pcrMapFromRows,
+  oiScoreMapFromRows,
+  loadFirstPartyDerivatives,
   DERIVATIVE_FACTOR_IDS,
 };

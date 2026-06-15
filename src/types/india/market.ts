@@ -15,6 +15,23 @@ export type Quote = {
   high?: number | null;
   low?: number | null;
   volume?: number | null;
+  /** Open interest (derivatives) — populated by first-party broker feeds. */
+  oi?: number | null;
+  /** 52-week high / low (FULL-mode broker quote enrichment). */
+  weekHigh52?: number | null;
+  weekLow52?: number | null;
+  /** Daily price-band circuit limits (FULL-mode broker quote enrichment). */
+  upperCircuit?: number | null;
+  lowerCircuit?: number | null;
+  /** Total buy / sell quantity across the order book (FULL-mode enrichment). */
+  totalBuyQty?: number | null;
+  totalSellQty?: number | null;
+  /**
+   * Order-book pressure in [-1, 1] derived from total buy vs sell quantity:
+   * +1 = all bids (buy pressure / bullish), -1 = all asks. Null when the feed
+   * doesn't ship depth totals.
+   */
+  orderBookImbalance?: number | null;
   /**
    * True upstream that produced this value. Lets the route/UI show genuine
    * provenance (e.g. "angel" vs a Yahoo backfill) rather than just the adapter

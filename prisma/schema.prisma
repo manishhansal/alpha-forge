@@ -305,6 +305,68 @@ model StrategyPaperTrade {
   @@index([strategyId, status])
 }
 
+/// One frozen "Daily Pick" — the day's top signal for a bucket
+/// (MOMENTUM / SCALPING / POTENTIAL) on the Indian F&O surface. The
+/// entry / stop / target levels are frozen at selection time so the pick
+/// stays an honest, immutable track record for the trading day; the
+/// live-tracking columns (`status`, `lastPrice`, `pnlPct`, `achievedPct`)
+/// are refreshed as the underlying moves. One row per (tradeDate, bucket,
+/// rank) so re-running the builder mid-day updates tracking in place
+/// rather than duplicating picks. History accrues automatically — every
+/// past `tradeDate` is queryable so users can review old picks + outcomes.
+model IndiaDailyPick {
+  id            String   @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
+  tradeDate     String
+  /// MOMENTUM | SCALPING | POTENTIAL.
+  bucket        String
+  /// 1..3 within the bucket.
+  rank          Int
+  symbol        String
+  displayName   String
+  /// BULLISH | BEARISH | NEUTRAL.
+  direction     String
+  /// LONG | SHORT | BUY | SELL | WAIT.
+  action        String
+  /// scalp | intraday | swing | positional.
+  horizon       String
+  grade         String
+  confidence    Float
+  confidenceScore Int
+  winProbability Float
+
+  /// Mark price of the underlying when the pick was frozen.
+  underlyingPrice Float
+  entry         Float
+  stopLoss      Float
+  /// Realistic first target (TP1).
+  target        Float
+  /// Stretch target (TP3) — "can move upto".
+  canMoveUpto   Float
+  /// Expected % move from entry to the stretch target ("can expect").
+  canExpectPct  Float
+  riskReward    Float
+  bucketScore   Float
+
+  rationale     String[]
+  /// Why the pick sits in its bucket — human readable.
+  logic         String
+
+  /// Live-tracking. OPEN | TARGET_HIT | STOP_HIT | EXPIRED.
+  status        String   @default("OPEN")
+  lastPrice     Float?
+  pnlPct        Float?
+  /// Best progress toward target so far, in % (100 = target hit).
+  achievedPct   Float?
+
+  generatedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tradeDate, bucket, rank])
+  @@index([tradeDate])
+  @@index([symbol, tradeDate])
+}
+
 /// Periodic capture of an NSE option-chain's aggregated analytics for one
 /// underlying. NSE only serves the *live* chain (no history endpoint), so
 /// the `india-oc-capture` worker snapshots it on a cadence during market

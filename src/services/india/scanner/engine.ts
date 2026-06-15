@@ -12,6 +12,7 @@ import type {
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { yahoo } from "@/services/india/yahoo";
 import { nse } from "@/services/india/nse";
+import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 
 const now = () => new Date().toISOString();
@@ -26,7 +27,52 @@ async function fnoQuotes(): Promise<Quote[]> {
 // Momentum: top gainers/losers among the F&O universe
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Angel One first-party F&O momentum — true price gainers/losers from the
+ * derivatives segment (NEAR expiry), not a % move derived off Yahoo cash
+ * quotes. Returns null when SmartAPI is unconfigured / empty so the caller
+ * falls back to the Yahoo path.
+ */
+async function runMomentumAngel(limit: number): Promise<ScannerResult | null> {
+  if (!isAngelConfigured()) return null;
+  const [gainers, losers] = await Promise.all([
+    angel.getTopGainersLosers("PercPriceGainers", "NEAR"),
+    angel.getTopGainersLosers("PercPriceLosers", "NEAR"),
+  ]);
+  const merged = [...gainers, ...losers];
+  if (merged.length === 0) return null;
+
+  const hits: ScannerHit[] = merged
+    .filter((r) => r.percentChange != null)
+    .sort(
+      (a, b) => Math.abs(b.percentChange ?? 0) - Math.abs(a.percentChange ?? 0),
+    )
+    .slice(0, limit)
+    .map((r) => ({
+      symbol: r.symbol,
+      price: r.ltp,
+      changePct: r.percentChange,
+      volume: null,
+      metric: r.percentChange ?? 0,
+      metricLabel: `${(r.percentChange ?? 0) >= 0 ? "+" : ""}${(r.percentChange ?? 0).toFixed(2)}%`,
+      kind: (r.percentChange ?? 0) >= 0 ? "GAINER" : "LOSER",
+      note: r.oi != null ? `OI ${(r.oi / 1e5).toFixed(1)}L` : undefined,
+    }));
+
+  return {
+    type: "momentum",
+    title: "Momentum Scanner",
+    description:
+      "Top F&O price gainers / losers (near-month futures) — Angel One SmartAPI.",
+    hits,
+    fetchedAt: now(),
+  };
+}
+
 async function runMomentum(limit: number): Promise<ScannerResult> {
+  const fromAngel = await runMomentumAngel(limit);
+  if (fromAngel) return fromAngel;
+
   const quotes = await fnoQuotes();
   const sorted = quotes
     .filter((q) => q.changePct != null)
@@ -145,7 +191,41 @@ async function indexChains() {
   });
 }
 
-async function runPcr(): Promise<ScannerResult> {
+/**
+ * Angel One first-party PCR across the whole F&O segment (not just the four
+ * indices the NSE chain covers). Returns null when unconfigured / empty.
+ */
+async function runPcrAngel(limit: number): Promise<ScannerResult | null> {
+  if (!isAngelConfigured()) return null;
+  const rows = await angel.getPutCallRatio();
+  if (rows.length === 0) return null;
+
+  const hits: ScannerHit[] = rows
+    .sort((a, b) => Math.abs(b.pcr - 1) - Math.abs(a.pcr - 1))
+    .slice(0, limit)
+    .map((r) => ({
+      symbol: r.symbol,
+      price: null,
+      changePct: null,
+      metric: r.pcr,
+      metricLabel: `PCR ${r.pcr.toFixed(2)}`,
+      kind: r.pcr > 1.3 ? "BULLISH" : r.pcr < 0.7 ? "BEARISH" : "NEUTRAL",
+    }));
+
+  return {
+    type: "pcr",
+    title: "PCR Scanner",
+    description:
+      "First-party Put-Call Ratio across the F&O segment (Angel One SmartAPI). >1.3 typically bullish, <0.7 bearish.",
+    hits,
+    fetchedAt: now(),
+  };
+}
+
+async function runPcr(limit: number): Promise<ScannerResult> {
+  const fromAngel = await runPcrAngel(limit);
+  if (fromAngel) return fromAngel;
+
   const chains = await indexChains();
   const hits: ScannerHit[] = chains
     .map(({ underlying, chain }) => {
@@ -204,7 +284,51 @@ async function runIvSpike(): Promise<ScannerResult> {
   };
 }
 
-async function runOiBuildup(): Promise<ScannerResult> {
+/**
+ * Angel One first-party OI build-up — authoritative Long/Short Built Up ·
+ * Short Covering · Long Unwinding lists across the whole F&O segment. This
+ * replaces the chain-derived classification that depended on per-strike ΔOI
+ * (which the synthesised Angel chain reports as 0). Returns null when
+ * unconfigured / empty so the NSE-derived path still works.
+ */
+async function runOiBuildupAngel(limit: number): Promise<ScannerResult | null> {
+  if (!isAngelConfigured()) return null;
+  const [longBuilt, shortBuilt, shortCover, longUnwind] = await Promise.all([
+    angel.getOiBuildup("Long Built Up", "NEAR"),
+    angel.getOiBuildup("Short Built Up", "NEAR"),
+    angel.getOiBuildup("Short Covering", "NEAR"),
+    angel.getOiBuildup("Long Unwinding", "NEAR"),
+  ]);
+  const merged = [...longBuilt, ...shortBuilt, ...shortCover, ...longUnwind];
+  if (merged.length === 0) return null;
+
+  const hits: ScannerHit[] = merged
+    .sort((a, b) => (b.oi ?? 0) - (a.oi ?? 0))
+    .slice(0, limit)
+    .map((r) => ({
+      symbol: r.symbol,
+      price: r.ltp,
+      changePct: r.percentChange,
+      metric: r.oi ?? 0,
+      metricLabel: r.kind.replace("_", " "),
+      kind: r.kind,
+      note: r.oi != null ? `OI ${(r.oi / 1e5).toFixed(1)}L` : undefined,
+    }));
+
+  return {
+    type: "oi-buildup",
+    title: "OI Buildup",
+    description:
+      "First-party F&O open-interest build-up (Long/Short Built Up · Short Covering · Long Unwinding) — Angel One SmartAPI.",
+    hits,
+    fetchedAt: now(),
+  };
+}
+
+async function runOiBuildup(limit: number): Promise<ScannerResult> {
+  const fromAngel = await runOiBuildupAngel(limit);
+  if (fromAngel) return fromAngel;
+
   const chains = await indexChains();
   const yfQuotes = await yahoo.getQuotes(FNO_INDICES.map((i) => i.symbol));
   const priceChange: Record<string, number | null> = {};
@@ -505,11 +629,11 @@ export async function runScanner(
     case "volume-breakout":
       return runVolumeBreakout(limit);
     case "pcr":
-      return runPcr();
+      return runPcr(limit);
     case "iv-spike":
       return runIvSpike();
     case "oi-buildup":
-      return runOiBuildup();
+      return runOiBuildup(limit);
     case "range-expansion":
       return runRangeExpansion(limit);
   }

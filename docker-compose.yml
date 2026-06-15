@@ -12,7 +12,9 @@ services:
       POSTGRES_PASSWORD: crypto
       POSTGRES_DB: crypto_dashboard
     ports:
-      - "5432:5432"
+      # Host 5433 avoids clashing with a native Postgres on 5432. The container
+      # still listens on 5432 internally; point DATABASE_URL at host port 5433.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

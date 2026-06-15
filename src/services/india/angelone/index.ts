@@ -26,12 +26,40 @@ import type {
   OptionChain,
   OptionChainAnalytics,
   OptionChainRow,
+  OptionGreeks,
   OptionLeg,
   Quote,
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
 import { cache } from "../cache";
 import { yahoo } from "../yahoo";
+import {
+  parseGainersLosers,
+  parseGreekRows,
+  parseOiBuildup,
+  parsePcr,
+  type DerivExpiryType,
+  type DerivGainerLoser,
+  type DerivOiBuildup,
+  type DerivPcr,
+  type GainersLosersDataType,
+  type OiBuildupDataType,
+} from "./derivatives";
+import {
+  SMART_EXCHANGE_TYPE,
+  SMART_MODE,
+  SmartStreamClient,
+  changePctFromTick,
+  type SmartTick,
+} from "./smartstream";
+import {
+  parseFunds,
+  parseHoldings,
+  parsePositions,
+  type AccountFunds,
+  type HoldingsResult,
+  type Position,
+} from "./portfolio";
 
 /** RFC-4648 Base32 decoder (no padding, alphabet A-Z + 2-7). Used to convert
  *  the SmartAPI TOTP secret (shown when 2FA is enabled) into raw bytes. */
@@ -151,10 +179,23 @@ async function resolveConfig(): Promise<SmartApiConfig | null> {
 
 // ── HTTP helper ─────────────────────────────────────────────────────────────
 
+/**
+ * Browser-like User-Agent for SmartAPI requests. Angel One's API gateway
+ * (Akamai) returns a bare `HTTP 403` — before the JSON envelope — for requests
+ * that arrive without a recognised User-Agent, which is exactly what Node's
+ * `fetch` (undici) sends by default. Spoofing a normal UA clears the WAF block.
+ * Overridable via `SMARTAPI_USER_AGENT` if Angel ever tightens this.
+ */
+const SMARTAPI_USER_AGENT =
+  process.env.SMARTAPI_USER_AGENT ??
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
 function smartApiHeaders(cfg: SmartApiConfig, jwt?: string): HeadersInit {
   const base: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
+    "User-Agent": SMARTAPI_USER_AGENT,
+    "Accept-Language": "en-US,en;q=0.9",
     "X-UserType": "USER",
     "X-SourceID": "WEB",
     "X-ClientLocalIP": cfg.localIp,
@@ -214,6 +255,27 @@ async function smartApiPost<T>(
   return env.data;
 }
 
+/** Authenticated GET (account-data endpoints: RMS / holdings / positions). */
+async function smartApiGet<T>(
+  cfg: SmartApiConfig,
+  path: string,
+  jwt: string,
+): Promise<T> {
+  const res = await timedFetch(`${SMARTAPI_BASE}${path}`, {
+    method: "GET",
+    headers: smartApiHeaders(cfg, jwt),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`SmartAPI ${path}: HTTP ${res.status}`);
+  const env = (await res.json()) as SmartApiEnvelope<T>;
+  if (!env.status) {
+    throw new Error(
+      `SmartAPI ${path} failed: ${env.message ?? "unknown"} (${env.errorcode ?? "?"})`,
+    );
+  }
+  return env.data;
+}
+
 // ── Auth (login + JWT caching) ──────────────────────────────────────────────
 
 interface LoginResponse {
@@ -224,12 +286,22 @@ interface LoginResponse {
 
 interface SessionState {
   jwt: string;
+  /** SmartStream (WebSocket 2.0) feed token, captured at login. */
+  feedToken: string;
   expiresAt: number; // epoch ms
 }
 
 // JWT cache keyed per client code so two accounts (e.g. env vs a UI-entered
 // user key) never share a session token.
 const sessions = new Map<string, SessionState>();
+
+// Auth-failure backoff keyed per client code. A failed login caches no session,
+// so without this every quote/candle poll would re-hit the login endpoint
+// (every few seconds) — hammering Angel's gateway, risking an IP ban, and
+// spamming logs. After a failure we suppress further login attempts for a short
+// window and reuse the recorded error.
+const LOGIN_FAILURE_COOLDOWN_MS = 5 * 60_000;
+const loginFailures = new Map<string, { until: number; message: string }>();
 
 /** End-of-day expiry (midnight IST) — SmartAPI sessions die at 00:00 IST. */
 function midnightIstMs(): number {
@@ -244,23 +316,44 @@ async function login(cfg: SmartApiConfig): Promise<string> {
   const cached = sessions.get(cfg.clientCode);
   if (cached && Date.now() < cached.expiresAt - 60_000) return cached.jwt;
 
-  const totp = generateTotp(cfg.totpSecret);
-  const data = await smartApiPost<LoginResponse>(
-    cfg,
-    "/rest/auth/angelbroking/user/v1/loginByPassword",
-    {
-      clientcode: cfg.clientCode,
-      password: cfg.pin,
-      totp,
-      state: "alphaforge",
-    },
-  );
-  if (!data?.jwtToken) {
-    throw new Error("SmartAPI login: missing jwtToken in response");
+  // Within the failure cooldown? Fail fast with the recorded error instead of
+  // re-hammering the login endpoint on every poll.
+  const failure = loginFailures.get(cfg.clientCode);
+  if (failure && Date.now() < failure.until) {
+    throw new Error(failure.message);
   }
-  const next: SessionState = { jwt: data.jwtToken, expiresAt: midnightIstMs() };
-  sessions.set(cfg.clientCode, next);
-  return next.jwt;
+
+  try {
+    const totp = generateTotp(cfg.totpSecret);
+    const data = await smartApiPost<LoginResponse>(
+      cfg,
+      "/rest/auth/angelbroking/user/v1/loginByPassword",
+      {
+        clientcode: cfg.clientCode,
+        password: cfg.pin,
+        totp,
+        state: "alphaforge",
+      },
+    );
+    if (!data?.jwtToken) {
+      throw new Error("SmartAPI login: missing jwtToken in response");
+    }
+    const next: SessionState = {
+      jwt: data.jwtToken,
+      feedToken: data.feedToken ?? "",
+      expiresAt: midnightIstMs(),
+    };
+    sessions.set(cfg.clientCode, next);
+    loginFailures.delete(cfg.clientCode);
+    return next.jwt;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    loginFailures.set(cfg.clientCode, {
+      until: Date.now() + LOGIN_FAILURE_COOLDOWN_MS,
+      message,
+    });
+    throw e;
+  }
 }
 
 // ── Scrip Master (instrument dump) ─────────────────────────────────────────
@@ -302,7 +395,9 @@ interface ScripSubsets {
  * downloads of the same dump.
  */
 async function getScripSubsets(): Promise<ScripSubsets> {
-  return cache.memo("angel:scripmaster:subsets", SCRIP_MASTER_TTL_MS, async () => {
+  // `:v2` busts the cached NFO-only subset so BSE (BFO) option contracts —
+  // needed for the SENSEX / BANKEX chains — are picked up immediately.
+  return cache.memo("angel:scripmaster:subsets:v2", SCRIP_MASTER_TTL_MS, async () => {
     const res = await timedFetch(SCRIP_MASTER_URL, { cache: "no-store" }, 30_000);
     if (!res.ok) throw new Error(`ScripMaster: HTTP ${res.status}`);
     const all = (await res.json()) as AngelScripRow[];
@@ -310,7 +405,12 @@ async function getScripSubsets(): Promise<ScripSubsets> {
     const cash: AngelScripRow[] = [];
     for (const r of all) {
       if (!r) continue;
-      if (r.exch_seg === "NFO" && NFO_OPTION_TYPES.has(r.instrumenttype)) {
+      // Index/stock options on both NSE (NFO) and BSE (BFO) — the BSE segment
+      // is what carries SENSEX / BANKEX contracts.
+      if (
+        (r.exch_seg === "NFO" || r.exch_seg === "BFO") &&
+        NFO_OPTION_TYPES.has(r.instrumenttype)
+      ) {
         options.push(r);
       } else if (r.exch_seg === "NSE" && /-EQ$/.test(r.symbol ?? "")) {
         cash.push(r);
@@ -392,6 +492,37 @@ export function resolveAngelToken(
   return eqTokenMap.get(name) ?? null;
 }
 
+/** Map our cash/derivative exchange tag to a SmartStream exchange-type code. */
+const SMART_EXCHANGE_TYPE_BY_EXCHANGE: Record<AngelExchange, number> = {
+  NSE: SMART_EXCHANGE_TYPE.NSE_CM,
+  NFO: SMART_EXCHANGE_TYPE.NSE_FO,
+  BSE: SMART_EXCHANGE_TYPE.BSE_CM,
+};
+
+/**
+ * Map a decoded SmartStream tick onto the canonical {@link Quote}. The WS Quote
+ * frame ships the previous `close`, so `changePct` is derived locally (the poll
+ * path got it straight from the FULL-quote `percentChange`).
+ */
+export function quoteFromTick(symbol: string, tick: SmartTick): Quote {
+  const close = tick.close ?? null;
+  return {
+    symbol,
+    name: null,
+    price: tick.ltp,
+    change: close != null ? tick.ltp - close : null,
+    changePct: changePctFromTick(tick.ltp, close),
+    prevClose: close,
+    open: tick.open ?? null,
+    high: tick.high ?? null,
+    low: tick.low ?? null,
+    volume: tick.volume ?? null,
+    oi: tick.oi ?? null,
+    source: "angel",
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
 // ── Quote + candle mapping (pure, testable) ─────────────────────────────────
 
 /** A row from the SmartAPI FULL-mode market-quote response (`data.fetched[]`). */
@@ -409,6 +540,15 @@ export interface AngelQuoteRow {
   percentChange?: number;
   tradeVolume?: number;
   opnInterest?: number;
+  /** 52-week high / low (note: SmartAPI keys these with a leading digit). */
+  "52WeekHigh"?: number;
+  "52WeekLow"?: number;
+  /** Daily price-band circuit limits. */
+  upperCircuit?: number;
+  lowerCircuit?: number;
+  /** Total buying / selling quantity across the order book. */
+  totBuyQuan?: number;
+  totSellQuan?: number;
 }
 
 /** A single OHLCV tuple from SmartAPI getCandleData: `[isoTs, o, h, l, c, v]`. */
@@ -431,8 +571,54 @@ function emptyAngelQuote(symbol: string): Quote {
   };
 }
 
+/**
+ * Order-book pressure from total buy vs sell quantity, normalised to [-1, 1].
+ * +1 = all bids (buy pressure, bullish), -1 = all asks. Null when either total
+ * is missing or they sum to zero (no book).
+ */
+export function orderBookImbalance(
+  totalBuy: number | null | undefined,
+  totalSell: number | null | undefined,
+): number | null {
+  const buy = num(totalBuy);
+  const sell = num(totalSell);
+  if (buy == null || sell == null) return null;
+  const sum = buy + sell;
+  if (sum <= 0) return null;
+  return (buy - sell) / sum;
+}
+
+/**
+ * Per-token intraday OI change vs a session-open baseline.
+ *
+ * SmartAPI's quote endpoint doesn't ship a change-in-OI field and per-token
+ * historical OI is rate-limit-prohibitive (1 req/s × hundreds of strikes), so
+ * we approximate ΔOI by diffing the live OI against the first OI reading we
+ * captured this session (the baseline, held in cache until midnight IST).
+ *
+ *   - No baseline yet (first fetch of the day) → every change is 0.
+ *   - A strike absent from the baseline (newly listed) → 0, not its full OI.
+ */
+export function computeOiChanges(
+  currentOiByToken: Record<string, number>,
+  baselineOiByToken: Record<string, number> | null,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [token, oi] of Object.entries(currentOiByToken)) {
+    if (!baselineOiByToken) {
+      out[token] = 0;
+      continue;
+    }
+    const base = baselineOiByToken[token];
+    out[token] = base == null ? 0 : oi - base;
+  }
+  return out;
+}
+
 /** Map a FULL-mode quote row into the canonical broker-agnostic `Quote`. */
 export function quoteFromQuoteRow(symbol: string, row: AngelQuoteRow): Quote {
+  const totalBuyQty = num(row.totBuyQuan);
+  const totalSellQty = num(row.totSellQuan);
   return {
     symbol,
     name: row.tradingSymbol ?? null,
@@ -444,6 +630,14 @@ export function quoteFromQuoteRow(symbol: string, row: AngelQuoteRow): Quote {
     high: num(row.high),
     low: num(row.low),
     volume: num(row.tradeVolume),
+    oi: num(row.opnInterest),
+    weekHigh52: num(row["52WeekHigh"]),
+    weekLow52: num(row["52WeekLow"]),
+    upperCircuit: num(row.upperCircuit),
+    lowerCircuit: num(row.lowerCircuit),
+    totalBuyQty,
+    totalSellQty,
+    orderBookImbalance: orderBookImbalance(totalBuyQty, totalSellQty),
     source: "angel",
     fetchedAt: new Date().toISOString(),
   };
@@ -597,26 +791,41 @@ interface QuoteFullRow {
   tradeVolume?: number;
 }
 
-async function bulkQuote(
+/**
+ * FULL-mode bulk quote for option legs, grouped by their exchange segment so
+ * NSE (`NFO`) and BSE (`BFO`) legs are requested under the correct key. Returns
+ * a map keyed by `symbolToken`. Used by the chain synthesiser so SENSEX/BANKEX
+ * (BSE) chains quote correctly alongside the NSE indices.
+ */
+async function bulkQuoteOptionLegs(
   cfg: SmartApiConfig,
   jwt: string,
-  tokens: string[],
+  legs: AngelScripRow[],
 ): Promise<Map<string, QuoteFullRow>> {
   const out = new Map<string, QuoteFullRow>();
-  for (let i = 0; i < tokens.length; i += QUOTE_BATCH_SIZE) {
-    const batch = tokens.slice(i, i + QUOTE_BATCH_SIZE);
-    const data = await smartApiPost<{ fetched: QuoteFullRow[] }>(
-      cfg,
-      "/rest/secure/angelbroking/market/v1/quote/",
-      { mode: "FULL", exchangeTokens: { NFO: batch } },
-      jwt,
-    );
-    for (const r of data?.fetched ?? []) {
-      out.set(r.symbolToken, r);
-    }
-    // Rate limit: 1 req / sec on the FULL-mode quote endpoint.
-    if (i + QUOTE_BATCH_SIZE < tokens.length) {
-      await new Promise((r) => setTimeout(r, 1_100));
+  const byExch = new Map<string, string[]>();
+  for (const l of legs) {
+    const ex = l.exch_seg === "BFO" ? "BFO" : "NFO";
+    const list = byExch.get(ex) ?? [];
+    list.push(l.token);
+    byExch.set(ex, list);
+  }
+  for (const [ex, tokens] of byExch) {
+    for (let i = 0; i < tokens.length; i += QUOTE_BATCH_SIZE) {
+      const batch = tokens.slice(i, i + QUOTE_BATCH_SIZE);
+      const data = await smartApiPost<{ fetched: QuoteFullRow[] }>(
+        cfg,
+        "/rest/secure/angelbroking/market/v1/quote/",
+        { mode: "FULL", exchangeTokens: { [ex]: batch } },
+        jwt,
+      );
+      for (const r of data?.fetched ?? []) {
+        out.set(r.symbolToken, r);
+      }
+      // Rate limit: 1 req / sec on the FULL-mode quote endpoint.
+      if (i + QUOTE_BATCH_SIZE < tokens.length) {
+        await new Promise((r) => setTimeout(r, 1_100));
+      }
     }
   }
   return out;
@@ -683,37 +892,26 @@ async function fetchCandleData(
   return Array.isArray(data) ? data : [];
 }
 
-interface GreekRow {
-  strikePrice: string;
-  optionType: "CE" | "PE";
-  impliedVolatility: string;
-}
-
 async function fetchGreeks(
   cfg: SmartApiConfig,
   jwt: string,
   underlying: string,
   expiryDmy: string,
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, OptionGreeks>> {
   try {
-    const data = await smartApiPost<GreekRow[]>(
+    const data = await smartApiPost<unknown>(
       cfg,
       "/rest/secure/angelbroking/marketData/v1/optionGreek",
       { name: underlying, expirydate: toSmartApiExpiry(expiryDmy) },
       jwt,
     );
-    for (const g of data ?? []) {
-      const k = `${Number(g.strikePrice)}:${g.optionType}`;
-      const iv = Number(g.impliedVolatility);
-      if (Number.isFinite(iv)) out.set(k, iv);
-    }
+    return parseGreekRows(data);
   } catch (e) {
-    // Non-fatal: chain still renders without IV.
+    // Non-fatal: chain still renders without greeks.
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[angelone] optionGreek failed for ${underlying}: ${msg}`);
+    return new Map<string, OptionGreeks>();
   }
-  return out;
 }
 
 // ── Analytics (shared with NSE adapter) ─────────────────────────────────────
@@ -1004,9 +1202,25 @@ export class AngelOneAdapter implements BrokerAdapter {
         );
       }
 
-      // 2. Bulk-quote every leg in this expiry (rate-limit-aware).
-      const tokens = legs.map((l) => l.token);
-      const quotes = await bulkQuote(cfg, jwt, tokens);
+      // 2. Bulk-quote every leg in this expiry (rate-limit-aware), grouped by
+      // exchange segment so BSE (BFO) legs — SENSEX / BANKEX — quote correctly.
+      const quotes = await bulkQuoteOptionLegs(cfg, jwt, legs);
+
+      // 2b. Intraday ΔOI vs the session-open baseline. The first chain fetch of
+      // the day seeds the baseline (changes all 0); later fetches diff against
+      // it so the chain reports real build-up/unwinding instead of a flat 0.
+      const currentOiByToken: Record<string, number> = {};
+      for (const [token, q] of quotes) {
+        currentOiByToken[token] = q.opnInterest ?? 0;
+      }
+      const baselineKey = `angel:oc:oibaseline:${upper}:${chosenExpiry}`;
+      const baseline =
+        (await cache.get<Record<string, number>>(baselineKey)) ?? null;
+      const oiChanges = computeOiChanges(currentOiByToken, baseline);
+      if (!baseline) {
+        const ttl = Math.max(60_000, midnightIstMs() - Date.now());
+        await cache.set(baselineKey, currentOiByToken, ttl);
+      }
 
       // 3. Greeks (best-effort, fills IV).
       const greeks = await fetchGreeks(cfg, jwt, upper, chosenExpiry);
@@ -1041,17 +1255,21 @@ export class AngelOneAdapter implements BrokerAdapter {
       ): OptionLeg | null => {
         if (!row) return null;
         const q = quotes.get(row.token);
-        const iv = greeks.get(`${strike}:${type}`) ?? null;
+        const g = greeks.get(`${strike}:${type}`) ?? null;
         return {
           strike,
           type,
           oi: q?.opnInterest ?? 0,
-          changeInOi: 0, // SmartAPI quote doesn't ship intraday ΔOI
+          changeInOi: oiChanges[row.token] ?? 0,
           volume: q?.tradeVolume ?? 0,
-          iv,
+          iv: g?.iv ?? null,
           ltp: q?.ltp ?? null,
           bid: null,
           ask: null,
+          delta: g?.delta ?? null,
+          gamma: g?.gamma ?? null,
+          theta: g?.theta ?? null,
+          vega: g?.vega ?? null,
         };
       };
 
@@ -1083,11 +1301,238 @@ export class AngelOneAdapter implements BrokerAdapter {
     });
   }
 
+  // ── First-party derivatives market-data (gainers/losers · PCR · OI buildup) ──
+  //
+  // These three SmartAPI endpoints live under /marketData/v1 and return
+  // exchange-grade derivative-segment signals. Each method returns an empty
+  // list (never throws) when SmartAPI is unconfigured or the call fails, so the
+  // scanner can transparently fall back to its Yahoo/NSE-derived path.
+
   /**
-   * Live feed via SmartAPI quote polling. SmartAPI also offers a binary
-   * WebSocket 2.0 stream, but polling the FULL-mode quote endpoint reuses the
-   * same auth + token plumbing, matches the gateway's diff-based contract, and
-   * stays within the 1 req/s rate limit at the cadence the dashboard uses.
+   * Top gainers / losers in the F&O segment for an expiry bucket. `dataType`
+   * selects OI vs price gainers/losers. Cached 20s (matches the scanner TTLs).
+   */
+  async getTopGainersLosers(
+    dataType: GainersLosersDataType,
+    expiry: DerivExpiryType = "NEAR",
+  ): Promise<DerivGainerLoser[]> {
+    const cfg = await resolveConfig();
+    if (!cfg) return [];
+    return cache.memo(`angel:gl:${dataType}:${expiry}`, 20_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiPost<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/marketData/v1/gainersLosers",
+          { datatype: dataType, expirytype: expiry },
+          jwt,
+        );
+        return parseGainersLosers(data);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`angelone.getTopGainersLosers(${dataType}):`, msg);
+        return [];
+      }
+    });
+  }
+
+  /** First-party Put-Call Ratio per F&O underlying. Cached 20s. */
+  async getPutCallRatio(): Promise<DerivPcr[]> {
+    const cfg = await resolveConfig();
+    if (!cfg) return [];
+    return cache.memo("angel:pcr:all", 20_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiPost<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/marketData/v1/putCallRatio",
+          {},
+          jwt,
+        );
+        return parsePcr(data);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`angelone.getPutCallRatio:`, msg);
+        return [];
+      }
+    });
+  }
+
+  /**
+   * OI build-up list for a single direction (`datatype`) and expiry bucket.
+   * Every returned row is tagged with the canonical `OiBuildupKind`.
+   */
+  async getOiBuildup(
+    datatype: OiBuildupDataType,
+    expiry: DerivExpiryType = "NEAR",
+  ): Promise<DerivOiBuildup[]> {
+    const cfg = await resolveConfig();
+    if (!cfg) return [];
+    return cache.memo(`angel:oib:${datatype}:${expiry}`, 20_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiPost<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/marketData/v1/OIBuildup",
+          { datatype, expirytype: expiry },
+          jwt,
+        );
+        return parseOiBuildup(data, datatype);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`angelone.getOiBuildup(${datatype}):`, msg);
+        return [];
+      }
+    });
+  }
+
+  // ── Account data (read-only portfolio / margin) ───────────────────────────
+  //
+  // These power a live "broker account" surface beside Paper Trading. They
+  // return `null` when Angel One isn't configured (or on any error) so callers
+  // can show a "connect Angel One" empty state instead of crashing. Live order
+  // placement is intentionally NOT implemented.
+
+  /** Funds & margin (RMS). Null when Angel One is unconfigured / errored. */
+  async getFunds(): Promise<AccountFunds | null> {
+    const cfg = await resolveConfig();
+    if (!cfg) return null;
+    return cache.memo("angel:funds", 10_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiGet<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/user/v1/getRMS",
+          jwt,
+        );
+        return parseFunds(data);
+      } catch (e: unknown) {
+        console.error(
+          "angelone.getFunds:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return null;
+      }
+    });
+  }
+
+  /** Demat holdings + portfolio summary. Null when unconfigured / errored. */
+  async getHoldings(): Promise<HoldingsResult | null> {
+    const cfg = await resolveConfig();
+    if (!cfg) return null;
+    return cache.memo("angel:holdings", 30_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiGet<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/portfolio/v1/getAllHolding",
+          jwt,
+        );
+        return parseHoldings(data);
+      } catch (e: unknown) {
+        console.error(
+          "angelone.getHoldings:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return null;
+      }
+    });
+  }
+
+  /** Net open day/carry-forward positions. Null when unconfigured / errored. */
+  async getPositions(): Promise<Position[] | null> {
+    const cfg = await resolveConfig();
+    if (!cfg) return null;
+    return cache.memo("angel:positions", 10_000, async () => {
+      try {
+        const jwt = await login(cfg);
+        const data = await smartApiGet<unknown>(
+          cfg,
+          "/rest/secure/angelbroking/order/v1/getPosition",
+          jwt,
+        );
+        return parsePositions(data);
+      } catch (e: unknown) {
+        console.error(
+          "angelone.getPositions:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Live feed via the SmartStream WebSocket 2.0 binary tick stream. Resolves
+   * the user's credentials + feed token, maps each symbol to its Angel token,
+   * opens a single socket and emits a {@link Quote} per decoded frame. Any
+   * setup failure (no credentials, no feed token, no resolvable tokens) — and
+   * the unconfigured-Angel case — degrades transparently to {@link subscribeFeed}
+   * (the 5s FULL-quote poll, itself backed by Yahoo when needed), so the caller
+   * always receives a working unsubscribe handle.
+   */
+  async subscribeFeedWs(
+    symbols: string[],
+    onTick: (q: Quote) => void,
+    intervalMs = 5_000,
+  ): Promise<() => void> {
+    if (symbols.length === 0) return () => {};
+    try {
+      const cfg = await resolveConfig();
+      if (cfg) {
+        await login(cfg); // populates the session (jwt + feedToken)
+        const session = sessions.get(cfg.clientCode);
+        const jwt = session?.jwt;
+        const feedToken = session?.feedToken;
+        if (jwt && feedToken) {
+          const { cash } = await getScripSubsets();
+          const eqMap = buildEqTokenMap(cash);
+          const tokensByExchangeType: Record<number, string[]> = {};
+          const tokenToSymbol = new Map<string, string>();
+          for (const symbol of symbols) {
+            const resolved = resolveAngelToken(symbol, eqMap);
+            if (!resolved) continue;
+            const exType = SMART_EXCHANGE_TYPE_BY_EXCHANGE[resolved.exchange];
+            if (!exType) continue;
+            (tokensByExchangeType[exType] ??= []).push(resolved.token);
+            tokenToSymbol.set(resolved.token, symbol);
+          }
+          if (tokenToSymbol.size > 0) {
+            const client = new SmartStreamClient({
+              credentials: {
+                apiKey: cfg.apiKey,
+                clientCode: cfg.clientCode,
+                jwt,
+                feedToken,
+              },
+              tokensByExchangeType,
+              mode: SMART_MODE.QUOTE,
+              onTick: (tick: SmartTick) => {
+                const symbol = tokenToSymbol.get(tick.token);
+                if (symbol) onTick(quoteFromTick(symbol, tick));
+              },
+              onError: (e: unknown) =>
+                console.error(
+                  "angelone.smartstream:",
+                  e instanceof Error ? e.message : String(e),
+                ),
+            });
+            client.start();
+            return () => client.stop();
+          }
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("angelone.subscribeFeedWs setup:", msg);
+    }
+    return this.subscribeFeed(symbols, onTick, intervalMs);
+  }
+
+  /**
+   * Live feed via SmartAPI quote polling — the resilient fallback for
+   * {@link subscribeFeedWs}. Polls the FULL-mode quote endpoint (reusing the
+   * same auth + token plumbing) and matches the gateway's diff-based contract.
    * Unconfigured credentials transparently fall back to the Yahoo poller.
    */
   subscribeFeed(

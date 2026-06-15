@@ -42,6 +42,7 @@ function legBg(leg: OptionLeg | null, side: "ce" | "pe"): string {
 
 export function OptionChainTable({ data, loading, spread = 10 }: Props) {
   const setExpiry = useIndiaOptionChainStore((s) => s.setExpiry);
+  const [showGreeks, setShowGreeks] = React.useState(false);
   const atm = pickAtmIndex(data.rows, data.spot);
   const start = Math.max(0, atm - spread);
   const end = Math.min(data.rows.length, atm + spread + 1);
@@ -70,6 +71,18 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
         </div>
 
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => setShowGreeks((v) => !v)}
+            aria-pressed={showGreeks}
+            className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
+              showGreeks
+                ? "bg-foreground text-background border-transparent"
+                : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground"
+            }`}
+          >
+            Greeks
+          </button>
           {loading && (
             <span className="flex items-center gap-1 text-blue-500">
               <Activity className="h-3 w-3 animate-pulse" />
@@ -94,7 +107,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
             <thead className="bg-muted/40">
               <tr className="text-muted-foreground uppercase tracking-wide">
                 <th
-                  colSpan={4}
+                  colSpan={showGreeks ? 5 : 4}
                   className="text-center py-2 font-semibold text-emerald-700 dark:text-emerald-400"
                 >
                   CALLS
@@ -103,7 +116,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                   Strike
                 </th>
                 <th
-                  colSpan={4}
+                  colSpan={showGreeks ? 5 : 4}
                   className="text-center py-2 font-semibold text-rose-700 dark:text-rose-400"
                 >
                   PUTS
@@ -113,9 +126,11 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                 <th className="p-1.5 text-right">OI</th>
                 <th className="p-1.5 text-right">ΔOI</th>
                 <th className="p-1.5 text-right">IV</th>
+                {showGreeks && <th className="p-1.5 text-right">Δ</th>}
                 <th className="p-1.5 text-right">LTP</th>
                 <th className="p-1.5 text-center font-semibold">—</th>
                 <th className="p-1.5 text-right">LTP</th>
+                {showGreeks && <th className="p-1.5 text-right">Δ</th>}
                 <th className="p-1.5 text-right">IV</th>
                 <th className="p-1.5 text-right">ΔOI</th>
                 <th className="p-1.5 text-right">OI</th>
@@ -158,6 +173,13 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                     <td className={`p-1.5 text-right tabular ${legBg(ce, "ce")}`}>
                       {ce?.iv ? `${ce.iv.toFixed(1)}` : "—"}
                     </td>
+                    {showGreeks && (
+                      <td
+                        className={`p-1.5 text-right tabular ${legBg(ce, "ce")}`}
+                      >
+                        {ce?.delta != null ? ce.delta.toFixed(2) : "—"}
+                      </td>
+                    )}
                     <td
                       className={`p-1.5 text-right tabular font-medium ${legBg(ce, "ce")}`}
                     >
@@ -171,6 +193,13 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                     >
                       {pe?.ltp != null ? fmt(pe.ltp) : "—"}
                     </td>
+                    {showGreeks && (
+                      <td
+                        className={`p-1.5 text-right tabular ${legBg(pe, "pe")}`}
+                      >
+                        {pe?.delta != null ? pe.delta.toFixed(2) : "—"}
+                      </td>
+                    )}
                     <td className={`p-1.5 text-right tabular ${legBg(pe, "pe")}`}>
                       {pe?.iv ? `${pe.iv.toFixed(1)}` : "—"}
                     </td>
@@ -196,7 +225,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
               {visible.length === 0 && (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={showGreeks ? 11 : 9}
                     className="p-8 text-center text-muted-foreground"
                   >
                     No option chain rows.

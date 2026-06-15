@@ -13,8 +13,19 @@ export type GatewayOptions = {
    * Quote fetcher backing the stream. Defaults to the Yahoo poller so the SSE
    * feed works with zero credentials, but the route injects the user's active
    * broker (e.g. Angel One SmartAPI) so the live feed reflects their choice.
+   * Always used for the initial snapshot, and for the polling loop when no
+   * push `subscribe` source is provided.
    */
   fetchQuotes?: (symbols: string[]) => Promise<Quote[]>;
+  /**
+   * Optional push tick source (e.g. Angel One SmartStream WebSocket 2.0). When
+   * provided, the per-cycle poll is replaced by this real-time subscription —
+   * `fetchQuotes` still serves the one-shot initial snapshot. Returns (or
+   * resolves to) an unsubscribe handle invoked on stream cancel.
+   */
+  subscribe?: (
+    onQuote: (q: Quote) => void,
+  ) => (() => void) | Promise<() => void>;
 };
 
 /**
@@ -30,6 +41,7 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
   const last = new Map<string, FeedTick>();
 
   let timer: ReturnType<typeof setInterval> | null = null;
+  let unsubscribe: (() => void) | null = null;
   let closed = false;
 
   const stop = () => {
@@ -38,6 +50,14 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
     if (timer) {
       clearInterval(timer);
       timer = null;
+    }
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch {
+        /* ignore */
+      }
+      unsubscribe = null;
     }
   };
 
@@ -74,6 +94,47 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "snapshot failed";
         send({ error: msg });
+      }
+
+      // Diff a single quote against the last sent tick; emit only on change.
+      const pushQuote = (q: Quote) => {
+        if (closed) return;
+        const next = tickerToFeed(q);
+        const prev = last.get(next.symbol);
+        if (
+          !prev ||
+          prev.ltp !== next.ltp ||
+          prev.changePct !== next.changePct
+        ) {
+          last.set(next.symbol, next);
+          send({ ticks: [next], ts: Date.now() } satisfies FeedDiff);
+        }
+      };
+
+      // Push path: a real-time subscription replaces the poll loop. The timer
+      // becomes a keep-alive heartbeat so proxies don't drop an idle stream.
+      if (opts.subscribe) {
+        try {
+          const handle = await opts.subscribe(pushQuote);
+          if (closed) {
+            try {
+              handle();
+            } catch {
+              /* already closing */
+            }
+            return;
+          }
+          unsubscribe = handle;
+          timer = setInterval(() => {
+            safeEnqueue(enc.encode(`: ping\n\n`));
+          }, 15_000);
+          return;
+        } catch (e: unknown) {
+          // Subscription setup failed — fall through to polling so the feed
+          // still flows.
+          const msg = e instanceof Error ? e.message : "subscribe failed";
+          send({ error: msg });
+        }
       }
 
       const poll = async () => {
