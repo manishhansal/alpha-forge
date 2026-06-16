@@ -33,6 +33,7 @@ export const INDIA_SCALP_STRATEGY_IDS = [
   "IV_SPIKE",
   "LIQUIDITY_EDGE",
   "MAX_PAIN_GRAVITY",
+  "OPENING_BREAKOUT",
 ] as const;
 export type IndiaScalpStrategyId = (typeof INDIA_SCALP_STRATEGY_IDS)[number];
 
@@ -43,7 +44,8 @@ export type IndiaScalpStrategyCategory =
   | "orderflow"
   | "options-flow"
   | "volatility"
-  | "liquidity";
+  | "liquidity"
+  | "breakout";
 
 export type IndiaBadgeVariant =
   | "neutral"
@@ -149,6 +151,16 @@ export const INDIA_SCALP_STRATEGY_CATALOG: ReadonlyArray<IndiaScalpStrategyMeta>
       tags: ["Max pain", "Mean reversion", "OI walls", "Pinning"],
       badge: "neutral",
       monogram: "G",
+    },
+    {
+      id: "OPENING_BREAKOUT",
+      label: "Opening Breakout",
+      description:
+        "First 5-min candle (9:15–9:19:59 IST) breakout, tuned for Indian markets. The opening candle's high/low frames the day's battle; a 5-min close beyond it confirms the winner. Entry is on the retest — the broken level flips resistance→support (or vice-versa), the highest-probability, lowest-risk point of the setup. Stop sits below the breakout candle's low (above its high for shorts), target is 2R. PCR / OI / max-pain confirm before entry; ATM / 1-strike ITM only (post-9:30 IV crush erodes OTM). Wide gap-driven opening ranges down-size the trade; sub-0.1% ranges are skipped.",
+      category: "breakout",
+      tags: ["Opening range", "5-min breakout", "Retest", "2R", "PCR/OI"],
+      badge: "bull",
+      monogram: "B",
     },
   ] as const;
 

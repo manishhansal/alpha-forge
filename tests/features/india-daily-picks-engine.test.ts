@@ -11,13 +11,44 @@ import {
   bucketLogic,
   bucketScores,
   buildDailyPicks,
+  dailyPickFromScalpSignal,
   groupDailyPicks,
   istDateKey,
   marketAlignment,
   pickFromSignal,
   selectDailyPicks,
+  squareOffPick,
   trackPick,
 } from "@/features/india/daily-picks/engine";
+import type { IndiaScalpSignal } from "@/features/india/scalping/types";
+
+function makeScalpSignal(
+  overrides: Partial<IndiaScalpSignal> = {},
+): IndiaScalpSignal {
+  return {
+    strategyId: "OPENING_BREAKOUT",
+    symbol: overrides.symbol ?? "RELIANCE",
+    symbolName: overrides.symbolName ?? overrides.symbol ?? "RELIANCE",
+    timeframe: "5m",
+    direction: overrides.direction ?? "LONG",
+    price: overrides.price ?? 100.4,
+    reference: overrides.reference ?? 100.3,
+    atr: overrides.atr ?? 0.3,
+    confirmed: overrides.confirmed ?? true,
+    entry: overrides.entry ?? 100.3,
+    stopLoss: overrides.stopLoss ?? 100.0,
+    target: overrides.target ?? 100.9,
+    riskReward: overrides.riskReward ?? 2,
+    confidence: overrides.confidence ?? 0.7,
+    rationale: overrides.rationale ?? [
+      "Opening 5-min range break",
+      "Bullish breakout",
+      "Retest of ₹100.30 held",
+    ],
+    triggeredAt: overrides.triggeredAt ?? 1_700_000_000_000,
+    extras: overrides.extras ?? { stretchTarget: 101.2 },
+  };
+}
 
 function makeFactor(
   id: string,
@@ -93,6 +124,26 @@ function makeSignal(overrides: Partial<AiSignal> = {}): AiSignal {
   };
 }
 
+/** An index underlying signal (feeds only the Indices-Scalping bucket). */
+function makeIndexSignal(
+  symbol: string,
+  overrides: Partial<AiSignal> = {},
+): AiSignal {
+  return makeSignal({
+    symbol,
+    displayName: symbol,
+    pair: symbol,
+    confluences: [
+      makeFactor("trend", 0.6),
+      makeFactor("momentum", 0.7),
+      makeFactor("oiBuildup", 0.9),
+      makeFactor("pcr", 0.6),
+      makeFactor("maxPain", 0.5),
+    ],
+    ...overrides,
+  });
+}
+
 describe("daily-picks engine", () => {
   describe("bucketScores", () => {
     it("rewards aligned trend/momentum/volume for the momentum bucket", () => {
@@ -116,6 +167,49 @@ describe("daily-picks engine", () => {
       });
       expect(bucketScores(strong).MOMENTUM).toBeGreaterThan(
         bucketScores(weak).MOMENTUM,
+      );
+    });
+
+    it("boosts every bucket when the futures screen is aligned with the trade", () => {
+      const common = {
+        confluences: [
+          makeFactor("trend", 0.8),
+          makeFactor("momentum", 0.7),
+          makeFactor("volume", 0.6),
+          makeFactor("scanner", 0.5),
+        ],
+      };
+      const withScreen = makeSignal({
+        symbol: "PASS",
+        confluences: [...common.confluences, makeFactor("futuresScreen", 1)],
+      });
+      const withoutScreen = makeSignal({ symbol: "NOSCREEN", ...common });
+      const a = bucketScores(withScreen);
+      const b = bucketScores(withoutScreen);
+      expect(a.MOMENTUM).toBeGreaterThan(b.MOMENTUM);
+      expect(a.SCALPING).toBeGreaterThan(b.SCALPING);
+      expect(a.POTENTIAL).toBeGreaterThan(b.POTENTIAL);
+    });
+
+    it("does not reward a long whose futures screen is bearish (counter-trend)", () => {
+      const base = [
+        makeFactor("trend", 0.6),
+        makeFactor("momentum", 0.6),
+        makeFactor("volume", 0.5),
+        makeFactor("scanner", 0.4),
+      ];
+      const bullScreen = makeSignal({
+        symbol: "BULL",
+        confluences: [...base, makeFactor("futuresScreen", 1)],
+      });
+      // A long (BULLISH) carrying a bearish screen → aligned() goes negative →
+      // clamped to 0, so it ranks below the same setup with a bullish screen.
+      const bearScreenOnLong = makeSignal({
+        symbol: "FIGHT",
+        confluences: [...base, makeFactor("futuresScreen", -1)],
+      });
+      expect(bucketScores(bullScreen).MOMENTUM).toBeGreaterThan(
+        bucketScores(bearScreenOnLong).MOMENTUM,
       );
     });
 
@@ -144,6 +238,28 @@ describe("daily-picks engine", () => {
       });
       expect(bucketScores(scalp).SCALPING).toBeGreaterThan(
         bucketScores(positional).SCALPING,
+      );
+    });
+
+    it("rewards option-chain OI build-up for the indices-scalping bucket", () => {
+      const strongOi = makeIndexSignal("NIFTY", {
+        confluences: [
+          makeFactor("momentum", 0.6),
+          makeFactor("oiBuildup", 1),
+          makeFactor("pcr", 0.8),
+          makeFactor("maxPain", 0.7),
+        ],
+      });
+      const weakOi = makeIndexSignal("BANKNIFTY", {
+        confluences: [
+          makeFactor("momentum", 0.6),
+          makeFactor("oiBuildup", 0.05),
+          makeFactor("pcr", 0.05),
+          makeFactor("maxPain", 0),
+        ],
+      });
+      expect(bucketScores(strongOi).INDICES_SCALP).toBeGreaterThan(
+        bucketScores(weakOi).INDICES_SCALP,
       );
     });
 
@@ -178,15 +294,42 @@ describe("daily-picks engine", () => {
       );
     }
 
-    it("returns up to 3 picks per bucket", () => {
+    it("fills the three stock buckets from stocks only", () => {
       const sel = selectDailyPicks(universe(), 3);
-      for (const bucket of DAILY_PICK_BUCKETS) {
+      for (const bucket of ["MOMENTUM", "SCALPING", "POTENTIAL"] as const) {
         expect(sel[bucket].length).toBe(3);
+      }
+      // No index underlyings in the pool → the indices bucket stays empty.
+      expect(sel.INDICES_SCALP.length).toBe(0);
+    });
+
+    it("feeds the indices bucket only from index underlyings", () => {
+      const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"].map((s) =>
+        makeIndexSignal(s),
+      );
+      const sel = selectDailyPicks([...universe(), ...indices], 3);
+      // Top 3 of the 4 indices land in the indices bucket — all index symbols.
+      expect(sel.INDICES_SCALP.length).toBe(3);
+      expect(
+        sel.INDICES_SCALP.every((x) =>
+          ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"].includes(
+            x.signal.symbol,
+          ),
+        ),
+      ).toBe(true);
+      // Stock buckets never contain an index.
+      for (const bucket of ["MOMENTUM", "SCALPING", "POTENTIAL"] as const) {
+        expect(
+          sel[bucket].every((x) => x.signal.symbol.startsWith("S")),
+        ).toBe(true);
       }
     });
 
     it("never repeats a symbol across buckets", () => {
-      const sel = selectDailyPicks(universe(), 3);
+      const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"].map((s) =>
+        makeIndexSignal(s),
+      );
+      const sel = selectDailyPicks([...universe(), ...indices], 3);
       const symbols = DAILY_PICK_BUCKETS.flatMap((b) =>
         sel[b].map((x) => x.signal.symbol),
       );
@@ -224,6 +367,53 @@ describe("daily-picks engine", () => {
       expect(pick.status).toBe("OPEN");
       expect(pick.logic).toMatch(/momentum/i);
       expect(pick.rank).toBe(1);
+    });
+  });
+
+  describe("dailyPickFromScalpSignal", () => {
+    it("projects an Opening Breakout signal into an OPENING_BREAKOUT pick", () => {
+      const pick = dailyPickFromScalpSignal({
+        signal: makeScalpSignal({ symbol: "RELIANCE", confidence: 0.72 }),
+        rank: 1,
+        tradeDate: "2026-06-16",
+        now: 9999,
+      });
+      expect(pick.bucket).toBe("OPENING_BREAKOUT");
+      expect(pick.rank).toBe(1);
+      expect(pick.direction).toBe("BULLISH");
+      expect(pick.action).toBe("LONG");
+      expect(pick.entry).toBeCloseTo(100.3, 5);
+      expect(pick.stopLoss).toBeCloseTo(100.0, 5);
+      expect(pick.target).toBeCloseTo(100.9, 5);
+      expect(pick.canMoveUpto).toBeCloseTo(101.2, 5); // stretch (3R)
+      expect(pick.riskReward).toBe(2);
+      expect(pick.grade).toBe("A"); // 0.72 → A
+      expect(pick.status).toBe("OPEN");
+      // Appeared-on-board time is the strategy's trigger (the retest instant).
+      expect(pick.generatedAt).toBe(1_700_000_000_000);
+      expect(pick.pair).toBe("RELIANCE.NS");
+      expect(pick.logic).toMatch(/opening breakout/i);
+    });
+
+    it("maps a SHORT signal and indices keep a bare pair symbol", () => {
+      const pick = dailyPickFromScalpSignal({
+        signal: makeScalpSignal({
+          symbol: "NIFTY",
+          direction: "SHORT",
+          entry: 100,
+          stopLoss: 101,
+          target: 98,
+          extras: {},
+        }),
+        rank: 2,
+        tradeDate: "2026-06-16",
+        now: 1,
+      });
+      expect(pick.direction).toBe("BEARISH");
+      expect(pick.action).toBe("SHORT");
+      expect(pick.pair).toBe("NIFTY");
+      // No stretch in extras → derived as 3R below entry (risk 1 → 97).
+      expect(pick.canMoveUpto).toBeCloseTo(97, 5);
     });
   });
 
@@ -282,6 +472,15 @@ describe("daily-picks engine", () => {
       expect(after.status).toBe("TARGET_HIT");
     });
 
+    it("stamps resolvedAt the moment a level is touched", () => {
+      expect(base.resolvedAt).toBeNull();
+      const hit = trackPick(base, 106, 1234);
+      expect(hit.resolvedAt).toBe(1234);
+      // Subsequent ticks don't move the resolution time.
+      const after = trackPick(hit, 100, 5678);
+      expect(after.resolvedAt).toBe(1234);
+    });
+
     it("resolves to STOP_HIT", () => {
       const stopped = trackPick(base, 94, 1);
       expect(stopped.status).toBe("STOP_HIT");
@@ -291,6 +490,39 @@ describe("daily-picks engine", () => {
       const t = trackPick(base, 0, 1);
       expect(t.lastPrice).toBeNull();
       expect(t.status).toBe("OPEN");
+    });
+  });
+
+  describe("squareOffPick", () => {
+    const base = pickFromSignal({
+      signal: makeSignal({ symbol: "X", entry: 100, stopLoss: 95 }),
+      bucket: "POTENTIAL",
+      rank: 1,
+      tradeDate: "2026-06-15",
+      bucketScore: 0.7,
+      now: 0,
+    });
+
+    it("flips an OPEN pick to CLOSED at the market close, keeping its P&L", () => {
+      const tracked = trackPick(base, 102, 1); // +2% but neither target nor stop
+      expect(tracked.status).toBe("OPEN");
+      const closed = squareOffPick(tracked, 5);
+      expect(closed.status).toBe("CLOSED");
+      expect(closed.pnlPct).toBeCloseTo(2, 5);
+      expect(closed.lastPrice).toBe(102);
+      expect(closed.updatedAt).toBe(5);
+      // Square-off is itself a resolution → time-to-outcome is recorded.
+      expect(closed.resolvedAt).toBe(5);
+    });
+
+    it("leaves a resolved pick untouched (idempotent)", () => {
+      const hit = trackPick(base, 106, 1);
+      expect(hit.status).toBe("TARGET_HIT");
+      expect(squareOffPick(hit, 9)).toBe(hit);
+      const stopped = trackPick(base, 94, 1);
+      expect(squareOffPick(stopped, 9).status).toBe("STOP_HIT");
+      const closed = squareOffPick(trackPick(base, 101, 1), 9);
+      expect(squareOffPick(closed, 12)).toBe(closed);
     });
   });
 
@@ -305,11 +537,15 @@ describe("daily-picks engine", () => {
       });
       const groups = groupDailyPicks(picks);
       expect(groups.map((g) => g.bucket)).toEqual([
+        "INDICES_SCALP",
+        "OPENING_BREAKOUT",
         "MOMENTUM",
         "SCALPING",
         "POTENTIAL",
       ]);
+      // Only the (stock-fed) buckets have picks here; ranks are contiguous.
       for (const g of groups) {
+        if (g.picks.length === 0) continue;
         expect(g.picks.map((p) => p.rank)).toEqual([1, 2, 3]);
       }
     });

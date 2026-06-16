@@ -34,6 +34,7 @@ function makePick(overrides: Partial<DailyPick> = {}): DailyPick {
     pnlPct: 2,
     achievedPct: 40,
     generatedAt: 0,
+    resolvedAt: null,
     updatedAt: 0,
     ...overrides,
   };
@@ -63,6 +64,22 @@ describe("DailyPickCard", () => {
   it("flags a target-hit pick", () => {
     render(<DailyPickCard pick={makePick({ status: "TARGET_HIT" })} />);
     expect(screen.getByText("Target hit")).toBeInTheDocument();
+  });
+
+  it("shows when the signal appeared and how long it took to resolve", () => {
+    // Appeared 09:30 IST (04:00 UTC), target hit 75 minutes later.
+    const appeared = Date.UTC(2026, 5, 15, 4, 0, 0);
+    render(
+      <DailyPickCard
+        pick={makePick({
+          status: "TARGET_HIT",
+          generatedAt: appeared,
+          resolvedAt: appeared + 75 * 60_000,
+        })}
+      />,
+    );
+    expect(screen.getByText(/Appeared/)).toHaveTextContent("09:30");
+    expect(screen.getByText(/Target hit in/)).toHaveTextContent("1h 15m");
   });
 
   it("renders SHORT direction for a bearish pick", () => {

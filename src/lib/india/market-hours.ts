@@ -22,3 +22,27 @@ export function isNseMarketOpenIST(at: Date): boolean {
   const minutes = ist.getUTCHours() * 60 + ist.getUTCMinutes();
   return minutes >= OPEN_MINUTES && minutes <= CLOSE_MINUTES;
 }
+
+/**
+ * Epoch ms of the 15:30 IST session close for an IST calendar date
+ * (`YYYY-MM-DD`). Returns null for an unparseable date. 15:30 IST = 10:00 UTC.
+ */
+export function nseCloseMsForDateIST(tradeDate: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tradeDate);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  // IST midnight of the date, in epoch ms, then + the close minute offset.
+  const istMidnightMs = Date.UTC(Number(y), Number(mo) - 1, Number(d)) - IST_OFFSET_MS;
+  return istMidnightMs + CLOSE_MINUTES * 60_000;
+}
+
+/**
+ * True when the regular NSE session for `tradeDate` (an IST calendar date) has
+ * fully ended at `at`. Used to force intraday positions square-off at the
+ * close — past trading days are always "ended"; today only after 15:30 IST.
+ */
+export function isNseSessionEndedForDateIST(tradeDate: string, at: Date): boolean {
+  const closeMs = nseCloseMsForDateIST(tradeDate);
+  if (closeMs == null) return false;
+  return at.getTime() >= closeMs;
+}

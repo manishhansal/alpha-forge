@@ -24,19 +24,33 @@ import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { AI_MODEL_VERSION } from "@/features/ai-signals/engine";
 import { getIndiaDailyPickCandidates } from "@/features/ai-signals/india-builder";
+import { getIndiaOpeningBreakoutSignals } from "@/features/india/scalping/strategies/opening-breakout";
+import {
+  isNseSessionEndedForDateIST,
+  nseCloseMsForDateIST,
+} from "@/lib/india/market-hours";
 import type { AiMarketContext } from "@/types/ai-signals";
 import type { AiSignal } from "@/types/ai-signals";
 
 import {
   buildDailyPicks,
+  dailyPickFromScalpSignal,
+  EXTERNAL_BUCKETS,
   groupDailyPicks,
   istDateKey,
+  squareOffPick,
   trackPick,
   type DailyPick,
   type DailyPickBucket,
   type DailyPickGroup,
   type DailyPickStatus,
 } from "./engine";
+
+/** How many Opening Breakout signals seed the externally-sourced bucket. */
+const OPENING_BREAKOUT_PICKS = 3;
+
+const isExternalBucket = (bucket: string): boolean =>
+  (EXTERNAL_BUCKETS as readonly string[]).includes(bucket);
 
 export interface DailyPicksResponse {
   market: "india";
@@ -54,6 +68,8 @@ export interface DailyPicksDaySummary {
   total: number;
   targetHit: number;
   stopHit: number;
+  /** Squared off at the market close without hitting target/stop. */
+  closed: number;
   open: number;
   /** Resolved win rate = targetHit / (targetHit + stopHit). */
   winRate: number;
@@ -86,17 +102,59 @@ function priceMap(signals: AiSignal[]): Map<string, number> {
   return m;
 }
 
+/**
+ * Fetch the Opening Breakout strategy's top signals and project them into
+ * `OPENING_BREAKOUT` Daily Picks. Resilient — a failing scan yields no picks
+ * rather than blanking the board. ORB signals only appear once the opening
+ * candle has broken + retested (typically 9:30+), so this can legitimately
+ * return [] early in the session.
+ */
+async function loadOpeningBreakoutPicks(
+  tradeDate: string,
+  now: number,
+): Promise<{ picks: DailyPick[]; prices: Map<string, number> }> {
+  const prices = new Map<string, number>();
+  try {
+    // Pull a deeper slice for live-price coverage, freeze only the top few.
+    const signals = await getIndiaOpeningBreakoutSignals({
+      timeframe: "5m",
+      limit: 12,
+    });
+    for (const s of signals) {
+      if (Number.isFinite(s.price) && s.price > 0) prices.set(s.symbol, s.price);
+    }
+    const picks = signals
+      .slice(0, OPENING_BREAKOUT_PICKS)
+      .map((signal, i) =>
+        dailyPickFromScalpSignal({ signal, rank: i + 1, tradeDate, now }),
+      );
+    return { picks, prices };
+  } catch (err) {
+    console.warn(
+      "[daily-picks] opening-breakout unavailable:",
+      (err as Error).message,
+    );
+    return { picks: [], prices };
+  }
+}
+
 function ephemeralPicks(
   signals: AiSignal[],
   tradeDate: string,
   now: number,
   prices: Map<string, number>,
   marketBias: number,
+  orbPicks: DailyPick[],
 ): DailyPick[] {
-  const fresh = buildDailyPicks({ signals, tradeDate, now, marketBias });
-  return fresh.map((p) =>
-    trackPick(p, prices.get(p.symbol) ?? p.underlyingPrice, now),
-  );
+  const fresh = [
+    ...buildDailyPicks({ signals, tradeDate, now, marketBias }),
+    ...orbPicks,
+  ];
+  const sessionEnded = isNseSessionEndedForDateIST(tradeDate, new Date(now));
+  return fresh.map((p) => {
+    const tracked = trackPick(p, prices.get(p.symbol) ?? p.underlyingPrice, now);
+    return sessionEnded ? squareOffPick(tracked, now) : tracked;
+  });
 }
 
 type DailyPickCreate = Parameters<
@@ -135,6 +193,7 @@ function toCreateData(p: DailyPick): DailyPickCreate {
     lastPrice: p.lastPrice,
     pnlPct: p.pnlPct,
     achievedPct: p.achievedPct,
+    resolvedAt: p.resolvedAt != null ? new Date(p.resolvedAt) : null,
     generatedAt: new Date(p.generatedAt),
   } as DailyPickCreate;
 }
@@ -166,6 +225,7 @@ interface DailyPickRow {
   lastPrice: number | null;
   pnlPct: number | null;
   achievedPct: number | null;
+  resolvedAt: Date | null;
   generatedAt: Date;
   updatedAt: Date;
 }
@@ -199,50 +259,56 @@ function rowToPick(row: DailyPickRow): DailyPick {
     lastPrice: row.lastPrice,
     pnlPct: row.pnlPct,
     achievedPct: row.achievedPct,
+    resolvedAt: row.resolvedAt ? row.resolvedAt.getTime() : null,
     generatedAt: row.generatedAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
   };
 }
 
-async function loadOrCreateAndTrack(
+/** Track + persist a fresh batch of frozen picks (first freeze of a bucket). */
+async function freezeAndTrack(
   db: PrismaClient,
-  signals: AiSignal[],
+  fresh: DailyPick[],
   tradeDate: string,
   prices: Map<string, number>,
   now: number,
-  marketBias: number,
+  sessionEnded: boolean,
 ): Promise<DailyPick[]> {
-  const existing = (await db.indiaDailyPick.findMany({
-    where: { tradeDate },
-  })) as unknown as DailyPickRow[];
+  if (fresh.length === 0) return [];
+  const tracked = fresh.map((p) => {
+    const t = trackPick(p, prices.get(p.symbol) ?? p.underlyingPrice, now);
+    return sessionEnded ? squareOffPick(t, now) : t;
+  });
+  await db.indiaDailyPick.createMany({
+    data: tracked.map(toCreateData),
+    skipDuplicates: true,
+  });
+  return tracked;
+}
 
-  // First request of the day — freeze the picks.
-  if (existing.length === 0) {
-    const fresh = buildDailyPicks({ signals, tradeDate, now, marketBias });
-    if (fresh.length === 0) return [];
-    const tracked = fresh.map((p) =>
-      trackPick(p, prices.get(p.symbol) ?? p.underlyingPrice, now),
-    );
-    await db.indiaDailyPick.createMany({
-      data: tracked.map(toCreateData),
-      skipDuplicates: true,
-    });
-    return tracked;
-  }
-
-  // Subsequent requests — live-track the frozen picks.
+/** Live-track already-frozen rows against the latest mark, persisting deltas. */
+async function trackExistingRows(
+  db: PrismaClient,
+  rows: DailyPickRow[],
+  tradeDate: string,
+  prices: Map<string, number>,
+  now: number,
+  sessionEnded: boolean,
+): Promise<DailyPick[]> {
   const updated: DailyPick[] = [];
-  for (const row of existing) {
+  for (const row of rows) {
     const pick = rowToPick(row);
     const price = prices.get(pick.symbol) ?? pick.lastPrice ?? null;
-    const next = trackPick(pick, price, now);
+    const tracked = trackPick(pick, price, now);
+    const next = sessionEnded ? squareOffPick(tracked, now) : tracked;
     updated.push(next);
 
     const changed =
       next.status !== pick.status ||
       next.lastPrice !== pick.lastPrice ||
       next.pnlPct !== pick.pnlPct ||
-      next.achievedPct !== pick.achievedPct;
+      next.achievedPct !== pick.achievedPct ||
+      next.resolvedAt !== pick.resolvedAt;
     if (changed) {
       await db.indiaDailyPick.update({
         where: {
@@ -257,11 +323,71 @@ async function loadOrCreateAndTrack(
           lastPrice: next.lastPrice,
           pnlPct: next.pnlPct,
           achievedPct: next.achievedPct,
+          resolvedAt: next.resolvedAt != null ? new Date(next.resolvedAt) : null,
         },
       });
     }
   }
   return updated;
+}
+
+async function loadOrCreateAndTrack(
+  db: PrismaClient,
+  signals: AiSignal[],
+  tradeDate: string,
+  prices: Map<string, number>,
+  now: number,
+  marketBias: number,
+  orbPicks: DailyPick[],
+): Promise<DailyPick[]> {
+  const existing = (await db.indiaDailyPick.findMany({
+    where: { tradeDate },
+  })) as unknown as DailyPickRow[];
+
+  // Intraday-only: once this trade date's 15:30 IST session has ended, any
+  // still-open pick is force-squared-off at its last mark (no overnight carry).
+  const sessionEnded = isNseSessionEndedForDateIST(tradeDate, new Date(now));
+
+  // The AI-sourced buckets (indices / momentum / scalping / potential) and the
+  // externally-sourced Opening Breakout bucket are frozen independently: the AI
+  // buckets freeze on the first request of the day, while ORB freezes *lazily*
+  // the first time its signals exist (the opening candle must break + retest
+  // first, usually 9:30+). Each then live-tracks in place.
+  const aiExisting = existing.filter((r) => !isExternalBucket(r.bucket));
+  const orbExisting = existing.filter((r) => isExternalBucket(r.bucket));
+
+  const ai =
+    aiExisting.length === 0
+      ? await freezeAndTrack(
+          db,
+          buildDailyPicks({ signals, tradeDate, now, marketBias }),
+          tradeDate,
+          prices,
+          now,
+          sessionEnded,
+        )
+      : await trackExistingRows(
+          db,
+          aiExisting,
+          tradeDate,
+          prices,
+          now,
+          sessionEnded,
+        );
+
+  const orb =
+    orbExisting.length === 0
+      ? await freezeAndTrack(db, orbPicks, tradeDate, prices, now, sessionEnded)
+      : await trackExistingRows(
+          db,
+          orbExisting,
+          tradeDate,
+          prices,
+          now,
+          sessionEnded,
+        );
+
+  return [...ai, ...orb];
 }
 
 /**
@@ -271,10 +397,16 @@ async function loadOrCreateAndTrack(
 export async function getIndiaDailyPicks(
   prisma?: PrismaClient,
 ): Promise<DailyPicksResponse> {
-  const candidates = await getIndiaDailyPickCandidates();
   const now = Date.now();
   const tradeDate = istDateKey(new Date(now));
+  const [candidates, orb] = await Promise.all([
+    getIndiaDailyPickCandidates(),
+    loadOpeningBreakoutPicks(tradeDate, now),
+  ]);
   const prices = priceMap(candidates.signals);
+  // Merge Opening Breakout live prices so its (possibly non-AI-universe) symbols
+  // also track live.
+  for (const [sym, px] of orb.prices) prices.set(sym, px);
   const marketBias = candidates.context.regimeScore;
 
   let picks: DailyPick[];
@@ -290,6 +422,7 @@ export async function getIndiaDailyPicks(
         prices,
         now,
         marketBias,
+        orb.picks,
       );
       persisted = true;
     } catch (err) {
@@ -297,10 +430,24 @@ export async function getIndiaDailyPicks(
         "[daily-picks] DB unavailable, serving ephemeral picks:",
         (err as Error).message,
       );
-      picks = ephemeralPicks(candidates.signals, tradeDate, now, prices, marketBias);
+      picks = ephemeralPicks(
+        candidates.signals,
+        tradeDate,
+        now,
+        prices,
+        marketBias,
+        orb.picks,
+      );
     }
   } else {
-    picks = ephemeralPicks(candidates.signals, tradeDate, now, prices, marketBias);
+    picks = ephemeralPicks(
+      candidates.signals,
+      tradeDate,
+      now,
+      prices,
+      marketBias,
+      orb.picks,
+    );
   }
 
   return {
@@ -318,10 +465,12 @@ export async function getIndiaDailyPicks(
 export function summariseDay(picks: DailyPick[]): DailyPicksDaySummary {
   let targetHit = 0;
   let stopHit = 0;
+  let closed = 0;
   let open = 0;
   for (const p of picks) {
     if (p.status === "TARGET_HIT") targetHit += 1;
     else if (p.status === "STOP_HIT") stopHit += 1;
+    else if (p.status === "CLOSED" || p.status === "EXPIRED") closed += 1;
     else open += 1;
   }
   const resolved = targetHit + stopHit;
@@ -329,6 +478,7 @@ export function summariseDay(picks: DailyPick[]): DailyPicksDaySummary {
     total: picks.length,
     targetHit,
     stopHit,
+    closed,
     open,
     winRate: resolved > 0 ? targetHit / resolved : 0,
   };
@@ -367,12 +517,56 @@ export async function getIndiaDailyPicksHistory(
       orderBy: [{ tradeDate: "desc" }, { rank: "asc" }],
     })) as unknown as DailyPickRow[];
 
+    // Every history day is a *past* trading day, so its session has ended —
+    // force-square-off any pick still left OPEN (intraday, no overnight carry)
+    // and persist the flip so the track record is honest on future reads too.
+    const squaredOff: Array<{
+      tradeDate: string;
+      bucket: string;
+      rank: number;
+      resolvedAt: number | null;
+    }> = [];
     const byDate = new Map<string, DailyPick[]>();
     for (const row of rows) {
-      const pick = rowToPick(row);
+      let pick = rowToPick(row);
+      if (pick.status === "OPEN") {
+        // Resolve at that day's 15:30 IST close (not "now"), so the recorded
+        // time-to-outcome reflects a real intraday hold, not the gap until the
+        // history was viewed.
+        const closeMs = nseCloseMsForDateIST(pick.tradeDate) ?? now;
+        pick = squareOffPick(pick, closeMs);
+        squaredOff.push({
+          tradeDate: pick.tradeDate,
+          bucket: pick.bucket,
+          rank: pick.rank,
+          resolvedAt: pick.resolvedAt,
+        });
+      }
       const bucket = byDate.get(pick.tradeDate) ?? [];
       bucket.push(pick);
       byDate.set(pick.tradeDate, bucket);
+    }
+
+    // Persist the flips so the track record stays honest on future reads. Each
+    // day closes at its own instant, so these are per-pick updates.
+    for (const s of squaredOff) {
+      try {
+        await db.indiaDailyPick.update({
+          where: {
+            tradeDate_bucket_rank: {
+              tradeDate: s.tradeDate,
+              bucket: s.bucket,
+              rank: s.rank,
+            },
+          },
+          data: {
+            status: "CLOSED",
+            resolvedAt: s.resolvedAt != null ? new Date(s.resolvedAt) : null,
+          },
+        });
+      } catch {
+        // Display still reflects the square-off even if the write fails.
+      }
     }
 
     const out: DailyPicksHistoryDay[] = dates

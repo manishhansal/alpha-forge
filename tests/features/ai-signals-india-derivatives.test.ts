@@ -4,8 +4,44 @@ import type { DerivOiBuildup, DerivPcr } from "@/services/india/angelone/derivat
 import type { Candle, OptionChain, OptionChainAnalytics } from "@/types/india";
 import { __internals } from "@/features/ai-signals/india-builder";
 
-const { indiaFactors, buildIndiaSignal, pcrMapFromRows, oiScoreMapFromRows } =
-  __internals;
+const {
+  indiaFactors,
+  buildIndiaSignal,
+  computeFuturesScreen,
+  pcrMapFromRows,
+  oiScoreMapFromRows,
+} = __internals;
+
+const DAY = 86_400;
+
+/**
+ * A daily series trending in `dir` (+1 up / -1 down) for `n` sessions, one
+ * calendar day apart, liquid enough to clear the screen. The last candle is
+ * widened into a range-expansion bar and pushed in `dir` so the full screen
+ * can pass.
+ */
+function trendSeries(n: number, dir: 1 | -1): Candle[] {
+  const out: Candle[] = [];
+  for (let i = 0; i < n; i++) {
+    const base = 100 + dir * i * 0.5;
+    out.push({
+      time: i * DAY,
+      open: base,
+      high: base + 1,
+      low: base - 1,
+      close: base + dir * 0.25,
+      volume: 50_000,
+    });
+  }
+  const last = out[out.length - 1];
+  const prev = out[out.length - 2];
+  // Range-expansion bar in the trend direction, closing past the prior close.
+  last.open = prev.close;
+  last.close = prev.close + dir * 12;
+  last.high = Math.max(last.open, last.close) + 2;
+  last.low = Math.min(last.open, last.close) - 2;
+  return out;
+}
 
 /** A flat daily series of `n` candles around `base`, optionally breaking out. */
 function series(
@@ -218,6 +254,55 @@ describe("ai-signals/india-builder derivatives wiring", () => {
         marketRegimeScore: -0.8,
       });
       expect(["LONG", "SHORT", "WAIT"]).toContain(sig.action);
+    });
+  });
+
+  describe("computeFuturesScreen", () => {
+    it("returns null when history is too short", () => {
+      expect(computeFuturesScreen(series(5, 100))).toBeNull();
+    });
+
+    it("passes the full bullish screen on an up-trend range-expansion bar", () => {
+      const screen = computeFuturesScreen(trendSeries(210, 1));
+      expect(screen).not.toBeNull();
+      expect(screen!.bullPass).toBe(true);
+      expect(screen!.bearPass).toBe(false);
+      expect(screen!.score).toBeGreaterThanOrEqual(0.9);
+      expect(screen!.metBull).toBe(7);
+    });
+
+    it("passes the full bearish mirror on a down-trend range-expansion bar", () => {
+      const screen = computeFuturesScreen(trendSeries(210, -1));
+      expect(screen).not.toBeNull();
+      expect(screen!.bearPass).toBe(true);
+      expect(screen!.bullPass).toBe(false);
+      expect(screen!.score).toBeLessThanOrEqual(-0.9);
+    });
+
+    it("fails the screen without range expansion", () => {
+      // A flat series: no widest-range bar, no SMA stack → not a full pass.
+      const screen = computeFuturesScreen(series(210, 100));
+      expect(screen).not.toBeNull();
+      expect(screen!.bullPass).toBe(false);
+      expect(screen!.bearPass).toBe(false);
+    });
+
+    it("treats sub-10k prior-session volume as illiquid (no bull pass)", () => {
+      const c = trendSeries(210, 1);
+      c[c.length - 2].volume = 500; // prior session below the liquidity gate
+      const screen = computeFuturesScreen(c);
+      expect(screen!.bullPass).toBe(false);
+    });
+
+    it("attaches a futuresScreen factor only when supplied", () => {
+      const withScreen = indiaFactors({
+        ...baseArgs,
+        dailies: trendSeries(210, 1),
+        futuresScreen: computeFuturesScreen(trendSeries(210, 1)),
+      });
+      expect(withScreen.find((f) => f.id === "futuresScreen")).toBeDefined();
+      const withoutScreen = indiaFactors({ ...baseArgs, dailies: series(30, 100) });
+      expect(withoutScreen.find((f) => f.id === "futuresScreen")).toBeUndefined();
     });
   });
 });

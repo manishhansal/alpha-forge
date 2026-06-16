@@ -176,6 +176,135 @@ function sma(candles: Candle[], period: number): number | null {
   return last.reduce((s, c) => s + c.close, 0) / period;
 }
 
+/** Epoch-day number of the Monday that starts `d`'s ISO week (UTC). */
+function mondayKey(d: Date): number {
+  const day = d.getUTCDay(); // 0 = Sun
+  const diff = (day + 6) % 7; // days since Monday
+  const monday = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - diff);
+  return Math.floor(monday / 86_400_000);
+}
+
+/**
+ * Is the *current* weekly / monthly candle bullish (close > open)? Aggregated
+ * from the daily candles — the period's open is its first session's open and
+ * its close is the latest close. Returns null when there's no data.
+ */
+function periodBullish(dailies: Candle[], unit: "week" | "month"): boolean | null {
+  if (dailies.length === 0) return null;
+  const last = dailies.at(-1)!;
+  const lastDate = new Date(last.time * 1000);
+  const sameMonth = (c: Candle) => {
+    const d = new Date(c.time * 1000);
+    return (
+      d.getUTCFullYear() === lastDate.getUTCFullYear() &&
+      d.getUTCMonth() === lastDate.getUTCMonth()
+    );
+  };
+  const sameWeek = (c: Candle) =>
+    mondayKey(new Date(c.time * 1000)) === mondayKey(lastDate);
+  const group = dailies.filter(unit === "month" ? sameMonth : sameWeek);
+  if (group.length === 0) return null;
+  return group.at(-1)!.close > group[0].open;
+}
+
+const candleRange = (c: Candle): number => c.high - c.low;
+
+/**
+ * Per-symbol read of the institutional futures-segment screen (the Chartink
+ * filter set): today's range is the widest of the last 8 sessions (range
+ * expansion), an up candle closing above the prior close, the week and month
+ * are bullish, the prior session is liquid (>10k), and the SMA stack is
+ * 20 > 50 > 200. We also evaluate the exact bearish mirror so the same screen
+ * ranks shorts in a down market. Returns a signed score in [-1, 1] plus the
+ * full-screen pass flags. Null when history is too short.
+ */
+export interface FuturesScreen {
+  /** Signed read: bullish conditions minus the bearish mirror, in [-1, 1]. */
+  score: number;
+  /** All seven bullish conditions met (the literal Chartink screen). */
+  bullPass: boolean;
+  /** All seven bearish-mirror conditions met. */
+  bearPass: boolean;
+  /** Bullish conditions met (of 7). */
+  metBull: number;
+  /** Bearish conditions met (of 7). */
+  metBear: number;
+}
+
+export function computeFuturesScreen(dailies: Candle[]): FuturesScreen | null {
+  // Need today + 7 prior sessions for range expansion (and a prior close).
+  if (dailies.length < 9) return null;
+  const last = dailies.at(-1)!;
+  const prev = dailies.at(-2)!;
+
+  const prior7 = dailies.slice(-8, -1);
+  const maxPriorRange = Math.max(...prior7.map(candleRange));
+  const rangeExpansion = candleRange(last) > maxPriorRange;
+
+  // Liquidity gate on the prior session. Index candles often ship 0/null
+  // volume on Yahoo — treat those as a pass (the screen targets stocks).
+  const prevVol = prev.volume ?? null;
+  const liquidity = prevVol == null || prevVol === 0 ? true : prevVol > 10_000;
+
+  const dailyBull = last.close > last.open;
+  const dailyBear = last.close < last.open;
+  const upDay = last.close > prev.close;
+  const downDay = last.close < prev.close;
+
+  const weekly = periodBullish(dailies, "week");
+  const monthly = periodBullish(dailies, "month");
+
+  const s20 = sma(dailies, 20);
+  const s50 = sma(dailies, 50);
+  const s200 = sma(dailies, 200);
+  const haveStack = s20 != null && s50 != null && s200 != null;
+  const stackBull = haveStack && s20! > s50! && s50! > s200!;
+  const stackBear = haveStack && s20! < s50! && s50! < s200!;
+
+  const bullDir = [dailyBull, upDay, weekly === true, monthly === true, stackBull].filter(
+    Boolean,
+  ).length;
+  const bearDir = [
+    dailyBear,
+    downDay,
+    weekly === false,
+    monthly === false,
+    stackBear,
+  ].filter(Boolean).length;
+
+  let score = (bullDir - bearDir) / 5;
+  if (!rangeExpansion) score *= 0.6; // no volatility expansion → fade the read
+  if (!liquidity) score *= 0.6;
+
+  const bullPass =
+    rangeExpansion &&
+    liquidity &&
+    dailyBull &&
+    upDay &&
+    weekly === true &&
+    monthly === true &&
+    stackBull;
+  const bearPass =
+    rangeExpansion &&
+    liquidity &&
+    dailyBear &&
+    downDay &&
+    weekly === false &&
+    monthly === false &&
+    stackBear;
+  if (bullPass) score = Math.max(score, 0.9);
+  if (bearPass) score = Math.min(score, -0.9);
+
+  const gate = (rangeExpansion ? 1 : 0) + (liquidity ? 1 : 0);
+  return {
+    score: clamp(score, -1, 1),
+    bullPass,
+    bearPass,
+    metBull: bullDir + gate,
+    metBear: bearDir + gate,
+  };
+}
+
 /**
  * Support/resistance breakout read in [-1, 1], the way a desk frames it:
  * a close above the prior `lookback`-day high (resistance) is bullish, below
@@ -260,6 +389,13 @@ interface IndiaSignalInputs {
   marketRegimeScore?: number | null;
   /** Per-symbol news read: net lexicon score + matched-headline count. */
   newsScore?: { score: number; count: number } | null;
+  /**
+   * Institutional futures-segment screen (range expansion + bullish candle +
+   * up day + bullish week/month + liquidity + SMA 20>50>200, with a bearish
+   * mirror). Folded in as a confluence factor for Daily Picks so the board
+   * leans on the same filter set a desk screens with. Null → factor omitted.
+   */
+  futuresScreen?: FuturesScreen | null;
   /**
    * Force a specific horizon (Daily Picks pin every pick to `intraday` so the
    * board is an intraday product). When omitted the horizon is auto-picked.
@@ -347,7 +483,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       ? ((chain.analytics.maxPain - lastClose) / lastClose) * 100
       : null;
 
-  return [
+  const factors: AiConfluenceFactor[] = [
     makeFactor({
       id: "dayChange",
       category: "flow",
@@ -568,6 +704,35 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
           : `Outside ${args.windowLabel} — wait for market open`,
     }),
   ];
+
+  // Institutional futures-segment screen (Daily Picks only). Added when the
+  // caller supplies the screen read so it influences direction + confidence
+  // and is read by the Daily Picks bucket ranking.
+  const screen = args.futuresScreen ?? null;
+  if (screen) {
+    factors.push(
+      makeFactor({
+        id: "futuresScreen",
+        category: "technical",
+        label: "Futures momentum screen",
+        weight: 0.12,
+        raw: screen.score,
+        denominator: 1,
+        describe: () =>
+          screen.bullPass
+            ? "Passes the full bullish F&O screen (7/7) — widest range in 8 days, up candle > prev close, week + month up, SMA 20>50>200"
+            : screen.bearPass
+              ? "Passes the full bearish F&O screen (7/7) — widest range in 8 days, down candle < prev close, week + month down, SMA 20<50<200"
+              : screen.score > 0.05
+                ? `Bullish screen — ${screen.metBull}/7 conditions met`
+                : screen.score < -0.05
+                  ? `Bearish screen — ${screen.metBear}/7 conditions met`
+                  : "Screen mixed — no clean edge",
+      }),
+    );
+  }
+
+  return factors;
 }
 
 /**
@@ -1042,6 +1207,8 @@ async function computeIndiaUniverse(
     intraday?: boolean;
     /** Lower the WAIT threshold so borderline setups still take a side. */
     actionMinMagnitude?: number;
+    /** Compute + attach the institutional futures screen (Daily Picks). */
+    attachFuturesScreen?: boolean;
   },
 ): Promise<IndiaUniverseResult> {
   const fetchChainFor = opts?.fetchChainFor ?? (() => true);
@@ -1157,6 +1324,9 @@ async function computeIndiaUniverse(
       horizonOverride: opts?.forceHorizon,
       intraday: opts?.intraday,
       actionMinMagnitude: opts?.actionMinMagnitude,
+      futuresScreen: opts?.attachFuturesScreen
+        ? computeFuturesScreen(dailies)
+        : null,
     });
   });
 
@@ -1224,6 +1394,9 @@ export async function getIndiaDailyPickCandidates(): Promise<IndiaDailyPickCandi
       forceHorizon: "intraday",
       intraday: true,
       actionMinMagnitude: 0.1,
+      // Rank with the institutional futures-segment screen (range expansion,
+      // bullish candle / up day, bullish week+month, liquidity, SMA 20>50>200).
+      attachFuturesScreen: true,
     });
     return {
       signals: r.signals,
@@ -1240,6 +1413,7 @@ export const __internals = {
   dailyAtr,
   dailyRsi,
   sma,
+  computeFuturesScreen,
   pcrMapFromRows,
   oiScoreMapFromRows,
   loadFirstPartyDerivatives,

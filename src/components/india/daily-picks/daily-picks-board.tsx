@@ -1,7 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Flame, Gauge, RefreshCw, Sparkles, Zap } from "lucide-react";
+import {
+  Flame,
+  Gauge,
+  LineChart,
+  RefreshCw,
+  Sparkles,
+  Sunrise,
+  Zap,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { DailyPickBucket } from "@/features/india/daily-picks/engine";
@@ -15,6 +23,8 @@ interface Props {
 }
 
 const BUCKET_ICON: Record<DailyPickBucket, typeof Flame> = {
+  INDICES_SCALP: LineChart,
+  OPENING_BREAKOUT: Sunrise,
   MOMENTUM: Flame,
   SCALPING: Zap,
   POTENTIAL: Sparkles,

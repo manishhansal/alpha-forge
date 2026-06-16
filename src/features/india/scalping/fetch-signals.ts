@@ -8,6 +8,7 @@ import {
   isIndiaScalpStrategyId,
   type IndiaScalpStrategyId,
 } from "@/features/india/scalping/strategies/catalog";
+import { getIndiaOpeningBreakoutSignals } from "@/features/india/scalping/strategies/opening-breakout";
 import { getIndiaPositioningSignals } from "@/features/india/scalping/strategies/positioning";
 import type {
   IndiaScalpDirection,
@@ -105,30 +106,43 @@ export async function getIndiaScalpSignals(
       ? options.strategies.filter(isIndiaScalpStrategyId)
       : [...ALL_INDIA_STRATEGY_IDS];
 
-  // Split the request into the scanner-backed strategies (run via the NSE
-  // scanner engine) and the option-positioning strategies (the two
-  // ILE-Pine ports run via the dedicated positioning engine).
+  // Split the request into three signal families: scanner-backed (NSE scanner
+  // engine), option-positioning (the two ILE-Pine ports), and the Opening
+  // Breakout engine (5-min opening-range breakout). Each runs independently.
   const scannerIds = requested.filter(isScannerBacked);
-  const positioningIds = requested.filter((id) => !isScannerBacked(id));
+  const wantsOpeningBreakout = requested.includes("OPENING_BREAKOUT");
+  const positioningIds = requested.filter(
+    (id) => !isScannerBacked(id) && id !== "OPENING_BREAKOUT",
+  );
 
-  const [scannerResults, positioningSignals] = await Promise.all([
-    Promise.allSettled(
-      scannerIds.map(async (strategyId) => {
-        const scanner = await runScanner(STRATEGY_TO_SCANNER[strategyId], limit);
-        return { strategyId, scanner };
-      }),
-    ),
-    positioningIds.length > 0
-      ? getIndiaPositioningSignals({
-          strategies: positioningIds,
-          timeframe,
-          limit,
-        }).catch((err) => {
-          console.warn("[india/scalping/fetch-signals] positioning", err);
-          return [] as IndiaScalpSignal[];
-        })
-      : Promise.resolve([] as IndiaScalpSignal[]),
-  ]);
+  const [scannerResults, positioningSignals, openingBreakoutSignals] =
+    await Promise.all([
+      Promise.allSettled(
+        scannerIds.map(async (strategyId) => {
+          const scanner = await runScanner(
+            STRATEGY_TO_SCANNER[strategyId],
+            limit,
+          );
+          return { strategyId, scanner };
+        }),
+      ),
+      positioningIds.length > 0
+        ? getIndiaPositioningSignals({
+            strategies: positioningIds,
+            timeframe,
+            limit,
+          }).catch((err) => {
+            console.warn("[india/scalping/fetch-signals] positioning", err);
+            return [] as IndiaScalpSignal[];
+          })
+        : Promise.resolve([] as IndiaScalpSignal[]),
+      wantsOpeningBreakout
+        ? getIndiaOpeningBreakoutSignals({ timeframe, limit }).catch((err) => {
+            console.warn("[india/scalping/fetch-signals] opening-breakout", err);
+            return [] as IndiaScalpSignal[];
+          })
+        : Promise.resolve([] as IndiaScalpSignal[]),
+    ]);
 
   const signals: IndiaScalpSignal[] = [];
   let latestFetchedAt = 0;
@@ -148,6 +162,11 @@ export async function getIndiaScalpSignals(
   }
 
   for (const sig of positioningSignals) {
+    signals.push(sig);
+    if (sig.triggeredAt > latestFetchedAt) latestFetchedAt = sig.triggeredAt;
+  }
+
+  for (const sig of openingBreakoutSignals) {
     signals.push(sig);
     if (sig.triggeredAt > latestFetchedAt) latestFetchedAt = sig.triggeredAt;
   }

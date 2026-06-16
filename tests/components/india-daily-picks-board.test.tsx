@@ -86,8 +86,10 @@ afterEach(() => {
 });
 
 describe("DailyPicksBoard", () => {
-  it("renders all three bucket sections", () => {
+  it("renders every bucket section, including indices scalping", () => {
     render(<DailyPicksBoard initialData={makeData()} />);
+    expect(screen.getByText("Indices Scalping")).toBeInTheDocument();
+    expect(screen.getByText("Opening Breakout")).toBeInTheDocument();
     expect(screen.getByText("Highly Momentum Stocks")).toBeInTheDocument();
     expect(screen.getByText("Highly Scalping Stocks")).toBeInTheDocument();
     expect(screen.getByText("Highly Potential Stocks")).toBeInTheDocument();

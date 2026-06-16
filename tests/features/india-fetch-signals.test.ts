@@ -8,14 +8,21 @@ vi.mock("@/features/india/scalping/strategies/positioning", () => ({
   getIndiaPositioningSignals: vi.fn(),
 }));
 
+vi.mock("@/features/india/scalping/strategies/opening-breakout", () => ({
+  getIndiaOpeningBreakoutSignals: vi.fn(),
+}));
+
 import { runScanner } from "@/services/india/scanner/engine";
 import { getIndiaPositioningSignals } from "@/features/india/scalping/strategies/positioning";
+import { getIndiaOpeningBreakoutSignals } from "@/features/india/scalping/strategies/opening-breakout";
 import { getIndiaScalpSignals } from "@/features/india/scalping/fetch-signals";
 import type { ScannerHit, ScannerResult, ScannerType } from "@/types/india/scanner";
 
 const mockedRunScanner = runScanner as unknown as ReturnType<typeof vi.fn>;
 const mockedPositioning =
   getIndiaPositioningSignals as unknown as ReturnType<typeof vi.fn>;
+const mockedOpeningBreakout =
+  getIndiaOpeningBreakoutSignals as unknown as ReturnType<typeof vi.fn>;
 
 function makeScanner(type: ScannerType, hits: ScannerHit[]): ScannerResult {
   return {
@@ -30,10 +37,12 @@ function makeScanner(type: ScannerType, hits: ScannerHit[]): ScannerResult {
 beforeEach(() => {
   mockedRunScanner.mockReset();
   mockedPositioning.mockReset();
-  // Default: the option-positioning engine yields nothing so the
-  // scanner-focused assertions below stay deterministic. Individual
-  // tests override this when they exercise ILE / IMPG.
+  mockedOpeningBreakout.mockReset();
+  // Default: the option-positioning + opening-breakout engines yield nothing
+  // so the scanner-focused assertions below stay deterministic. Individual
+  // tests override these when they exercise ILE / IMPG / ORB.
   mockedPositioning.mockResolvedValue([]);
+  mockedOpeningBreakout.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -257,6 +266,49 @@ describe("features/india/scalping/fetch-signals — adapter shape", () => {
     expect(res.signals.some((s) => s.strategyId === "MAX_PAIN_GRAVITY")).toBe(
       true,
     );
+  });
+
+  it("merges Opening Breakout signals and only runs the ORB engine when requested", async () => {
+    mockedRunScanner.mockImplementation(async (type: ScannerType) =>
+      makeScanner(type, [
+        { symbol: "RELIANCE", price: 2900, changePct: 0.8, metric: 0.8, metricLabel: "+0.80%" },
+      ]),
+    );
+    mockedOpeningBreakout.mockResolvedValue([
+      {
+        strategyId: "OPENING_BREAKOUT",
+        symbol: "NIFTY",
+        symbolName: "NIFTY 50",
+        timeframe: "5m",
+        direction: "LONG",
+        price: 22050,
+        reference: 22000,
+        atr: 30,
+        confirmed: true,
+        entry: 22000,
+        stopLoss: 21970,
+        target: 22060,
+        riskReward: 2,
+        confidence: 0.7,
+        rationale: ["Opening 5-min range break", "Retest held"],
+        triggeredAt: Date.now(),
+      },
+    ]);
+
+    const res = await getIndiaScalpSignals({ timeframe: "5m" });
+
+    expect(mockedOpeningBreakout).toHaveBeenCalledTimes(1);
+    expect(mockedOpeningBreakout.mock.calls[0][0].timeframe).toBe("5m");
+    expect(res.signals.some((s) => s.strategyId === "OPENING_BREAKOUT")).toBe(
+      true,
+    );
+  });
+
+  it("runs only the Opening Breakout engine when only ORB is requested", async () => {
+    await getIndiaScalpSignals({ strategies: ["OPENING_BREAKOUT"] });
+    expect(mockedRunScanner).not.toHaveBeenCalled();
+    expect(mockedPositioning).not.toHaveBeenCalled();
+    expect(mockedOpeningBreakout).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT invoke the positioning engine when only scanner strategies are requested", async () => {

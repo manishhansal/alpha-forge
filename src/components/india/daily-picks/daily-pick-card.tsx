@@ -1,6 +1,7 @@
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Clock,
   Gauge,
   Rocket,
   ShieldAlert,
@@ -12,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DailyPick, DailyPickStatus } from "@/features/india/daily-picks/engine";
-import { fmt, fmtPct } from "@/lib/india/format";
+import { fmt, fmtDuration, fmtIstTime, fmtPct } from "@/lib/india/format";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -26,7 +27,17 @@ const STATUS_META: Record<
   OPEN: { label: "Live", variant: "neutral" },
   TARGET_HIT: { label: "Target hit", variant: "bull" },
   STOP_HIT: { label: "Stopped out", variant: "bear" },
+  CLOSED: { label: "Squared off", variant: "neutral" },
   EXPIRED: { label: "Expired", variant: "warning" },
+};
+
+/** Leading verb for the time-to-outcome line, by status. */
+const OUTCOME_VERB: Record<DailyPickStatus, string> = {
+  OPEN: "Live for",
+  TARGET_HIT: "Target hit in",
+  STOP_HIT: "Stopped in",
+  CLOSED: "Squared off in",
+  EXPIRED: "Expired after",
 };
 
 /**
@@ -44,6 +55,13 @@ export function DailyPickCard({ pick }: Props) {
   const pnlTone = pnl == null ? "neutral" : pnl >= 0 ? "bull" : "bear";
   const achieved = pick.achievedPct;
   const progressWidth = Math.max(0, Math.min(100, achieved ?? 0));
+
+  // Timing — when the signal appeared on the board, and how long it took to
+  // resolve (target / stop / square-off). For a still-live pick we show how
+  // long it's been running so far instead.
+  const appearedAt = fmtIstTime(pick.generatedAt);
+  const elapsedMs = (pick.resolvedAt ?? Date.now()) - pick.generatedAt;
+  const elapsed = fmtDuration(elapsedMs);
 
   return (
     <Card
@@ -108,6 +126,19 @@ export function DailyPickCard({ pick }: Props) {
               {pick.lastPrice != null ? `LTP ₹${fmt(pick.lastPrice)}` : "awaiting tick"}
             </span>
           </div>
+        </div>
+
+        {/* Timing — appeared on the board + time-to-outcome */}
+        <div className="flex items-center justify-between gap-2 text-[10px] text-[var(--color-fg-subtle)]">
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Appeared{" "}
+            <span className="num text-[var(--color-fg-muted)]">{appearedAt}</span>{" "}
+            IST
+          </span>
+          <span className="num text-[var(--color-fg-muted)]">
+            {OUTCOME_VERB[pick.status]} {elapsed}
+          </span>
         </div>
 
         {/* Progress toward target */}

@@ -38,12 +38,13 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
   strategies (UT Bot + SMC, VWAP Sweep + Trend, News Momentum, Range
   Scalp, EMA Pullback, VWAP Reversion, Orderflow Sweep, Fib Pullback,
   Institutional AI SMC, AI Institutional Pro v5) run on 1m / 5m / 15m
-  Binance klines. On the F&O side, eight strategies (Range Expansion,
+  Binance klines. On the F&O side, nine strategies (Range Expansion,
   Momentum, Volume Breakout, OI Build-up, PCR Extreme, IV Spike —
   derived from the existing NSE scanners — plus India Liquidity Edge,
   a liquidity-first quant framework ported from the ILE Pine indicator,
-  and India Max-Pain Gravity, an option-positioning mean-reversion play
-  carved from the same Pine framework)
+  India Max-Pain Gravity, an option-positioning mean-reversion play
+  carved from the same Pine framework, and Opening Breakout, the
+  first 5-min candle opening-range break entered on the retest)
   run against the live NSE F&O universe. Each market exposes the same two pages: **Strategies**
   (`/strategies`, `/in/strategies`) owns the picker + live signal feed
   + how-it-works reference card, while **Paper Trading**
@@ -220,9 +221,11 @@ src/
         strategy-backtest/      F&O backtest scaffold over /api/in/historical
         strategy-lab/           Conversational F&O backtester intake + roadmap
         heatmap/                Sector + stock heatmap (continuous color-mix tints)
-        daily-picks/            Top-3-per-bucket Daily Picks (Momentum /
-                                Scalping / Potential) — intraday, market-tape
-                                aligned, entry/stop/target + can-move-upto/
+        daily-picks/            Top-3-per-bucket Daily Picks (Indices Scalping /
+                                Opening Breakout / Momentum / Scalping /
+                                Potential) — intraday,
+                                market-tape aligned, with appeared-at + time-to-
+                                outcome timing, entry/stop/target + can-move-upto/
                                 can-expect, frozen per IST day, live-tracked,
                                 with a per-day outcome history. Hosts the
                                 expiry-only Gamma Blast / Hero Zero section.
@@ -963,13 +966,14 @@ absent, the cache transparently falls back to in-memory.
         EMA pullback), stop / target / lookback capture, local draft
         persistence.
   - [x] **F&O Strategies page** (`/in/strategies`) — full structural
-        mirror of `/strategies` for NSE F&O. Eight-strategy picker
+        mirror of `/strategies` for NSE F&O. Nine-strategy picker
         (Range Expansion, Momentum, Volume Breakout, OI Build-up, PCR
         Extreme, IV Spike — derived from the existing NSE scanners —
         plus India Liquidity Edge, a liquidity-first quant framework
-        ported from the ILE Pine indicator, and India Max-Pain Gravity,
+        ported from the ILE Pine indicator, India Max-Pain Gravity,
         an option-positioning mean-reversion play carved from the same
-        Pine framework), per-strategy 1m / 5m / 15m
+        Pine framework, and Opening Breakout, the first 5-min candle
+        opening-range break entered on the retest), per-strategy 1m / 5m / 15m
         timeframe toggles, live signal feed served by
         `/api/in/scalper/signals` (cards in ₹ / NSE ticker form), and a
         "how the F&O strategies work" reference card. Replaces the
@@ -1116,6 +1120,37 @@ absent, the cache transparently falls back to in-memory.
       worker job (`worker/src/jobs/india-daily-picks.ts`, 5-min market-hours
       cadence) runs the same freeze-or-track path so the day's picks are frozen
       at the open and tracked to the close even when nobody opens the page.
+- [x] **Opening Breakout strategy + Daily Picks bucket** — a ninth NSE F&O
+      strategy, the **first 5-min candle (9:15–9:19:59 IST) opening-range
+      breakout** tuned for Indian markets. Runs on **live 5-min candles**
+      (Yahoo) across the F&O indices + liquid leaders with an NSE option chain
+      layered in: the 9:15 range frames the day, a 5-min **close** beyond it
+      confirms the break, and entry is on the **retest** of the broken level
+      (resistance→support flip) with a stop below the breakout candle and a
+      **2R** target. PCR / OI / max-pain nudge confidence; sub-0.1% (trap) and
+      >0.7% gap-driven ranges down-weight it; rationale flags **ATM / 1-strike
+      ITM** to dodge the post-9:30 IV crush. Pure builder in
+      `scalping/strategies/opening-breakout-core.ts`, IO in `opening-breakout.ts`,
+      wired into `fetch-signals` as a third (non-scanner, non-positioning)
+      family and surfaced on `/in/strategies`. Its **top three** signals seed a
+      new **Opening Breakout** bucket on `/in/daily-picks` — externally sourced
+      (`dailyPickFromScalpSignal`), **lazily frozen** the first time signals
+      exist for the day (the opening candle must break + retest), then
+      live-tracked and squared off at 15:30 like every other pick, with its
+      appeared-on-board time set to the retest instant.
+- [x] **Daily Picks — Indices Scalping bucket + signal timing** — a fourth
+      **Indices Scalping** section on `/in/daily-picks` surfaces institutional
+      index scalps (NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY) scored on
+      option-chain **OI build-up**, **PCR** and **max-pain** positioning plus
+      intraday momentum and a short horizon. Indices now feed *only* this bucket
+      and stocks the other three (`isIndexSignal` partition), so each section is
+      pure. Every signal also carries **timing**: the IST time it **appeared on
+      the board** (`generatedAt`) and, once resolved, **how long it took to take
+      profit or loss** (`resolvedAt − generatedAt`, e.g. "Target hit in 1h 15m")
+      — surfaced on the live cards and as *Appeared* / *Held* columns in history.
+      New `resolvedAt` column (`IndiaDailyPick`) is stamped on TARGET_HIT /
+      STOP_HIT / square-off; history squares stale OPEN picks off at that day's
+      actual 15:30 close.
 - [x] **Daily Picks — intraday + institutional signal upgrade** — every pick is
       now pinned to an **intraday** horizon with same-session-sized stops/targets,
       and the underlying signal trades the way a desk does: it weights **intraday

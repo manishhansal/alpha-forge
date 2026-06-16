@@ -25,6 +25,8 @@
  * unit test in isolation.
  */
 
+import { FNO_INDEX_UNDERLYINGS } from "@/lib/india/fno-symbols";
+import type { IndiaScalpSignal } from "@/features/india/scalping/types";
 import type {
   AiDirection,
   AiGrade,
@@ -34,6 +36,8 @@ import type {
 } from "@/types/ai-signals";
 
 export const DAILY_PICK_BUCKETS = [
+  "INDICES_SCALP",
+  "OPENING_BREAKOUT",
   "MOMENTUM",
   "SCALPING",
   "POTENTIAL",
@@ -41,7 +45,34 @@ export const DAILY_PICK_BUCKETS = [
 
 export type DailyPickBucket = (typeof DAILY_PICK_BUCKETS)[number];
 
-export type DailyPickStatus = "OPEN" | "TARGET_HIT" | "STOP_HIT" | "EXPIRED";
+/** Buckets filled from index underlyings (NIFTY/BANKNIFTY/…). */
+const INDEX_BUCKETS = ["INDICES_SCALP"] as const satisfies readonly DailyPickBucket[];
+/** Buckets filled from F&O stocks. */
+const STOCK_BUCKETS = [
+  "MOMENTUM",
+  "SCALPING",
+  "POTENTIAL",
+] as const satisfies readonly DailyPickBucket[];
+/**
+ * Buckets sourced *externally* (not ranked from the AI candidate universe by
+ * `selectDailyPicks`). `OPENING_BREAKOUT` is fed straight from the Opening
+ * Breakout strategy's top signals via `dailyPickFromScalpSignal`.
+ */
+export const EXTERNAL_BUCKETS = [
+  "OPENING_BREAKOUT",
+] as const satisfies readonly DailyPickBucket[];
+
+/** True when an AI signal is one of the F&O index underlyings. */
+export function isIndexSignal(signal: AiSignal): boolean {
+  return FNO_INDEX_UNDERLYINGS.has(signal.symbol);
+}
+
+export type DailyPickStatus =
+  | "OPEN"
+  | "TARGET_HIT"
+  | "STOP_HIT"
+  | "CLOSED"
+  | "EXPIRED";
 
 export interface DailyPickBucketMeta {
   bucket: DailyPickBucket;
@@ -53,6 +84,18 @@ export const DAILY_PICK_BUCKET_META: Record<
   DailyPickBucket,
   DailyPickBucketMeta
 > = {
+  INDICES_SCALP: {
+    bucket: "INDICES_SCALP",
+    label: "Indices Scalping",
+    description:
+      "Institutional index scalps — strong option-chain OI build-up, PCR and max-pain positioning aligned with intraday demand and the broad tape. Tight, same-session trades on NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY.",
+  },
+  OPENING_BREAKOUT: {
+    bucket: "OPENING_BREAKOUT",
+    label: "Opening Breakout",
+    description:
+      "First 5-min candle (9:15–9:19:59 IST) breakout, entered on the retest of the broken level (resistance→support flip). Stop below the breakout candle, target 2R, confirmed with PCR / OI / max-pain. The day's highest-probability, lowest-risk intraday setup.",
+  },
   MOMENTUM: {
     bucket: "MOMENTUM",
     label: "Highly Momentum Stocks",
@@ -119,7 +162,13 @@ export interface DailyPick {
   /** Best progress toward the target seen so far, in % (100 = target hit). */
   achievedPct: number | null;
 
+  /** Epoch ms the signal appeared on the board (frozen at selection time). */
   generatedAt: number;
+  /**
+   * Epoch ms the pick first resolved (target / stop / square-off), or null
+   * while still live. Time-to-outcome = `resolvedAt - generatedAt`.
+   */
+  resolvedAt: number | null;
   updatedAt: number;
 }
 
@@ -190,6 +239,8 @@ function horizonScalpBonus(horizon: AiHorizon): number {
 }
 
 export interface BucketScores {
+  INDICES_SCALP: number;
+  OPENING_BREAKOUT: number;
   MOMENTUM: number;
   SCALPING: number;
   POTENTIAL: number;
@@ -206,25 +257,53 @@ export function bucketScores(signal: AiSignal): BucketScores {
   const mom = clamp01(aligned(signal, "momentum"));
   const vol = clamp01(aligned(signal, "volume"));
   const scan = clamp01(aligned(signal, "scanner"));
+  // Institutional futures-segment screen, projected onto the trade direction
+  // (range expansion + bullish candle/up-day + bullish week & month +
+  // liquidity + SMA 20>50>200, with a bearish mirror). 0 when absent.
+  const screen = clamp01(aligned(signal, "futuresScreen"));
   const expectedMove = clamp01(signal.expectedMovePct / 6);
   const rr = clamp01(signal.riskReward / 3);
   const rrBlended = clamp01(signal.riskRewardBlended / 4);
   const scalpBonus = horizonScalpBonus(signal.horizon);
 
+  // Derivatives positioning, projected onto the trade direction — the
+  // institutional backbone of an index scalp. OI build-up is the headline; PCR
+  // and max-pain confirm where the option writers are leaning.
+  const oi = clamp01(aligned(signal, "oiBuildup"));
+  const pcr = clamp01(aligned(signal, "pcr"));
+  const maxPain = clamp01(aligned(signal, "maxPain"));
+
   const MOMENTUM =
-    0.35 * trend + 0.28 * mom + 0.17 * vol + 0.1 * scan + 0.1 * conf;
+    0.28 * trend + 0.22 * mom + 0.14 * vol + 0.08 * scan + 0.08 * conf + 0.2 * screen;
 
   const SCALPING =
-    0.34 * expectedMove +
-    0.24 * rr +
-    0.2 * vol +
-    0.12 * scan +
-    0.1 * scalpBonus;
+    0.3 * expectedMove +
+    0.22 * rr +
+    0.16 * vol +
+    0.1 * scan +
+    0.1 * scalpBonus +
+    0.12 * screen;
 
   const POTENTIAL =
-    0.42 * conf + 0.24 * win + 0.2 * rrBlended + 0.14 * expectedMove;
+    0.38 * conf + 0.22 * win + 0.18 * rrBlended + 0.12 * expectedMove + 0.1 * screen;
+
+  // Index scalps live and die on option-chain positioning: heavy OI weight,
+  // PCR / max-pain confirmation, then intraday demand, expected range and a
+  // short horizon. The futures screen keeps it on the right side of the tape.
+  const INDICES_SCALP =
+    0.3 * oi +
+    0.16 * pcr +
+    0.12 * maxPain +
+    0.14 * mom +
+    0.1 * expectedMove +
+    0.1 * scalpBonus +
+    0.08 * screen;
 
   return {
+    INDICES_SCALP: clamp01(INDICES_SCALP),
+    // Externally sourced (Opening Breakout strategy) — never ranked from the
+    // AI universe, so its bucket score here is unused.
+    OPENING_BREAKOUT: 0,
     MOMENTUM: clamp01(MOMENTUM),
     SCALPING: clamp01(SCALPING),
     POTENTIAL: clamp01(POTENTIAL),
@@ -242,6 +321,14 @@ export function bucketLogic(signal: AiSignal, bucket: DailyPickBucket): string {
   const dirWord = signal.direction === "BEARISH" ? "downside" : "upside";
 
   switch (bucket) {
+    case "INDICES_SCALP": {
+      const oi = factorScore(signal, "oiBuildup") * dirSign(signal.direction);
+      const oiWord =
+        oi > 0.15 ? "OI build-up confirming" : oi < -0.15 ? "OI unwinding into" : "balanced OI on";
+      return `Institutional index scalp — ${oiWord} the ${dirWord} with PCR / max-pain positioning and intraday demand aligned to the tape, on a ${signal.horizon} horizon.${
+        drivers ? ` ${drivers}.` : ""
+      }`;
+    }
     case "MOMENTUM":
       return `Momentum leader — daily trend, 5-day momentum and volume thrust all aligned to the ${dirWord}.${
         drivers ? ` ${drivers}.` : ""
@@ -307,6 +394,82 @@ export function pickFromSignal(args: {
     pnlPct: null,
     achievedPct: null,
     generatedAt: now,
+    resolvedAt: null,
+    updatedAt: now,
+  };
+}
+
+/** Map a [0, 1] confidence onto the AI letter grade ladder. */
+function gradeFromConfidence(confidence: number): AiGrade {
+  if (confidence >= 0.85) return "S";
+  if (confidence >= 0.7) return "A";
+  if (confidence >= 0.55) return "B";
+  if (confidence >= 0.4) return "C";
+  return "D";
+}
+
+/**
+ * Project an Opening Breakout strategy signal into a frozen `DailyPick` for the
+ * externally-sourced `OPENING_BREAKOUT` bucket. The strategy already carries
+ * entry / stop / target (2R) and a confidence; we derive the stretch target
+ * ("can move upto", 3R), grade and a win-probability proxy so the pick renders
+ * identically to the AI-sourced buckets and tracks live the same way. The
+ * appeared-on-board time is the strategy's `triggeredAt` (the retest instant).
+ */
+export function dailyPickFromScalpSignal(args: {
+  signal: IndiaScalpSignal;
+  rank: number;
+  tradeDate: string;
+  now: number;
+}): DailyPick {
+  const { signal, rank, tradeDate, now } = args;
+  const isLong = signal.direction === "LONG";
+  const confidence = Math.max(0, Math.min(1, signal.confidence));
+  const risk = Math.abs(signal.entry - signal.stopLoss);
+  const stretch =
+    typeof signal.extras?.stretchTarget === "number"
+      ? signal.extras.stretchTarget
+      : isLong
+        ? signal.entry + 3 * risk
+        : signal.entry - 3 * risk;
+  const canExpectPct =
+    signal.entry > 0
+      ? (Math.abs(stretch - signal.entry) / signal.entry) * 100
+      : 0;
+
+  return {
+    tradeDate,
+    bucket: "OPENING_BREAKOUT",
+    rank,
+    symbol: signal.symbol,
+    displayName: signal.symbolName || signal.symbol,
+    pair: FNO_INDEX_UNDERLYINGS.has(signal.symbol)
+      ? signal.symbol
+      : `${signal.symbol}.NS`,
+    direction: isLong ? "BULLISH" : "BEARISH",
+    action: isLong ? "LONG" : "SHORT",
+    horizon: "intraday",
+    grade: gradeFromConfidence(confidence),
+    confidence,
+    confidenceScore: Math.round(confidence * 100),
+    // Win-probability proxy: confirmed retest setups skew higher.
+    winProbability: Math.max(0, Math.min(1, 0.42 + confidence * 0.4)),
+    underlyingPrice: signal.price,
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    target: signal.target,
+    canMoveUpto: stretch,
+    canExpectPct,
+    riskReward: signal.riskReward,
+    bucketScore: confidence,
+    rationale: signal.rationale,
+    logic: `Opening Breakout — ${signal.rationale[2] ?? "first 5-min range break, entered on the retest"}.`,
+    status: "OPEN",
+    lastPrice: null,
+    pnlPct: null,
+    achievedPct: null,
+    generatedAt: signal.triggeredAt,
+    resolvedAt: null,
     updatedAt: now,
   };
 }
@@ -317,30 +480,35 @@ interface Scored {
 }
 
 /**
- * Select the top `perBucket` signals for each bucket. A symbol can only land
- * in one bucket — we fill the buckets round-robin (best-available per bucket,
- * one slot at a time) so no single hot name monopolises every section and
- * each bucket gets its strongest *distinct* candidates.
+ * Fill a set of buckets round-robin from a candidate pool, best-available per
+ * bucket one slot at a time, so no single hot name monopolises every section
+ * and each bucket gets its strongest *distinct* candidates. `used` is shared
+ * across calls so a symbol can only ever land in one bucket overall.
  *
  * WAIT signals are excluded when there are enough real directional setups to
- * fill the board; only when the directional pool is too thin do we fall back
+ * fill the buckets; only when the directional pool is too thin do we fall back
  * to including them (so the board still renders out of hours).
  */
-export function selectDailyPicks(
-  signals: AiSignal[],
-  perBucket = 3,
-  marketBias = 0,
-): Record<DailyPickBucket, Scored[]> {
-  const directional = signals.filter((s) => s.action !== "WAIT");
-  const needed = perBucket * DAILY_PICK_BUCKETS.length;
-  const pool = directional.length >= needed ? directional : signals;
+function fillBuckets(
+  pool: AiSignal[],
+  buckets: readonly DailyPickBucket[],
+  perBucket: number,
+  marketBias: number,
+  result: Record<DailyPickBucket, Scored[]>,
+  used: Set<string>,
+): void {
+  const directional = pool.filter((s) => s.action !== "WAIT");
+  const needed = perBucket * buckets.length;
+  const usable = directional.length >= needed ? directional : pool;
 
-  const scored: Scored[] = pool.map((signal) => {
+  const scored: Scored[] = usable.map((signal) => {
     const base = bucketScores(signal);
     const m = marketAlignment(signal.direction, marketBias);
     return {
       signal,
       scores: {
+        INDICES_SCALP: base.INDICES_SCALP * m,
+        OPENING_BREAKOUT: base.OPENING_BREAKOUT * m,
         MOMENTUM: base.MOMENTUM * m,
         SCALPING: base.SCALPING * m,
         POTENTIAL: base.POTENTIAL * m,
@@ -348,23 +516,15 @@ export function selectDailyPicks(
     };
   });
 
-  const sortedByBucket: Record<DailyPickBucket, Scored[]> = {
-    MOMENTUM: [...scored].sort((a, b) => b.scores.MOMENTUM - a.scores.MOMENTUM),
-    SCALPING: [...scored].sort((a, b) => b.scores.SCALPING - a.scores.SCALPING),
-    POTENTIAL: [...scored].sort(
-      (a, b) => b.scores.POTENTIAL - a.scores.POTENTIAL,
-    ),
-  };
-
-  const result: Record<DailyPickBucket, Scored[]> = {
-    MOMENTUM: [],
-    SCALPING: [],
-    POTENTIAL: [],
-  };
-  const used = new Set<string>();
+  const sortedByBucket = {} as Record<DailyPickBucket, Scored[]>;
+  for (const bucket of buckets) {
+    sortedByBucket[bucket] = [...scored].sort(
+      (a, b) => b.scores[bucket] - a.scores[bucket],
+    );
+  }
 
   for (let slot = 0; slot < perBucket; slot++) {
-    for (const bucket of DAILY_PICK_BUCKETS) {
+    for (const bucket of buckets) {
       const next = sortedByBucket[bucket].find(
         (x) => !used.has(x.signal.symbol),
       );
@@ -374,6 +534,36 @@ export function selectDailyPicks(
       }
     }
   }
+}
+
+/**
+ * Select the top `perBucket` signals for each bucket. Index underlyings feed
+ * only the Indices-Scalping bucket and F&O stocks feed the Momentum / Scalping
+ * / Potential buckets, so the index section is always pure index plays and the
+ * stock sections never get crowded out by a hot index. A symbol can only ever
+ * land in one bucket.
+ */
+export function selectDailyPicks(
+  signals: AiSignal[],
+  perBucket = 3,
+  marketBias = 0,
+): Record<DailyPickBucket, Scored[]> {
+  const indexPool = signals.filter((s) => isIndexSignal(s));
+  const stockPool = signals.filter((s) => !isIndexSignal(s));
+
+  const result: Record<DailyPickBucket, Scored[]> = {
+    INDICES_SCALP: [],
+    // Externally sourced — populated by the builder from the Opening Breakout
+    // strategy, not by ranking the AI universe here.
+    OPENING_BREAKOUT: [],
+    MOMENTUM: [],
+    SCALPING: [],
+    POTENTIAL: [],
+  };
+  const used = new Set<string>();
+
+  fillBuckets(indexPool, INDEX_BUCKETS, perBucket, marketBias, result, used);
+  fillBuckets(stockPool, STOCK_BUCKETS, perBucket, marketBias, result, used);
 
   return result;
 }
@@ -436,12 +626,16 @@ export function trackPick(
     pick.achievedPct == null ? progress : Math.max(pick.achievedPct, progress);
 
   let status = pick.status;
+  let resolvedAt = pick.resolvedAt;
   if (status === "OPEN") {
     const hitStop = dir === 1 ? lastPrice <= pick.stopLoss : lastPrice >= pick.stopLoss;
     const hitTarget =
       dir === 1 ? lastPrice >= pick.target : lastPrice <= pick.target;
     if (hitStop) status = "STOP_HIT";
     else if (hitTarget) status = "TARGET_HIT";
+    // Stamp the resolution instant the moment the level is touched, so the
+    // board can report how long the trade took to hit its target / stop.
+    if (status !== "OPEN") resolvedAt = now;
   }
 
   return {
@@ -450,6 +644,26 @@ export function trackPick(
     pnlPct,
     achievedPct,
     status,
+    resolvedAt,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Square off an intraday pick at the market close. Daily Picks are strictly
+ * intraday, so any pick still OPEN once its trading session has ended is
+ * force-closed at its last mark — regardless of profit/loss — and never carried
+ * overnight. The frozen P&L / progress (`pnlPct`, `achievedPct`, `lastPrice`)
+ * are kept as-is; only the status flips OPEN → CLOSED. Already-resolved picks
+ * (TARGET_HIT / STOP_HIT / CLOSED / EXPIRED) are returned untouched, so it's
+ * idempotent.
+ */
+export function squareOffPick(pick: DailyPick, now: number): DailyPick {
+  if (pick.status !== "OPEN") return pick;
+  return {
+    ...pick,
+    status: "CLOSED",
+    resolvedAt: pick.resolvedAt ?? now,
     updatedAt: now,
   };
 }

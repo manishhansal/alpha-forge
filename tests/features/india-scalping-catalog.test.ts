@@ -14,7 +14,7 @@ import {
 } from "@/features/india/scalping/types";
 
 describe("features/india/scalping — strategy catalog", () => {
-  it("ships the eight F&O strategies — six scanner-derived plus the two ILE-Pine ports", () => {
+  it("ships the nine F&O strategies — six scanner-derived, two ILE-Pine ports, plus Opening Breakout", () => {
     expect([...INDIA_SCALP_STRATEGY_IDS]).toEqual([
       "RANGE_EXPANSION",
       "MOMENTUM",
@@ -24,8 +24,16 @@ describe("features/india/scalping — strategy catalog", () => {
       "IV_SPIKE",
       "LIQUIDITY_EDGE",
       "MAX_PAIN_GRAVITY",
+      "OPENING_BREAKOUT",
     ]);
-    expect(INDIA_SCALP_STRATEGY_CATALOG).toHaveLength(8);
+    expect(INDIA_SCALP_STRATEGY_CATALOG).toHaveLength(9);
+  });
+
+  it("includes the Opening Breakout strategy with breakout metadata", () => {
+    const orb = getIndiaStrategyMeta("OPENING_BREAKOUT");
+    expect(orb.label).toMatch(/opening breakout/i);
+    expect(orb.category).toBe("breakout");
+    expect(orb.description).toMatch(/retest/i);
   });
 
   it("includes India Liquidity Edge + India Max-Pain Gravity with distinct categories", () => {

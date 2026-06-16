@@ -4,7 +4,7 @@ import * as React from "react";
 import { ChevronDown, History } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { fmt, fmtPct } from "@/lib/india/format";
+import { fmt, fmtDuration, fmtIstTime, fmtPct } from "@/lib/india/format";
 import { DAILY_PICK_BUCKET_META } from "@/features/india/daily-picks/engine";
 import type {
   DailyPicksHistoryDay,
@@ -90,7 +90,10 @@ function HistoryDay({ day }: { day: DailyPicksHistoryDay }) {
         <span className="flex items-center gap-3 text-[11px] text-[var(--color-fg-muted)]">
           <span className="text-[var(--color-bull)]">{day.summary.targetHit} hit</span>
           <span className="text-[var(--color-bear)]">{day.summary.stopHit} stop</span>
-          <span>{day.summary.open} open</span>
+          {day.summary.closed > 0 ? (
+            <span>{day.summary.closed} squared off</span>
+          ) : null}
+          {day.summary.open > 0 ? <span>{day.summary.open} open</span> : null}
           <span className="num font-semibold text-[var(--color-fg)]">
             {(day.summary.winRate * 100).toFixed(0)}% win
           </span>
@@ -115,6 +118,8 @@ function HistoryDay({ day }: { day: DailyPicksHistoryDay }) {
                 <th className="px-3 py-2 text-right font-medium">Stop</th>
                 <th className="px-3 py-2 text-right font-medium">Target</th>
                 <th className="px-3 py-2 text-right font-medium">P&amp;L</th>
+                <th className="px-3 py-2 text-right font-medium">Appeared</th>
+                <th className="px-3 py-2 text-right font-medium">Held</th>
                 <th className="px-3 py-2 font-medium">Outcome</th>
               </tr>
             </thead>
@@ -156,6 +161,14 @@ function HistoryDay({ day }: { day: DailyPicksHistoryDay }) {
                   >
                     {p.pnlPct == null ? "—" : fmtPct(p.pnlPct)}
                   </td>
+                  <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
+                    {fmtIstTime(p.generatedAt)}
+                  </td>
+                  <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
+                    {p.resolvedAt != null
+                      ? fmtDuration(p.resolvedAt - p.generatedAt)
+                      : "—"}
+                  </td>
                   <td className="px-3 py-2">
                     <OutcomeTag status={p.status} />
                   </td>
@@ -174,6 +187,7 @@ function OutcomeTag({ status }: { status: string }) {
     TARGET_HIT: { label: "Target", cls: "text-bull" },
     STOP_HIT: { label: "Stop", cls: "text-bear" },
     OPEN: { label: "Open", cls: "text-[var(--color-fg-muted)]" },
+    CLOSED: { label: "Squared off", cls: "text-[var(--color-fg-muted)]" },
     EXPIRED: { label: "Expired", cls: "text-[var(--color-warning)]" },
   };
   const m = map[status] ?? map.OPEN;

@@ -12,6 +12,16 @@ vi.mock("@/services/india/scanner/engine", () => ({
     runScannerMock(type, limit),
 }));
 
+// The two option-positioning ports + the Opening Breakout engine touch
+// NSE / Yahoo — mock them to [] so this route test stays scanner-focused and
+// offline.
+vi.mock("@/features/india/scalping/strategies/positioning", () => ({
+  getIndiaPositioningSignals: vi.fn(async () => []),
+}));
+vi.mock("@/features/india/scalping/strategies/opening-breakout", () => ({
+  getIndiaOpeningBreakoutSignals: vi.fn(async () => []),
+}));
+
 import { GET } from "@/app/api/in/scalper/signals/route";
 
 function makeRequest(qs: string): Request {

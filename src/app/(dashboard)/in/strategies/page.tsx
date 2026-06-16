@@ -17,7 +17,7 @@ export const revalidate = 0;
 export const metadata = {
   title: "Strategies · NSE F&O",
   description:
-    "Eight NSE F&O strategies running in parallel — Range Expansion, Momentum, Volume Breakout, OI Build-up, PCR Extreme, IV Spike, India Liquidity Edge and Max-Pain Gravity — with a live multi-timeframe signal feed pinned to the active NSE session.",
+    "Nine NSE F&O strategies running in parallel — Range Expansion, Momentum, Volume Breakout, OI Build-up, PCR Extreme, IV Spike, India Liquidity Edge, Max-Pain Gravity and the first-5-minute Opening Breakout — with a live multi-timeframe signal feed pinned to the active NSE session.",
 };
 
 /**
