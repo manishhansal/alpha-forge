@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AiSignal } from "@/types/ai-signals";
 import type { IndiaScalpSignal } from "@/features/india/scalping/types";
 
 const getCandidatesMock = vi.fn();
 const getOrbMock = vi.fn();
+const nseGetOptionChainMock = vi.fn();
 
 vi.mock("@/features/ai-signals/india-builder", () => ({
   getIndiaDailyPickCandidates: () => getCandidatesMock(),
@@ -12,6 +13,17 @@ vi.mock("@/features/ai-signals/india-builder", () => ({
 
 vi.mock("@/features/india/scalping/strategies/opening-breakout", () => ({
   getIndiaOpeningBreakoutSignals: (...args: unknown[]) => getOrbMock(...args),
+}));
+
+// Mock the NSE service surface used by the builder for INDICES_SCALP option
+// projection + live tracking. Default behaviour: chain unavailable (null) so
+// existing tests that don't surface any index symbols behave exactly as
+// before. Tests that exercise the option-projection path stub this to return
+// a controlled chain.
+vi.mock("@/services/india/nse", () => ({
+  nse: {
+    getOptionChain: (...args: unknown[]) => nseGetOptionChainMock(...args),
+  },
 }));
 
 import {
@@ -89,6 +101,8 @@ function makeSignal(overrides: Partial<AiSignal> = {}): AiSignal {
       bestExitNote: "",
     },
     confluences: [
+      { id: "dayChange", category: "flow", label: "dayChange", description: "", weight: 0.13, score: 0.5, contribution: 0.065, available: true },
+      { id: "breakout", category: "chart", label: "breakout", description: "", weight: 0.13, score: 0.4, contribution: 0.052, available: true },
       { id: "trend", category: "technical", label: "trend", description: "", weight: 0.1, score: 0.8, contribution: 0.08, available: true },
       { id: "momentum", category: "technical", label: "momentum", description: "", weight: 0.1, score: 0.7, contribution: 0.07, available: true },
       { id: "volume", category: "flow", label: "volume", description: "", weight: 0.1, score: 0.6, contribution: 0.06, available: true },
@@ -174,6 +188,26 @@ function fakePrisma() {
       }
       return { count };
     }),
+    deleteMany: vi.fn(
+      async (args: {
+        where: {
+          tradeDate?: string;
+          generatedAt?: { lt?: Date };
+        };
+      }) => {
+        const before = store.length;
+        const where = args.where;
+        store = store.filter((r) => {
+          if (where.tradeDate && r.tradeDate !== where.tradeDate) return true;
+          if (where.generatedAt?.lt) {
+            const ts = (r.generatedAt as Date).getTime();
+            if (ts >= where.generatedAt.lt.getTime()) return true;
+          }
+          return false;
+        });
+        return { count: before - store.length };
+      },
+    ),
   };
   return {
     client: { indiaDailyPick: model } as never,
@@ -189,12 +223,28 @@ function fakePrisma() {
   };
 }
 
+// Freeze wall-clock to a post-open instant (10:30 IST on 2026-06-16, a
+// Tuesday). The builder gates freezing on `now >= 09:15 IST`, so the suite
+// would behave differently depending on the actual time of day without this.
+const FAKE_NOW_MS = Date.UTC(2026, 5, 16, 5, 0, 0); // 2026-06-16T05:00:00Z = 10:30 IST
+const TODAY = "2026-06-16";
+
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(FAKE_NOW_MS));
   getCandidatesMock.mockReset();
   getOrbMock.mockReset();
+  nseGetOptionChainMock.mockReset();
   // Default: no Opening Breakout signals (the opening candle hasn't broken /
   // retested yet) so the AI-bucket assertions stay deterministic.
   getOrbMock.mockResolvedValue([]);
+  // Default: option chains unavailable — the builder fail-softs to dropping
+  // any INDICES_SCALP picks rather than fabricating premiums.
+  nseGetOptionChainMock.mockRejectedValue(new Error("no chain (test default)"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("getIndiaDailyPicks", () => {
@@ -352,6 +402,274 @@ describe("getIndiaDailyPicks", () => {
       .flatMap((g) => g.picks)
       .find((p) => p.bucket === "OPENING_BREAKOUT" && p.symbol === "NIFTY");
     expect(nifty?.status).toBe("TARGET_HIT");
+  });
+
+  it("filters Opening Breakout to confirmed retests above the confidence floor", async () => {
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed" },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    // Unconfirmed (awaiting retest) and low-confidence signals both reach the
+    // strategy feed; only the confirmed + ≥0.55 confidence ones make it into
+    // Daily Picks. Regression for the ICICIBANK 18-min stopout on 2026-06-17.
+    getOrbMock.mockResolvedValue([
+      // Unconfirmed — must be dropped despite high confidence.
+      makeOrbSignal({ symbol: "ICICIBANK", confirmed: false, confidence: 0.83 }),
+      // Confirmed but sub-floor — must be dropped.
+      makeOrbSignal({ symbol: "ITC", confirmed: true, confidence: 0.42 }),
+      // Confirmed + above floor — survives.
+      makeOrbSignal({ symbol: "NIFTY", confirmed: true, confidence: 0.66 }),
+    ]);
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    const orbPicks =
+      res.groups.find((g) => g.bucket === "OPENING_BREAKOUT")?.picks ?? [];
+    expect(orbPicks.map((p) => p.symbol)).toEqual(["NIFTY"]);
+  });
+
+  it("applies the tape filter to Opening Breakout — drops counter-tape shorts on a bullish day", async () => {
+    // Regression for 2026-06-17 second incident: the NIFTY ORB long fired at
+    // ~10:00 IST, retested, and ran to its stretch target (24,102). But the
+    // top 3 of the ORB feed were ICICIBANK SHORT (0.75), MIDCPNIFTY LONG
+    // (0.66), and AXISBANK SHORT (0.62) — two stock shorts fighting a +0.15
+    // bullish tape crowded the cleanest index long off the board. With the
+    // tape filter the shorts get dropped and NIFTY finally surfaces.
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: {
+        market: "india",
+        regime: "bullish",
+        regimeScore: 0.15, // > +0.10 tape bias → drops shorts
+      },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    getOrbMock.mockResolvedValue([
+      makeOrbSignal({ symbol: "ICICIBANK", direction: "SHORT", confidence: 0.75 }),
+      makeOrbSignal({ symbol: "MIDCPNIFTY", direction: "LONG", confidence: 0.66 }),
+      makeOrbSignal({ symbol: "AXISBANK", direction: "SHORT", confidence: 0.62 }),
+      makeOrbSignal({ symbol: "KOTAKBANK", direction: "LONG", confidence: 0.62 }),
+      makeOrbSignal({ symbol: "NIFTY", direction: "LONG", confidence: 0.58 }),
+    ]);
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    const orbSyms =
+      res.groups.find((g) => g.bucket === "OPENING_BREAKOUT")?.picks.map(
+        (p) => p.symbol,
+      ) ?? [];
+    expect(orbSyms).not.toContain("ICICIBANK");
+    expect(orbSyms).not.toContain("AXISBANK");
+    // Top 3 longs by confidence after the shorts are dropped.
+    expect(orbSyms).toEqual(["MIDCPNIFTY", "KOTAKBANK", "NIFTY"]);
+  });
+
+  it("Opening Breakout falls back to the unfiltered set when tape would empty the bucket", async () => {
+    // If the only confirmed ORB setups today are counter-tape, surface them
+    // anyway rather than going empty — better to show the day's actual
+    // strategy output than a blank board.
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: {
+        market: "india",
+        regime: "bullish",
+        regimeScore: 0.3,
+      },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    getOrbMock.mockResolvedValue([
+      makeOrbSignal({ symbol: "TCS", direction: "SHORT", confidence: 0.7 }),
+      makeOrbSignal({ symbol: "INFY", direction: "SHORT", confidence: 0.62 }),
+    ]);
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    const orbSyms =
+      res.groups.find((g) => g.bucket === "OPENING_BREAKOUT")?.picks.map(
+        (p) => p.symbol,
+      ) ?? [];
+    expect(orbSyms).toEqual(["TCS", "INFY"]);
+  });
+
+  it("projects INDICES_SCALP picks into ATM option contracts (premiums, not index levels)", async () => {
+    // Inject one NIFTY index candidate strong enough to clear the bucket
+    // gates, alongside the stock universe.
+    const niftySignal = makeSignal({
+      symbol: "NIFTY",
+      displayName: "NIFTY 50",
+      pair: "NIFTY",
+      entry: 24080,
+      underlyingPrice: 24080,
+      stopLoss: 23866,
+      confidence: 0.6,
+      grade: "B",
+      takeProfits: [
+        { level: 1, price: 24337, percent: 1.07, allocation: 0.5 },
+        { level: 2, price: 24450, percent: 1.54, allocation: 0.3 },
+        { level: 3, price: 24500, percent: 1.74, allocation: 0.2 },
+      ],
+      confluences: [
+        { id: "trend", category: "technical", label: "trend", description: "", weight: 0.2, score: 0.7, contribution: 0.14, available: true },
+        { id: "momentum", category: "technical", label: "momentum", description: "", weight: 0.2, score: 0.6, contribution: 0.12, available: true },
+        { id: "volume", category: "flow", label: "volume", description: "", weight: 0.1, score: 0.5, contribution: 0.05, available: true },
+        { id: "oiBuildup", category: "derivatives", label: "OI", description: "", weight: 0.2, score: 0.8, contribution: 0.16, available: true },
+        { id: "pcr", category: "derivatives", label: "PCR", description: "", weight: 0.1, score: 0.4, contribution: 0.04, available: true },
+        { id: "maxPain", category: "derivatives", label: "maxPain", description: "", weight: 0.1, score: 0.3, contribution: 0.03, available: true },
+      ],
+    });
+    getCandidatesMock.mockResolvedValue({
+      signals: [niftySignal, ...candidateUniverse()],
+      context: { market: "india", regime: "mixed", regimeScore: 0 },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    // Stub the chain so the projection has an ATM strike with a quotable
+    // premium. Per-symbol behaviour keyed off the requested underlying.
+    nseGetOptionChainMock.mockImplementation(async (sym: string) => {
+      if (sym !== "NIFTY") throw new Error(`no chain for ${sym}`);
+      return {
+        symbol: "NIFTY",
+        spot: 24080,
+        expiry: "26-Jun-2026",
+        expiries: ["26-Jun-2026"],
+        rows: [
+          { strike: 24050, ce: null, pe: null },
+          {
+            strike: 24100,
+            ce: { strike: 24100, type: "CE", oi: 0, changeInOi: 0, volume: 0, iv: 14, ltp: 100, bid: null, ask: null, delta: 0.5 },
+            pe: { strike: 24100, type: "PE", oi: 0, changeInOi: 0, volume: 0, iv: 14, ltp: 110, bid: null, ask: null, delta: -0.5 },
+          },
+          { strike: 24150, ce: null, pe: null },
+        ],
+        analytics: {
+          pcrOi: null,
+          pcrVolume: null,
+          maxCeOiStrike: null,
+          maxPeOiStrike: null,
+          totalCeOi: 0,
+          totalPeOi: 0,
+          totalCeOiChange: 0,
+          totalPeOiChange: 0,
+          atmIv: 14,
+          maxPain: null,
+        },
+        fetchedAt: new Date().toISOString(),
+      };
+    });
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    const indices = res.groups.find((g) => g.bucket === "INDICES_SCALP")?.picks ?? [];
+    expect(indices.length).toBe(1);
+    const nifty = indices[0];
+    // Display + contract metadata reflect the OPTION the desk actually trades.
+    expect(nifty.displayName).toBe("NIFTY 24100 CE");
+    expect(nifty.optionContract).toMatchObject({
+      strike: 24100,
+      side: "CE",
+      lotSize: 75,
+      expiry: "26-Jun-2026",
+      delta: 0.5,
+    });
+    // Entry = current option LTP (₹100), not the index level (24080).
+    expect(nifty.entry).toBe(100);
+    // Target underlying +257 × delta 0.5 = +128.5 premium → ≈228.5.
+    expect(nifty.target).toBeCloseTo(228.5, 1);
+    // Stop underlying −214 × 0.5 = −107 → floored at MIN_PREMIUM (≈0.05).
+    expect(nifty.stopLoss).toBeLessThan(1);
+    // Persisted with the option contract JSON for live re-pricing.
+    const stored = db.all().find((r) => r.bucket === "INDICES_SCALP");
+    expect(stored?.optionContract).toMatchObject({ strike: 24100, side: "CE" });
+  });
+
+  it("drops INDICES_SCALP picks when the option chain is unavailable", async () => {
+    const niftySignal = makeSignal({
+      symbol: "NIFTY",
+      entry: 24080,
+      underlyingPrice: 24080,
+      confidence: 0.6,
+      grade: "B",
+      confluences: [
+        { id: "trend", category: "technical", label: "trend", description: "", weight: 0.2, score: 0.7, contribution: 0.14, available: true },
+        { id: "volume", category: "flow", label: "volume", description: "", weight: 0.1, score: 0.5, contribution: 0.05, available: true },
+        { id: "oiBuildup", category: "derivatives", label: "OI", description: "", weight: 0.2, score: 0.8, contribution: 0.16, available: true },
+      ],
+    });
+    getCandidatesMock.mockResolvedValue({
+      signals: [niftySignal, ...candidateUniverse()],
+      context: { market: "india", regime: "mixed", regimeScore: 0 },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    // Chain mock stays at the suite default (rejects) — projection can't run.
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    const indices = res.groups.find((g) => g.bucket === "INDICES_SCALP")?.picks ?? [];
+    expect(indices.length).toBe(0);
+  });
+
+  it("does NOT freeze before the 09:15 IST open — returns empty groups", async () => {
+    // Re-arm fake time to 08:30 IST (pre-market) on the same trade date.
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 16, 3, 0, 0))); // 03:00 UTC = 08:30 IST
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed" },
+      inActiveWindow: false,
+      generatedAt: Date.now(),
+    });
+    const db = fakePrisma();
+
+    const res = await getIndiaDailyPicks(db.client);
+    expect(res.tradeDate).toBe(TODAY);
+    expect(res.groups.every((g) => g.picks.length === 0)).toBe(true);
+    expect(db.model.createMany).not.toHaveBeenCalled();
+    expect(db.all()).toEqual([]);
+  });
+
+  it("evicts stale pre-market rows and re-freezes with fresh opening prices", async () => {
+    // Seed yesterday-evening / midnight rows for today (generatedAt < 09:15 IST)
+    // — exactly the scenario reported in production where a midnight cron froze
+    // picks against stale closes that then live-tracked all morning.
+    const preOpenMs = Date.UTC(2026, 5, 15, 18, 42, 0); // 00:12 IST today
+    const stale = buildDailyPicks({
+      signals: [makeSignal({ symbol: "STALE", entry: 50 })],
+      tradeDate: TODAY,
+      now: preOpenMs,
+    });
+    const db = fakePrisma();
+    db.seed(
+      stale.map((p) => ({
+        ...p,
+        generatedAt: new Date(preOpenMs),
+        updatedAt: new Date(preOpenMs),
+      })),
+    );
+
+    // Now we're at 10:30 IST (the global fake "now") with fresh candidates.
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed" },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+
+    const res = await getIndiaDailyPicks(db.client);
+
+    // Old midnight rows are gone.
+    expect(db.model.deleteMany).toHaveBeenCalled();
+    const allSymbols = db.all().map((r) => r.symbol);
+    expect(allSymbols).not.toContain("STALE");
+    // Fresh picks were frozen against the post-open universe.
+    expect(db.model.createMany).toHaveBeenCalled();
+    const fresh = res.groups.flatMap((g) => g.picks);
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh.every((p) => p.generatedAt >= FAKE_NOW_MS - 60_000)).toBe(true);
+    expect(fresh.every((p) => p.symbol !== "STALE")).toBe(true);
   });
 });
 

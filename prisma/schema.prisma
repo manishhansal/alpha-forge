@@ -362,6 +362,14 @@ model IndiaDailyPick {
   /// time-to-outcome shown on the board is `resolvedAt - generatedAt`.
   resolvedAt    DateTime?
 
+  /// Present only for INDICES_SCALP picks: the ATM/near-ATM option contract
+  /// the trade is actually expressed in. Entry / stopLoss / target /
+  /// canMoveUpto / lastPrice for these picks are *option premiums* (₹/lot),
+  /// not the index level. JSON shape:
+  ///   { strike, side: "CE" | "PE", expiry, contractSymbol, lotSize,
+  ///     spotAtFreeze, delta, ivPct }
+  optionContract Json?
+
   generatedAt   DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

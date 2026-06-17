@@ -74,6 +74,17 @@ function makeData(): DailyPicksResponse {
     inActiveWindow: true,
     groups: groupDailyPicks(picks),
     persisted: true,
+    marketContextHeader: {
+      date: "Mon, 15 Jun 2026 IST",
+      nifty: null,
+      banknifty: null,
+      indiaVix: { value: 12.3, regime: "low" },
+      pcrNifty: null,
+      maxPain: { nifty: null, banknifty: null },
+      fiiFlow: null,
+      sectorWatch: null,
+      bias: { regime: "mixed", headline: "Mixed — pick spots only." },
+    },
   };
 }
 
@@ -97,7 +108,19 @@ describe("DailyPicksBoard", () => {
 
   it("shows the market context headline and trade date", () => {
     render(<DailyPicksBoard initialData={makeData()} />);
-    expect(screen.getByText("Mixed — pick spots only.")).toBeInTheDocument();
+    // The institutional Market Context Header panel + the existing context
+    // banner both echo the bias headline (header has it under `Bias`, banner
+    // shows it next to the gauge icon), so we expect *at least one* match.
+    expect(screen.getAllByText("Mixed — pick spots only.").length).toBeGreaterThan(0);
     expect(screen.getByText("2026-06-15")).toBeInTheDocument();
+  });
+
+  it("renders the institutional Market Context Header panel", () => {
+    render(<DailyPicksBoard initialData={makeData()} />);
+    expect(screen.getByLabelText("Market Context Header")).toBeInTheDocument();
+    expect(screen.getByText("India VIX")).toBeInTheDocument();
+    expect(screen.getByText("Max Pain")).toBeInTheDocument();
+    expect(screen.getByText("PCR (NIFTY OI)")).toBeInTheDocument();
+    expect(screen.getByText("Mon, 15 Jun 2026 IST")).toBeInTheDocument();
   });
 });

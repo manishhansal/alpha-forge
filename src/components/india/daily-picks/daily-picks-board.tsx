@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { fmtIstClock } from "@/lib/india/format";
 import type { DailyPickBucket } from "@/features/india/daily-picks/engine";
 import type { DailyPicksResponse } from "@/features/india/daily-picks/builder";
 import { DailyPickCard } from "./daily-pick-card";
+import { MarketContextPanel } from "./market-context-panel";
 
 interface Props {
   initialData: DailyPicksResponse;
@@ -38,7 +40,10 @@ const BUCKET_ICON: Record<DailyPickBucket, typeof Flame> = {
 export function DailyPicksBoard({
   initialData,
   endpoint = "/api/in/daily-picks",
-  intervalMs = 30_000,
+  // Matches the server-side `CACHE_TTL_MS` in the AI builder — the spec
+  // calls for a fresh full-F&O scan every minute, and a tighter client
+  // poll would just keep returning the same cached payload.
+  intervalMs = 60_000,
 }: Props) {
   const [data, setData] = React.useState<DailyPicksResponse>(initialData);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -72,10 +77,20 @@ export function DailyPicksBoard({
     };
   }, [intervalMs, refresh]);
 
-  const generatedLabel = new Date(data.generatedAt).toLocaleTimeString();
+  // Pinned to IST (matches the rest of the board's stamping) so SSR + CSR
+  // produce identical text — `toLocaleTimeString()` resolves differently on
+  // Node (`20:40:21`) vs the browser (`8:40:21 PM`) and breaks hydration.
+  const generatedLabel = fmtIstClock(data.generatedAt);
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Institutional Market Context Header — one panel, all the macro
+          inputs (NIFTY / BANKNIFTY level + trend + S/R, India VIX + regime,
+          PCR (NIFTY), Max Pain, bias). */}
+      {data.marketContextHeader ? (
+        <MarketContextPanel header={data.marketContextHeader} />
+      ) : null}
+
       {/* Context banner */}
       <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

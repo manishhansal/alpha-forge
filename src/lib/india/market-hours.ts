@@ -24,6 +24,18 @@ export function isNseMarketOpenIST(at: Date): boolean {
 }
 
 /**
+ * Epoch ms of the 09:15 IST session open for an IST calendar date
+ * (`YYYY-MM-DD`). Returns null for an unparseable date. 09:15 IST = 03:45 UTC.
+ */
+export function nseOpenMsForDateIST(tradeDate: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tradeDate);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const istMidnightMs = Date.UTC(Number(y), Number(mo) - 1, Number(d)) - IST_OFFSET_MS;
+  return istMidnightMs + OPEN_MINUTES * 60_000;
+}
+
+/**
  * Epoch ms of the 15:30 IST session close for an IST calendar date
  * (`YYYY-MM-DD`). Returns null for an unparseable date. 15:30 IST = 10:00 UTC.
  */

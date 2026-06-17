@@ -203,6 +203,54 @@ describe("ai-signals/india-builder derivatives wiring", () => {
       expect(factor(factors, "breakout").score).toBeGreaterThan(0);
     });
 
+    it("volume thrust is UNAVAILABLE when volume is below the 20-day average", () => {
+      // Regression: under the old engine `raw = volRatio - 1` would feed a
+      // negative score into `aligned()` and *flip sign* on SHORT signals,
+      // making "Below-avg volume 0.16×" look like bullish confirmation of a
+      // short. The fix marks the factor *unavailable* (rather than score 0)
+      // below the 1.0 threshold — keeping it available with score 0 would
+      // dilute the confidence denominator and tank every signal on a
+      // coiling/low-volume day.
+      const dailies = series(22, 100, { volume: 1000, lastVolume: 200 }); // 0.2×
+      const down = indiaFactors({
+        ...baseArgs,
+        dailies,
+        dayChangePct: -1,
+      });
+      expect(factor(down, "volume").available).toBe(false);
+      expect(factor(down, "volume").score).toBe(0);
+    });
+
+    it("session factor is UNAVAILABLE off-hours (no permanent penalty)", () => {
+      // Regression: previously the session factor scored -0.5 when outside
+      // the active window, dragging every off-hours signal's confidence down
+      // by ~2 points. The fix marks the factor unavailable so it stops
+      // diluting confidence — it's a meta state, not directional edge.
+      const offHours = indiaFactors({
+        ...baseArgs,
+        inActiveWindow: false,
+        windowLabel: "Post-close",
+      });
+      expect(factor(offHours, "session").available).toBe(false);
+      expect(factor(offHours, "session").score).toBe(0);
+    });
+
+    it("session factor is +1 during the active window", () => {
+      const inWindow = indiaFactors({ ...baseArgs, inActiveWindow: true });
+      expect(factor(inWindow, "session").available).toBe(true);
+      expect(factor(inWindow, "session").score).toBe(1);
+    });
+
+    it("volume thrust agrees with the day's price direction", () => {
+      // Volume 2× avg + up day → positive (bullish confirmation).
+      // Same volume + down day → negative (bearish confirmation).
+      const dailies = series(22, 100, { volume: 1000, lastVolume: 2000 });
+      const up = indiaFactors({ ...baseArgs, dailies, dayChangePct: 1.2 });
+      const down = indiaFactors({ ...baseArgs, dailies, dayChangePct: -1.2 });
+      expect(factor(up, "volume").score).toBeGreaterThan(0.5);
+      expect(factor(down, "volume").score).toBeLessThan(-0.5);
+    });
+
     it("scores news flow directionally", () => {
       const bull = indiaFactors({
         ...baseArgs,

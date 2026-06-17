@@ -100,7 +100,7 @@ export async function getIndiaOpeningBreakoutSignals(
 ): Promise<IndiaScalpSignal[]> {
   const timeframe = options.timeframe;
   const all = await cache.memo(
-    `scalp:opening-breakout:${timeframe}`,
+    `scalp:opening-breakout:v2:${timeframe}`,
     30_000,
     async () => {
       const universe = buildOrbUniverse();

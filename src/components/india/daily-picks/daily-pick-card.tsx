@@ -1,8 +1,11 @@
 import {
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  CalendarRange,
   Clock,
   Gauge,
+  Info,
   Rocket,
   ShieldAlert,
   Sparkles,
@@ -12,7 +15,12 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { DailyPick, DailyPickStatus } from "@/features/india/daily-picks/engine";
+import type {
+  DailyPick,
+  DailyPickStatus,
+  DailyPickWarning,
+  DailyPickWarningSeverity,
+} from "@/features/india/daily-picks/engine";
 import { fmt, fmtDuration, fmtIstTime, fmtPct } from "@/lib/india/format";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +48,16 @@ const OUTCOME_VERB: Record<DailyPickStatus, string> = {
   EXPIRED: "Expired after",
 };
 
+/** Map a warning severity to the Badge variant. */
+const WARNING_VARIANT: Record<
+  DailyPickWarningSeverity,
+  "warning" | "bear" | "neutral"
+> = {
+  info: "neutral",
+  warn: "warning",
+  danger: "bear",
+};
+
 /**
  * One Daily Pick — frozen entry / stop / target / "can move upto" / "can
  * expect", the live P&L and progress-to-target, plus the logic explaining why
@@ -50,6 +68,12 @@ export function DailyPickCard({ pick }: Props) {
   const isBull = pick.direction !== "BEARISH";
   const DirIcon = isBull ? ArrowUpRight : ArrowDownRight;
   const status = STATUS_META[pick.status];
+  // Option-mode: entry / stop / target / lastPrice are *premium* ₹, not the
+  // underlying. Premiums always move DOWN on a stop and UP on a target,
+  // regardless of CE/PE — so the level-tone logic differs from a spot trade.
+  const isOption = pick.optionContract != null;
+  const stopTone: "bull" | "bear" = isOption ? "bear" : isBull ? "bear" : "bull";
+  const targetTone: "bull" | "bear" = isOption ? "bull" : isBull ? "bull" : "bear";
 
   const pnl = pick.pnlPct;
   const pnlTone = pnl == null ? "neutral" : pnl >= 0 ? "bull" : "bear";
@@ -62,6 +86,19 @@ export function DailyPickCard({ pick }: Props) {
   const appearedAt = fmtIstTime(pick.generatedAt);
   const elapsedMs = (pick.resolvedAt ?? Date.now()) - pick.generatedAt;
   const elapsed = fmtDuration(elapsedMs);
+
+  const subtitle = isOption && pick.optionContract
+    ? `NSE OPT · ${pick.optionContract.side} ${pick.optionContract.strike} · Lot ${pick.optionContract.lotSize} · ${pick.optionContract.expiry}`
+    : `NSE F&O · ${pick.horizon}`;
+
+  const confluenceScore = pick.confluenceScore;
+  const confluenceTone =
+    confluenceScore >= 8 ? "bull" : confluenceScore <= 4 ? "bear" : "neutral";
+  const timeWindow = pick.timeWindow;
+  const keyIndicators = pick.keyIndicators ?? [];
+  const warnings: DailyPickWarning[] = pick.warnings ?? [];
+  const setupType = pick.setupType;
+  const researchNote = pick.researchNote;
 
   return (
     <Card
@@ -83,7 +120,7 @@ export function DailyPickCard({ pick }: Props) {
                 {pick.displayName}
               </CardTitle>
               <span className="text-[10px] uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
-                NSE F&amp;O · {pick.horizon}
+                {subtitle}
               </span>
             </div>
           </div>
@@ -97,6 +134,14 @@ export function DailyPickCard({ pick }: Props) {
             </Badge>
           </div>
         </div>
+        {setupType ? (
+          <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
+            <span className="text-[var(--color-fg-muted)]">Setup · </span>
+            <span className="font-medium text-[var(--color-fg)] normal-case tracking-normal">
+              {setupType}
+            </span>
+          </p>
+        ) : null}
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3 px-4">
@@ -127,6 +172,62 @@ export function DailyPickCard({ pick }: Props) {
             </span>
           </div>
         </div>
+
+        {/* Spec strip — Confluence X/10 + Time Window. The card already shows
+            a Conf 0-100 in the live strip above; this one renders the
+            ladder-aligned X/10 the desk reads off the spec. */}
+        {(confluenceScore > 0 || timeWindow) ? (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
+            <div className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                Confluence
+              </span>
+              <span
+                className={cn(
+                  "num text-sm font-semibold",
+                  confluenceTone === "bull"
+                    ? "text-bull"
+                    : confluenceTone === "bear"
+                      ? "text-bear"
+                      : "text-[var(--color-fg)]",
+                )}
+              >
+                {confluenceScore}
+                <span className="text-[var(--color-fg-subtle)]">/10</span>
+              </span>
+            </div>
+            {timeWindow ? (
+              <div className="flex flex-col items-end">
+                <span className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                  <CalendarRange className="h-3 w-3" />
+                  Time window
+                </span>
+                <span className="num text-[12px] font-medium text-[var(--color-fg-muted)]">
+                  {timeWindow.start}–{timeWindow.end} IST
+                </span>
+                <span className="text-[10px] text-[var(--color-fg-subtle)]">
+                  {timeWindow.label}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Warning badges — HIGH VIX, EVENT RISK, LOW CONFIDENCE, … */}
+        {warnings.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {warnings.map((w) => (
+              <Badge
+                key={w.kind}
+                variant={WARNING_VARIANT[w.severity]}
+                title={w.note}
+              >
+                <AlertTriangle className="h-3 w-3" />
+                {w.label}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
 
         {/* Timing — appeared on the board + time-to-outcome */}
         <div className="flex items-center justify-between gap-2 text-[10px] text-[var(--color-fg-subtle)]">
@@ -169,28 +270,28 @@ export function DailyPickCard({ pick }: Props) {
             label="Stop loss"
             value={`₹${fmt(pick.stopLoss)}`}
             sub={fmtPct(((pick.stopLoss - pick.entry) / pick.entry) * 100)}
-            tone={isBull ? "bear" : "bull"}
+            tone={stopTone}
             icon={<ShieldAlert className="h-3 w-3" />}
           />
           <Field
             label="Target"
             value={`₹${fmt(pick.target)}`}
             sub={fmtPct(((pick.target - pick.entry) / pick.entry) * 100)}
-            tone={isBull ? "bull" : "bear"}
+            tone={targetTone}
             icon={<Target className="h-3 w-3" />}
           />
           <Field
             label="Can move upto"
             value={`₹${fmt(pick.canMoveUpto)}`}
             sub={fmtPct(((pick.canMoveUpto - pick.entry) / pick.entry) * 100)}
-            tone={isBull ? "bull" : "bear"}
+            tone={targetTone}
             icon={<Rocket className="h-3 w-3" />}
           />
           <Field
             label="Can expect"
-            value={`${isBull ? "+" : "-"}${fmt(pick.canExpectPct)}%`}
+            value={`${isOption ? "+" : isBull ? "+" : "-"}${fmt(pick.canExpectPct)}%`}
             sub={`RR ${pick.riskReward.toFixed(1)}:1`}
-            tone={isBull ? "bull" : "bear"}
+            tone={targetTone}
             icon={<TrendingUp className="h-3 w-3" />}
           />
           <Field
@@ -200,11 +301,46 @@ export function DailyPickCard({ pick }: Props) {
           />
         </div>
 
+        {/* Key Indicators — chip row of the technical/structural factors
+            driving the pick (RSI / VWAP / OI / PCR / ATR / …). */}
+        {keyIndicators.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+              Key Indicators
+            </span>
+            {keyIndicators.map((k) => (
+              <span
+                key={k}
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
+              >
+                {k}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
         {/* Logic */}
         <p className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
           <span className="font-semibold text-[var(--color-fg)]">Why here: </span>
           {pick.logic}
         </p>
+
+        {/* Research Note — 3–5 sentence institutional thesis: why this stock
+            today, what the chart shows, what the chain reveals, the risk
+            and why the R:R justifies it. */}
+        {researchNote ? (
+          <div className="flex gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-brand)]" />
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                Research Note
+              </span>
+              <p className="text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
+                {researchNote}
+              </p>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

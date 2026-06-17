@@ -69,10 +69,12 @@ describe("opening-breakout-core — IST helpers", () => {
 
 describe("opening-breakout-core — buildOpeningBreakoutSignal", () => {
   // 09:15 range 99.8–100.3 (0.5% wide), bullish break at 09:20, retest at 09:25.
+  // Retest bar must be bullish (close > open) — a doji / bearish bar at the
+  // level is a *failed* retest under the strategy's "support flip held" rule.
   const bullishRetest = [
     candle(0, 100, 100.3, 99.8, 100.1, 1000),
     candle(5, 100.2, 100.6, 100.0, 100.5, 2000),
-    candle(10, 100.5, 100.6, 100.2, 100.4, 1500),
+    candle(10, 100.4, 100.6, 100.25, 100.55, 1500),
   ];
 
   it("returns a confirmed LONG on a breakout + retest, entering at the range high", () => {
@@ -87,10 +89,45 @@ describe("opening-breakout-core — buildOpeningBreakoutSignal", () => {
     // Target = 2R above entry (risk 0.3 → +0.6).
     expect(sig?.target).toBeCloseTo(100.9, 5);
     expect(sig?.riskReward).toBe(2);
-    // Confirmed base (0.62) + volume thrust (0.08), range in the healthy band.
-    expect(sig?.confidence).toBeCloseTo(0.7, 5);
+    // Confirmed base (0.62) + volume thrust (0.08) + index bonus (0.05),
+    // range in the healthy band.
+    expect(sig?.confidence).toBeCloseTo(0.75, 5);
     expect(sig?.triggeredAt).toBe(bullishRetest[2].time * 1000);
     expect(sig?.rationale.join(" ")).toMatch(/retest/i);
+  });
+
+  it("applies the F&O-index bonus so index breakouts rank above equal stock setups", () => {
+    // Regression for 2026-06-17: NIFTY's clean ORB long (retested, stretch
+    // target hit on the day) ranked #9 of 10 because chain max-pain was
+    // marginally below spot (-0.04) while stock setups got no such penalty.
+    // The +0.05 index bonus restores the structural advantage indices have
+    // over single stocks (max liquidity, tightest spreads, no idiosyncratic
+    // news shock) so the F&O hero shows up on the board.
+    const stockInput: OpeningBreakoutInput = {
+      ...baseInput(bullishRetest),
+      symbol: "RELIANCE",
+      symbolName: "RELIANCE",
+    };
+    const indexSig = buildOpeningBreakoutSignal(baseInput(bullishRetest));
+    const stockSig = buildOpeningBreakoutSignal(stockInput);
+    expect(indexSig?.confidence).toBeGreaterThan(stockSig?.confidence ?? 0);
+    expect((indexSig?.confidence ?? 0) - (stockSig?.confidence ?? 0)).toBeCloseTo(
+      0.05,
+      5,
+    );
+  });
+
+  it("rejects a doji / counter-bar at the level as an unconfirmed retest", () => {
+    // Same geometry as bullishRetest but the retest candle closes below its
+    // open (bearish bar) — the strategy treats this as a failed retest.
+    const counterBar = [
+      candle(0, 100, 100.3, 99.8, 100.1, 1000),
+      candle(5, 100.2, 100.6, 100.0, 100.5, 2000),
+      candle(10, 100.5, 100.6, 100.2, 100.35, 1500),
+    ];
+    const sig = buildOpeningBreakoutSignal(baseInput(counterBar));
+    expect(sig?.confirmed).toBe(false);
+    expect(sig?.rationale.join(" ")).toMatch(/awaiting retest/i);
   });
 
   it("flags an unconfirmed breakout while the retest is still pending", () => {
@@ -110,7 +147,9 @@ describe("opening-breakout-core — buildOpeningBreakoutSignal", () => {
     const bearish = [
       candle(0, 100, 100.2, 99.7, 99.9, 1000),
       candle(5, 99.8, 100.0, 99.4, 99.5, 2000), // close < 99.7 → bearish
-      candle(10, 99.5, 99.75, 99.45, 99.6, 1500), // high>=99.7 && close<=99.7 → retest
+      // Retest: high reaches 99.7, close back below — *and* bearish bar
+      // (close < open) so the support-flipped-to-resistance held.
+      candle(10, 99.65, 99.75, 99.45, 99.55, 1500),
     ];
     const sig = buildOpeningBreakoutSignal(baseInput(bearish));
     expect(sig?.direction).toBe("SHORT");

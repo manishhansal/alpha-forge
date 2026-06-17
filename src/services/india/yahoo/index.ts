@@ -141,7 +141,14 @@ export class YahooAdapter implements BrokerAdapter {
     const interval = YF_INTERVAL[req.interval];
     const period1 = rangeToFrom(req.range);
     const cacheKey = `yf:hist:${yfSym}:${interval}:${req.range}`;
-    return cache.memo(cacheKey, 30_000, async () => {
+    // Daily and weekly bars don't change minute-to-minute — caching them for
+    // 30s on a per-symbol basis becomes ruinous when the Daily Picks scan
+    // fans out across 170 F&O underlyings every minute. Keep intraday
+    // intervals short-TTL (their *current* bar updates tick-by-tick) and let
+    // daily/weekly history coast on a long TTL refreshed lazily.
+    const isDailyOrLonger = req.interval === "1d" || req.interval === "1w";
+    const ttlMs = isDailyOrLonger ? 4 * 60 * 60 * 1000 : 30_000;
+    return cache.memo(cacheKey, ttlMs, async () => {
       try {
         const res = await yf.chart(yfSym, { period1, interval });
         const quotes = (res?.quotes ?? []) as YfRawCandle[];

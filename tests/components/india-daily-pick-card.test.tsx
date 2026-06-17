@@ -36,6 +36,14 @@ function makePick(overrides: Partial<DailyPick> = {}): DailyPick {
     generatedAt: 0,
     resolvedAt: null,
     updatedAt: 0,
+    optionContract: null,
+    confluenceScore: 8,
+    keyIndicators: ["RSI", "EMA stack", "OI buildup"],
+    setupType: "Trend continuation pullback",
+    researchNote:
+      "Outperforming the tape into a multi-day breakout. Stop sits below the prior swing low so the structural invalidation is honest. Targets line up with the next supply pocket.",
+    timeWindow: { start: "09:15", end: "15:30", label: "Intraday Window" },
+    warnings: [],
     ...overrides,
   };
 }

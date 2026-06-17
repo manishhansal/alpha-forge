@@ -578,6 +578,15 @@ five buckets**:
   any pick still OPEN is **force-squared-off at its last mark** (status
   `CLOSED`), regardless of P&L, both on the live board and across the history
   (`squareOffPick` + `isNseSessionEndedForDateIST`).
+- **No pre-market freeze.** The builder will not freeze picks before
+  **09:15 IST** — without real opening-session prices, anything captured at
+  e.g. 00:12 (when the IST trade date rolls over) would just lock in last
+  evening's closes and live-track stale levels all day. Pre-market requests
+  return an empty board with the "waiting for open" empty state. If stale
+  pre-market rows already exist in `IndiaDailyPick` for today (e.g. from an
+  off-hours cron in a previous run), they're **auto-evicted on the first
+  post-open request** and immediately re-frozen against fresh opening
+  candidates (`nseOpenMsForDateIST` + `generatedAt < openMs` filter).
 - **Institutional confluence stack.** Beyond the technical/derivatives reads,
   the signal now weights the factors a desk actually trades on: **intraday
   demand** (the day's move), **support/resistance breakout confirmed by

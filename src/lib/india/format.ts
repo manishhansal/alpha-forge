@@ -39,6 +39,22 @@ export function fmtIstTime(ts: number | null | undefined): string {
 }
 
 /**
+ * Epoch ms → IST wall-clock time as `HH:MM:SS IST` (24h). Used for the
+ * "refreshed at" stamp on the live boards, where the seconds give useful
+ * freshness feedback. Deterministic across SSR + CSR (never delegates to
+ * `toLocaleTimeString`, which would render differently on server vs client
+ * and break React hydration).
+ */
+export function fmtIstClock(ts: number | null | undefined): string {
+  if (ts == null || !Number.isFinite(ts)) return "—";
+  const ist = new Date(ts + 5.5 * 60 * 60 * 1000);
+  const hh = String(ist.getUTCHours()).padStart(2, "0");
+  const mm = String(ist.getUTCMinutes()).padStart(2, "0");
+  const ss = String(ist.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss} IST`;
+}
+
+/**
  * A duration in ms → compact human form (`45s`, `12m`, `1h 23m`). Used for
  * "how long the trade took to hit its target / stop" and "how long it's been
  * live". Negative / non-finite inputs return an em-dash.

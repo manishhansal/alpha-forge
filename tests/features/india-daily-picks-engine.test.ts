@@ -15,9 +15,12 @@ import {
   groupDailyPicks,
   istDateKey,
   marketAlignment,
+  passesBucketGate,
+  passesTapeFilter,
   pickFromSignal,
   selectDailyPicks,
   squareOffPick,
+  TAPE_HARD_FILTER_BIAS,
   trackPick,
 } from "@/features/india/daily-picks/engine";
 import type { IndiaScalpSignal } from "@/features/india/scalping/types";
@@ -107,6 +110,8 @@ function makeSignal(overrides: Partial<AiSignal> = {}): AiSignal {
       bestExitNote: "",
     },
     confluences: overrides.confluences ?? [
+      makeFactor("dayChange", 0.5),
+      makeFactor("breakout", 0.4),
       makeFactor("trend", 0.8),
       makeFactor("momentum", 0.7),
       makeFactor("volume", 0.6),
@@ -597,6 +602,261 @@ describe("daily-picks engine", () => {
       // for the momentum bucket even though their raw setups are symmetric.
       const sel = selectDailyPicks([short, long], 1, 0.8);
       expect(sel.MOMENTUM[0]?.signal.symbol).toBe("LONGER");
+    });
+  });
+
+  describe("passesTapeFilter (counter-tape hard-filter)", () => {
+    it("is a no-op on a weak / mixed tape", () => {
+      const short = makeSignal({
+        symbol: "X",
+        direction: "BEARISH",
+        action: "SHORT",
+      });
+      expect(passesTapeFilter(short, 0.05)).toBe(true);
+      expect(passesTapeFilter(short, -0.05)).toBe(true);
+    });
+
+    it("drops shorts in a meaningfully-bullish tape", () => {
+      const short = makeSignal({
+        symbol: "X",
+        direction: "BEARISH",
+        action: "SHORT",
+      });
+      const long = makeSignal({
+        symbol: "Y",
+        direction: "BULLISH",
+        action: "LONG",
+      });
+      expect(passesTapeFilter(short, 0.2)).toBe(false);
+      expect(passesTapeFilter(long, 0.2)).toBe(true);
+    });
+
+    it("drops longs in a meaningfully-bearish tape", () => {
+      const short = makeSignal({
+        symbol: "X",
+        direction: "BEARISH",
+        action: "SHORT",
+      });
+      const long = makeSignal({
+        symbol: "Y",
+        direction: "BULLISH",
+        action: "LONG",
+      });
+      expect(passesTapeFilter(short, -0.2)).toBe(true);
+      expect(passesTapeFilter(long, -0.2)).toBe(false);
+    });
+
+    it("hard-filter threshold sits at the documented constant", () => {
+      // Sanity: a tape bias right above the threshold filters, just below
+      // doesn't. Catches accidental tightening / loosening of the gate.
+      const short = makeSignal({
+        symbol: "X",
+        direction: "BEARISH",
+        action: "SHORT",
+      });
+      expect(passesTapeFilter(short, TAPE_HARD_FILTER_BIAS + 0.01)).toBe(false);
+      expect(passesTapeFilter(short, TAPE_HARD_FILTER_BIAS - 0.01)).toBe(true);
+    });
+  });
+
+  describe("passesBucketGate (per-bucket factor-direct floor)", () => {
+    it("MOMENTUM rejects picks with no day-change push", () => {
+      const stale = makeSignal({
+        symbol: "STALE",
+        confluences: [
+          makeFactor("dayChange", 0.05),
+          makeFactor("trend", 0.6),
+          makeFactor("momentum", 0.5),
+          makeFactor("breakout", 0.3),
+        ],
+      });
+      expect(passesBucketGate(stale, "MOMENTUM")).toBe(false);
+    });
+
+    it("MOMENTUM accepts a tape-aligned mover even on a low-volume day", () => {
+      const mover = makeSignal({
+        symbol: "MOVER",
+        confluences: [
+          makeFactor("dayChange", 0.45),
+          makeFactor("trend", 1.0),
+          makeFactor("momentum", 0.7),
+          makeFactor("breakout", 0.3),
+        ],
+      });
+      expect(passesBucketGate(mover, "MOMENTUM")).toBe(true);
+    });
+
+    it("MOMENTUM rejects a pick fighting S/R even with strong day-change", () => {
+      const fightingSr = makeSignal({
+        symbol: "AGAINST",
+        confluences: [
+          makeFactor("dayChange", 0.5),
+          makeFactor("trend", 0.8),
+          makeFactor("momentum", 0.6),
+          makeFactor("breakout", -0.4),
+        ],
+      });
+      expect(passesBucketGate(fightingSr, "MOMENTUM")).toBe(false);
+    });
+
+    it("SCALPING rejects a setup with poor blended R:R", () => {
+      const lowRr = makeSignal({
+        symbol: "SCALP1",
+        confluences: [
+          makeFactor("dayChange", 0.5),
+          makeFactor("breakout", 0.3),
+        ],
+        riskReward: 1.0,
+        riskRewardBlended: 1.0,
+      });
+      expect(passesBucketGate(lowRr, "SCALPING")).toBe(false);
+    });
+
+    it("SCALPING accepts an intraday-blended-RR setup on side of the tape", () => {
+      const good = makeSignal({
+        symbol: "SCALP2",
+        confluences: [
+          makeFactor("dayChange", 0.4),
+          makeFactor("breakout", 0.3),
+        ],
+        riskReward: 1.14,
+        riskRewardBlended: 1.7,
+      });
+      expect(passesBucketGate(good, "SCALPING")).toBe(true);
+    });
+
+    it("POTENTIAL rejects a 'flat' setup with no breakout edge", () => {
+      const flat = makeSignal({
+        symbol: "WEAK",
+        confluences: [
+          makeFactor("breakout", 0.05),
+          makeFactor("trend", 0.6),
+        ],
+        confidence: 0.4,
+      });
+      expect(passesBucketGate(flat, "POTENTIAL")).toBe(false);
+    });
+
+    it("POTENTIAL accepts a grade-D, low-conf pick when the factor signature is clean", () => {
+      const realSetup = makeSignal({
+        symbol: "OK",
+        grade: "D",
+        confidence: 0.25,
+        confluences: [
+          makeFactor("breakout", 0.5),
+          makeFactor("trend", 0.8),
+          makeFactor("momentum", 0.4),
+        ],
+      });
+      expect(passesBucketGate(realSetup, "POTENTIAL")).toBe(true);
+    });
+
+    it("INDICES_SCALP enforces a confidence floor (≥0.18) but not a grade gate", () => {
+      expect(
+        passesBucketGate(
+          makeSignal({ symbol: "X", confidence: 0.1, grade: "B" }),
+          "INDICES_SCALP",
+        ),
+      ).toBe(false);
+      expect(
+        passesBucketGate(
+          makeSignal({ symbol: "Y", confidence: 0.22, grade: "D" }),
+          "INDICES_SCALP",
+        ),
+      ).toBe(true);
+    });
+
+    it("OPENING_BREAKOUT has no engine-side gate (curated upstream)", () => {
+      const weak = makeSignal({ symbol: "X", confidence: 0.1, grade: "D" });
+      expect(passesBucketGate(weak, "OPENING_BREAKOUT")).toBe(true);
+    });
+
+    it("does NOT gate on grade — a grade-D mover with clean factors clears MOMENTUM", () => {
+      const gradeDMover = makeSignal({
+        symbol: "MOVER",
+        grade: "D",
+        confidence: 0.25,
+        confluences: [
+          makeFactor("dayChange", 0.45),
+          makeFactor("trend", 1.0),
+          makeFactor("momentum", 0.7),
+          makeFactor("breakout", 0.3),
+        ],
+      });
+      expect(passesBucketGate(gradeDMover, "MOMENTUM")).toBe(true);
+    });
+  });
+
+  describe("selectDailyPicks hard-filter integration", () => {
+    it("regression: 3 shorts + 3 weak longs in a bullish tape — only longs survive", () => {
+      // Reproduces the 2026-06-17 Highly Scalping incident: shorts ranked
+      // highest under the old engine because below-avg volume flipped sign for
+      // shorts. With the volume-factor fix + tape filter + bucket gate the
+      // shorts are dropped entirely and the bucket reflects the tape.
+      const shorts = ["S1", "S2", "S3"].map((sym) =>
+        makeSignal({
+          symbol: sym,
+          direction: "BEARISH",
+          action: "SHORT",
+          confluences: [
+            makeFactor("trend", -0.4),
+            makeFactor("momentum", -0.3),
+            // Volume factor as the *fixed* builder emits it on a low-volume
+            // day: raw score 0 (lack of conviction), not a flipped negative.
+            // Under `aligned()` this stays 0 — failing the MOMENTUM/SCALPING
+            // volume gate, which is the whole point of the regression.
+            makeFactor("volume", 0),
+            makeFactor("scanner", -0.2),
+          ],
+          riskReward: 2,
+          stopLoss: 105,
+          takeProfits: [
+            { level: 1, price: 95, percent: 5, allocation: 0.5 },
+            { level: 2, price: 90, percent: 10, allocation: 0.3 },
+            { level: 3, price: 85, percent: 15, allocation: 0.2 },
+          ],
+        }),
+      );
+      const longs = ["L1", "L2", "L3"].map((sym) =>
+        makeSignal({
+          symbol: sym,
+          direction: "BULLISH",
+          action: "LONG",
+          confluences: [
+            makeFactor("trend", 0.6),
+            makeFactor("momentum", 0.5),
+            makeFactor("volume", 0.5),
+            makeFactor("scanner", 0.4),
+          ],
+          riskReward: 2,
+          horizon: "intraday",
+        }),
+      );
+      const sel = selectDailyPicks([...shorts, ...longs], 3, 0.2);
+      const allPicked = (
+        ["MOMENTUM", "SCALPING", "POTENTIAL"] as const
+      ).flatMap((b) => sel[b].map((x) => x.signal.symbol));
+      expect(allPicked.every((s) => s.startsWith("L"))).toBe(true);
+      expect(allPicked).not.toContain("S1");
+    });
+
+    it("leaves a bucket empty rather than promoting a sub-threshold pick", () => {
+      // Pool has only weak (grade D, conf 0.2) signals — POTENTIAL should
+      // refuse to fill rather than ship a low-conviction "highest conviction"
+      // pick.
+      const weak = ["W1", "W2", "W3"].map((sym) =>
+        makeSignal({
+          symbol: sym,
+          confidence: 0.2,
+          grade: "D",
+          confluences: [
+            makeFactor("trend", 0.6),
+            makeFactor("volume", 0.5),
+          ],
+        }),
+      );
+      const sel = selectDailyPicks(weak, 3, 0);
+      expect(sel.POTENTIAL.length).toBe(0);
     });
   });
 

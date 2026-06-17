@@ -186,6 +186,14 @@ export interface AiMarketContext {
    * (e.g. "tomorrow at 09:15 IST"). Paired with `nextSessionOpensAt`.
    */
   nextSessionLabel?: string | null;
+  /**
+   * India-only: the latest India VIX reading (decimal %, e.g. 13.4 for
+   * 13.4%). Surfaced on the context so cross-market consumers (e.g. the
+   * Daily Picks Market Context Header) can read the volatility regime
+   * without needing to re-fetch it. Null/undefined when unavailable or for
+   * the crypto market.
+   */
+  indiaVix?: number | null;
 }
 
 export interface AiSignalsResponse {

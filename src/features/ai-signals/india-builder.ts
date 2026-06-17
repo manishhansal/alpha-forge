@@ -13,7 +13,8 @@
 
 import "server-only";
 
-import { FNO_INDICES } from "@/lib/india/fno-symbols";
+import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
+import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import { yahoo } from "@/services/india/yahoo";
 import { nse } from "@/services/india/nse";
 import { angel, isAngelConfigured } from "@/services/india/angelone";
@@ -61,7 +62,19 @@ import {
   suggestPositionSizePct,
 } from "./engine";
 
-const CACHE_TTL_MS = 30_000;
+// Daily Picks rescans the full F&O universe on this cadence — bumped to a
+// minute per the spec ("scan all F&O stocks every minute"). The minute is the
+// natural NSE intraday candle; finer than that the macro factors (PCR, OI
+// buildup, daily-RSI/MACD) don't change meaningfully.
+const CACHE_TTL_MS = 60_000;
+
+/**
+ * Concurrency cap when fanning Yahoo historical fetches across the full F&O
+ * universe (170 symbols). Yahoo's chart endpoint rate-limits aggressively
+ * on parallel bursts; 8 in-flight is the sweet spot we've seen settle
+ * within ~12s on cold cache while staying clear of 429s.
+ */
+const YAHOO_HIST_CONCURRENCY = 8;
 
 const DERIVATIVE_FACTOR_IDS = new Set([
   "pcr",
@@ -597,7 +610,17 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       category: "flow",
       label: "Volume thrust",
       weight: 0.08,
-      raw: volRatio != null ? volRatio - 1 : null,
+      // Volume "thrust" must be *directional conviction* — above-average volume
+      // moving in the day's price direction. We use the sign of today's % change
+      // as the direction proxy. Below-average volume returns `null` (unavailable)
+      // rather than 0, because lack of volume is *lack of conviction*: a `0`
+      // would still be counted in the confidence denominator and dilute every
+      // signal on coiling days, while `null` correctly removes it from the math.
+      // It also cannot be flipped by `aligned()` into a SHORT-supporting score.
+      raw:
+        volRatio != null && dayChange != null && volRatio >= 1
+          ? (volRatio - 1) * (dayChange >= 0 ? 1 : -1)
+          : null,
       denominator: 1,
       describe: () =>
         volRatio == null
@@ -606,7 +629,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
             ? `Breakout volume ${volRatio.toFixed(2)}× 20-day avg`
             : volRatio >= 1
               ? `Above-avg volume ${volRatio.toFixed(2)}×`
-              : `Below-avg volume ${volRatio.toFixed(2)}×`,
+              : `Below-avg volume ${volRatio.toFixed(2)}× — no conviction`,
     }),
     makeFactor({
       id: "pcr",
@@ -696,7 +719,13 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       category: "macro",
       label: "NSE session",
       weight: 0.04,
-      raw: args.inActiveWindow ? 1 : -0.5,
+      // The session factor is a *meta* state — "is the market open" — not a
+      // directional edge. When we're outside the active F&O window we mark it
+      // unavailable rather than scoring it -0.5; otherwise every off-hours
+      // signal gets a permanent confidence penalty for no real reason. When
+      // we're inside the window we still score it +1 to reward signals fired
+      // at high-liquidity times.
+      raw: args.inActiveWindow ? 1 : null,
       denominator: 1,
       describe: () =>
         args.inActiveWindow
@@ -1097,6 +1126,7 @@ function buildIndiaContext(args: {
       !args.inActiveWindow && args.nextSession
         ? `${args.nextSession.dayLabel} at ${args.nextSession.timeLabel}`
         : null,
+    indiaVix: vix,
   };
 }
 
@@ -1131,49 +1161,21 @@ function buildUniverse(): UniverseEntry[] {
 }
 
 /**
- * Broader high-liquidity F&O stock set layered on top of the AI universe so
- * the Daily Picks board has a deep enough pool to fill three buckets of three
- * *distinct* names. These are spot-traded for technicals only — option chains
- * are fetched just for the indices + AI leaders (see `getIndiaDailyPickCandidates`).
+ * Daily Picks scans the **full F&O universe** — every NSE stock with a live
+ * options & futures contract (sourced from `lib/india/sectors.ts` via
+ * `FNO_STOCKS`). The base AI universe (indices + AI leaders) is layered in
+ * first so those carry the option-chain enrichment, then every remaining
+ * F&O stock is added for technicals-only scoring.
+ *
+ * Option chains are intentionally NOT fetched for the long tail — the NSE
+ * option-chain endpoint rate-limits aggressively, so chains stay gated to
+ * the indices + AI leaders (see `getIndiaDailyPickCandidates`).
  */
-const DAILY_PICK_STOCKS = [
-  "ICICIBANK",
-  "INFY",
-  "SBIN",
-  "AXISBANK",
-  "KOTAKBANK",
-  "BHARTIARTL",
-  "ITC",
-  "LT",
-  "TATAMOTORS",
-  "MARUTI",
-  "BAJFINANCE",
-  "SUNPHARMA",
-  "HINDUNILVR",
-  "HCLTECH",
-  "WIPRO",
-  "TITAN",
-  "ULTRACEMCO",
-  "ASIANPAINT",
-  "TATASTEEL",
-  "JSWSTEEL",
-  "POWERGRID",
-  "NTPC",
-  "ONGC",
-  "COALINDIA",
-  "ADANIENT",
-  "ADANIPORTS",
-  "BAJAJFINSV",
-  "TECHM",
-  "GRASIM",
-  "HINDALCO",
-] as const;
-
 function buildDailyPickUniverse(): UniverseEntry[] {
   const base = buildUniverse();
   const seen = new Set(base.map((u) => u.symbol));
   const extra: UniverseEntry[] = [];
-  for (const s of DAILY_PICK_STOCKS) {
+  for (const s of FNO_STOCKS) {
     if (seen.has(s)) continue;
     seen.add(s);
     extra.push({ symbol: s, displayName: s, isIndex: false, yahooSymbol: s });
@@ -1188,6 +1190,12 @@ interface IndiaUniverseResult {
   inActiveWindow: boolean;
   nextSession: NextTradingSession | null;
   stats: AiSignalsResponse["stats"];
+  /** Latest India VIX value (decimal %), or null when unavailable. */
+  indiaVix: number | null;
+  /** Intraday level + % change for the headline indices. */
+  indexLevels: Partial<
+    Record<"NIFTY" | "BANKNIFTY", { level: number; changePct: number | null }>
+  >;
 }
 
 /**
@@ -1236,8 +1244,15 @@ async function computeIndiaUniverse(
   const dailiesByYf = new Map<string, Candle[]>();
   const chainBySymbol = new Map<string, OptionChain | null>();
 
-  await Promise.all(
-    universe.map(async (u, idx) => {
+  // Two-phase fan-out with concurrency caps — at 170+ universe entries an
+  // unbounded `Promise.all` would fire every Yahoo / NSE call simultaneously
+  // and earn us a 429 on cold cache. Phase 1 pulls daily candles (the heavy
+  // one; cached 4h downstream — see `cache.memo` TTL in the Yahoo adapter).
+  // Phase 2 pulls option chains only for the gated subset.
+  await mapWithConcurrency(
+    universe,
+    YAHOO_HIST_CONCURRENCY,
+    async (u, idx) => {
       const yfSym = yahooSymbols[idx];
       try {
         const candles = await yahoo.getHistorical({
@@ -1253,13 +1268,15 @@ async function computeIndiaUniverse(
         );
         dailiesByYf.set(yfSym, []);
       }
+    },
+    { onError: () => null },
+  );
 
-      // Option chain only available for the four F&O index underlyings + the
-      // F&O stocks NSE serves. Fail-soft on shadow-bans / 401s.
-      if (!fetchChainFor(u)) {
-        chainBySymbol.set(u.symbol, null);
-        return;
-      }
+  const chainFetches = universe.filter(fetchChainFor);
+  await mapWithConcurrency(
+    chainFetches,
+    4,
+    async (u) => {
       try {
         const chain = await nse.getOptionChain(u.symbol);
         chainBySymbol.set(u.symbol, chain);
@@ -1270,8 +1287,13 @@ async function computeIndiaUniverse(
         );
         chainBySymbol.set(u.symbol, null);
       }
-    }),
+    },
+    { onError: () => null },
   );
+  // Backfill nulls for universe members we intentionally skipped.
+  for (const u of universe) {
+    if (!chainBySymbol.has(u.symbol)) chainBySymbol.set(u.symbol, null);
+  }
 
   const status = getBestTimeStatus();
   const inActiveWindow =
@@ -1345,6 +1367,25 @@ async function computeIndiaUniverse(
   }
   const avgConfidence = signals.length > 0 ? confSum / signals.length : 0;
 
+  // Capture intraday level + change for the headline indices so downstream
+  // consumers (Daily Picks header) don't have to refetch the quote slice.
+  const indexLevels: IndiaUniverseResult["indexLevels"] = {};
+  for (const u of universe) {
+    if (u.symbol !== "NIFTY" && u.symbol !== "BANKNIFTY") continue;
+    const idx = universe.indexOf(u);
+    const q = quoteList[idx] ?? null;
+    if (q?.price != null && Number.isFinite(q.price)) {
+      indexLevels[u.symbol as "NIFTY" | "BANKNIFTY"] = {
+        level: q.price,
+        changePct: q.changePct ?? null,
+      };
+    }
+  }
+  const indiaVix =
+    vixQuote?.price != null && Number.isFinite(vixQuote.price)
+      ? vixQuote.price
+      : null;
+
   return {
     signals,
     context,
@@ -1352,11 +1393,13 @@ async function computeIndiaUniverse(
     inActiveWindow,
     nextSession,
     stats: { bullish, bearish, wait, avgConfidence, topGrade },
+    indiaVix,
+    indexLevels,
   };
 }
 
 export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
-  return indiaCache.memo("ai-signals:india:v1", CACHE_TTL_MS, async () => {
+  return indiaCache.memo("ai-signals:india:v2", CACHE_TTL_MS, async () => {
     const r = await computeIndiaUniverse(buildUniverse());
     return {
       market: "india",
@@ -1374,6 +1417,16 @@ export interface IndiaDailyPickCandidates {
   context: AiMarketContext;
   generatedAt: number;
   inActiveWindow: boolean;
+  /** Latest India VIX value (decimal %), or null when unavailable. */
+  indiaVix: number | null;
+  /**
+   * Intraday level + % change for the headline indices, used by the Daily
+   * Picks Market Context Header. Missing entries mean the quote wasn't
+   * available — the header renders `—` for that line.
+   */
+  indexLevels: Partial<
+    Record<"NIFTY" | "BANKNIFTY", { level: number; changePct: number | null }>
+  >;
 }
 
 /**
@@ -1383,7 +1436,10 @@ export interface IndiaDailyPickCandidates {
  * fetched only for the indices + AI leaders to keep the fan-out fast.
  */
 export async function getIndiaDailyPickCandidates(): Promise<IndiaDailyPickCandidates> {
-  return indiaCache.memo("daily-picks:candidates:v3", CACHE_TTL_MS, async () => {
+  // v6 — full F&O universe expansion (174 symbols, replacing the 37-symbol
+  // curated set). Bumping the key forces every in-memory + Redis entry
+  // built against the older universe to be evicted on the first read.
+  return indiaCache.memo("daily-picks:candidates:v6", CACHE_TTL_MS, async () => {
     const r = await computeIndiaUniverse(buildDailyPickUniverse(), {
       fetchChainFor: (u) =>
         u.isIndex || (FNO_STOCK_LEADERS as readonly string[]).includes(u.symbol),
@@ -1403,6 +1459,8 @@ export async function getIndiaDailyPickCandidates(): Promise<IndiaDailyPickCandi
       context: r.context,
       generatedAt: r.generatedAt,
       inActiveWindow: r.inActiveWindow,
+      indiaVix: r.indiaVix,
+      indexLevels: r.indexLevels,
     };
   });
 }

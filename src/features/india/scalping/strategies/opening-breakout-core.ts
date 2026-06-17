@@ -22,6 +22,15 @@ import type {
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
 
+/**
+ * F&O index underlyings — the four indices for which NSE writes options. Used
+ * to apply a small confidence bonus to index ORB setups: indices are the
+ * F&O hero (max liquidity, tightest spreads, no single-stock news shock, the
+ * widest institutional participation). A clean retested index breakout should
+ * rank above an equally-clean stock breakout on the Daily Picks board.
+ */
+const FNO_INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
+
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 /** The opening 5-min candle starts at 09:15 IST. */
 const OPEN_HOUR = 9;
@@ -198,11 +207,21 @@ export function buildOpeningBreakoutSignal(
   const breakout = after[breakoutIdx];
   const level = isLong ? rangeHigh : rangeLow;
 
-  // Retest: a later candle that returns to the broken level and holds (closes
-  // back on the breakout side). This is the entry trigger.
+  // Retest: a later candle that returns to the broken level and *holds with
+  // direction confirmation*. We require:
+  //   1. price touches the level (low ≤ level for long, high ≥ level for short),
+  //   2. the bar closes back on the breakout side (close ≥ level / close ≤ level),
+  //   3. the bar itself is directional in the trade's favour (bullish bar on a
+  //      long retest, bearish bar on a short retest) — a doji or counter-bar
+  //      at the level is a *failed* retest, not a held one.
+  // This last gate stops the "wick into the level, close flat, then reverse"
+  // false retests that produced the ICICIBANK SHORT stopout in <20m on
+  // 2026-06-17.
   let retest: Candle | null = null;
   for (let j = breakoutIdx + 1; j < after.length; j++) {
     const c = after[j];
+    const directional = isLong ? c.close > c.open : c.close < c.open;
+    if (!directional) continue;
     if (isLong && c.low <= level && c.close >= level) {
       retest = c;
       break;
@@ -243,6 +262,12 @@ export function buildOpeningBreakoutSignal(
   const spotForChain = lastPrice ?? entry;
   const opt = optionAlignment(input.analytics, isLong, spotForChain);
   confidence += opt.score;
+
+  // F&O index bonus — see FNO_INDEX_SYMBOLS comment for the rationale. Without
+  // this, a NIFTY ORB long with chain max-pain marginally below spot ranked
+  // below a half-dozen stock setups despite hitting its stretch target
+  // intraday (2026-06-17 regression).
+  if (FNO_INDEX_SYMBOLS.has(input.symbol)) confidence += 0.05;
 
   confidence = clamp01(confidence);
 
