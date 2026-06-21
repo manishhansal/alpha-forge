@@ -477,6 +477,35 @@ describe("daily-picks engine", () => {
       expect(after.status).toBe("TARGET_HIT");
     });
 
+    it("locks lastPrice / pnlPct / achievedPct at the resolution snapshot", () => {
+      // Pick hits target at the +6% mark, then the underlying drifts back to
+      // entry by the close. Without the lock the row would report ~0% P&L and
+      // an outcome of "Target" — exactly the misleading rows we saw on the
+      // 2026-06-18 history (CAMS shipped as "Target" with +0.00% P&L).
+      const hit = trackPick(base, 106, 1);
+      expect(hit.lastPrice).toBe(106);
+      expect(hit.pnlPct).toBeCloseTo(6, 5);
+      expect(hit.achievedPct).toBeCloseTo(120, 5); // 6%/5% target = 120%
+
+      const after = trackPick(hit, 100, 2);
+      // Status is already covered by the "sticks" test above — what we care
+      // about here is that the *numbers* don't drift after resolution.
+      expect(after.lastPrice).toBe(106);
+      expect(after.pnlPct).toBeCloseTo(6, 5);
+      expect(after.achievedPct).toBeCloseTo(120, 5);
+    });
+
+    it("locks lastPrice / pnlPct at the STOP_HIT snapshot too", () => {
+      const stopped = trackPick(base, 94, 1);
+      expect(stopped.status).toBe("STOP_HIT");
+      expect(stopped.lastPrice).toBe(94);
+      expect(stopped.pnlPct).toBeCloseTo(-6, 5);
+      // Underlying bounces all the way back — the row must keep reporting -6%.
+      const after = trackPick(stopped, 100, 2);
+      expect(after.lastPrice).toBe(94);
+      expect(after.pnlPct).toBeCloseTo(-6, 5);
+    });
+
     it("stamps resolvedAt the moment a level is touched", () => {
       expect(base.resolvedAt).toBeNull();
       const hit = trackPick(base, 106, 1234);

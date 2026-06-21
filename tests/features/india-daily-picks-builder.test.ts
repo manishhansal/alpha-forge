@@ -631,6 +631,154 @@ describe("getIndiaDailyPicks", () => {
     expect(db.all()).toEqual([]);
   });
 
+  it("tops up an AI bucket when an earlier freeze landed fewer than 3 picks", async () => {
+    // Reproduces the 2026-06-18 INDICES_SCALP shortfall — at the first freeze
+    // tick only NIFTY made it through (BANKNIFTY/FINNIFTY/MIDCPNIFTY were
+    // dropped by `projectIndicesScalpPicks` because their chains were
+    // unavailable). Without top-up the bucket stays at rank 1 for the whole
+    // day even though those chains come back online a minute later.
+    const tradeDate = istDateKey(new Date());
+    const db = fakePrisma();
+    // Seed ONLY a single MOMENTUM rank-1 pick to simulate the "shortfall"
+    // freeze. Two stock buckets (SCALPING / POTENTIAL) and the AI's other
+    // buckets are intentionally empty.
+    const partial = buildDailyPicks({
+      signals: [makeSignal({ symbol: "SOLO", entry: 100, underlyingPrice: 100 })],
+      tradeDate,
+      now: Date.now(),
+    }).filter((p) => p.bucket === "MOMENTUM" && p.rank === 1);
+    expect(partial.length).toBe(1);
+    db.seed(
+      partial.map((p) => ({ ...p, generatedAt: new Date(), updatedAt: new Date() })),
+    );
+
+    // Next minute: fresh candidates that would fill the bucket with 3 names.
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed", regimeScore: 0 },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+
+    const res = await getIndiaDailyPicks(db.client);
+    const momentum =
+      res.groups.find((g) => g.bucket === "MOMENTUM")?.picks ?? [];
+
+    // Bucket is now full to 3, with the originally-frozen rank 1 intact and
+    // two new picks added at ranks 2 + 3 from the latest tick.
+    expect(momentum.length).toBe(3);
+    expect(momentum.map((p) => p.rank)).toEqual([1, 2, 3]);
+    expect(momentum[0].symbol).toBe("SOLO");
+
+    // Top-up persisted exactly the 2 missing slots — no duplicate ranks.
+    expect(db.model.createMany).toHaveBeenCalledTimes(1);
+    const persisted = db
+      .all()
+      .filter((r) => r.bucket === "MOMENTUM")
+      .map((r) => r.rank);
+    expect(persisted.sort()).toEqual([1, 2, 3]);
+  });
+
+  it("tops up the Opening Breakout bucket as more ORB signals qualify later", async () => {
+    // Reproduces the 2026-06-18 OPENING_BREAKOUT shortfall — only AXISBANK
+    // had qualified at the first non-empty ORB freeze (09:45), so the bucket
+    // froze at rank 1 only. Later in the session more ORB signals fired
+    // (confirmed + ≥0.55 confidence) but never reached the board.
+    const tradeDate = istDateKey(new Date());
+    const db = fakePrisma();
+    const seeded = dailyPickFromScalpSignal({
+      signal: makeOrbSignal({ symbol: "AXISBANK", confidence: 0.7 }),
+      rank: 1,
+      tradeDate,
+      now: Date.now(),
+    });
+    db.seed([
+      { ...seeded, generatedAt: new Date(), updatedAt: new Date() },
+    ]);
+
+    // Two more ORB signals now qualify. The existing one is still in the
+    // feed (real strategy keeps emitting it) — top-up must NOT re-create it.
+    getOrbMock.mockResolvedValue([
+      makeOrbSignal({ symbol: "AXISBANK", confidence: 0.7 }),
+      makeOrbSignal({ symbol: "RELIANCE", confidence: 0.66, price: 100.4 }),
+      makeOrbSignal({ symbol: "INFY", confidence: 0.6, price: 100.4 }),
+    ]);
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed", regimeScore: 0 },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+
+    const res = await getIndiaDailyPicks(db.client);
+    const orb =
+      res.groups.find((g) => g.bucket === "OPENING_BREAKOUT")?.picks ?? [];
+
+    expect(orb.length).toBe(3);
+    expect(orb.map((p) => p.rank)).toEqual([1, 2, 3]);
+    expect(orb.map((p) => p.symbol)).toEqual(["AXISBANK", "RELIANCE", "INFY"]);
+
+    // AXISBANK rank 1 was tracked, not re-frozen.
+    const persistedRanks = db
+      .all()
+      .filter((r) => r.bucket === "OPENING_BREAKOUT")
+      .map((r) => r.rank)
+      .sort();
+    expect(persistedRanks).toEqual([1, 2, 3]);
+  });
+
+  it("never re-freezes when both AI + ORB buckets are already full", async () => {
+    // Steady-state sanity check: if every bucket already has its 3 picks,
+    // top-up must be a no-op (only tracking updates).
+    const tradeDate = istDateKey(new Date());
+    const db = fakePrisma();
+    const aiFrozen = buildDailyPicks({
+      signals: candidateUniverse(),
+      tradeDate,
+      now: Date.now(),
+    });
+    const orbFrozen = [
+      dailyPickFromScalpSignal({
+        signal: makeOrbSignal({ symbol: "NIFTY", confidence: 0.74 }),
+        rank: 1,
+        tradeDate,
+        now: Date.now(),
+      }),
+      dailyPickFromScalpSignal({
+        signal: makeOrbSignal({ symbol: "RELIANCE", confidence: 0.68 }),
+        rank: 2,
+        tradeDate,
+        now: Date.now(),
+      }),
+      dailyPickFromScalpSignal({
+        signal: makeOrbSignal({ symbol: "INFY", confidence: 0.6 }),
+        rank: 3,
+        tradeDate,
+        now: Date.now(),
+      }),
+    ];
+    db.seed(
+      [...aiFrozen, ...orbFrozen].map((p) => ({
+        ...p,
+        generatedAt: new Date(),
+        updatedAt: new Date(),
+      })),
+    );
+    getCandidatesMock.mockResolvedValue({
+      signals: candidateUniverse(),
+      context: { market: "india", regime: "mixed", regimeScore: 0 },
+      inActiveWindow: true,
+      generatedAt: Date.now(),
+    });
+    getOrbMock.mockResolvedValue([
+      makeOrbSignal({ symbol: "NIFTY", confidence: 0.74 }),
+      makeOrbSignal({ symbol: "TCS", confidence: 0.7 }),
+    ]);
+
+    await getIndiaDailyPicks(db.client);
+    expect(db.model.createMany).not.toHaveBeenCalled();
+  });
+
   it("evicts stale pre-market rows and re-freezes with fresh opening prices", async () => {
     // Seed yesterday-evening / midnight rows for today (generatedAt < 09:15 IST)
     // — exactly the scenario reported in production where a midnight cron froze

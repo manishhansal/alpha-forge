@@ -34,13 +34,19 @@ import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { pickBrokerChain } from "@/services/india/broker/factory";
 import { nse } from "@/services/india/nse";
 import { resolveQuotes } from "@/services/india/resolve";
-import { getActiveSelections } from "@/features/settings/active-sources";
+// NOTE: deliberately importing the *shared* defaults (zero auth / server-only
+// deps) rather than `getActiveSelections` — Daily Picks is a background-ish
+// scorer driven by the worker too, and that runtime doesn't have a React /
+// NextAuth context. Bringing `next/navigation` into the worker via
+// `getActiveSelections` → `auth()` crashes worker boot.
+import { DEFAULT_SELECTIONS } from "@/features/settings/data-sources-shared";
 import type { AiMarketContext } from "@/types/ai-signals";
 import type { AiSignal } from "@/types/ai-signals";
 import type { OptionChain } from "@/types/india";
 
 import {
   buildDailyPicks,
+  DAILY_PICK_BUCKETS,
   dailyPickFromScalpSignal,
   EXTERNAL_BUCKETS,
   groupDailyPicks,
@@ -71,6 +77,9 @@ import {
 
 /** How many Opening Breakout signals seed the externally-sourced bucket. */
 const OPENING_BREAKOUT_PICKS = 3;
+
+/** Spec target: every bucket carries up to N picks. Used by the top-up freeze. */
+const TARGET_PER_BUCKET = 3;
 
 const isExternalBucket = (bucket: string): boolean =>
   (EXTERNAL_BUCKETS as readonly string[]).includes(bucket);
@@ -108,8 +117,13 @@ async function fetchSectorWatchRows(): Promise<
   { name: string; changePct: number | null }[]
 > {
   try {
-    const selections = await getActiveSelections();
-    const chain = pickBrokerChain(selections.india.selected);
+    // Use the package-wide default chain (Yahoo + optional Angel One when
+    // env-configured). User-specific broker preferences are deliberately not
+    // consulted here — they don't change the *signal*, only which broker
+    // serves the underlying quote — and bringing the auth-aware resolver
+    // into this path would re-introduce the NextAuth-via-next/navigation
+    // dep that crashes the worker.
+    const chain = pickBrokerChain(DEFAULT_SELECTIONS.india.selected);
     const { quotes } = await resolveQuotes(
       chain,
       SECTOR_WATCH_INDICES.map((s) => s.symbol),
@@ -723,62 +737,104 @@ async function loadOrCreateAndTrack(
   const sessionEnded = isNseSessionEndedForDateIST(tradeDate, new Date(now));
 
   // The AI-sourced buckets (indices / momentum / scalping / potential) and the
-  // externally-sourced Opening Breakout bucket are frozen independently: the AI
-  // buckets freeze on the first request of the day, while ORB freezes *lazily*
-  // the first time its signals exist (the opening candle must break + retest
-  // first, usually 9:30+). Each then live-tracks in place.
+  // externally-sourced Opening Breakout bucket follow the *same* lifecycle:
+  // every minute we (1) live-track whatever's already frozen, then (2) top up
+  // any bucket that's currently short of `TARGET_PER_BUCKET` with the latest
+  // qualifying candidates. The freeze isn't one-shot any more — a bucket that
+  // landed only rank 1 at 09:15 (because an option chain was down, or only one
+  // ORB signal had qualified yet) keeps trying to fill ranks 2/3 from the
+  // freshest data until it's full. Already-frozen rows are NEVER re-issued;
+  // top-up picks pack into the missing rank slots only.
   const aiExisting = existing.filter((r) => !isExternalBucket(r.bucket));
   const orbExisting = existing.filter((r) => isExternalBucket(r.bucket));
 
-  const ai =
-    aiExisting.length === 0
-      ? await freezeAndTrack(
-          db,
-          // INDICES_SCALP picks are re-projected into ATM option contracts
-          // before they're frozen — entry / stop / target persist as option
-          // premiums so live tracking reflects what the desk actually trades.
-          projectIndicesScalpPicks(
-            buildDailyPicks({ signals, tradeDate, now, marketBias, marketContext }),
-            chains,
-          ),
-          tradeDate,
-          prices,
-          chains,
-          now,
-          sessionEnded,
-        )
-      : await trackExistingRows(
-          db,
-          aiExisting,
-          tradeDate,
-          prices,
-          chains,
-          now,
-          sessionEnded,
-        );
+  const tracked = await trackExistingRows(
+    db,
+    [...aiExisting, ...orbExisting],
+    tradeDate,
+    prices,
+    chains,
+    now,
+    sessionEnded,
+  );
 
-  const orb =
-    orbExisting.length === 0
-      ? await freezeAndTrack(
-          db,
-          orbPicks,
-          tradeDate,
-          prices,
-          chains,
-          now,
-          sessionEnded,
-        )
-      : await trackExistingRows(
-          db,
-          orbExisting,
-          tradeDate,
-          prices,
-          chains,
-          now,
-          sessionEnded,
-        );
+  // Reserve every symbol already on the board (across all buckets) so the
+  // top-up cannot dup a name across the day — quality rule #3 ("No stock can
+  // appear in more than one category on the same day").
+  const reservedSymbols = new Set(existing.map((r) => r.symbol));
 
-  return [...ai, ...orb];
+  // ── AI top-up ────────────────────────────────────────────────────────────
+  const freshAi = projectIndicesScalpPicks(
+    buildDailyPicks({ signals, tradeDate, now, marketBias, marketContext }),
+    chains,
+  );
+  const aiTopUps: DailyPick[] = [];
+  for (const bucket of DAILY_PICK_BUCKETS) {
+    if (isExternalBucket(bucket)) continue;
+    const bucketExisting = aiExisting.filter((r) => r.bucket === bucket);
+    const missingRanks = computeMissingRanks(
+      bucketExisting.map((r) => r.rank),
+      TARGET_PER_BUCKET,
+    );
+    if (missingRanks.length === 0) continue;
+    const bucketFresh = freshAi
+      .filter((p) => p.bucket === bucket)
+      .filter((p) => !reservedSymbols.has(p.symbol))
+      .slice(0, missingRanks.length)
+      .map((p, idx) => ({ ...p, rank: missingRanks[idx] }));
+    for (const p of bucketFresh) reservedSymbols.add(p.symbol);
+    aiTopUps.push(...bucketFresh);
+  }
+  const aiFrozen = await freezeAndTrack(
+    db,
+    aiTopUps,
+    tradeDate,
+    prices,
+    chains,
+    now,
+    sessionEnded,
+  );
+
+  // ── ORB top-up ───────────────────────────────────────────────────────────
+  const orbBucketExisting = orbExisting.filter(
+    (r) => r.bucket === "OPENING_BREAKOUT",
+  );
+  const orbMissingRanks = computeMissingRanks(
+    orbBucketExisting.map((r) => r.rank),
+    TARGET_PER_BUCKET,
+  );
+  const orbTopUps =
+    orbMissingRanks.length === 0
+      ? []
+      : orbPicks
+          .filter((p) => !reservedSymbols.has(p.symbol))
+          .slice(0, orbMissingRanks.length)
+          .map((p, idx) => ({ ...p, rank: orbMissingRanks[idx] }));
+  const orbFrozen = await freezeAndTrack(
+    db,
+    orbTopUps,
+    tradeDate,
+    prices,
+    chains,
+    now,
+    sessionEnded,
+  );
+
+  return [...tracked, ...aiFrozen, ...orbFrozen];
+}
+
+/**
+ * Resolve the rank slots a bucket is still missing, given the ranks that are
+ * already frozen. Works with sparse rank sets (e.g. existing = [rank 2] →
+ * missing = [1, 3]) so a degenerate DB state can't double-write a rank.
+ */
+function computeMissingRanks(existing: number[], target: number): number[] {
+  const have = new Set(existing);
+  const missing: number[] = [];
+  for (let i = 1; i <= target; i += 1) {
+    if (!have.has(i)) missing.push(i);
+  }
+  return missing;
 }
 
 /**

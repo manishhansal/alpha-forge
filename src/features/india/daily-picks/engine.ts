@@ -1370,6 +1370,18 @@ export function trackPick(
   if (lastPrice == null || !Number.isFinite(lastPrice) || lastPrice <= 0) {
     return pick;
   }
+
+  // Once a pick is resolved (TARGET_HIT / STOP_HIT / CLOSED / EXPIRED), its
+  // P&L snapshot is locked. Without this, a pick that hit target at 11:00
+  // and then drifted back to entry by close would still report `Target` as
+  // its outcome but `~0%` as its P&L — exactly the misleading rows we saw
+  // on the 2026-06-18 history (CAMS = "Target" with +0.00%, NBCC = "Stop"
+  // with -0.02%). Status correctness is necessary but not sufficient; the
+  // recorded numbers must match the resolution instant too.
+  if (pick.status !== "OPEN") {
+    return { ...pick, updatedAt: now };
+  }
+
   const dir = pick.direction === "BEARISH" ? -1 : 1;
   const pnlPct = ((lastPrice - pick.entry) / pick.entry) * 100 * dir;
   const targetMovePct = (Math.abs(pick.target - pick.entry) / pick.entry) * 100;
@@ -1377,18 +1389,18 @@ export function trackPick(
   const achievedPct =
     pick.achievedPct == null ? progress : Math.max(pick.achievedPct, progress);
 
-  let status = pick.status;
+  // Widen back to the full DailyPickStatus — the early-return above narrowed
+  // `pick.status` to the literal `"OPEN"`.
+  let status: DailyPickStatus = pick.status;
   let resolvedAt = pick.resolvedAt;
-  if (status === "OPEN") {
-    const hitStop = dir === 1 ? lastPrice <= pick.stopLoss : lastPrice >= pick.stopLoss;
-    const hitTarget =
-      dir === 1 ? lastPrice >= pick.target : lastPrice <= pick.target;
-    if (hitStop) status = "STOP_HIT";
-    else if (hitTarget) status = "TARGET_HIT";
-    // Stamp the resolution instant the moment the level is touched, so the
-    // board can report how long the trade took to hit its target / stop.
-    if (status !== "OPEN") resolvedAt = now;
-  }
+  const hitStop = dir === 1 ? lastPrice <= pick.stopLoss : lastPrice >= pick.stopLoss;
+  const hitTarget =
+    dir === 1 ? lastPrice >= pick.target : lastPrice <= pick.target;
+  if (hitStop) status = "STOP_HIT";
+  else if (hitTarget) status = "TARGET_HIT";
+  // Stamp the resolution instant the moment the level is touched, so the
+  // board can report how long the trade took to hit its target / stop.
+  if (status !== "OPEN") resolvedAt = now;
 
   return {
     ...pick,
