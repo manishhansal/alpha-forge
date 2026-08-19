@@ -65,6 +65,7 @@ from .market_structure import (
     detect_order_blocks,
 )
 from .macro import (
+    compute_advance_decline_ratio,
     compute_expiry_features,
     compute_intermarket_features,
     compute_time_features,
