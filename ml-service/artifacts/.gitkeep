@@ -1,0 +1,10 @@
+# Trained model artifacts directory.
+# Files saved here:
+#   market_regime.json     — XGBoost regime classifier
+#   stock_ranker.txt       — LightGBM ranking model
+#   strategy_selector.cbm  — CatBoost strategy classifier
+#   risk/                  — XGBoost risk sub-models
+#     risk_stop_hit.json
+#     risk_target_hit.json
+#     risk_drawdown.json
+#   rl_executor.zip        — Stable-Baselines3 PPO agent
