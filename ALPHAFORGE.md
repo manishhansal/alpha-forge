@@ -51,7 +51,8 @@ the topbar.
 - **Overview / Market Pulse** (`/in/dashboard`) — NIFTY indices hero
   strip with 3D tilt, sectoral heatmap (bullish→bearish), MSB–OB
   intraday signals table, range-expansion (WR8 + bullish-trend) scanner
-  section, sector drill-down modal with sortable F&O constituents
+  section, **Top 5 Stocks for Tomorrow** post-market picks section,
+  sector drill-down modal with sortable F&O constituents
   (price, day %, vs SMA50, upside, downside, score, signal, held-for).
 - **Best Time** (`/in/best-time`) — NSE-anchored session guide. Seven
   windows (Pre-Open Auction 09:00–09:15, Opening Volatility 09:15–10:00,
@@ -205,6 +206,7 @@ Paginated components:
 | F&O Scanner | `/in/scanner` | Yes |
 | MSB–OB Intraday Signals | `/in/dashboard` | Yes |
 | Range Expansion (WR8) | `/in/dashboard` | Yes |
+| Top 5 Stocks for Tomorrow | `/in/dashboard` | No (always 5 cards) |
 | Sector Stocks Modal | `/in/dashboard` (drill-down) | Yes |
 | Live F&O Signals | `/in/strategies` | Yes |
 | Open F&O Paper Positions | `/in/paper-trading` | Yes |
@@ -1094,7 +1096,59 @@ the crypto features, no shared stores, no shared API routes.
 - Sectoral heatmap (bullish → bearish)
 - MSB–OB intraday signals table
 - Range-expansion (WR8 + bullish-trend) scanner section
+- **Top 5 Stocks for Tomorrow** — post-market picks section (see below)
 - Sector drill-down modal with sortable F&O constituents
+
+#### Top 5 Stocks for Tomorrow (`/api/in/top-picks`)
+
+A post-market section on the Overview dashboard that surfaces the **five
+highest-conviction NSE F&O stocks for the next trading session**, refreshed
+every 5 minutes. Intended for review after market close.
+
+**How it works:**
+- Flattens the entire `SECTOR_STOCKS` universe (~130+ F&O names) into a
+  deduplicated symbol → primary-sector map (first sector wins per symbol).
+- Fetches Yahoo Finance quotes for every symbol in parallel.
+- Scores each stock through the same 8-factor `computeScore` + `classifySignal`
+  pipeline used by the sector-stocks route (SMA-50/200, intraday change,
+  analyst target, RSI, ADX, relative volume, delivery%).
+- Filters out any stock with no price data or an `N/A` signal.
+- Sorts descending by score, with upside% as a tiebreaker.
+- Returns the top 5 (configurable via `?limit=N`).
+
+**API:** `GET /api/in/top-picks?limit=5`
+
+**Response shape:**
+```ts
+{
+  picks: Array<{
+    rank: number;
+    symbol: string;
+    shortName: string | null;
+    sector: string;
+    price: number | null;
+    changePct: number | null;
+    score: number;           // −100 … +100
+    signal: SignalLabel;     // "STRONG BUY" | "BUY" | …
+    upsidePct: number | null;
+    fromSma50Pct: number | null;
+    relativeVolume: number | null;
+    targetMean: number | null;
+  }>;
+  universe: number;          // stocks scored (after filtering nulls)
+  fetchedAt: string;         // ISO timestamp
+}
+```
+
+**UI (`TopPicksSection` in `msb-dashboard.tsx`):**
+- 5-column responsive card grid (stacks on mobile/tablet).
+- Each `TopPickCard` shows: rank badge, TradingView deep-link, company name,
+  sector label, signal badge (color-coded bull/bear), price, day %, upside
+  to analyst/52w-high, vs SMA50, relative volume, and a score pill.
+- Loading skeletons animate while the first fetch is in-flight.
+- Error state with the HTTP message if the API fails.
+- Auto-refresh every 5 minutes (post-market data, not tick-sensitive).
+- Placed between the Range Expansion section and the MSB Signals table.
 
 ### Best Time (`/in/best-time`)
 - Hero status card (active NSE window, verdict, IST clock, day quality, score)
@@ -2097,6 +2151,52 @@ python -m src.training.train_all --quick
 | POST   | /explain/{model}        | SHAP explanation for a prediction    |
 | GET    | /health                 | Service health check                 |
 | GET    | /models/status          | Model load status                    |
+
+---
+
+# Build & TypeScript Fix Log
+
+## TypeScript + Build Fixes (August 2026)
+
+Three pre-existing issues that blocked `tsc --noEmit` and `next build` were
+resolved. None affected runtime behaviour.
+
+### 1. `tsconfig.json` — `target` raised to ES2018
+
+**Problem:** The root `tsconfig.json` set `"target": "ES2017"`. Two worker
+test files (`tests/worker/db.test.ts`, `tests/worker/redis.test.ts`) used the
+`s` (dotAll) regex flag (`/pattern/s`) which TypeScript only allows when the
+target is ES2018 or later. This produced `error TS1501` at type-check time.
+
+**Fix:** Changed `"target": "ES2017"` → `"target": "ES2018"`. This is safe
+because the worker already targets `ES2022` and Next.js itself requires
+Node 18+. No code changes needed.
+
+### 2. `tsconfig.json` — `@worker/*` path alias added
+
+**Problem:** The `@worker/*` import alias was defined only in
+`worker/tsconfig.json` but not in the root `tsconfig.json`. The root `tsc`
+type-check (used by `next build` and `npm run typecheck`) couldn't resolve
+any `import … from "@worker/…"` in the `tests/worker/` directory, producing
+`error TS2307: Cannot find module '@worker/…'` for every worker test file.
+
+**Fix:** Added `"@worker/*": ["./worker/src/*"]` to the `paths` map in the
+root `tsconfig.json`. Mirrors the entry already present in
+`worker/tsconfig.json`. The Vitest config had its own `resolve.alias`
+mapping covering this path at test runtime — this fix brings the type-checker
+into alignment with the bundler.
+
+### 3. `tests/setup/vitest.setup.ts` — redundant `NODE_ENV` assignment removed
+
+**Problem:** `vitest.setup.ts` contained `process.env.NODE_ENV ??= "test"`.
+TypeScript's `ProcessEnv` type marks `NODE_ENV` as `readonly`, so the
+nullish assignment operator (`??=`) caused `error TS2540: Cannot assign to
+'NODE_ENV' because it is a read-only property`.
+
+**Fix:** Removed the line. It was already redundant — `vitest.config.ts`
+injects `NODE_ENV=test` via `test.env` before any test file (or its
+transitively-imported modules) starts evaluating, so the assignment in the
+setup file never had any effect.
 
 ---
 

@@ -21,7 +21,9 @@ top-of-sidebar switcher:
   **Paper Trading** desks, **Strategy Backtest** + **Strategy Lab**
   scaffolds wired to the live
   historical fetcher, a sector + stock **Heatmap** with continuous tint
-  saturation, plus India-only Scanner / Watchlist / per-symbol Chart
+  saturation, a **Top 5 Stocks for Tomorrow** post-market picks section
+  on the Overview dashboard (scored across the full F&O universe, refreshed
+  every 5 minutes), plus India-only Scanner / Watchlist / per-symbol Chart
   extras. Powered by `yahoo-finance2` for quotes & history and the
   direct NSE feed for option chains, with a Redis-cached server layer.
 
@@ -275,7 +277,8 @@ src/
       in/                       Indian-Market route group (mounted via sidebar switcher)
         page.tsx                Redirects /in → /in/dashboard
         dashboard/              Overview — NIFTY indices, sectoral heatmap,
-                                MSB–OB signals, Range Expansion (WR8) scanner
+                                MSB–OB signals, Range Expansion (WR8) scanner,
+                                Top 5 Stocks for Tomorrow post-market picks
         best-time/              NSE-anchored session guide (09:15–15:30 IST,
                                 7 windows, weekly-expiry quality, "now" cursor)
         options/                NSE option chain (PCR, max pain, ATM ±5 strikes)
@@ -1381,6 +1384,26 @@ absent, the cache transparently falls back to in-memory.
     - [ ] **Live order placement** — `placeOrder` / `modifyOrder` /
           `cancelOrder` + order/trade book, gated behind an explicit live-trading
           opt-in (moves real money — deliberately deferred).
+- [x] **Top 5 Stocks for Tomorrow** — post-market picks section on the
+      Overview dashboard (`/in/dashboard`). Scores every deduplicated stock in
+      the `SECTOR_STOCKS` universe (~130+ NSE F&O names) through the 8-factor
+      `computeScore` + `classifySignal` pipeline, sorts by score descending
+      (upside% as tiebreaker), and surfaces the top 5. Each card shows rank,
+      sector label, signal badge, price, day %, upside to analyst/52w-high, vs
+      SMA50, relative volume and score pill. API: `GET /api/in/top-picks?limit=5`
+      (`src/app/api/in/top-picks/route.ts`). UI: `TopPicksSection` +
+      `TopPickCard` in `msb-dashboard.tsx`, placed between the Range Expansion
+      and MSB Signals sections. Refreshes every 5 minutes. Animated loading
+      skeletons and an error state included.
+- [x] **TypeScript / build fixes** — resolved 3 pre-existing issues that
+      blocked `tsc --noEmit` and `next build`:
+  - `tsconfig.json` `target` raised `ES2017 → ES2018` (dotAll `/s` regex
+    flag support for worker tests).
+  - `@worker/*` path alias added to root `tsconfig.json` so the type-checker
+    resolves `tests/worker/**` imports consistently with the Vitest bundler alias.
+  - Redundant `process.env.NODE_ENV ??= "test"` removed from
+    `tests/setup/vitest.setup.ts` (TypeScript marks `NODE_ENV` read-only;
+    the value is already injected via `vitest.config.ts` `test.env`).
 
 ## Troubleshooting
 

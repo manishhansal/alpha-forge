@@ -12,6 +12,7 @@ import {
   PlusCircle,
   RefreshCw,
   Sparkles,
+  Star,
   TrendingDown,
   TrendingUp,
   X,
@@ -396,6 +397,9 @@ export default function MsbDashboard() {
 
       {/* Range Expansion (WR8 + Bullish Trend) — F&O long-side scanner */}
       <RangeExpansionSection />
+
+      {/* Top 5 Stocks for Tomorrow */}
+      <TopPicksSection />
 
       {/* Signals Table */}
       <MsbSignalsSection data={data} loading={loading} addJournal={addJournal} />
@@ -1697,5 +1701,332 @@ function ScorePill({ score }: { score: number }) {
         <div className="absolute top-0 bottom-0 left-1/2 w-px bg-border" />
       </div>
     </div>
+  );
+}
+
+// ─── Top 5 Stocks for Tomorrow ────────────────────────────────────────────────
+
+type TopPickRow = {
+  rank: number;
+  symbol: string;
+  shortName: string | null;
+  sector: string;
+  price: number | null;
+  changePct: number | null;
+  score: number;
+  signal: "STRONG BUY" | "BUY" | "HOLD" | "SELL" | "STRONG SELL" | "N/A";
+  upsidePct: number | null;
+  fromSma50Pct: number | null;
+  relativeVolume: number | null;
+  targetMean: number | null;
+};
+
+type TopPicksResponse = {
+  picks: TopPickRow[];
+  universe: number;
+  fetchedAt: string;
+};
+
+const SIGNAL_GRADIENT: Record<
+  Exclude<TopPickRow["signal"], "N/A">,
+  { ring: string; badge: string; icon: string }
+> = {
+  "STRONG BUY": {
+    ring: "ring-emerald-500/40",
+    badge: "bg-emerald-600 text-white shadow-emerald-600/30 shadow-md",
+    icon: "text-emerald-500",
+  },
+  BUY: {
+    ring: "ring-emerald-400/25",
+    badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+    icon: "text-emerald-400",
+  },
+  HOLD: {
+    ring: "ring-border",
+    badge: "bg-muted text-muted-foreground",
+    icon: "text-muted-foreground",
+  },
+  SELL: {
+    ring: "ring-rose-400/25",
+    badge: "bg-rose-500/15 text-rose-700 dark:text-rose-400",
+    icon: "text-rose-400",
+  },
+  "STRONG SELL": {
+    ring: "ring-rose-500/40",
+    badge: "bg-rose-600 text-white shadow-rose-600/30 shadow-md",
+    icon: "text-rose-500",
+  },
+};
+
+function TopPickCard({ pick, delay }: { pick: TopPickRow; delay: number }) {
+  const isBull = pick.signal === "STRONG BUY" || pick.signal === "BUY";
+  const isBear = pick.signal === "STRONG SELL" || pick.signal === "SELL";
+  const meta =
+    pick.signal !== "N/A"
+      ? SIGNAL_GRADIENT[pick.signal]
+      : { ring: "ring-border", badge: "bg-muted text-muted-foreground", icon: "text-muted-foreground" };
+
+  const DirIcon = isBull ? ArrowUpRight : isBear ? ArrowDownRight : Activity;
+  const changeTone =
+    (pick.changePct ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.35, delay, ease: "easeOut" }}
+      className={`relative rounded-2xl bg-card/70 backdrop-blur p-4 ring-1 ring-inset ${meta.ring} flex flex-col gap-3`}
+    >
+      {/* Rank badge */}
+      <span className="absolute top-3 right-3 grid h-6 w-6 place-items-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground ring-1 ring-border">
+        #{pick.rank}
+      </span>
+
+      {/* Header */}
+      <div className="flex items-start gap-2 pr-8">
+        <div
+          className={`mt-0.5 p-1.5 rounded-lg ${
+            isBull
+              ? "bg-emerald-500/15"
+              : isBear
+                ? "bg-rose-500/15"
+                : "bg-muted"
+          }`}
+        >
+          <DirIcon className={`h-3.5 w-3.5 ${meta.icon}`} />
+        </div>
+        <div className="min-w-0">
+          <a
+            href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${pick.symbol}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-semibold text-foreground hover:text-blue-400 hover:underline transition-colors"
+          >
+            {pick.symbol}
+          </a>
+          {pick.shortName && (
+            <p className="text-[10px] text-muted-foreground truncate">
+              {pick.shortName}
+            </p>
+          )}
+          <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide">
+            {pick.sector}
+          </p>
+        </div>
+      </div>
+
+      {/* Signal badge */}
+      {pick.signal !== "N/A" && (
+        <span
+          className={`self-start text-[10px] font-bold px-2.5 py-1 rounded-full ${meta.badge}`}
+        >
+          {pick.signal}
+        </span>
+      )}
+
+      {/* Key metrics grid */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        <div>
+          <p className="text-[10px] text-muted-foreground">Price</p>
+          <p className="font-semibold tabular">{fmt(pick.price)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground">Day %</p>
+          <p className={`font-semibold tabular ${changeTone}`}>
+            {pick.changePct == null
+              ? "—"
+              : `${pick.changePct >= 0 ? "+" : ""}${pick.changePct.toFixed(2)}%`}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground">Upside</p>
+          <p className="font-semibold tabular text-emerald-500">
+            {pick.upsidePct == null ? "—" : `+${pick.upsidePct.toFixed(1)}%`}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground">vs SMA50</p>
+          <p
+            className={`font-semibold tabular ${
+              (pick.fromSma50Pct ?? 0) >= 0
+                ? "text-emerald-500"
+                : "text-rose-500"
+            }`}
+          >
+            {pick.fromSma50Pct == null
+              ? "—"
+              : `${pick.fromSma50Pct >= 0 ? "+" : ""}${pick.fromSma50Pct.toFixed(1)}%`}
+          </p>
+        </div>
+        {pick.relativeVolume != null && (
+          <div>
+            <p className="text-[10px] text-muted-foreground">Rel. Vol</p>
+            <p
+              className={`font-semibold tabular ${
+                pick.relativeVolume >= 1.5
+                  ? "text-amber-500"
+                  : "text-foreground"
+              }`}
+            >
+              {pick.relativeVolume.toFixed(2)}×
+            </p>
+          </div>
+        )}
+        <div>
+          <p className="text-[10px] text-muted-foreground">Score</p>
+          <ScorePill score={pick.score} />
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function TopPicksSection() {
+  const [data, setData] = useState<TopPicksResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const ctrlRef = useRef<AbortController | null>(null);
+
+  const load = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    ctrlRef.current?.abort();
+    const ctrl = new AbortController();
+    ctrlRef.current = ctrl;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/in/top-picks?limit=5", {
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as TopPicksResponse;
+      if (!ctrl.signal.aborted) {
+        setData(json);
+        setError(null);
+      }
+    } catch (e: unknown) {
+      const err = e as { name?: string; message?: string };
+      if (err?.name !== "AbortError") setError(err?.message ?? "Failed to load picks");
+    } finally {
+      inFlightRef.current = false;
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const initial = setTimeout(() => void load(), 0);
+    // Refresh every 5 minutes — this data is post-market, not tick-sensitive.
+    const t = setInterval(load, 5 * 60_000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(t);
+      ctrlRef.current?.abort();
+    };
+  }, [load]);
+
+  const picks = data?.picks ?? [];
+
+  return (
+    <section>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut", delay: 0.18 }}
+        className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
+          <div className="flex items-start gap-2.5">
+            <div className="p-1.5 rounded-md bg-gradient-to-br from-violet-400/30 to-fuchsia-500/30 mt-0.5">
+              <Star className="h-4 w-4 text-violet-400" />
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-semibold">
+                Top 5 Stocks for Tomorrow
+              </h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Highest-conviction NSE F&amp;O picks ranked by quant score across
+                all sectors — review after market close.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {data?.fetchedAt && (
+              <span className="text-[10px] text-muted-foreground">
+                Updated {new Date(data.fetchedAt).toLocaleTimeString()}
+              </span>
+            )}
+            {data?.universe != null && (
+              <span className="text-[10px] text-muted-foreground">
+                from {data.universe} stocks
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="rounded-full p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+              title="Refresh picks"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Error state */}
+        {error && (
+          <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5 text-xs text-rose-500">
+            {error}
+          </div>
+        )}
+
+        {/* Cards grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <AnimatePresence>
+            {picks.map((pick, i) => (
+              <TopPickCard key={pick.symbol} pick={pick} delay={i * 0.06} />
+            ))}
+          </AnimatePresence>
+
+          {/* Loading skeletons */}
+          {loading && picks.length === 0 &&
+            Array.from({ length: 5 }).map((_, i) => (
+              <div
+                key={i}
+                className="rounded-2xl bg-muted/40 ring-1 ring-border p-4 space-y-3 animate-pulse"
+              >
+                <div className="h-4 w-24 rounded bg-muted" />
+                <div className="h-3 w-16 rounded bg-muted" />
+                <div className="h-6 w-20 rounded-full bg-muted mt-2" />
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {Array.from({ length: 4 }).map((_, j) => (
+                    <div key={j} className="h-8 rounded bg-muted" />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+          {/* Empty state */}
+          {!loading && picks.length === 0 && !error && (
+            <div className="col-span-full py-10 text-center text-sm text-muted-foreground">
+              No picks available — the scanner may still be warming up.
+            </div>
+          )}
+        </div>
+
+        {/* Footer note */}
+        {picks.length > 0 && (
+          <p className="mt-4 text-[10px] text-muted-foreground/70">
+            <b>Score</b>: −100…+100 composite from SMA50/200 trend, day move,
+            analyst target, RSI, ADX, volume and delivery quality.{" "}
+            <b>Upside</b>: % to max(52-week high, analyst mean target).
+            Not financial advice — always apply your own risk management.
+          </p>
+        )}
+      </motion.div>
+    </section>
   );
 }

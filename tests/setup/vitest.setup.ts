@@ -12,7 +12,8 @@ import { cleanup } from "@testing-library/react";
 
 // Required env so `src/lib/env.ts` zod parse passes. Non-secret defaults that
 // only matter for the test environment.
-process.env.NODE_ENV ??= "test";
+// Note: NODE_ENV is set via `test.env` in vitest.config.ts (can't be assigned
+// directly here because TypeScript marks it read-only in ProcessEnv).
 process.env.AUTH_SECRET ??= "test-auth-secret-123456789012345678901234";
 process.env.AUTH_TRUST_HOST ??= "true";
 // 64 hex chars = 32 bytes (matches AES-256 key requirement in lib/crypto.ts).
