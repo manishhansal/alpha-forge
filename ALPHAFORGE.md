@@ -73,12 +73,22 @@ the topbar.
 - **AI Signals** (`/in/ai-signals`) — multi-confluence AI engine on top
   of the F&O surface. Pulls daily trend (SMA 20/50/200 + RSI + momentum),
   option-chain positioning (PCR, ATM IV, ΔPE-CE OI, max-pain) from the
-  live NSE chain, and cross-references the existing scanners. Publishes
-  a confidence-scored trade plan per index + F&O leader (NIFTY,
-  BANKNIFTY, FINNIFTY, MIDCPNIFTY + RELIANCE, HDFCBANK, TCS) with the
-  nearest ATM strike, tiered TP ladder, ATR-sized stop, position-sizing
-  %, and a live entry/exit timing window. Forces WAIT outside NSE
-  session hours.
+  live NSE chain, and cross-references the existing scanners. Produces a
+  confidence-scored trade plan per index + F&O leader with the nearest ATM
+  strike, tiered TP ladder, ATR-sized stop, position-sizing %, and a live
+  entry/exit timing window. Forces WAIT outside NSE session hours.
+
+  **Quant Upgrade (v2 engine):**
+  - 8-factor scoring model per stock: SMA-50/200 trend, intraday demand,
+    analyst target, RSI(14), ADX(14), relative volume, NSE delivery %
+  - Quantitative pre-filter: stocks failing ADX ≥ 18, relative volume ≥ 1.1×,
+    ATR% ≥ 0.4% floors receive an 18% confidence penalty; index underlyings
+    always pass
+  - ML regime blending: Python ML service regime prediction is blended 35%
+    ML + 65% heuristic; ML stock rankings apply a ±0.06 confidence delta
+  - Factor weights boosted: `futuresScreen` 0.12→0.14, `scanner` 0.08→0.10
+  - WAIT threshold tightened from 0.18 → 0.22 composite score magnitude
+  - Grade thresholds tightened (S≥0.82, A≥0.68, B≥0.54, C≥0.38)
 - **Strategies** (`/in/strategies`) — full structural mirror of the
   crypto Strategies page. Best-Time banner pinned to the active NSE
   window, a nine-strategy picker (Range Expansion, Momentum, Volume
@@ -514,7 +524,7 @@ inputs (avg funding, OI 1h, F&G classification).
 
 Covers NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + the three
 highest-liquidity F&O stock leaders. Same `AiSignal` shape so the rich
-`<AiSignalCard>` renders 1:1, but with an India-specific confluence stack:
+`<AiSignalCard>` renders 1:1, but with an India-specific 10-factor confluence stack:
 
 1. Daily SMA 20/50/200 trend stack
 2. Daily RSI(14)
@@ -530,6 +540,17 @@ highest-liquidity F&O stock leaders. Same `AiSignal` shape so the rich
 10. NSE session quality — forces WAIT outside 09:15–15:30 IST and on
     weekends / weekly-expiry warning days
 
+**Quant confidence boost** (v2 engine — `alphaforge-ai-v2`):
+- Flow factor availability bonus: when `scanner`, `futuresScreen`, `volume`,
+  `oiBuildup`, and `dayChange` factors are present, confidence gets up to
+  +0.08 bonus — rewarding institutionally-confirmed setups
+- Quant pre-filter: stocks that fail ADX ≥ 18 + relative vol ≥ 1.1× +
+  ATR% ≥ 0.4% gates receive an 18% confidence penalty; index underlyings
+  always pass
+- ML regime blend: Python ML service regime (35%) is blended into the
+  heuristic regime score (65%); top-20 ML-ranked stocks get up to +0.06
+  confidence boost
+
 Strike suggestions come from the live NSE option chain — every non-WAIT
 signal carries the nearest ATM strike so the user knows exactly which
 contract to touch on. Prices and stops are rounded to NSE-appropriate tick
@@ -543,14 +564,18 @@ sizes (0.05 INR on stocks, 1 / 5 on indices depending on price band).
   (compositeScore, classifyAction, gradeFromConfidence,
   calibrateWinProbability, buildTakeProfits, buildTradeLevels,
   buildTimingWindow, buildReasons, suggestPositionSizePct, …). No I/O.
+  **v2 upgrades:** flow-factor confidence bonus, WAIT threshold 0.22,
+  grade thresholds tightened, logistic win-probability offset 0.38.
 - `src/features/ai-signals/crypto-builder.ts` — `getCryptoAiSignals()`
   fans out broker klines + futures aggregate + fear-greed + liquidations
   + best-time and folds into the shared engine. Cached via Redis at the
   `signals` TTL.
 - `src/features/ai-signals/india-builder.ts` — `getIndiaAiSignals()`
   fans out Yahoo quotes + historical OHLCV + NSE option chain + the
-  india scanner cache + the India best-time engine. Cached via the
-  shared india-cache facade (Redis + in-process fallback).
+  india scanner cache + the India best-time engine. **v2 upgrades:**
+  ML regime blending, ML rank boost per stock, quantitative pre-filter
+  (ADX/volume/ATR gate), computeApproxAdx, buildStockFeaturesForML.
+  Cached via the shared india-cache facade (Redis + in-process fallback).
 
 UI components live in `src/components/ai-signals/`:
 - `ai-signal-card.tsx` — the rich per-signal card (renders identically
@@ -623,6 +648,18 @@ five buckets**:
   volume**, **OI build-up**, the **broad market tape** (so single names lean
   *with* the index, not against it) and **news flow** (per-symbol headline
   sentiment). The 1-year SMA trend is de-emphasised for intraday.
+- **Quant pre-filter.** Stocks failing the ADX ≥ 18 / relative volume ≥ 1.1×
+  / ATR% ≥ 0.4% gate receive an 18% confidence penalty before bucket ranking,
+  so only genuinely trending, liquid names surface at the top. Index underlyings
+  always pass. A full quant gate (ADX ≥ 20, vol ≥ 1.2×, delivery ≥ 40%) applies
+  a +5% score multiplier to the highest-quality setups.
+- **ML-enhanced ranking.** The Python ML stock ranker's top-20 scores feed a
+  ±0.06 confidence delta into every signal before bucket selection, surfacing
+  the names the ML engine agrees with the technical setup on.
+- **Tighter bucket quality floors (v2).** MOMENTUM requires confidence ≥ 0.25 +
+  dayChange ≥ 0.30; SCALPING requires confidence ≥ 0.22 + RR ≥ 1.5 + dayChange ≥
+  0.30; POTENTIAL requires confidence ≥ 0.28 + breakout ≥ 0.25. Empty is
+  preferred over a low-quality pick.
 - **Futures-segment screen.** Every candidate is also run through the
   Chartink-style institutional screen and the result feeds both the signal's
   direction/confidence and the per-bucket ranking (`computeFuturesScreen` →
@@ -1984,6 +2021,17 @@ on NSE F&O data:
 | Portfolio Optimization   | HRP         | Hierarchical Risk Parity allocation                        |
 | Execution                | PPO (RL)    | When to enter/exit, trailing stops, position sizing        |
 | Explainability           | SHAP        | Feature contributions for every prediction                 |
+
+**v2 model upgrades:**
+- **Stock Ranker**: derivatives component weight raised 0.17→0.22 (OI/PCR is
+  the strongest NSE predictor); NSE delivery % added to volume component;
+  `higher_highs_lows` weight raised 0.20→0.26; new `sector_relative_strength`
+  factor (stock 20d return vs sector peer average)
+- **Market Regime**: PCR, OI delta skew, pct_above_sma20/200, and sector
+  rotation score added as regime inputs; all VIX/breadth/ADX thresholds
+  tightened to NSE-calibrated values (e.g. CRASH VIX >30, STRONG_BULL VIX <13)
+- **Feature Engineering**: `sector_relative_strength` added to RANKING_FEATURES;
+  `compute_stock_features()` now computes 20d stock return vs sector peer avg
 
 ## Feature Engineering (150+ features)
 
