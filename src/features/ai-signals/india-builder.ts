@@ -61,6 +61,11 @@ import {
   roundToTick,
   suggestPositionSizePct,
 } from "./engine";
+import {
+  buildMLContext,
+  type MLContextInputs,
+} from "@/lib/india/ml-enhanced-context";
+import type { MLStockRank } from "@/lib/india/ml-client";
 
 // Daily Picks rescans the full F&O universe on this cadence — bumped to a
 // minute per the spec ("scan all F&O stocks every minute"). The minute is the
@@ -75,6 +80,193 @@ const CACHE_TTL_MS = 60_000;
  * within ~12s on cold cache while staying clear of 429s.
  */
 const YAHOO_HIST_CONCURRENCY = 8;
+
+// ─── Quant Pre-filter ─────────────────────────────────────────────────────────
+/**
+ * Minimum thresholds for a stock to enter the AI scoring pipeline.
+ * Stocks that fail all three gates are kept but receive a predictability
+ * penalty in their confidence score (they are never fully excluded because
+ * index underlyings always pass regardless of volume).
+ *
+ * These mirror the NSE prop-desk liquidity floor:
+ *   - ADX ≥ 18 → trending (not purely random/coiling)
+ *   - Relative volume ≥ 1.1× → above-average institutional participation
+ *   - ATR % ≥ 0.4 → minimum tradeable daily range
+ */
+const QUANT_PREFILTER = {
+  adxMin: 18,
+  relVolMin: 1.1,
+  atrPctMin: 0.4,
+} as const;
+
+/**
+ * True when a stock passes the quant pre-filter. Index underlyings always
+ * pass (their option-chain data is the primary signal source; ADX/volume
+ * gates are less meaningful for an index). For stocks, all three gates must
+ * be satisfied to earn full confidence; failure multiplies confidence by
+ * `QUANT_PENALTY`.
+ */
+export function passesQuantPrefilter(
+  symbol: string,
+  dailies: Candle[],
+  isIndex: boolean,
+): { passes: boolean; adx: number | null; relVol: number | null; atrPct: number | null } {
+  if (isIndex) return { passes: true, adx: null, relVol: null, atrPct: null };
+  if (dailies.length < 21) return { passes: false, adx: null, relVol: null, atrPct: null };
+
+  const last = dailies.at(-1)!;
+  const prev20 = dailies.slice(-21, -1);
+
+  // ATR% — Wilder ATR(14) / last close
+  const atrVal = dailyAtr(dailies, 14);
+  const atrPct = atrVal != null && last.close > 0 ? (atrVal / last.close) * 100 : null;
+
+  // Relative volume vs 20-day avg
+  const avgVol =
+    prev20.map((c) => c.volume ?? 0).reduce((a, b) => a + b, 0) / 20;
+  const relVol = avgVol > 0 ? (last.volume ?? 0) / avgVol : null;
+
+  // ADX(14) approximation from daily candles
+  // We use a simple ±DM / TR proxy since we don't carry the full ADX state
+  const adx = computeApproxAdx(dailies, 14);
+
+  const passes =
+    (adx == null || adx >= QUANT_PREFILTER.adxMin) &&
+    (relVol == null || relVol >= QUANT_PREFILTER.relVolMin) &&
+    (atrPct == null || atrPct >= QUANT_PREFILTER.atrPctMin);
+
+  return { passes, adx, relVol, atrPct };
+}
+
+/** A confidence multiplier applied when the quant pre-filter is failed. */
+const QUANT_PENALTY = 0.82;
+
+/**
+ * Compute an approximate Wilder ADX(14) from daily candles.
+ * Returns null when there aren't enough bars (need ≥ 28 for a stable read).
+ */
+function computeApproxAdx(candles: Candle[], period = 14): number | null {
+  if (candles.length < period * 2 + 1) return null;
+  const slice = candles.slice(-(period * 2 + 1));
+  const trs: number[] = [];
+  const plusDMs: number[] = [];
+  const minusDMs: number[] = [];
+  for (let i = 1; i < slice.length; i++) {
+    const c = slice[i];
+    const p = slice[i - 1];
+    const tr = Math.max(
+      c.high - c.low,
+      Math.abs(c.high - p.close),
+      Math.abs(c.low - p.close),
+    );
+    const upMove = c.high - p.high;
+    const downMove = p.low - c.low;
+    const plusDM = upMove > downMove && upMove > 0 ? upMove : 0;
+    const minusDM = downMove > upMove && downMove > 0 ? downMove : 0;
+    trs.push(tr);
+    plusDMs.push(plusDM);
+    minusDMs.push(minusDM);
+  }
+  // Wilder smoothing
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let pdi = plusDMs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let mdi = minusDMs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+    pdi = (pdi * (period - 1) + plusDMs[i]) / period;
+    mdi = (mdi * (period - 1) + minusDMs[i]) / period;
+  }
+  const diPlus = atr > 0 ? (pdi / atr) * 100 : 0;
+  const diMinus = atr > 0 ? (mdi / atr) * 100 : 0;
+  const diSum = diPlus + diMinus;
+  if (diSum === 0) return 0;
+  const dx = Math.abs(diPlus - diMinus) / diSum * 100;
+  return Math.round(dx);
+}
+
+/**
+ * Build the stock feature vector needed for ML ranking from available
+ * daily candles. Returns a minimal set of numeric features the ML service
+ * can consume without full feature-engineering infrastructure on the TS side.
+ */
+function buildStockFeaturesForML(
+  symbol: string,
+  dailies: Candle[],
+  quote: Quote | null,
+): {
+  symbol: string;
+  relative_volume: number;
+  atr_expansion: number;
+  momentum_5d: number;
+  momentum_10d: number;
+  vwap_distance_pct: number;
+  ema_stack_score: number;
+  rsi_14: number;
+  macd_histogram: number;
+  adx_14: number;
+  sector_momentum: number;
+  relative_strength_vs_nifty: number;
+  market_breadth: number;
+  gap_pct: number;
+  [key: string]: unknown;
+} {
+  const closes = dailies.map((c) => c.close);
+  const last = dailies.at(-1);
+  const price = quote?.price ?? last?.close ?? 0;
+
+  const ret5d =
+    closes.length >= 6 && closes.at(-6)
+      ? ((closes.at(-1)! - closes.at(-6)!) / closes.at(-6)!) * 100
+      : 0;
+  const ret10d =
+    closes.length >= 11 && closes.at(-11)
+      ? ((closes.at(-1)! - closes.at(-11)!) / closes.at(-11)!) * 100
+      : 0;
+
+  const avg20Vol =
+    dailies.length >= 21
+      ? dailies.slice(-21, -1).map((c) => c.volume ?? 0).reduce((a, b) => a + b, 0) / 20
+      : null;
+  const relVol =
+    avg20Vol && avg20Vol > 0 ? (last?.volume ?? 0) / avg20Vol : 1.0;
+
+  const atrVal = dailyAtr(dailies, 14);
+  const atrExpansion =
+    atrVal != null && price > 0 ? (atrVal / price) * 100 : 1.0;
+
+  const rsi = dailyRsi(dailies, 14) ?? 50;
+  const s20 = sma(dailies, 20);
+  const s50 = sma(dailies, 50);
+  const s200 = sma(dailies, 200);
+  const emaStack =
+    s20 != null && s50 != null && s200 != null
+      ? s20 > s50 && s50 > s200
+        ? 1.0
+        : s20 < s50 && s50 < s200
+          ? -1.0
+          : (s20 - s50) / Math.max(s50, 1) * 5
+      : 0;
+
+  const vwapDist = quote?.changePct ?? 0;
+  const adx = computeApproxAdx(dailies, 14) ?? 20;
+
+  return {
+    symbol,
+    relative_volume: relVol,
+    atr_expansion: atrExpansion,
+    momentum_5d: ret5d,
+    momentum_10d: ret10d,
+    vwap_distance_pct: vwapDist,
+    ema_stack_score: emaStack,
+    rsi_14: rsi,
+    macd_histogram: 0, // not computed on TS side; ML degrades gracefully
+    adx_14: adx,
+    sector_momentum: 0,
+    relative_strength_vs_nifty: 1.0,
+    market_breadth: 50,
+    gap_pct: quote?.changePct ?? 0,
+  };
+}
 
 const DERIVATIVE_FACTOR_IDS = new Set([
   "pcr",
@@ -425,6 +617,20 @@ interface IndiaSignalInputs {
    * than leaving the board padded with WAIT cards.
    */
   actionMinMagnitude?: number;
+  /**
+   * Whether the stock passed the quant pre-filter (ADX, relative-volume, ATR
+   * floors). Stocks that fail receive a mild confidence penalty so the board
+   * naturally surfaces only high-predictability names at the top.
+   * Index underlyings always pass (set to true by computeIndiaUniverse).
+   */
+  quantPrefilterPassed?: boolean;
+  /**
+   * Confidence delta from the ML stock ranker in [-0.1, 0.1]. Positive for
+   * top-20 ML-ranked stocks, slightly negative for bottom-ranked ones.
+   * Applied after the confluence math so the signal's internal factors are
+   * not altered, only the final confidence is nudged.
+   */
+  mlRankBoost?: number;
 }
 
 /**
@@ -501,7 +707,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "dayChange",
       category: "flow",
       label: "Intraday demand",
-      weight: 0.13,
+      weight: 0.14,
       raw: dayChange,
       denominator: 1.5,
       describe: (raw) =>
@@ -703,7 +909,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
       id: "scanner",
       category: "flow",
       label: "Scanner agreement",
-      weight: 0.08,
+      weight: 0.10,
       raw: args.scannerScore?.score ?? null,
       denominator: 1,
       describe: () => {
@@ -744,7 +950,7 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
         id: "futuresScreen",
         category: "technical",
         label: "Futures momentum screen",
-        weight: 0.12,
+        weight: 0.14,
         raw: screen.score,
         denominator: 1,
         describe: () =>
@@ -896,9 +1102,24 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
   const factors = indiaFactors(args);
   const composite = compositeScore(factors);
   const derivShare = derivativeShare(factors, DERIVATIVE_FACTOR_IDS);
+
+  // ── Quant pre-filter confidence penalty ──────────────────────────────────
+  // Stocks that fail the ADX/volume/ATR gate get an 18% confidence haircut
+  // so the board naturally surfaces higher-predictability names. Indices
+  // always pass (quantPrefilterPassed = true when not supplied for indices).
+  const prefilterPassed = args.quantPrefilterPassed ?? true;
+  const mlBoost = args.mlRankBoost ?? 0;
+
+  // Blend pre-filter penalty + ML rank boost into a single confidence scalar.
+  // The formula keeps everything in [0, 0.98] and never turns a low-confidence
+  // signal into a high-confidence one via ML boost alone.
+  const rawConfidence = composite.confidence;
+  const penalised = prefilterPassed ? rawConfidence : rawConfidence * 0.82;
+  const boostedConfidence = clamp(penalised + mlBoost, 0, 0.98);
+  const adjustedComposite = { ...composite, confidence: boostedConfidence };
   // F&O — always LONG/SHORT (perp-style), even for spot stocks, because the
   // tradeable instrument is the future / option.
-  const rawAction = classifyAction(composite.score, derivShare, {
+  const rawAction = classifyAction(adjustedComposite.score, derivShare, {
     allowPerps: true,
     ...(args.actionMinMagnitude != null
       ? { minMagnitude: args.actionMinMagnitude }
@@ -917,7 +1138,7 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
     pickHorizon({
       inActiveWindow: args.inActiveWindow,
       derivativeShare: derivShare,
-      scoreMagnitude: Math.abs(composite.score),
+      scoreMagnitude: Math.abs(adjustedComposite.score),
     });
 
   const price = args.quote?.price ?? args.dailies.at(-1)?.close ?? 0;
@@ -951,25 +1172,25 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
 
   const strike = nearestAtmStrike(args.chain, price);
 
-  const confidenceScore = Math.round(composite.confidence * 100);
-  const grade = gradeFromConfidence(composite.confidence);
+  const confidenceScore = Math.round(adjustedComposite.confidence * 100);
+  const grade = gradeFromConfidence(adjustedComposite.confidence);
   const winProbability = calibrateWinProbability(
-    Math.abs(composite.score),
-    composite.confidence,
+    Math.abs(adjustedComposite.score),
+    adjustedComposite.confidence,
   );
 
   const positionSizingPct = isWait
     ? 0
     : suggestPositionSizePct(entry, stopLoss, horizon, {
-        confidence: composite.confidence,
+        confidence: adjustedComposite.confidence,
       });
 
   const alignedRatio =
-    composite.bullishCount + composite.bearishCount > 0
-      ? Math.max(composite.bullishCount, composite.bearishCount) /
-        (composite.bullishCount + composite.bearishCount)
+    adjustedComposite.bullishCount + adjustedComposite.bearishCount > 0
+      ? Math.max(adjustedComposite.bullishCount, adjustedComposite.bearishCount) /
+        (adjustedComposite.bullishCount + adjustedComposite.bearishCount)
       : 0;
-  const riskLevel = riskLevelFromConfidence(composite.confidence, alignedRatio);
+  const riskLevel = riskLevelFromConfidence(adjustedComposite.confidence, alignedRatio);
 
   const reasons = buildReasons(factors);
 
@@ -1031,14 +1252,14 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
     expectedMovePct: isWait ? 0 : levels.expectedMovePct,
     positionSizingPct,
     riskLevel: isWait ? "high" : riskLevel,
-    confidence: composite.confidence,
+    confidence: adjustedComposite.confidence,
     confidenceScore,
     grade,
     winProbability,
     timing,
     confluences: factors,
-    bullishCount: composite.bullishCount,
-    bearishCount: composite.bearishCount,
+    bullishCount: adjustedComposite.bullishCount,
+    bearishCount: adjustedComposite.bearishCount,
     reasons,
     invalidationCriteria,
     modelVersion: AI_MODEL_VERSION,
@@ -1320,12 +1541,76 @@ async function computeIndiaUniverse(
     newsSentiment: news.sentiment,
   });
 
+  // ── ML-enhanced context ──────────────────────────────────────────────────
+  // Build a parallel ML context from the Python service. When the service is
+  // healthy the ML regime + stock rankings are used to:
+  //   1. Blend the ML regime score into the market context (±0.15 tilt)
+  //   2. Boost ML-ranked top-20 stocks' confidence scores
+  // Falls back transparently when the service is down.
+  const niftyQ = quoteList[universe.findIndex((u) => u.symbol === "NIFTY")] ?? null;
+  const bnQ = quoteList[universe.findIndex((u) => u.symbol === "BANKNIFTY")] ?? null;
+  const vix = vixQuote?.price ?? 15;
+
+  // Build stock feature vectors for ML ranking (stocks only, not indices)
+  const stockFeatures: MLContextInputs["stockFeatures"] = universe
+    .filter((u) => !u.isIndex)
+    .map((u, _i) => {
+      const idx = universe.indexOf(u);
+      const yfSym = yahooSymbols[idx];
+      const dailies = dailiesByYf.get(yfSym) ?? [];
+      const quote = quoteList[idx] ?? null;
+      return buildStockFeaturesForML(u.symbol, dailies, quote);
+    });
+
+  const mlCtxResult = await buildMLContext({
+    niftyChangePct: niftyQ?.changePct ?? 0,
+    bankniftyChangePct: bnQ?.changePct ?? 0,
+    indiaVix: vix,
+    niftyAtrPct: 1.0,   // rough proxy; full ATR needs candle data
+    niftyAdx: 25,
+    advanceDeclineRatio: clamp((niftyQ?.changePct ?? 0) / 2, -1, 1),
+    marketBreadth: 50,
+    sectorStrength: context.regimeScore * 50 + 50,
+    volumeRatio: 1.0,
+    gapPct: 0,
+    stockFeatures,
+  }).catch(() => null);
+
+  // Build ML rank lookup: symbol → 0-100 rank score
+  const mlRankMap = new Map<string, number>();
+  if (mlCtxResult?.rankings?.rankings) {
+    for (const r of mlCtxResult.rankings.rankings as MLStockRank[]) {
+      mlRankMap.set(r.symbol, r.score);
+    }
+  }
+
+  // Blend ML regime score into context if it differs meaningfully
+  let blendedRegimeScore = context.regimeScore;
+  if (mlCtxResult?.mlAvailable && mlCtxResult.regime) {
+    const mlScore = mlCtxResult.regimeScore;
+    // Weight ML at 35%, heuristic at 65% — the heuristic uses live intraday
+    // data (actual index %) while ML uses point-in-time feature vectors.
+    blendedRegimeScore = clamp(context.regimeScore * 0.65 + mlScore * 0.35, -1, 1);
+  }
+
   const signals: AiSignal[] = universe.map((u, idx) => {
     const yfSym = yahooSymbols[idx];
     const quote = quoteList[idx] ?? null;
     const dailies = dailiesByYf.get(yfSym) ?? [];
     const chain = chainBySymbol.get(u.symbol) ?? null;
     const scannerScore = scannerMap.get(u.symbol) ?? null;
+
+    // Quant pre-filter: stocks that fail get a confidence penalty applied
+    // inside buildIndiaSignal via the mlRankBoost mechanism.
+    const prefilter = passesQuantPrefilter(u.symbol, dailies, u.isIndex);
+
+    // ML rank boost: top-20 ranked stocks get up to +0.06 confidence bonus.
+    // This gently surfaces the ML-vetted names above unranked ones without
+    // overriding the confluence math.
+    const mlRankScore = mlRankMap.get(u.symbol) ?? null;
+    const mlRankBoost =
+      mlRankScore != null ? clamp((mlRankScore - 50) / 50, -0.1, 0.1) * 0.6 : 0;
+
     return buildIndiaSignal({
       symbol: u.symbol,
       displayName: u.displayName,
@@ -1341,7 +1626,7 @@ async function computeIndiaUniverse(
       pcrOverride: deriv.pcr.get(u.symbol) ?? null,
       oiOverride: deriv.oi.get(u.symbol) ?? null,
       dayChangePct: quote?.changePct ?? null,
-      marketRegimeScore: context.regimeScore,
+      marketRegimeScore: blendedRegimeScore,
       newsScore: news.symbols.get(u.symbol) ?? null,
       horizonOverride: opts?.forceHorizon,
       intraday: opts?.intraday,
@@ -1349,6 +1634,8 @@ async function computeIndiaUniverse(
       futuresScreen: opts?.attachFuturesScreen
         ? computeFuturesScreen(dailies)
         : null,
+      quantPrefilterPassed: prefilter.passes,
+      mlRankBoost,
     });
   });
 

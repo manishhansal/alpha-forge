@@ -18,7 +18,7 @@ gymnasium==1.0.0
 shap==0.46.0
 
 # Portfolio Optimization
-pypfopt==1.5.5
+pyportfolioopt==1.5.5
 scipy==1.14.1
 
 # Feature Engineering

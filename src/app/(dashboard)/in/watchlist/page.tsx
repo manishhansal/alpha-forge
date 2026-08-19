@@ -12,6 +12,10 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/india/ui/button";
+import {
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
 import { useIndiaWatchlistStore } from "@/store/india/watchlistStore";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { useFeedStream } from "@/hooks/india/useFeedStream";
@@ -38,6 +42,18 @@ export default function WatchlistPage() {
     const q = search.toUpperCase();
     return FNO_STOCKS.filter((s) => s.includes(q)).slice(0, 8);
   }, [search]);
+
+  const {
+    pageItems,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+  } = usePaginationFilter({
+    items,
+    pageSize: 5,
+  });
 
   return (
     <div className="space-y-6">
@@ -124,7 +140,7 @@ export default function WatchlistPage() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {items.map((item) => {
+                {pageItems.map((item) => {
                   const tick = ticks[item.symbol];
                   const q = quotes[item.symbol];
                   const ltp = tick?.ltp ?? q?.price ?? null;
@@ -204,6 +220,18 @@ export default function WatchlistPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="px-4 pb-4">
+          <PaginationStrip
+            page={page}
+            totalPages={totalPages}
+            filteredTotal={filteredTotal}
+            pageSize={pageSize}
+            onPrev={() => setPage(page - 1)}
+            onNext={() => setPage(page + 1)}
+            onJump={setPage}
+          />
         </div>
       </motion.div>
     </div>

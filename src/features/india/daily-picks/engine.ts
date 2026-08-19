@@ -305,11 +305,13 @@ export function marketAlignment(
 /**
  * Above this absolute regime score we *hard-filter* counter-tape directional
  * picks out of the stock buckets rather than merely demoting them — desks
- * don't take 5-day-momentum shorts in a tape that's grinding up. A symmetric
- * bullish/bearish threshold prevents the "all 3 SHORT in a flat tape" failure
- * mode (see Highly Scalping all-shorts incident on 2026-06-17).
+ * don't take 5-day-momentum shorts in a tape that's grinding up.
+ *
+ * Quant v2: raised from 0.10 to 0.15 so the filter only kicks in when the
+ * tape has a genuinely meaningful directional lean, preventing premature
+ * filtering on flat/borderline days.
  */
-export const TAPE_HARD_FILTER_BIAS = 0.1;
+export const TAPE_HARD_FILTER_BIAS = 0.15;
 
 /**
  * True when a signal's direction is compatible with the broader tape. Returns
@@ -347,35 +349,31 @@ const BUCKET_GATES: Record<
   // INDICES_SCALP: 4-name universe ranked by OI / PCR / max-pain — chain
   // factors that the AI's confidence scoring largely ignores. Confidence
   // floor stays low; the bucket-ranking score does the heavy lifting.
-  INDICES_SCALP: (s) => s.confidence >= 0.18,
+  // Quant v2: raised from 0.18 to 0.20 — filter pure noise on index signals.
+  INDICES_SCALP: (s) => s.confidence >= 0.20,
   // OPENING_BREAKOUT is externally sourced (the strategy itself enforces its
   // own retest + confidence floor in `loadOpeningBreakoutPicks`).
   OPENING_BREAKOUT: () => true,
   // Momentum: the name must be MOVING and BREAKING OUT in the trade
-  // direction. Trend OR momentum must be aligned (long-term up + 5-day push)
-  // and either day-change or breakout must be aligned (today's tape is on
-  // your side). Volume thrust is a *nice-to-have* — on coiling days the
-  // best setups print before volume confirms.
+  // direction. Quant v2: require ADX-proxied direction (day-change ≥ 0.3)
+  // so we don't surface names that are just drifting up without conviction.
   MOMENTUM: (s) =>
-    aligned(s, "dayChange") >= 0.2 &&
+    s.confidence >= 0.25 &&
+    aligned(s, "dayChange") >= 0.3 &&
     (aligned(s, "trend") >= 0.3 || aligned(s, "momentum") >= 0.3) &&
     aligned(s, "breakout") >= 0,
-  // Scalping: useful blended R:R across the TP ladder AND the day's tape
-  // already on your side. We use riskRewardBlended (≥ 1.5) because TP1 R:R
-  // is structurally 1.14-1.25 for any ATR-derived intraday plan; the
-  // blended ladder is the right measure of "is the math actually in my
-  // favour for a same-session trade".
+  // Scalping: quant v2 raises confidence floor to 0.22, riskRewardBlended
+  // floor to 1.5 (was 1.4), and requires stronger intraday demand (≥ 0.30).
   SCALPING: (s) =>
-    s.riskRewardBlended >= 1.4 &&
-    aligned(s, "dayChange") >= 0.25 &&
+    s.confidence >= 0.22 &&
+    s.riskRewardBlended >= 1.5 &&
+    aligned(s, "dayChange") >= 0.30 &&
     aligned(s, "breakout") >= 0,
-  // Potential: the highest-conviction, best risk-adjusted setups even when
-  // they aren't today's biggest movers. Floor confidence at a realistic
-  // 0.2 for compressed regimes; require a real breakout edge AND either
-  // long-term trend alignment or strong momentum.
+  // Potential: quant v2 raises confidence floor to 0.28, breakout alignment
+  // to 0.25 — only genuinely high-conviction structural plays reach this bucket.
   POTENTIAL: (s) =>
-    s.confidence >= 0.2 &&
-    aligned(s, "breakout") >= 0.2 &&
+    s.confidence >= 0.28 &&
+    aligned(s, "breakout") >= 0.25 &&
     (aligned(s, "trend") >= 0.3 || aligned(s, "momentum") >= 0.3),
 };
 
@@ -439,30 +437,30 @@ export function bucketScores(signal: AiSignal): BucketScores {
   const maxPain = clamp01(aligned(signal, "maxPain"));
 
   const MOMENTUM =
-    0.28 * trend + 0.22 * mom + 0.14 * vol + 0.08 * scan + 0.08 * conf + 0.2 * screen;
+    0.26 * trend + 0.20 * mom + 0.13 * vol + 0.08 * scan + 0.07 * conf + 0.26 * screen;
 
   const SCALPING =
-    0.3 * expectedMove +
-    0.22 * rr +
-    0.16 * vol +
-    0.1 * scan +
-    0.1 * scalpBonus +
-    0.12 * screen;
+    0.28 * expectedMove +
+    0.20 * rr +
+    0.15 * vol +
+    0.09 * scan +
+    0.08 * scalpBonus +
+    0.20 * screen;
 
   const POTENTIAL =
-    0.38 * conf + 0.22 * win + 0.18 * rrBlended + 0.12 * expectedMove + 0.1 * screen;
+    0.35 * conf + 0.20 * win + 0.17 * rrBlended + 0.12 * expectedMove + 0.16 * screen;
 
   // Index scalps live and die on option-chain positioning: heavy OI weight,
   // PCR / max-pain confirmation, then intraday demand, expected range and a
   // short horizon. The futures screen keeps it on the right side of the tape.
   const INDICES_SCALP =
-    0.3 * oi +
+    0.28 * oi +
     0.16 * pcr +
     0.12 * maxPain +
-    0.14 * mom +
-    0.1 * expectedMove +
-    0.1 * scalpBonus +
-    0.08 * screen;
+    0.12 * mom +
+    0.10 * expectedMove +
+    0.10 * scalpBonus +
+    0.12 * screen;
 
   return {
     INDICES_SCALP: clamp01(INDICES_SCALP),

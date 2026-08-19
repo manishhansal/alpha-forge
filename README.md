@@ -80,6 +80,25 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
   cross-references the six F&O scanners. Both engines force WAIT outside
   the active session via the Best-Time engine.
 
+  **India AI v2 — Quant upgrade:**
+  The India engine was upgraded to `alphaforge-ai-v2` with a full
+  quantitative pre-filter pipeline mirroring how a prop desk screens stocks:
+  - **8-factor quant score** per stock: SMA-50 (15pts), SMA-200 (15pts),
+    intraday change (20pts), analyst target (15pts), RSI(14) (10pts),
+    ADX(14) (8pts), relative volume (9pts), NSE delivery % (8pts)
+  - **Quant pre-filter gate**: ADX ≥ 18, rel vol ≥ 1.1×, ATR% ≥ 0.4%;
+    failures penalised −18% confidence; index underlyings always pass
+  - **ML regime blending**: 65% heuristic + 35% Python ML service regime
+  - **ML rank boost**: top-20 ML-ranked stocks earn up to +0.06 confidence
+  - **Tighter WAIT threshold**: 0.18 → 0.22 composite score magnitude
+  - **Grade thresholds tightened**: S≥0.82, A≥0.68, B≥0.54, C≥0.38
+
+- **Paginated Data Views** — all Indian Market data tables and grids are
+  paginated at **5 items per page** with filter tabs (All / Most Confidence /
+  High Winrate) using a shared `usePaginationFilter` hook. Covers: Scanner,
+  MSB Signals, Range Expansion, Sector Stocks Modal, Live Signals, Open
+  Positions, News Feed, Watchlist, Daily Picks Board, and Daily Picks History.
+
 > Full product spec: [`ALPHAFORGE.md`](./ALPHAFORGE.md)
 
 ## Tech stack
@@ -119,6 +138,18 @@ NSE Data → Feature Engineering (150+ features)
     ├── RL Executor (PPO) → trade execution timing
     └── SHAP Explainability → transparent factor contributions
 ```
+
+**v2 model upgrades:**
+- **Stock Ranker**: derivatives weight raised to 0.22 (OI/PCR is the
+  strongest NSE predictor); NSE delivery % added to volume component;
+  `higher_highs_lows` structural quality weight 0.20→0.26; new
+  `sector_relative_strength` factor (stock 20d return vs sector peer avg)
+- **Market Regime**: PCR, OI delta skew, `pct_above_sma20/200`, and sector
+  rotation score wired into heuristic; all thresholds tightened to
+  NSE-calibrated values (e.g. CRASH VIX >30, STRONG_BULL VIX <13, BULL
+  change >0.4%)
+- **Feature Engineering**: `sector_relative_strength` added to
+  `RANKING_FEATURES`; per-stock computation in `compute_stock_features()`
 
 All models include **rule-based heuristic fallbacks** — when the ML
 service is down or models are untrained, the existing rule-based engine
@@ -669,13 +700,24 @@ $ npm test                       # full suite still green
   action (`LONG` / `SHORT` / `BUY` / `SELL` / `WAIT`), grades the
   confidence (S → D), picks a horizon, builds an ATR-sized stop +
   tiered take-profit ladder (TP1/TP2/TP3 with 50%/30%/20% scale-outs),
-  calibrates a [0.30, 0.85] win-probability via a logistic, and suggests
+  calibrates a [0.28, 0.82] win-probability via a logistic, and suggests
   a horizon-capped position size against a 1% risk budget. The crypto
   builder feeds it RSI / MACD / EMA / volume thrust / funding / OI / L/S
   / liquidation imbalance / Fear & Greed; the India builder feeds it
   daily SMA trend stack / RSI / momentum / volume / PCR (OI) / ATM IV /
   ΔPE-CE OI / max-pain pull / live-scanner agreement. Both engines force
   WAIT outside the active session via the Best-Time engine.
+
+  **India AI v2 upgrades** (`alphaforge-ai-v2`):
+  - Flow-factor confidence bonus (up to +0.08 when scanner/futuresScreen/
+    volume/oiBuildup/dayChange factors are all available)
+  - Quant pre-filter: `passesQuantPrefilter()` — ADX≥18, relVol≥1.1×,
+    ATR%≥0.4%; failures receive 0.82× confidence penalty
+  - ML service integration: `buildMLContext()` regime blending (35% ML
+    + 65% heuristic) + ML stock rank boost (±0.06 confidence delta)
+  - `computeApproxAdx()` — Wilder ADX(14) computed from daily candles
+  - `buildStockFeaturesForML()` — builds ML feature vectors per stock
+  - `futuresScreen` weight 0.12→0.14; `scanner` weight 0.08→0.10
 - **Server-side liquidation imbalance**: the worker subscribes to Binance
   futures `!forceOrder@arr`, filters to tracked symbols, and `ZADD`s each
   event into `liq:rolling:{PAIR}` (Redis sorted set, score = ts). The Next
@@ -1183,6 +1225,29 @@ absent, the cache transparently falls back to in-memory.
       worker job (`worker/src/jobs/india-daily-picks.ts`, 5-min market-hours
       cadence) runs the same freeze-or-track path so the day's picks are frozen
       at the open and tracked to the close even when nobody opens the page.
+- [x] **Quant-grade India stock selection upgrade (v2 engine)** —
+      end-to-end upgrade of the India AI pipeline to surface only
+      high-predictability, institutionally-confirmed setups:
+  - [x] **8-factor quant score** (`score.ts`): SMA-50, SMA-200, intraday,
+        analyst target, RSI(14), ADX(14), relative volume, NSE delivery %
+  - [x] **Engine v2** (`engine.ts`): flow-factor confidence bonus, WAIT
+        threshold 0.22, grade thresholds tightened, win-probability
+        logistic offset 0.38, risk-level bar raised
+  - [x] **Quant pre-filter** + **ML integration** (`india-builder.ts`):
+        ADX/vol/ATR gate → 18% confidence penalty on failure; ML regime
+        35%/65% blend; ML rank ±0.06 confidence boost;
+        `computeApproxAdx`, `buildStockFeaturesForML`
+  - [x] **Higher bucket quality floors** (`daily-picks/engine.ts`):
+        MOMENTUM ≥0.25, SCALPING ≥0.22+RR≥1.5, POTENTIAL ≥0.28;
+        `TAPE_HARD_FILTER_BIAS` 0.15; `futuresScreen` weights raised
+  - [x] **ML Stock Ranker v2** (`stock_ranker.py`): derivatives
+        weight 0.22, delivery% in volume component, higher_highs_lows
+        weight 0.26, new `sector_relative_strength` factor
+  - [x] **ML Regime Classifier v2** (`market_regime.py`): PCR, OI skew,
+        pct_above_sma20/200, rotation_score added; all thresholds
+        tightened to NSE-calibrated values
+  - [x] **Feature Engineering** (`engineer.py`): `sector_relative_strength`
+        added to `RANKING_FEATURES` + computed in `compute_stock_features()`
 - [x] **Opening Breakout strategy + Daily Picks bucket** — a ninth NSE F&O
       strategy, the **first 5-min candle (9:15–9:19:59 IST) opening-range
       breakout** tuned for Indian markets. Runs on **live 5-min candles**

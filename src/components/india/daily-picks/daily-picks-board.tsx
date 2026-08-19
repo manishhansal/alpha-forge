@@ -13,7 +13,11 @@ import {
 
 import { cn } from "@/lib/utils";
 import { fmtIstClock } from "@/lib/india/format";
-import type { DailyPickBucket } from "@/features/india/daily-picks/engine";
+import {
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
+import type { DailyPickBucket, DailyPickGroup } from "@/features/india/daily-picks/engine";
 import type { DailyPicksResponse } from "@/features/india/daily-picks/builder";
 import { DailyPickCard } from "./daily-pick-card";
 import { MarketContextPanel } from "./market-context-panel";
@@ -146,37 +150,65 @@ export function DailyPicksBoard({
         </button>
       </div>
 
-      {data.groups.map((group) => {
-        const Icon = BUCKET_ICON[group.bucket];
-        return (
-          <section key={group.bucket} className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--color-bg-elevated)] text-[var(--color-brand)] ring-1 ring-inset ring-[var(--color-border)]">
-                <Icon className="h-4 w-4" />
-              </span>
-              <div className="flex flex-col">
-                <h2 className="text-sm font-semibold text-[var(--color-fg)]">
-                  {group.label}
-                </h2>
-                <p className="text-[11px] text-[var(--color-fg-subtle)]">
-                  {group.description}
-                </p>
-              </div>
-            </div>
-            {group.picks.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
-                No qualifying setups right now — check back next refresh.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {group.picks.map((pick) => (
-                  <DailyPickCard key={`${pick.bucket}-${pick.rank}`} pick={pick} />
-                ))}
-              </div>
-            )}
-          </section>
-        );
-      })}
+      {data.groups.map((group) => (
+        <DailyPicksBucketSection key={group.bucket} group={group} />
+      ))}
     </div>
+  );
+}
+
+function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
+  const Icon = BUCKET_ICON[group.bucket];
+
+  const {
+    pageItems,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+  } = usePaginationFilter({
+    items: group.picks,
+    pageSize: 5,
+  });
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--color-bg-elevated)] text-[var(--color-brand)] ring-1 ring-inset ring-[var(--color-border)]">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="flex flex-col">
+          <h2 className="text-sm font-semibold text-[var(--color-fg)]">
+            {group.label}
+          </h2>
+          <p className="text-[11px] text-[var(--color-fg-subtle)]">
+            {group.description}
+          </p>
+        </div>
+      </div>
+      {group.picks.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
+          No qualifying setups right now — check back next refresh.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {pageItems.map((pick) => (
+              <DailyPickCard key={`${pick.bucket}-${pick.rank}`} pick={pick} />
+            ))}
+          </div>
+          <PaginationStrip
+            page={page}
+            totalPages={totalPages}
+            filteredTotal={filteredTotal}
+            pageSize={pageSize}
+            onPrev={() => setPage(page - 1)}
+            onNext={() => setPage(page + 1)}
+            onJump={setPage}
+          />
+        </>
+      )}
+    </section>
   );
 }

@@ -65,6 +65,7 @@ from .market_structure import (
     detect_order_blocks,
 )
 from .macro import (
+    compute_advance_decline_ratio,
     compute_expiry_features,
     compute_intermarket_features,
     compute_time_features,
@@ -105,13 +106,13 @@ RANKING_FEATURES = [
     "oi_delta_skew_norm", "atm_iv",
     # Market structure
     "fvg_score", "ob_score", "structure_score", "liquidity_sweep",
-    # Relative
-    "relative_strength_vs_nifty", "sector_momentum",
+    # Relative strength — vs NIFTY AND vs sector peers (new)
+    "relative_strength_vs_nifty", "sector_momentum", "sector_relative_strength",
     # Macro context (passed through from regime)
     "regime_encoded", "vix_regime", "market_breadth_score",
     # ATR
     "atr_pct", "atr_14",
-    # Delivery
+    # Delivery quality gate (NSE-specific)
     "delivery_pct",
 ]
 
@@ -251,15 +252,37 @@ def compute_stock_features(
         features["relative_strength_vs_nifty"] = 1.0
 
     # Sector momentum (average 5-day return of sector peers)
+    # Sector relative strength: stock RS vs average of sector peers over 20d
     if sector_data:
         sector_returns = []
+        peer_closes = []
         for sym, peer_close in sector_data.items():
             if len(peer_close) > 5:
                 ret = (peer_close.iloc[-1] - peer_close.iloc[-6]) / peer_close.iloc[-6] * 100
                 sector_returns.append(ret)
+            if len(peer_close) >= 20:
+                peer_closes.append(peer_close)
         features["sector_momentum"] = float(np.mean(sector_returns)) if sector_returns else 0.0
+
+        # Sector RS: 20d return of this stock / average 20d return of sector
+        if peer_closes and len(c) >= 21:
+            stock_ret20 = (c.iloc[-1] - c.iloc[-21]) / c.iloc[-21]
+            peer_rets = []
+            for pc in peer_closes:
+                if len(pc) >= 21:
+                    peer_rets.append((pc.iloc[-1] - pc.iloc[-21]) / pc.iloc[-21])
+            if peer_rets:
+                avg_sector_ret = float(np.mean(peer_rets))
+                features["sector_relative_strength"] = (
+                    1.0 + float(stock_ret20) - avg_sector_ret
+                )
+            else:
+                features["sector_relative_strength"] = 1.0
+        else:
+            features["sector_relative_strength"] = 1.0
     else:
         features["sector_momentum"] = 0.0
+        features["sector_relative_strength"] = 1.0
 
     # ─── Market Structure ─────────────────────────────────────────────────
     fvg = detect_fair_value_gaps(h, l, c)

@@ -63,3 +63,5 @@ ml-service/artifacts/risk/
 ml-service/data/*.csv
 ml-service/data/*.parquet
 ml-service/data/*.pkl
+ml-service/data/*.npz
+ml-service/catboost_info/

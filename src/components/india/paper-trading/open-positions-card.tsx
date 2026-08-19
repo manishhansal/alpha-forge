@@ -14,6 +14,11 @@ import {
   indiaPnlClass,
 } from "@/components/india/paper-trading/journal-shared";
 import { useIndiaStrategyFilter } from "@/components/india/strategies/strategy-context";
+import {
+  FilterTabs,
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,15 +45,59 @@ export function IndiaOpenPositionsCard() {
     [open, isRowSelected],
   );
 
+  const getConfidence = useCallback(
+    (t: ApiIndiaPaperTrade) => {
+      // RiskReward as confidence proxy — higher RR = more confident setup
+      return Math.min(t.riskReward / 3, 1);
+    },
+    [],
+  );
+
+  const getWinrate = useCallback(
+    (t: ApiIndiaPaperTrade) => {
+      // Unrealized P&L % as winrate proxy — positive means winning
+      const mark = prices[t.symbol];
+      const live = computeIndiaLivePnl(t, mark);
+      if (!live) return 0.5;
+      // Normalize: +5% → 1.0, −5% → 0.0
+      return Math.min(Math.max((live.pct + 5) / 10, 0), 1);
+    },
+    [prices],
+  );
+
+  const {
+    pageItems,
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+    tabs,
+  } = usePaginationFilter({
+    items: visibleOpen,
+    pageSize: 5,
+    getConfidence,
+    getWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle className="text-base font-semibold normal-case tracking-tight text-[var(--color-fg)]">
           Open F&amp;O paper positions
         </CardTitle>
-        <Badge variant={visibleOpen.length > 0 ? "info" : "outline"}>
-          {visibleOpen.length} open
-        </Badge>
+        <div className="flex items-center gap-2">
+          {visibleOpen.length > 0 && (
+            <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+          )}
+          <Badge variant={visibleOpen.length > 0 ? "info" : "outline"}>
+            {filteredTotal} open
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent>
         {visibleOpen.length === 0 ? (
@@ -57,85 +106,100 @@ export function IndiaOpenPositionsCard() {
             paper-trader opens a position automatically when a fresh
             signal from an active strategy fires.
           </p>
+        ) : pageItems.length === 0 ? (
+          <p className="text-[12px] text-[var(--color-fg-muted)]">
+            No positions match the current filter.
+          </p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-            <table className="w-full text-[12px]">
-              <thead className="bg-[var(--color-bg-elevated)] text-[var(--color-fg-muted)]">
-                <tr>
-                  <Th>Symbol</Th>
-                  <Th>Strategy</Th>
-                  <Th>Side</Th>
-                  <Th align="right">Entry</Th>
-                  <Th align="right">Mark</Th>
-                  <Th align="right">Stop</Th>
-                  <Th align="right">Target</Th>
-                  <Th align="right">RR</Th>
-                  <Th align="right">P&amp;L %</Th>
-                  <Th align="right">P&amp;L ₹</Th>
-                  <Th align="right">Opened</Th>
-                  <Th align="right">Action</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleOpen.map((t) => {
-                  const mark = prices[t.symbol];
-                  const live = computeIndiaLivePnl(t, mark);
-                  return (
-                    <tr
-                      key={t.id}
-                      className="border-t border-[var(--color-border)]"
-                    >
-                      <Td>
-                        <span className="font-semibold">{t.symbol}</span>
-                      </Td>
-                      <Td>
-                        <IndiaStrategyChip
-                          strategyId={t.strategyId}
-                          timeframe={t.strategyTimeframe}
-                        />
-                      </Td>
-                      <Td>
-                        <Badge
-                          variant={t.direction === "LONG" ? "bull" : "bear"}
-                        >
-                          {t.direction}
-                        </Badge>
-                      </Td>
-                      <Td align="right">₹{fmt(t.entry, 2)}</Td>
-                      <Td align="right">
-                        {mark !== undefined ? `₹${fmt(mark, 2)}` : "—"}
-                      </Td>
-                      <Td align="right">₹{fmt(t.stopLoss, 2)}</Td>
-                      <Td align="right">₹{fmt(t.target, 2)}</Td>
-                      <Td align="right">{t.riskReward.toFixed(2)}</Td>
-                      <Td align="right" className={indiaPnlClass(live?.pct ?? null)}>
-                        {live
-                          ? `${live.pct > 0 ? "+" : ""}${live.pct.toFixed(2)}%`
-                          : "—"}
-                      </Td>
-                      <Td align="right" className={indiaPnlClass(live?.usd ?? null)}>
-                        {live
-                          ? `${live.usd > 0 ? "+" : ""}₹${live.usd.toFixed(2)}`
-                          : "—"}
-                      </Td>
-                      <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {new Date(t.openedAt).toLocaleString()}
-                      </Td>
-                      <Td align="right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void cancelTrade(t.id)}
-                        >
-                          Cancel
-                        </Button>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+              <table className="w-full text-[12px]">
+                <thead className="bg-[var(--color-bg-elevated)] text-[var(--color-fg-muted)]">
+                  <tr>
+                    <Th>Symbol</Th>
+                    <Th>Strategy</Th>
+                    <Th>Side</Th>
+                    <Th align="right">Entry</Th>
+                    <Th align="right">Mark</Th>
+                    <Th align="right">Stop</Th>
+                    <Th align="right">Target</Th>
+                    <Th align="right">RR</Th>
+                    <Th align="right">P&amp;L %</Th>
+                    <Th align="right">P&amp;L ₹</Th>
+                    <Th align="right">Opened</Th>
+                    <Th align="right">Action</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageItems.map((t) => {
+                    const mark = prices[t.symbol];
+                    const live = computeIndiaLivePnl(t, mark);
+                    return (
+                      <tr
+                        key={t.id}
+                        className="border-t border-[var(--color-border)]"
+                      >
+                        <Td>
+                          <span className="font-semibold">{t.symbol}</span>
+                        </Td>
+                        <Td>
+                          <IndiaStrategyChip
+                            strategyId={t.strategyId}
+                            timeframe={t.strategyTimeframe}
+                          />
+                        </Td>
+                        <Td>
+                          <Badge
+                            variant={t.direction === "LONG" ? "bull" : "bear"}
+                          >
+                            {t.direction}
+                          </Badge>
+                        </Td>
+                        <Td align="right">₹{fmt(t.entry, 2)}</Td>
+                        <Td align="right">
+                          {mark !== undefined ? `₹${fmt(mark, 2)}` : "—"}
+                        </Td>
+                        <Td align="right">₹{fmt(t.stopLoss, 2)}</Td>
+                        <Td align="right">₹{fmt(t.target, 2)}</Td>
+                        <Td align="right">{t.riskReward.toFixed(2)}</Td>
+                        <Td align="right" className={indiaPnlClass(live?.pct ?? null)}>
+                          {live
+                            ? `${live.pct > 0 ? "+" : ""}${live.pct.toFixed(2)}%`
+                            : "—"}
+                        </Td>
+                        <Td align="right" className={indiaPnlClass(live?.usd ?? null)}>
+                          {live
+                            ? `${live.usd > 0 ? "+" : ""}₹${live.usd.toFixed(2)}`
+                            : "—"}
+                        </Td>
+                        <Td align="right" className="text-[var(--color-fg-subtle)]">
+                          {new Date(t.openedAt).toLocaleString()}
+                        </Td>
+                        <Td align="right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void cancelTrade(t.id)}
+                          >
+                            Cancel
+                          </Button>
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <PaginationStrip
+              page={page}
+              totalPages={totalPages}
+              filteredTotal={filteredTotal}
+              pageSize={pageSize}
+              onPrev={() => setPage(page - 1)}
+              onNext={() => setPage(page + 1)}
+              onJump={setPage}
+            />
+          </>
         )}
       </CardContent>
     </Card>

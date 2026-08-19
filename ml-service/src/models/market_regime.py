@@ -165,9 +165,11 @@ class MarketRegimeClassifier:
         """
         Rule-based fallback when no trained model is available.
 
+        Quant v2: tightened thresholds, added PCR, OI delta skew, pct_above_sma
+        surfaces, and sectoral RSI to improve regime sensitivity.
+
         Uses a priority-ordered rule set based on VIX, breadth, change %,
-        and ADX to classify the regime. Probabilities are synthesized from
-        the rule confidence rather than being learned.
+        ADX, PCR and OI skew to classify the regime.
         """
         nifty_change = features.get("nifty_change_pct", 0.0)
         vix = features.get("india_vix", 15.0)
@@ -177,100 +179,123 @@ class MarketRegimeClassifier:
         atr_pct = features.get("nifty_atr_pct", 1.0)
         vix_change = features.get("vix_change_pct", 0.0)
         rsi = features.get("nifty_rsi", 50.0)
+        # New quant inputs
+        pcr = features.get("put_call_ratio", 1.0)
+        oi_skew = features.get("nifty_oi_delta_skew_norm", 0.0)
+        pct_sma20 = features.get("pct_above_sma20", 50.0)
+        pct_sma200 = features.get("pct_above_sma200", 50.0)
+        rotation = features.get("rotation_score", 0.0)
 
         # Score each regime based on how well conditions match
         scores: dict[MarketRegime, float] = {}
 
-        # CRASH: extreme selling + VIX spike + breadth collapse
+        # CRASH: extreme selling + VIX spike + breadth collapse + PCR spike
         crash_score = 0.0
         if nifty_change < -3.0:
-            crash_score += 0.35
-        if vix > 28:
+            crash_score += 0.30
+        if vix > 30:                          # tightened from 28
             crash_score += 0.25
-        if ad_ratio < -0.6:
-            crash_score += 0.2
-        if vix_change > 20:
-            crash_score += 0.2
+        elif vix > 26:
+            crash_score += 0.12
+        if ad_ratio < -0.65:                  # tightened
+            crash_score += 0.20
+        if vix_change > 25:                   # tightened
+            crash_score += 0.15
+        if pcr > 1.8:                         # high put buying = panic
+            crash_score += 0.10
         scores[MarketRegime.CRASH] = min(crash_score, 1.0)
 
-        # BEAR: sustained selling + weak breadth
+        # BEAR: sustained selling + weak breadth + majority of stocks below SMA
         bear_score = 0.0
-        if nifty_change < -1.0:
-            bear_score += 0.25
-        elif nifty_change < 0:
-            bear_score += 0.1
-        if vix > 18:
-            bear_score += 0.15
-        if ad_ratio < -0.2:
-            bear_score += 0.2
-        if breadth < 40:
-            bear_score += 0.2
-        if rsi < 40:
-            bear_score += 0.2
+        if nifty_change < -1.2:               # tightened
+            bear_score += 0.22
+        elif nifty_change < -0.4:
+            bear_score += 0.08
+        if vix > 20:                          # tightened from 18
+            bear_score += 0.14
+        if ad_ratio < -0.25:                  # tightened
+            bear_score += 0.18
+        if breadth < 38:                      # tightened
+            bear_score += 0.18
+        if rsi < 38:                          # tightened
+            bear_score += 0.18
+        if pct_sma200 < 40:                   # new: majority below long-term MA
+            bear_score += 0.10
         scores[MarketRegime.BEAR] = min(bear_score, 1.0)
 
-        # VOLATILE: high VIX + wide ranges but no clear direction
+        # VOLATILE: high VIX + wide ranges but no clear direction + OI skew flip
         volatile_score = 0.0
-        if vix > 20:
-            volatile_score += 0.3
-        if atr_pct > 1.5:
-            volatile_score += 0.25
-        if abs(nifty_change) > 1.5 and adx < 25:
-            volatile_score += 0.2
-        if abs(vix_change) > 10:
-            volatile_score += 0.25
+        if vix > 22:                          # tightened
+            volatile_score += 0.28
+        if atr_pct > 1.6:                     # tightened
+            volatile_score += 0.22
+        if abs(nifty_change) > 1.5 and adx < 22:
+            volatile_score += 0.18
+        if abs(vix_change) > 12:              # tightened
+            volatile_score += 0.22
+        if abs(oi_skew) > 0.3:               # new: large OI skew = uncertainty
+            volatile_score += 0.10
         scores[MarketRegime.VOLATILE] = min(volatile_score, 1.0)
 
-        # STRONG_BULL: broad rally + low VIX + high participation
+        # STRONG_BULL: broad rally + low VIX + high participation + PCR supportive
         strong_bull_score = 0.0
-        if nifty_change > 1.0:
-            strong_bull_score += 0.25
-        if vix < 15:
-            strong_bull_score += 0.2
-        if ad_ratio > 0.5:
-            strong_bull_score += 0.2
-        if breadth > 70:
-            strong_bull_score += 0.2
-        if rsi > 60 and rsi < 80:
-            strong_bull_score += 0.15
+        if nifty_change > 1.2:               # tightened
+            strong_bull_score += 0.22
+        if vix < 13:                          # tightened
+            strong_bull_score += 0.20
+        elif vix < 15:
+            strong_bull_score += 0.10
+        if ad_ratio > 0.55:                   # tightened
+            strong_bull_score += 0.18
+        if breadth > 72:                      # tightened
+            strong_bull_score += 0.18
+        if rsi > 62 and rsi < 78:            # tightened
+            strong_bull_score += 0.12
+        if pcr > 1.2 and pcr < 1.6:         # new: heavy PE writing = bullish hedge
+            strong_bull_score += 0.05
+        if pct_sma20 > 70:                   # new: most stocks in near-term uptrend
+            strong_bull_score += 0.05
         scores[MarketRegime.STRONG_BULL] = min(strong_bull_score, 1.0)
 
-        # BULL: moderate up trend + decent breadth
+        # BULL: moderate up trend + decent breadth + rotation healthy
         bull_score = 0.0
-        if nifty_change > 0.3:
-            bull_score += 0.2
-        elif nifty_change > 0:
-            bull_score += 0.1
-        if vix < 18:
-            bull_score += 0.15
-        if ad_ratio > 0.1:
-            bull_score += 0.2
-        if breadth > 55:
-            bull_score += 0.2
-        if adx > 20:
-            bull_score += 0.15
-        if rsi > 50:
-            bull_score += 0.1
+        if nifty_change > 0.4:               # tightened
+            bull_score += 0.18
+        elif nifty_change > 0.1:
+            bull_score += 0.08
+        if vix < 17:                          # tightened
+            bull_score += 0.14
+        if ad_ratio > 0.12:                   # tightened
+            bull_score += 0.18
+        if breadth > 57:                      # tightened
+            bull_score += 0.18
+        if adx > 22:                          # tightened
+            bull_score += 0.12
+        if rsi > 52:                          # tightened
+            bull_score += 0.10
+        if rotation > 0.1:                    # new: healthy sector rotation
+            bull_score += 0.10
         scores[MarketRegime.BULL] = min(bull_score, 1.0)
 
-        # SIDEWAYS: low ADX + range-bound + mixed signals
+        # SIDEWAYS: low ADX + range-bound + mixed signals + balanced PCR
         sideways_score = 0.0
-        if abs(nifty_change) < 0.5:
-            sideways_score += 0.25
-        if adx < 20:
-            sideways_score += 0.25
-        if 40 < breadth < 60:
-            sideways_score += 0.2
-        if abs(ad_ratio) < 0.15:
-            sideways_score += 0.15
-        if 13 < vix < 18:
-            sideways_score += 0.15
+        if abs(nifty_change) < 0.4:          # tightened
+            sideways_score += 0.22
+        if adx < 18:                          # tightened
+            sideways_score += 0.22
+        if 42 < breadth < 58:                # tightened
+            sideways_score += 0.18
+        if abs(ad_ratio) < 0.12:             # tightened
+            sideways_score += 0.14
+        if 13 < vix < 19:                    # tightened
+            sideways_score += 0.14
+        if 0.85 < pcr < 1.15:               # new: balanced PCR = no clear bias
+            sideways_score += 0.10
         scores[MarketRegime.SIDEWAYS] = min(sideways_score, 1.0)
 
         # Normalize to probabilities
         total = sum(scores.values())
         if total == 0:
-            # Default to sideways when all conditions are flat
             probs = {r: 1.0 / 6 for r in REGIME_CLASSES}
             probs[MarketRegime.SIDEWAYS] = 0.4
         else:

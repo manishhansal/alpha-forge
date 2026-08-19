@@ -85,8 +85,11 @@ def fetch_historical_ohlcv(
             logger.warning("no_data", symbol=symbol)
             return None
 
-        # Normalize column names
-        df.columns = [c.lower() for c in df.columns]
+        # Normalize column names (yfinance >=1.0 returns MultiIndex columns)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0].lower() for c in df.columns]
+        else:
+            df.columns = [c.lower() for c in df.columns]
         required = ["open", "high", "low", "close", "volume"]
         if not all(c in df.columns for c in required):
             return None
