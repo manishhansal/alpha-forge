@@ -226,77 +226,88 @@ class StockRanker:
         """
         Compute a composite ranking score from individual factors.
 
+        Quant upgrade: increased weight on derivatives positioning (key for
+        NSE F&O predictability), added relative-strength-vs-sector component,
+        and higher-highs/higher-lows structural filter for trend quality.
+
         The score blends:
           - Momentum signals (return, trend, RSI alignment)
           - Volume confirmation (relative vol, breakout, OBV)
           - Breakout potential (ATR expansion, breakout score, structure)
-          - Derivatives positioning (OI, PCR, IV rank)
+          - Derivatives positioning (OI, PCR, IV rank) — highest weight for India
           - Mean-reversion opportunity (Bollinger position, RSI extremes)
-          - Relative strength (vs NIFTY, sector momentum)
+          - Relative strength (vs NIFTY, vs sector peers)
+          - Structure quality (higher-highs/lows, order block, FVG)
         """
         # Momentum component
         momentum_score = (
-            _clip_norm(feat.get("return_5d", 0), -5, 5) * 0.2
-            + _clip_norm(feat.get("trend_strength", 0), -1, 1) * 0.2
-            + _clip_norm(feat.get("ema_stack_score", 0), -1, 1) * 0.2
-            + _clip_norm(feat.get("rate_of_change_12", 0), -10, 10) * 0.15
+            _clip_norm(feat.get("return_5d", 0), -5, 5) * 0.22
+            + _clip_norm(feat.get("trend_strength", 0), -1, 1) * 0.20
+            + _clip_norm(feat.get("ema_stack_score", 0), -1, 1) * 0.20
+            + _clip_norm(feat.get("rate_of_change_12", 0), -10, 10) * 0.16
             + _clip_norm(feat.get("adx_14", 0) - 20, -20, 40) * 0.15
-            + _clip_norm(feat.get("supertrend", 0), -1, 1) * 0.1
+            + _clip_norm(feat.get("supertrend", 0), -1, 1) * 0.07
         )
 
-        # Volume component
+        # Volume component — delivery % added as quality gate
         vol_ratio = feat.get("relative_volume", 1.0)
+        delivery = feat.get("delivery_pct", 40.0)
+        delivery_norm = _clip_norm(delivery - 40, -40, 60)  # >40% is good
         volume_score = (
-            _clip_norm(vol_ratio - 1, -1, 3) * 0.3
-            + feat.get("volume_breakout", 0) * 0.2
-            + _clip_norm(feat.get("obv_trend", 0), -2, 2) * 0.2
-            + _clip_norm(feat.get("volume_price_confirm", 0), -1, 1) * 0.2
-            + _clip_norm(feat.get("cmf", 0), -0.5, 0.5) * 0.1
+            _clip_norm(vol_ratio - 1, -1, 3) * 0.28
+            + feat.get("volume_breakout", 0) * 0.18
+            + _clip_norm(feat.get("obv_trend", 0), -2, 2) * 0.18
+            + _clip_norm(feat.get("volume_price_confirm", 0), -1, 1) * 0.20
+            + _clip_norm(feat.get("cmf", 0), -0.5, 0.5) * 0.08
+            + delivery_norm * 0.08           # NSE delivery quality gate
         )
 
-        # Breakout component
+        # Breakout component — higher-highs/lows given more weight
         breakout_score = (
-            _clip_norm(feat.get("breakout_score", 0), -1, 1) * 0.25
-            + _clip_norm(feat.get("atr_expansion", 0) - 1, -0.5, 2) * 0.2
-            + _clip_norm(feat.get("structure_score", 0), -1, 1) * 0.2
-            + _clip_norm(feat.get("fvg_score", 0), -1, 1) * 0.15
-            + _clip_norm(feat.get("higher_highs_lows", 0), -1, 1) * 0.2
+            _clip_norm(feat.get("breakout_score", 0), -1, 1) * 0.24
+            + _clip_norm(feat.get("atr_expansion", 0) - 1, -0.5, 2) * 0.18
+            + _clip_norm(feat.get("structure_score", 0), -1, 1) * 0.18
+            + _clip_norm(feat.get("fvg_score", 0), -1, 1) * 0.14
+            + _clip_norm(feat.get("higher_highs_lows", 0), -1, 1) * 0.26  # boosted
         )
 
-        # Derivatives component
+        # Derivatives component — highest weight for India F&O (key predictor)
         deriv_score = (
-            _clip_norm(feat.get("oi_buildup_score", 0), -1, 1) * 0.3
-            + _clip_norm(feat.get("pcr_score", 0), -1, 1) * 0.25
-            + _clip_norm(feat.get("oi_wall_score", 0), -1, 1) * 0.2
-            + _clip_norm(feat.get("max_pain_distance_pct", 0), -3, 3) * 0.15
-            + _clip_norm(50 - feat.get("iv_rank", 50), -50, 50) * 0.1
+            _clip_norm(feat.get("oi_buildup_score", 0), -1, 1) * 0.34
+            + _clip_norm(feat.get("pcr_score", 0), -1, 1) * 0.26
+            + _clip_norm(feat.get("oi_wall_score", 0), -1, 1) * 0.20
+            + _clip_norm(feat.get("max_pain_distance_pct", 0), -3, 3) * 0.12
+            + _clip_norm(50 - feat.get("iv_rank", 50), -50, 50) * 0.08
         )
 
         # Mean-reversion component (inverse signals for regime where this matters)
         rsi = feat.get("rsi_14", 50)
         bb_pos = feat.get("bollinger_position", 0.5)
         mean_rev_score = (
-            _clip_norm(50 - abs(rsi - 50), 0, 30) * 0.3  # RSI near 50 = stable
-            + _clip_norm(0.5 - abs(bb_pos - 0.5), -0.5, 0.5) * 0.25  # Near middle band
+            _clip_norm(50 - abs(rsi - 50), 0, 30) * 0.3   # RSI near 50 = stable
+            + _clip_norm(0.5 - abs(bb_pos - 0.5), -0.5, 0.5) * 0.25
             + _clip_norm(feat.get("liquidity_sweep", 0), -1, 1) * 0.25
-            + _clip_norm(-feat.get("distance_from_52w_high", 0), -20, 0) * 0.2
+            + _clip_norm(-feat.get("distance_from_52w_high", 0), -20, 0) * 0.20
         )
 
-        # Relative strength component
+        # Relative strength vs NIFTY AND sector peers (new: sector RS)
+        sector_rs = feat.get("sector_relative_strength", 1.0)
         rel_strength_score = (
-            _clip_norm(feat.get("relative_strength_vs_nifty", 1) - 1, -0.2, 0.3) * 0.4
-            + _clip_norm(feat.get("sector_momentum", 0), -3, 3) * 0.3
-            + _clip_norm(feat.get("delivery_pct", 0) - 40, -40, 60) * 0.3
+            _clip_norm(feat.get("relative_strength_vs_nifty", 1) - 1, -0.2, 0.3) * 0.35
+            + _clip_norm(feat.get("sector_momentum", 0), -3, 3) * 0.30
+            + _clip_norm(feat.get("delivery_pct", 0) - 40, -40, 60) * 0.20
+            + _clip_norm(sector_rs - 1, -0.2, 0.3) * 0.15  # vs sector (new)
         )
 
         # Weighted composite with regime adjustments
+        # Derivatives weight raised from 0.17 → 0.22 for India F&O universe
         composite = (
-            momentum_score * 0.25 * regime_weights.get("momentum", 1.0)
-            + volume_score * 0.18 * regime_weights.get("volume", 1.0)
-            + breakout_score * 0.2 * regime_weights.get("breakout", 1.0)
-            + deriv_score * 0.17
-            + mean_rev_score * 0.1 * regime_weights.get("mean_reversion", 1.0)
-            + rel_strength_score * 0.1
+            momentum_score * 0.22 * regime_weights.get("momentum", 1.0)
+            + volume_score * 0.16 * regime_weights.get("volume", 1.0)
+            + breakout_score * 0.18 * regime_weights.get("breakout", 1.0)
+            + deriv_score * 0.22                              # raised for India
+            + mean_rev_score * 0.10 * regime_weights.get("mean_reversion", 1.0)
+            + rel_strength_score * 0.12
         )
 
         return composite
@@ -364,17 +375,19 @@ class StockRanker:
             "EMA Stack": features.get("ema_stack_score", 0) * 12,
             "Breakout": features.get("breakout_score", 0) * 14,
             "ATR Expansion": (features.get("atr_expansion", 1) - 1) * 10,
-            "OI Build-up": features.get("oi_buildup_score", 0) * 12,
-            "PCR": features.get("pcr_score", 0) * 10,
+            "OI Build-up": features.get("oi_buildup_score", 0) * 14,    # boosted
+            "PCR": features.get("pcr_score", 0) * 12,                    # boosted
             "Volume Thrust": max(features.get("relative_volume", 1) - 1.2, 0) * 10,
             "RS vs NIFTY": (features.get("relative_strength_vs_nifty", 1) - 1) * 50,
+            "RS vs Sector": (features.get("sector_relative_strength", 1) - 1) * 40,  # new
             "Sector Momentum": features.get("sector_momentum", 0) * 5,
             "Market Breadth": (features.get("market_breadth_score", 0)) * 8,
             "Structure": features.get("structure_score", 0) * 10,
-            "Delivery %": (features.get("delivery_pct", 40) - 40) / 5,
+            "Higher Highs/Lows": features.get("higher_highs_lows", 0) * 12,   # new
+            "Delivery %": (features.get("delivery_pct", 40) - 40) / 4,        # boosted
             "FVG": features.get("fvg_score", 0) * 8,
             "IV Rank": (50 - features.get("iv_rank", 50)) / 5,
-            "OI Wall": features.get("oi_wall_score", 0) * 8,
+            "OI Wall": features.get("oi_wall_score", 0) * 10,                # boosted
         }
 
         # Sort by absolute magnitude, keep top K
