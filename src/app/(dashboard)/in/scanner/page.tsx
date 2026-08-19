@@ -14,11 +14,16 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/india/ui/button";
+import {
+  FilterTabs,
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
 import { useIndiaScannerStore } from "@/store/india/scannerStore";
 import { useIndiaWatchlistStore } from "@/store/india/watchlistStore";
 import { useScanner } from "@/hooks/india/useScanner";
 import { fmt, fmtPct } from "@/lib/india/format";
-import type { ScannerType } from "@/types/india/scanner";
+import type { ScannerHit, ScannerType } from "@/types/india/scanner";
 
 type Tab = {
   id: ScannerType;
@@ -92,6 +97,56 @@ export default function ScannerPage() {
 
   const addToWatchlist = useIndiaWatchlistStore((s) => s.add);
 
+  const hits = React.useMemo(() => result?.hits ?? [], [result]);
+
+  const getConfidence = React.useCallback(
+    (h: ScannerHit) => {
+      // Metric is the primary strength indicator. Normalize it to 0–1
+      // based on the max value in the current result set for this scanner.
+      if (!result || result.hits.length === 0) return h.metric;
+      const max = Math.max(...result.hits.map((x) => Math.abs(x.metric)));
+      return max > 0 ? Math.abs(h.metric) / max : 0;
+    },
+    [result],
+  );
+
+  const getWinrate = React.useCallback(
+    (h: ScannerHit) => {
+      // Use day change % as a proxy for winrate/momentum strength.
+      // Items with strong bullish moves rank higher.
+      const pct = h.changePct ?? 0;
+      // Normalize: cap at 10% and map to 0–1
+      return Math.min(Math.abs(pct) / 10, 1);
+    },
+    [],
+  );
+
+  const {
+    pageItems,
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+    tabs,
+  } = usePaginationFilter({
+    items: hits,
+    pageSize: 5,
+    getConfidence,
+    getWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
+  // Reset pagination when the scanner type changes
+  React.useEffect(() => {
+    setPage(1);
+  }, [active, setPage]);
+
+  const pageOffset = (page - 1) * pageSize;
+
   return (
     <div className="space-y-6">
       <motion.div
@@ -161,13 +216,21 @@ export default function ScannerPage() {
         animate={{ opacity: 1, y: 0 }}
         className="glass rounded-2xl overflow-hidden"
       >
-        <div className="p-4 sm:p-5 border-b border-border/60">
-          <h2 className="text-base sm:text-lg font-semibold">
-            {result?.title ?? TABS.find((t) => t.id === active)?.label}
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {result?.description ?? "Loading…"}
-          </p>
+        <div className="p-4 sm:p-5 border-b border-border/60 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base sm:text-lg font-semibold">
+              {result?.title ?? TABS.find((t) => t.id === active)?.label}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {result?.description ?? "Loading…"}
+              {result && filteredTotal !== hits.length && (
+                <span className="ml-1">
+                  · showing {filteredTotal} of {hits.length}
+                </span>
+              )}
+            </p>
+          </div>
+          <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
         </div>
 
         <div className="overflow-x-auto">
@@ -186,7 +249,7 @@ export default function ScannerPage() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {result?.hits.map((h, i) => (
+                {pageItems.map((h, i) => (
                   <motion.tr
                     key={h.symbol}
                     initial={{ opacity: 0, y: 4 }}
@@ -195,7 +258,9 @@ export default function ScannerPage() {
                     transition={{ delay: Math.min(i * 0.015, 0.4) }}
                     className="border-b border-border/40 hover:bg-muted/30 transition-colors"
                   >
-                    <td className="p-3 text-muted-foreground">{i + 1}</td>
+                    <td className="p-3 text-muted-foreground">
+                      {pageOffset + i + 1}
+                    </td>
                     <td className="p-3 font-medium">
                       <Link
                         href={`/in/chart/${encodeURIComponent(h.symbol)}`}
@@ -254,7 +319,7 @@ export default function ScannerPage() {
                   </td>
                 </tr>
               )}
-              {result && result.hits.length === 0 && !loading && (
+              {result && hits.length === 0 && !loading && (
                 <tr>
                   <td
                     colSpan={8}
@@ -264,8 +329,31 @@ export default function ScannerPage() {
                   </td>
                 </tr>
               )}
+              {result && hits.length > 0 && pageItems.length === 0 && !loading && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    className="p-8 text-center text-muted-foreground text-sm"
+                  >
+                    No hits match the current filter.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
+        </div>
+
+        <div className="px-4 pb-4 sm:px-5 sm:pb-5">
+          <PaginationStrip
+            page={page}
+            totalPages={totalPages}
+            filteredTotal={filteredTotal}
+            pageSize={pageSize}
+            disabled={loading}
+            onPrev={() => setPage(page - 1)}
+            onNext={() => setPage(page + 1)}
+            onJump={setPage}
+          />
         </div>
       </motion.div>
     </div>

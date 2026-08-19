@@ -80,6 +80,12 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
   cross-references the six F&O scanners. Both engines force WAIT outside
   the active session via the Best-Time engine.
 
+- **Paginated Data Views** — all Indian Market data tables and grids are
+  paginated at **5 items per page** with filter tabs (All / Most Confidence /
+  High Winrate) using a shared `usePaginationFilter` hook. Covers: Scanner,
+  MSB Signals, Range Expansion, Sector Stocks Modal, Live Signals, Open
+  Positions, News Feed, Watchlist, Daily Picks Board, and Daily Picks History.
+
 > Full product spec: [`ALPHAFORGE.md`](./ALPHAFORGE.md)
 
 ## Tech stack

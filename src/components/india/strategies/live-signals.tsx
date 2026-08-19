@@ -8,6 +8,11 @@ import {
   indiaSelectionToParam,
   useIndiaStrategyFilter,
 } from "@/components/india/strategies/strategy-context";
+import {
+  FilterTabs,
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -144,6 +149,37 @@ export function IndiaLiveSignals({ initial }: Props) {
     [signals, isLaneActive],
   );
 
+  const getSignalConfidence = useCallback(
+    (s: IndiaScalpSignal) => s.confidence,
+    [],
+  );
+  const getSignalWinrate = useCallback(
+    (s: IndiaScalpSignal) => {
+      // Use risk:reward as a winrate proxy — higher R:R ≈ better edge.
+      return Math.min(s.riskReward / 3, 1);
+    },
+    [],
+  );
+
+  const {
+    pageItems: visiblePage,
+    activeTab: signalFilterTab,
+    setActiveTab: setSignalFilterTab,
+    page: signalPage,
+    setPage: setSignalPage,
+    totalPages: signalTotalPages,
+    filteredTotal: signalFilteredTotal,
+    pageSize: signalPageSize,
+    tabs: signalTabs,
+  } = usePaginationFilter({
+    items: visible,
+    pageSize: 5,
+    getConfidence: getSignalConfidence,
+    getWinrate: getSignalWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
   const toggleTf = useCallback((t: IndiaScalpTimeframe) => {
     setTfs((prev) => {
       const next = new Set(prev);
@@ -173,38 +209,45 @@ export function IndiaLiveSignals({ initial }: Props) {
             Live F&amp;O signals
           </CardTitle>
           <p className="mt-1 text-[11px] text-[var(--color-fg-subtle)]">
-            {visible.length} {marketStatus.isClosed ? "queued" : "fresh"} ·{" "}
+            {signalFilteredTotal} of {visible.length} {marketStatus.isClosed ? "queued" : "fresh"} ·{" "}
             {activeForAnyTf.size} of {selected.size} strategies on {tfLabel} ·{" "}
             {loading
               ? "Refreshing…"
               : `Updated ${new Date(generatedAt).toLocaleTimeString()}`}
           </p>
         </div>
-        <div
-          className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5"
-          role="group"
-          aria-label="Filter signals by timeframe (multi-select)"
-        >
-          {TIMEFRAMES.map((t) => {
-            const on = tfs.has(t);
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => toggleTf(t)}
-                aria-pressed={on}
-                title={on ? `Hide ${t} signals` : `Show ${t} signals`}
-                className={cn(
-                  "rounded-md px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors",
-                  on
-                    ? "bg-[var(--color-surface)] text-[var(--color-fg)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-info)_35%,transparent)]"
-                    : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
-                )}
-              >
-                {t}
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-2 flex-wrap">
+          <FilterTabs
+            tabs={signalTabs}
+            active={signalFilterTab}
+            onChange={setSignalFilterTab}
+          />
+          <div
+            className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5"
+            role="group"
+            aria-label="Filter signals by timeframe (multi-select)"
+          >
+            {TIMEFRAMES.map((t) => {
+              const on = tfs.has(t);
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => toggleTf(t)}
+                  aria-pressed={on}
+                  title={on ? `Hide ${t} signals` : `Show ${t} signals`}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors",
+                    on
+                      ? "bg-[var(--color-surface)] text-[var(--color-fg)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-info)_35%,transparent)]"
+                      : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+                  )}
+                >
+                  {t}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -224,15 +267,31 @@ export function IndiaLiveSignals({ initial }: Props) {
               <Skeleton className="h-[120px] w-full rounded-lg" />
             ) : null}
           </div>
+        ) : visiblePage.length === 0 ? (
+          <p className="text-[12px] text-[var(--color-fg-muted)]">
+            No signals match the current filter.
+          </p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            {visible.map((s) => (
-              <IndiaScalpSignalCard
-                key={`${s.symbol}-${s.strategyId}-${s.timeframe}-${s.triggeredAt}`}
-                signal={s}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              {visiblePage.map((s) => (
+                <IndiaScalpSignalCard
+                  key={`${s.symbol}-${s.strategyId}-${s.timeframe}-${s.triggeredAt}`}
+                  signal={s}
+                />
+              ))}
+            </div>
+            <PaginationStrip
+              page={signalPage}
+              totalPages={signalTotalPages}
+              filteredTotal={signalFilteredTotal}
+              pageSize={signalPageSize}
+              disabled={loading}
+              onPrev={() => setSignalPage(signalPage - 1)}
+              onNext={() => setSignalPage(signalPage + 1)}
+              onJump={setSignalPage}
+            />
+          </>
         )}
       </CardContent>
     </Card>

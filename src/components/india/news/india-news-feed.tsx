@@ -5,6 +5,12 @@ import { motion } from "framer-motion";
 import { ExternalLink, Globe, Newspaper, TrendingDown, TrendingUp } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  FilterTabs,
+  PaginationStrip,
+  usePaginationFilter,
+  type FilterTab,
+} from "@/components/india/ui/pagination-filter";
 import { useNews } from "@/hooks/india/useNews";
 import { IndiaMarketSentimentBanner } from "./india-market-sentiment-banner";
 import type {
@@ -132,6 +138,12 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
   );
 }
 
+const NEWS_FILTER_TABS: FilterTab[] = [
+  { id: "all", label: "All" },
+  { id: "high-confidence", label: "High Impact" },
+  { id: "high-winrate", label: "Bullish" },
+];
+
 export function IndiaNewsFeed() {
   const [category, setCategory] = React.useState<CategoryFilter>(() => loadCategory());
 
@@ -147,36 +159,79 @@ export function IndiaNewsFeed() {
 
   const items = data?.items ?? [];
 
+  const getConfidence = React.useCallback(
+    (item: NewsItem) => {
+      // High impact = high confidence
+      if (item.impact === "high") return 1;
+      if (item.impact === "medium") return 0.6;
+      return 0.3;
+    },
+    [],
+  );
+
+  const getWinrate = React.useCallback(
+    (item: NewsItem) => {
+      // Bullish sentiment = high winrate proxy
+      if (item.sentiment.label === "bullish") return 0.9;
+      if (item.sentiment.label === "neutral") return 0.5;
+      return 0.2;
+    },
+    [],
+  );
+
+  const {
+    pageItems,
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+    tabs,
+  } = usePaginationFilter({
+    items,
+    pageSize: 5,
+    getConfidence,
+    getWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+    tabs: NEWS_FILTER_TABS,
+  });
+
   return (
     <div className="flex flex-col gap-4">
       <IndiaMarketSentimentBanner sentiment={data?.sentiment ?? null} />
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base font-semibold normal-case tracking-tight text-[var(--color-fg)]">
               Top market news
             </CardTitle>
-            <div className="flex flex-wrap gap-1.5">
-              {FILTERS.map((f) => {
-                const Icon = f.icon;
-                const on = category === f.id;
-                return (
-                  <button
-                    key={f.id}
-                    onClick={() => setCategory(f.id)}
-                    aria-pressed={on}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset transition-colors ${
-                      on
-                        ? "bg-[var(--color-surface-hover)] text-[var(--color-fg)] ring-[var(--color-border-strong)]"
-                        : "bg-transparent text-[var(--color-fg-muted)] ring-[var(--color-border)] hover:text-[var(--color-fg)]"
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {f.label}
-                  </button>
-                );
-              })}
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+              <div className="flex flex-wrap gap-1.5">
+                {FILTERS.map((f) => {
+                  const Icon = f.icon;
+                  const on = category === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => setCategory(f.id)}
+                      aria-pressed={on}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset transition-colors ${
+                        on
+                          ? "bg-[var(--color-surface-hover)] text-[var(--color-fg)] ring-[var(--color-border-strong)]"
+                          : "bg-transparent text-[var(--color-fg-muted)] ring-[var(--color-border)] hover:text-[var(--color-fg)]"
+                      }`}
+                    >
+                      <Icon className="h-3 w-3" />
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -190,12 +245,28 @@ export function IndiaNewsFeed() {
             <p className="py-8 text-center text-sm text-[var(--color-fg-muted)]">
               {loading ? "Loading headlines…" : "No market-moving headlines right now."}
             </p>
+          ) : pageItems.length === 0 ? (
+            <p className="py-8 text-center text-sm text-[var(--color-fg-muted)]">
+              No news matches the current filter.
+            </p>
           ) : (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {items.map((item, i) => (
-                <NewsCard key={item.id} item={item} index={i} />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {pageItems.map((item, i) => (
+                  <NewsCard key={item.id} item={item} index={i} />
+                ))}
+              </div>
+              <PaginationStrip
+                page={page}
+                totalPages={totalPages}
+                filteredTotal={filteredTotal}
+                pageSize={pageSize}
+                disabled={loading}
+                onPrev={() => setPage(page - 1)}
+                onNext={() => setPage(page + 1)}
+                onJump={setPage}
+              />
+            </>
           )}
         </CardContent>
       </Card>

@@ -27,6 +27,11 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/india/ui/button";
+import {
+  FilterTabs,
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { dataSourceLabels } from "@/features/settings/data-sources-shared";
 
@@ -393,122 +398,7 @@ export default function MsbDashboard() {
       <RangeExpansionSection />
 
       {/* Signals Table */}
-      <section>
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: "easeOut", delay: 0.2 }}
-          className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
-        >
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-md bg-gradient-to-br from-blue-400/30 to-violet-500/30">
-                <Sparkles className="h-4 w-4 text-blue-500" />
-              </div>
-              <h2 className="text-base sm:text-lg font-semibold">
-                MSB–OB Intraday Signals
-              </h2>
-            </div>
-            <span className="text-[10px] sm:text-xs text-muted-foreground">
-              {data.length} setup{data.length === 1 ? "" : "s"}
-            </span>
-          </div>
-
-          <div className="overflow-x-auto -mx-1 px-1">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b border-border/60 text-muted-foreground text-xs uppercase tracking-wide">
-                  <th className="p-2.5 font-medium">Symbol</th>
-                  <th className="p-2.5 font-medium">Side</th>
-                  <th className="p-2.5 font-medium text-right">Entry</th>
-                  <th className="p-2.5 font-medium text-right">SL (ATR)</th>
-                  <th className="p-2.5 font-medium text-right">Target</th>
-                  <th className="p-2.5 font-medium text-right">Strike</th>
-                  <th className="p-2.5 font-medium">Type</th>
-                  <th className="p-2.5 font-medium text-right">Strength</th>
-                  <th className="p-2.5"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <AnimatePresence>
-                  {data.map((row, i) => (
-                    <motion.tr
-                      key={`${row.Symbol}-${i}`}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{
-                        duration: 0.25,
-                        delay: Math.min(i * 0.03, 0.4),
-                      }}
-                      className="border-b border-border/40 hover:bg-muted/40 transition-colors"
-                    >
-                      <td className="p-2.5 font-medium">
-                        <a
-                          href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${String(row.Symbol).replace(".NS", "")}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-500 hover:text-blue-400 hover:underline"
-                        >
-                          {row.Symbol}
-                        </a>
-                      </td>
-                      <td className="p-2.5">
-                        <SideBadge side={row.Side} />
-                      </td>
-                      <td className="p-2.5 text-right tabular">{row.Entry}</td>
-                      <td className="p-2.5 text-right tabular">{row.SL_ATR}</td>
-                      <td className="p-2.5 text-right tabular">{row.TGT_ATR}</td>
-                      <td className="p-2.5 text-right tabular">{row.Strike}</td>
-                      <td className="p-2.5">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
-                          {row.Type}
-                        </span>
-                      </td>
-                      <td className="p-2.5 text-right tabular font-semibold">
-                        {Number(row.Strength).toFixed(2)}
-                      </td>
-                      <td className="p-2.5">
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => addJournal(row)}
-                          title="Add to journal"
-                        >
-                          <PlusCircle className="h-3 w-3 mr-1" />
-                          Journal
-                        </Button>
-                      </td>
-                    </motion.tr>
-                  ))}
-                </AnimatePresence>
-
-                {data.length === 0 && !loading && (
-                  <tr>
-                    <td
-                      colSpan={9}
-                      className="p-8 text-center text-muted-foreground text-sm"
-                    >
-                      No setups available — run the Python scanner during
-                      market hours.
-                    </td>
-                  </tr>
-                )}
-                {loading && data.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={9}
-                      className="p-8 text-center text-muted-foreground text-sm"
-                    >
-                      Loading signals…
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
-      </section>
+      <MsbSignalsSection data={data} loading={loading} addJournal={addJournal} />
 
       <SectorStocksModal
         sector={selectedSector}
@@ -761,6 +651,191 @@ function SortHeader({
   );
 }
 
+function MsbSignalsSection({
+  data,
+  loading,
+  addJournal,
+}: {
+  data: MsbSignalRow[];
+  loading: boolean;
+  addJournal: (row: MsbSignalRow) => void;
+}) {
+  const getConfidence = useCallback(
+    (row: MsbSignalRow) => Number(row.Strength) || 0,
+    [],
+  );
+  const getWinrate = useCallback(
+    (row: MsbSignalRow) => {
+      // Use strength as a proxy — higher strength ≈ higher winrate potential
+      const s = Number(row.Strength) || 0;
+      return Math.min(s / 1.5, 1);
+    },
+    [],
+  );
+
+  const {
+    pageItems,
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+    tabs,
+  } = usePaginationFilter({
+    items: data,
+    pageSize: 5,
+    getConfidence,
+    getWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
+  return (
+    <section>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut", delay: 0.2 }}
+        className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
+      >
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-md bg-gradient-to-br from-blue-400/30 to-violet-500/30">
+              <Sparkles className="h-4 w-4 text-blue-500" />
+            </div>
+            <h2 className="text-base sm:text-lg font-semibold">
+              MSB–OB Intraday Signals
+            </h2>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+            <span className="text-[10px] sm:text-xs text-muted-foreground">
+              {filteredTotal} of {data.length} setup{data.length === 1 ? "" : "s"}
+            </span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto -mx-1 px-1">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b border-border/60 text-muted-foreground text-xs uppercase tracking-wide">
+                <th className="p-2.5 font-medium">Symbol</th>
+                <th className="p-2.5 font-medium">Side</th>
+                <th className="p-2.5 font-medium text-right">Entry</th>
+                <th className="p-2.5 font-medium text-right">SL (ATR)</th>
+                <th className="p-2.5 font-medium text-right">Target</th>
+                <th className="p-2.5 font-medium text-right">Strike</th>
+                <th className="p-2.5 font-medium">Type</th>
+                <th className="p-2.5 font-medium text-right">Strength</th>
+                <th className="p-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <AnimatePresence>
+                {pageItems.map((row, i) => (
+                  <motion.tr
+                    key={`${row.Symbol}-${(page - 1) * pageSize + i}`}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{
+                      duration: 0.25,
+                      delay: Math.min(i * 0.03, 0.4),
+                    }}
+                    className="border-b border-border/40 hover:bg-muted/40 transition-colors"
+                  >
+                    <td className="p-2.5 font-medium">
+                      <a
+                        href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${String(row.Symbol).replace(".NS", "")}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-400 hover:underline"
+                      >
+                        {row.Symbol}
+                      </a>
+                    </td>
+                    <td className="p-2.5">
+                      <SideBadge side={row.Side} />
+                    </td>
+                    <td className="p-2.5 text-right tabular">{row.Entry}</td>
+                    <td className="p-2.5 text-right tabular">{row.SL_ATR}</td>
+                    <td className="p-2.5 text-right tabular">{row.TGT_ATR}</td>
+                    <td className="p-2.5 text-right tabular">{row.Strike}</td>
+                    <td className="p-2.5">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
+                        {row.Type}
+                      </span>
+                    </td>
+                    <td className="p-2.5 text-right tabular font-semibold">
+                      {Number(row.Strength).toFixed(2)}
+                    </td>
+                    <td className="p-2.5">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => addJournal(row)}
+                        title="Add to journal"
+                      >
+                        <PlusCircle className="h-3 w-3 mr-1" />
+                        Journal
+                      </Button>
+                    </td>
+                  </motion.tr>
+                ))}
+              </AnimatePresence>
+
+              {data.length === 0 && !loading && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="p-8 text-center text-muted-foreground text-sm"
+                  >
+                    No setups available — run the Python scanner during
+                    market hours.
+                  </td>
+                </tr>
+              )}
+              {data.length > 0 && pageItems.length === 0 && !loading && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="p-8 text-center text-muted-foreground text-sm"
+                  >
+                    No setups match the current filter.
+                  </td>
+                </tr>
+              )}
+              {loading && data.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="p-8 text-center text-muted-foreground text-sm"
+                  >
+                    Loading signals…
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <PaginationStrip
+          page={page}
+          totalPages={totalPages}
+          filteredTotal={filteredTotal}
+          pageSize={pageSize}
+          disabled={loading}
+          onPrev={() => setPage(page - 1)}
+          onNext={() => setPage(page + 1)}
+          onJump={setPage}
+        />
+      </motion.div>
+    </section>
+  );
+}
+
 function SectorStocksModal({
   sector,
   onClose,
@@ -889,6 +964,42 @@ function SectorStocksModal({
     return arr;
   }, [rows, sortKey, sortDir, ageFor]);
 
+  const getSectorConfidence = useCallback(
+    (row: StockRow) => {
+      // Score is −100…+100. Normalize to 0–1 for the filter.
+      return (row.score + 100) / 200;
+    },
+    [],
+  );
+
+  const getSectorWinrate = useCallback(
+    (row: StockRow) => {
+      // Use upside % as winrate proxy — higher upside = better potential.
+      const up = row.upsidePct ?? 0;
+      return Math.min(Math.abs(up) / 30, 1); // cap at 30% upside → 1.0
+    },
+    [],
+  );
+
+  const {
+    pageItems: paginatedRows,
+    activeTab: sectorFilterTab,
+    setActiveTab: setSectorFilterTab,
+    page: sectorPage,
+    setPage: setSectorPage,
+    totalPages: sectorTotalPages,
+    filteredTotal: sectorFilteredTotal,
+    pageSize: sectorPageSize,
+    tabs: sectorTabs,
+  } = usePaginationFilter({
+    items: sortedRows,
+    pageSize: 5,
+    getConfidence: getSectorConfidence,
+    getWinrate: getSectorWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
   const onSort = (key: SortKey) => {
     if (key === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -977,7 +1088,7 @@ function SectorStocksModal({
                       {sortDir === "asc" ? "↑" : "↓"}
                     </span>
                     <span>·</span>
-                    <span>{rows.length} stocks</span>
+                    <span>{sectorFilteredTotal} of {rows.length} stocks</span>
                     {resp?.fetchedAt && (
                       <>
                         <span>·</span>
@@ -994,6 +1105,12 @@ function SectorStocksModal({
                       </span>
                     )}
                   </div>
+                  <FilterTabs
+                    tabs={sectorTabs}
+                    active={sectorFilterTab}
+                    onChange={setSectorFilterTab}
+                    className="mt-1.5"
+                  />
                 </div>
               </div>
               <Button
@@ -1085,7 +1202,7 @@ function SectorStocksModal({
                 </thead>
                 <tbody>
                   <AnimatePresence>
-                    {sortedRows.map((r, i) => {
+                    {paginatedRows.map((r, i) => {
                       const age = ageFor(r);
                       const ageMs = age?.ms ?? null;
                       const ageSource = age?.source ?? null;
@@ -1226,6 +1343,16 @@ function SectorStocksModal({
                       </td>
                     </tr>
                   )}
+                  {sortedRows.length > 0 && paginatedRows.length === 0 && !loading && (
+                    <tr>
+                      <td
+                        colSpan={9}
+                        className="p-8 text-center text-muted-foreground text-sm"
+                      >
+                        No stocks match the current filter.
+                      </td>
+                    </tr>
+                  )}
                   {sortedRows.length === 0 && loading && (
                     <tr>
                       <td
@@ -1238,6 +1365,19 @@ function SectorStocksModal({
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="px-4 sm:px-5 py-2 border-t border-border/60">
+              <PaginationStrip
+                page={sectorPage}
+                totalPages={sectorTotalPages}
+                filteredTotal={sectorFilteredTotal}
+                pageSize={sectorPageSize}
+                disabled={loading}
+                onPrev={() => setSectorPage(sectorPage - 1)}
+                onNext={() => setSectorPage(sectorPage + 1)}
+                onJump={setSectorPage}
+              />
             </div>
 
             <div className="p-3 sm:p-4 border-t border-border/60 bg-muted/30 text-[10px] sm:text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
@@ -1302,7 +1442,7 @@ function RangeExpansionSection() {
     setLoading(true);
     try {
       const res = await fetch(
-        "/api/in/scanner?type=range-expansion&limit=10",
+        "/api/in/scanner?type=range-expansion&limit=25",
         {
           cache: "no-store",
           signal: ctrl.signal,
@@ -1324,12 +1464,7 @@ function RangeExpansionSection() {
   }, []);
 
   useEffect(() => {
-    // Defer the initial scan onto the next task so the eslint
-    // `react-hooks/set-state-in-effect` rule sees state updates only via an
-    // external-system callback (the timer), not a synchronous effect body.
     const initial = setTimeout(() => void load(), 0);
-    // The scanner pass is heavy server-side (caches 5 min) so polling every
-    // 60 s is fine even though it triggers state updates.
     const t = setInterval(load, 60_000);
     return () => {
       clearTimeout(initial);
@@ -1337,6 +1472,46 @@ function RangeExpansionSection() {
       ctrlRef.current?.abort();
     };
   }, [load]);
+
+  const hits = useMemo(() => data?.hits ?? [], [data]);
+
+  const getRangeConfidence = useCallback(
+    (h: ScannerHit) => {
+      if (hits.length === 0) return h.metric;
+      const max = Math.max(...hits.map((x) => Math.abs(x.metric)));
+      return max > 0 ? Math.abs(h.metric) / max : 0;
+    },
+    [hits],
+  );
+
+  const getRangeWinrate = useCallback(
+    (h: ScannerHit) => {
+      const pct = h.changePct ?? 0;
+      return Math.min(Math.abs(pct) / 8, 1);
+    },
+    [],
+  );
+
+  const {
+    pageItems,
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+    tabs,
+  } = usePaginationFilter({
+    items: hits,
+    pageSize: 5,
+    getConfidence: getRangeConfidence,
+    getWinrate: getRangeWinrate,
+    confidenceThreshold: 0.7,
+    winrateThreshold: 0.6,
+  });
+
+  const pageOffset = (page - 1) * pageSize;
 
   return (
     <section>
@@ -1362,7 +1537,8 @@ function RangeExpansionSection() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
             {data?.fetchedAt && (
               <span className="text-[10px] text-muted-foreground">
                 {new Date(data.fetchedAt).toLocaleTimeString()}
@@ -1400,7 +1576,7 @@ function RangeExpansionSection() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {data?.hits.map((h, i) => (
+                {pageItems.map((h, i) => (
                   <motion.tr
                     key={h.symbol}
                     initial={{ opacity: 0, y: 4 }}
@@ -1409,7 +1585,9 @@ function RangeExpansionSection() {
                     transition={{ delay: Math.min(i * 0.02, 0.4) }}
                     className="border-b border-border/40 hover:bg-muted/40 transition-colors"
                   >
-                    <td className="p-2.5 text-muted-foreground">{i + 1}</td>
+                    <td className="p-2.5 text-muted-foreground">
+                      {pageOffset + i + 1}
+                    </td>
                     <td className="p-2.5 font-medium">
                       <Link
                         href={`/in/chart/${encodeURIComponent(h.symbol)}`}
@@ -1456,7 +1634,7 @@ function RangeExpansionSection() {
                   </td>
                 </tr>
               )}
-              {data && data.hits.length === 0 && !loading && (
+              {data && hits.length === 0 && !loading && (
                 <tr>
                   <td
                     colSpan={7}
@@ -1467,9 +1645,30 @@ function RangeExpansionSection() {
                   </td>
                 </tr>
               )}
+              {data && hits.length > 0 && pageItems.length === 0 && !loading && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="p-6 text-center text-muted-foreground text-sm"
+                  >
+                    No hits match the current filter.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+
+        <PaginationStrip
+          page={page}
+          totalPages={totalPages}
+          filteredTotal={filteredTotal}
+          pageSize={pageSize}
+          disabled={loading}
+          onPrev={() => setPage(page - 1)}
+          onNext={() => setPage(page + 1)}
+          onJump={setPage}
+        />
       </motion.div>
     </section>
   );

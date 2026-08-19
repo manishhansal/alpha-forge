@@ -175,6 +175,36 @@ the topbar.
 - **Chart** (`/in/chart/[symbol]`) — per-symbol lightweight-charts
   deep-dive with intraday / daily toggles.
 
+#### Client-side Pagination & Filter System
+
+All large data tables and grids in the Indian Market surface are paginated
+at **5 items per page** with a shared `usePaginationFilter` hook and
+reusable UI primitives (`FilterTabs`, `PaginationStrip`). The filter tabs
+offer three views:
+
+- **All** — every row, paginated.
+- **Most Confidence** — only items above the 70% confidence threshold
+  (metric varies per component: signal strength, score, impact level).
+- **High Winrate** — only items above the 60% winrate threshold
+  (uses day %, upside %, risk:reward, or sentiment as a proxy).
+
+Paginated components:
+
+| Component | Location | Filter Tabs |
+|-----------|----------|-------------|
+| F&O Scanner | `/in/scanner` | Yes |
+| MSB–OB Intraday Signals | `/in/dashboard` | Yes |
+| Range Expansion (WR8) | `/in/dashboard` | Yes |
+| Sector Stocks Modal | `/in/dashboard` (drill-down) | Yes |
+| Live F&O Signals | `/in/strategies` | Yes |
+| Open F&O Paper Positions | `/in/paper-trading` | Yes |
+| News Feed | `/in/news` | Yes (High Impact / Bullish) |
+| Watchlist | `/in/watchlist` | No (user-curated) |
+| Daily Picks Board | `/in/daily-picks` (per bucket) | No |
+| Daily Picks History | `/in/daily-picks` (days + picks) | No |
+
+Shared implementation: `src/components/india/ui/pagination-filter.tsx`
+
 ---
 
 # Tech Stack

@@ -5,7 +5,11 @@ import { ChevronDown, History } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { fmt, fmtDuration, fmtIstTime, fmtPct } from "@/lib/india/format";
-import { DAILY_PICK_BUCKET_META } from "@/features/india/daily-picks/engine";
+import {
+  PaginationStrip,
+  usePaginationFilter,
+} from "@/components/india/ui/pagination-filter";
+import { DAILY_PICK_BUCKET_META, type DailyPick } from "@/features/india/daily-picks/engine";
 import type {
   DailyPicksHistoryDay,
   DailyPicksHistoryResponse,
@@ -61,11 +65,36 @@ export function DailyPicksHistory({
     );
   }
 
+  return <PaginatedHistoryDays days={days} />;
+}
+
+function PaginatedHistoryDays({ days }: { days: DailyPicksHistoryDay[] }) {
+  const {
+    pageItems,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+  } = usePaginationFilter({
+    items: days,
+    pageSize: 5,
+  });
+
   return (
     <div className="flex flex-col gap-2">
-      {days.map((day) => (
+      {pageItems.map((day) => (
         <HistoryDay key={day.tradeDate} day={day} />
       ))}
+      <PaginationStrip
+        page={page}
+        totalPages={totalPages}
+        filteredTotal={filteredTotal}
+        pageSize={pageSize}
+        onPrev={() => setPage(page - 1)}
+        onNext={() => setPage(page + 1)}
+        onJump={setPage}
+      />
     </div>
   );
 }
@@ -106,78 +135,107 @@ function HistoryDay({ day }: { day: DailyPicksHistoryDay }) {
         </span>
       </button>
 
-      {open ? (
-        <div className="overflow-x-auto border-t border-[var(--color-border)]">
-          <table className="w-full text-left text-[11px]">
-            <thead className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">
-              <tr className="border-b border-[var(--color-border)]">
-                <th className="px-4 py-2 font-medium">Bucket</th>
-                <th className="px-3 py-2 font-medium">Symbol</th>
-                <th className="px-3 py-2 font-medium">Dir</th>
-                <th className="px-3 py-2 text-right font-medium">Entry</th>
-                <th className="px-3 py-2 text-right font-medium">Stop</th>
-                <th className="px-3 py-2 text-right font-medium">Target</th>
-                <th className="px-3 py-2 text-right font-medium">P&amp;L</th>
-                <th className="px-3 py-2 text-right font-medium">Appeared</th>
-                <th className="px-3 py-2 text-right font-medium">Held</th>
-                <th className="px-3 py-2 font-medium">Outcome</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allPicks.map((p) => (
-                <tr
-                  key={`${p.bucket}-${p.rank}`}
-                  className="border-b border-[var(--color-border)] last:border-0"
+      {open ? <HistoryDayTable picks={allPicks} /> : null}
+    </div>
+  );
+}
+
+function HistoryDayTable({ picks }: { picks: DailyPick[] }) {
+  const {
+    pageItems,
+    page,
+    setPage,
+    totalPages,
+    filteredTotal,
+    pageSize,
+  } = usePaginationFilter({
+    items: picks,
+    pageSize: 5,
+  });
+
+  return (
+    <div className="border-t border-[var(--color-border)]">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[11px]">
+          <thead className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">
+            <tr className="border-b border-[var(--color-border)]">
+              <th className="px-4 py-2 font-medium">Bucket</th>
+              <th className="px-3 py-2 font-medium">Symbol</th>
+              <th className="px-3 py-2 font-medium">Dir</th>
+              <th className="px-3 py-2 text-right font-medium">Entry</th>
+              <th className="px-3 py-2 text-right font-medium">Stop</th>
+              <th className="px-3 py-2 text-right font-medium">Target</th>
+              <th className="px-3 py-2 text-right font-medium">P&amp;L</th>
+              <th className="px-3 py-2 text-right font-medium">Appeared</th>
+              <th className="px-3 py-2 text-right font-medium">Held</th>
+              <th className="px-3 py-2 font-medium">Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageItems.map((p) => (
+              <tr
+                key={`${p.bucket}-${p.rank}`}
+                className="border-b border-[var(--color-border)] last:border-0"
+              >
+                <td className="px-4 py-2 text-[var(--color-fg-muted)]">
+                  {DAILY_PICK_BUCKET_META[p.bucket]?.label?.replace(
+                    "Highly ",
+                    "",
+                  ) ?? p.bucket}
+                </td>
+                <td className="px-3 py-2 font-medium text-[var(--color-fg)]">
+                  {p.displayName}
+                </td>
+                <td
+                  className={cn(
+                    "px-3 py-2 font-medium",
+                    p.direction === "BEARISH" ? "text-bear" : "text-bull",
+                  )}
                 >
-                  <td className="px-4 py-2 text-[var(--color-fg-muted)]">
-                    {DAILY_PICK_BUCKET_META[p.bucket].label.replace(
-                      "Highly ",
-                      "",
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-medium text-[var(--color-fg)]">
-                    {p.displayName}
-                  </td>
-                  <td
-                    className={cn(
-                      "px-3 py-2 font-medium",
-                      p.direction === "BEARISH" ? "text-bear" : "text-bull",
-                    )}
-                  >
-                    {p.direction === "BEARISH" ? "SHORT" : "LONG"}
-                  </td>
-                  <td className="num px-3 py-2 text-right">₹{fmt(p.entry)}</td>
-                  <td className="num px-3 py-2 text-right">₹{fmt(p.stopLoss)}</td>
-                  <td className="num px-3 py-2 text-right">₹{fmt(p.target)}</td>
-                  <td
-                    className={cn(
-                      "num px-3 py-2 text-right font-medium",
-                      p.pnlPct == null
-                        ? "text-[var(--color-fg-muted)]"
-                        : p.pnlPct >= 0
-                          ? "text-bull"
-                          : "text-bear",
-                    )}
-                  >
-                    {p.pnlPct == null ? "—" : fmtPct(p.pnlPct)}
-                  </td>
-                  <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
-                    {fmtIstTime(p.generatedAt)}
-                  </td>
-                  <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
-                    {p.resolvedAt != null
-                      ? fmtDuration(p.resolvedAt - p.generatedAt)
-                      : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <OutcomeTag status={p.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+                  {p.direction === "BEARISH" ? "SHORT" : "LONG"}
+                </td>
+                <td className="num px-3 py-2 text-right">₹{fmt(p.entry)}</td>
+                <td className="num px-3 py-2 text-right">₹{fmt(p.stopLoss)}</td>
+                <td className="num px-3 py-2 text-right">₹{fmt(p.target)}</td>
+                <td
+                  className={cn(
+                    "num px-3 py-2 text-right font-medium",
+                    p.pnlPct == null
+                      ? "text-[var(--color-fg-muted)]"
+                      : p.pnlPct >= 0
+                        ? "text-bull"
+                        : "text-bear",
+                  )}
+                >
+                  {p.pnlPct == null ? "—" : fmtPct(p.pnlPct)}
+                </td>
+                <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
+                  {fmtIstTime(p.generatedAt)}
+                </td>
+                <td className="num px-3 py-2 text-right text-[var(--color-fg-muted)]">
+                  {p.resolvedAt != null
+                    ? fmtDuration(p.resolvedAt - p.generatedAt)
+                    : "—"}
+                </td>
+                <td className="px-3 py-2">
+                  <OutcomeTag status={p.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 pb-3">
+        <PaginationStrip
+          page={page}
+          totalPages={totalPages}
+          filteredTotal={filteredTotal}
+          pageSize={pageSize}
+          onPrev={() => setPage(page - 1)}
+          onNext={() => setPage(page + 1)}
+          onJump={setPage}
+        />
+      </div>
     </div>
   );
 }
