@@ -1,0 +1,2 @@
+# Training data directory — populated by the training pipeline.
+# Model artifacts are stored in ./artifacts/ (docker volume in production).

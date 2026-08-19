@@ -1913,6 +1913,115 @@ Use weighted scoring system:
 
 ---
 
+# Multi-Model AI Decision Engine (ML Service)
+
+The Indian Market surface is enhanced by a **Python ML microservice**
+(`ml-service/`) that runs alongside the Next.js app. It implements a
+multi-model decision engine using institutional-grade ML models trained
+on NSE F&O data:
+
+## Architecture
+
+```
+                      NSE Data
+                           │
+              Feature Engineering Layer (150+ features)
+                           │
+      ┌────────────────────┼────────────────────┐
+      │                    │                    │
+ Market Regime       Stock Ranking        Risk Prediction
+ XGBoost             LightGBM             XGBoost
+      │                    │                    │
+      └────────────────────┼────────────────────┘
+                           │
+                  Strategy Selection (CatBoost)
+                           │
+                  RL Execution (PPO / Stable-Baselines3)
+                           │
+                  Portfolio Optimizer (HRP)
+                           │
+                  SHAP Explainability
+```
+
+## Models
+
+| Layer                    | Model       | Purpose                                                    |
+| ------------------------ | ----------- | ---------------------------------------------------------- |
+| Market Regime            | XGBoost     | Classify into Strong Bull / Bull / Sideways / Volatile / Bear / Crash |
+| Stock Ranking            | LightGBM    | Rank all F&O stocks by outperformance probability (0-100)  |
+| Strategy Selection       | CatBoost    | Select optimal strategy per regime (8 strategies)          |
+| Risk Prediction          | XGBoost ×3  | P(stop hit), P(target hit), expected drawdown              |
+| Portfolio Optimization   | HRP         | Hierarchical Risk Parity allocation                        |
+| Execution                | PPO (RL)    | When to enter/exit, trailing stops, position sizing        |
+| Explainability           | SHAP        | Feature contributions for every prediction                 |
+
+## Feature Engineering (150+ features)
+
+- **Technical**: RSI, MACD, ADX, ATR, Bollinger Bands, EMA stack (8/13/21/55/200),
+  Stochastic RSI, Williams %R, CCI, MFI, CMF, OBV, Supertrend
+- **Volume**: Relative volume, breakout detection, volume profile, VWAP distance,
+  volume-price confirmation, force index, A/D line
+- **Momentum**: Multi-period returns (1/2/3/5/10/20/60d), ROC, trend strength,
+  ATR expansion, breakout score, gap %, relative strength vs NIFTY, HH/HL
+- **Derivatives**: PCR score, OI build-up (4 quadrants), IV rank/percentile,
+  max-pain distance, OI wall proximity, delta OI skew
+- **Market Structure**: Fair Value Gaps (FVG), Order Blocks, BOS/CHOCH,
+  liquidity sweeps
+- **Macro**: Market breadth (% above SMA20/50/200), advance/decline ratio,
+  sector rotation, VIX regime, inter-market signals, time-of-day, expiry effects
+
+## Integration
+
+- **ML Service** runs on port 8100 (Docker container or local Python)
+- **TypeScript client** (`src/lib/india/ml-client.ts`) — fail-soft HTTP client
+  with typed interfaces, 10s timeout, returns null on any failure
+- **ML Context** (`src/lib/india/ml-enhanced-context.ts`) — orchestrates ML
+  calls in parallel, 60s cache TTL, graceful fallback to rule-based engine
+- **API Route** (`/api/in/ml-predictions`) — proxies ML predictions to frontend
+- **Zero-degradation**: When the ML service is down, the existing heuristic
+  engine continues to drive signals identically (all models have built-in
+  rule-based fallbacks)
+
+## Running
+
+```bash
+# Start ML service alongside the existing infra:
+docker compose up -d
+
+# Or run locally for development:
+cd ml-service
+pip install -r requirements.txt
+uvicorn src.server:app --port 8100 --reload
+
+# Generate training data:
+python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
+
+# Train all models:
+python -m src.training.train_all
+
+# Train with Optuna HPO:
+python -m src.training.train_all --hpo --n-trials 50
+
+# Quick training (for iteration):
+python -m src.training.train_all --quick
+```
+
+## Endpoints
+
+| Method | Path                    | Purpose                              |
+| ------ | ----------------------- | ------------------------------------ |
+| POST   | /predict/regime         | Market regime classification         |
+| POST   | /predict/rankings       | Batch stock ranking                  |
+| POST   | /predict/strategy       | Per-stock strategy selection          |
+| POST   | /predict/risk           | Per-trade risk estimation            |
+| POST   | /predict/portfolio      | HRP portfolio optimization           |
+| POST   | /predict/execution      | RL execution decision                |
+| POST   | /explain/{model}        | SHAP explanation for a prediction    |
+| GET    | /health                 | Service health check                 |
+| GET    | /models/status          | Model load status                    |
+
+---
+
 # Suggested Environment Variables
 
 ```env

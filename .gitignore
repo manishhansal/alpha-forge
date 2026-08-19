@@ -46,3 +46,20 @@ next-env.d.ts
 # test artifacts
 /test-results
 /playwright-report
+
+# ML Service
+ml-service/__pycache__/
+ml-service/**/__pycache__/
+ml-service/*.pyc
+ml-service/.venv/
+ml-service/venv/
+ml-service/.mypy_cache/
+ml-service/.ruff_cache/
+ml-service/artifacts/*.json
+ml-service/artifacts/*.txt
+ml-service/artifacts/*.cbm
+ml-service/artifacts/*.zip
+ml-service/artifacts/risk/
+ml-service/data/*.csv
+ml-service/data/*.parquet
+ml-service/data/*.pkl

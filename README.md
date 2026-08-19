@@ -101,6 +101,41 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
 | Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain + greeks, first-party F&O gainers-losers / PCR / OI-buildup, FULL-quote enrichment + order-book imbalance) + Groww REST (opt-in via `INDIA_BROKER`) |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
+| ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · PyPortfolioOpt |
+
+## ML Decision Engine (Indian Market)
+
+The Indian market surface is enhanced by a **Python ML microservice**
+(`ml-service/`, port 8100) implementing an institutional-grade multi-model
+decision engine:
+
+```
+NSE Data → Feature Engineering (150+ features)
+    ├── Market Regime Classifier (XGBoost) → 6 regimes
+    ├── Stock Ranker (LightGBM) → outperformance scores
+    ├── Strategy Selector (CatBoost) → 8 strategies
+    ├── Risk Predictor (XGBoost ×3) → P(stop), P(target), drawdown
+    ├── Portfolio Optimizer (HRP) → diversified allocations
+    ├── RL Executor (PPO) → trade execution timing
+    └── SHAP Explainability → transparent factor contributions
+```
+
+All models include **rule-based heuristic fallbacks** — when the ML
+service is down or models are untrained, the existing rule-based engine
+continues to drive signals with zero degradation.
+
+```bash
+# Start everything (Postgres + Redis + ML service):
+docker compose up -d
+
+# Train models (after generating data):
+cd ml-service
+pip install -r requirements.txt
+python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
+python -m src.training.train_all
+```
+
+See the [ML Architecture section in ALPHAFORGE.md](./ALPHAFORGE.md#multi-model-ai-decision-engine-ml-service) for full details.
 
 ## Quick start
 
@@ -404,7 +439,35 @@ prisma/
                                 Notification, Strategy, StrategyBacktest,
                                 StrategyPaperTrade, PaperTrade (+ enums)
 prisma.config.ts                Prisma 7 datasource config (no url in schema)
-docker-compose.yml              Postgres 17 + Redis 7 with healthchecks
+docker-compose.yml              Postgres 17 + Redis 7 + ML service with healthchecks
+ml-service/                     Python ML microservice (multi-model AI engine)
+  src/
+    server.py                   FastAPI app — /predict/regime, /rankings, /strategy, /risk, /portfolio, /execution, /explain
+    config.py                   Environment-driven settings
+    schemas.py                  Pydantic request/response models
+    features/                   Feature engineering layer (150+ features)
+      technical.py              RSI, MACD, ADX, ATR, Bollinger, EMA stack, Stoch RSI, CCI, MFI, Supertrend
+      volume.py                 Relative volume, breakout, VWAP distance, volume profile, OBV
+      momentum.py               Multi-period returns, trend strength, ATR expansion, breakout score
+      derivatives.py            PCR, OI build-up, IV rank, max-pain, OI walls
+      market_structure.py       FVG, Order Blocks, BOS/CHOCH, liquidity sweeps
+      macro.py                  Market breadth, sector rotation, VIX regime, time features
+      engineer.py               Orchestrator — per-stock + per-regime feature computation
+    models/
+      market_regime.py          XGBoost 6-class regime classifier
+      stock_ranker.py           LightGBM stock ranking (regression + LambdaRank)
+      strategy_selector.py      CatBoost 8-strategy multiclass classifier
+      risk_predictor.py         XGBoost ×3 (stop/target/drawdown)
+      portfolio_optimizer.py    Hierarchical Risk Parity (HRP)
+      rl_executor.py            PPO agent (Gymnasium env + Stable-Baselines3)
+    explainability/
+      shap_explainer.py         Unified SHAP/heuristic explanations for all models
+    training/
+      data_pipeline.py          Yahoo Finance → feature computation → labeled .npz
+      train_all.py              End-to-end training with Optuna HPO
+  Dockerfile                    Python 3.11 slim, uvicorn, 2 workers
+  requirements.txt              XGBoost, LightGBM, CatBoost, SB3, SHAP, FastAPI
+  artifacts/                    Trained model files (docker volume in prod)
 tests/                          Vitest suite — see "Testing & TDD policy"
   setup/                        Shared test fixtures, jest-dom setup, Next mocks
   lib/                          Pure-utility tests (cn, formatPrice, market-mode, …)
