@@ -330,6 +330,7 @@ function useMarketSessionStatus(): MarketSessionStatus {
         nextSession: closed ? getNextTradingSessionOpen() : null,
       };
     };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState(compute());
     const msUntilNextMinute = 60_000 - (Date.now() % 60_000);
     let intervalId: ReturnType<typeof setInterval> | null = null;

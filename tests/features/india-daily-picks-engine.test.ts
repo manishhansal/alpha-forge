@@ -770,7 +770,7 @@ describe("daily-picks engine", () => {
       const realSetup = makeSignal({
         symbol: "OK",
         grade: "D",
-        confidence: 0.25,
+        confidence: 0.29, // quant v2 raised floor to 0.28; 0.29 is still low-conf but clears the gate
         confluences: [
           makeFactor("breakout", 0.5),
           makeFactor("trend", 0.8),
