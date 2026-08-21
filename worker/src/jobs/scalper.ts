@@ -1,9 +1,18 @@
+import { feedBar, type IndicatorConfig, type IndicatorHandle } from "@/features/indicators";
 import { getScalpSignals } from "@/features/scalping/fetch-signals";
 import { openPaperTrade, resolveOpenTrades } from "@/features/scalping/paper-trader";
 import type { ScalpStrategyId, ScalpTimeframe } from "@/features/scalping/types";
+import { TRACKED_SYMBOLS } from "@/lib/constants";
+import { getServerBroker } from "@/services/brokers/registry";
+import type { KlineInterval } from "@/services/binance/klines";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
+import {
+  indicatorStateKey,
+  loadIndicatorState,
+  saveIndicatorState,
+} from "../indicator-state";
 import { createLogger } from "../log";
 import { scheduleJob, type JobHandle } from "../scheduler";
 
@@ -18,6 +27,68 @@ const log = createLogger("worker:scalper");
  * history without having to re-run the worker.
  */
 const TIMEFRAMES: ReadonlyArray<ScalpTimeframe> = ["1m", "5m", "15m"];
+
+/** Default indicator configuration used for state persistence. */
+const INDICATOR_CONFIG: IndicatorConfig = {
+  emaPeriod: 20,
+  atrPeriod: 14,
+  rsiPeriod: 14,
+  bollingerPeriod: 20,
+  bollingerK: 2,
+};
+
+const TIMEFRAME_TO_INTERVAL: Record<ScalpTimeframe, KlineInterval> = {
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+};
+
+/** Required bars to maintain a warm indicator handle. */
+const REQUIRED_BARS = 200;
+
+/**
+ * Feed the latest candles from the broker into a persisted indicator handle,
+ * then save the updated state back to Redis. This ensures indicator state
+ * survives worker restarts — on the next tick, the handle is restored and
+ * only new bars need to be fed (warm-up in ≤ 5 bars per Requirement 1.6).
+ *
+ * Best-effort — any error is logged and swallowed so the main trade-opening
+ * logic is never blocked.
+ */
+async function refreshIndicatorState(
+  symbol: string,
+  timeframe: ScalpTimeframe,
+): Promise<void> {
+  try {
+    const broker = getServerBroker();
+    const symbolMeta = TRACKED_SYMBOLS.find((s) => s.id === symbol);
+    if (!symbolMeta) return;
+
+    const pair = broker.pairs.spot[symbolMeta.id];
+    if (!pair) return;
+
+    const interval = TIMEFRAME_TO_INTERVAL[timeframe];
+    const candles = await broker.fetchKlines(pair, interval, REQUIRED_BARS);
+    if (candles.length === 0) return;
+
+    const key = indicatorStateKey("scalper", symbol, timeframe);
+    const handle: IndicatorHandle = await loadIndicatorState(key, INDICATOR_CONFIG);
+
+    // Feed all candles through the streaming handle (O(n) on first run,
+    // O(few) on subsequent runs when state was persisted).
+    for (const candle of candles) {
+      feedBar(handle, candle);
+    }
+
+    await saveIndicatorState(key, handle);
+  } catch (err) {
+    log.warn("refreshIndicatorState failed", {
+      symbol,
+      timeframe,
+      err: (err as Error).message,
+    });
+  }
+}
 
 /**
  * Two-stage tick (repeated per timeframe):
@@ -52,6 +123,13 @@ export function startScalperJob(): JobHandle {
               timeframe: tf,
               noCache: true,
             });
+
+            // Wire streaming indicator state persistence. Fire-and-forget so
+            // Redis errors never block trade opening.
+            void Promise.allSettled(
+              TRACKED_SYMBOLS.map((s) => refreshIndicatorState(s.id, tf)),
+            );
+
             for (const sig of signals) {
               const result = await openPaperTrade(sig, { prisma });
               if (result.opened) {
