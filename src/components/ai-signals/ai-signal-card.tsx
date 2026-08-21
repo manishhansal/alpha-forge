@@ -379,6 +379,26 @@ export function AiSignalCard({ signal, currency = "usd" }: Props) {
               <span className="text-[10px] uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
                 {signal.pair} · {signal.market === "crypto" ? "Crypto" : "NSE F&O"}
               </span>
+              {/* Quant / ML badges — India only */}
+              {signal.market === "india" && (
+                <div className="mt-1 flex items-center gap-1">
+                  {signal.quantGatePassed === true && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-[color-mix(in_oklch,var(--color-bull)_14%,transparent)] px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-bull)_30%,transparent)]">
+                      ✓ Quant
+                    </span>
+                  )}
+                  {signal.quantGatePassed === false && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-[color-mix(in_oklch,var(--color-warning)_12%,transparent)] px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-[var(--color-warning)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-warning)_28%,transparent)]">
+                      ⚠ Low Liq
+                    </span>
+                  )}
+                  {signal.mlEnhanced === true && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-[color-mix(in_oklch,var(--color-brand)_12%,transparent)] px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-[var(--color-brand)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-brand)_28%,transparent)]">
+                      ML Top
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -517,12 +537,20 @@ export function AiSignalCard({ signal, currency = "usd" }: Props) {
         {/* AI rationale */}
         {signal.reasons.length > 0 && (
           <div className="mt-3">
-            <div className="mb-1.5 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
-              <Brain className="h-3 w-3" />
-              Why the AI is {signal.direction.toLowerCase()}
-              <span className="ml-1 rounded-full bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--color-fg-muted)]">
-                {signal.bullishCount} bull · {signal.bearishCount} bear
-              </span>
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                <Brain className="h-3 w-3" />
+                Why the AI is {signal.direction.toLowerCase()}
+                <span className="ml-1 rounded-full bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--color-fg-muted)]">
+                  {signal.bullishCount} bull · {signal.bearishCount} bear
+                </span>
+              </div>
+              {/* Confluence factor coverage — how many factors were available */}
+              {signal.confluences.length > 0 && (
+                <span className="text-[9px] text-[var(--color-fg-subtle)]">
+                  {signal.confluences.filter((f) => f.available).length}/{signal.confluences.length} factors
+                </span>
+              )}
             </div>
             <ul className="flex flex-col gap-1">
               {signal.reasons.map((r, idx) => {

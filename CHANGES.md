@@ -2,6 +2,154 @@
 
 ---
 
+## [Unreleased] — Top 5 Stocks for Tomorrow + TypeScript / Build Fixes
+
+**Branch:** `feat/ml-decision-engine`
+**Scope:** Indian Market dashboard · API · TypeScript config · Test setup
+
+---
+
+### 1. New feature — Top 5 Stocks for Tomorrow
+
+A new post-market section on the Indian Market Overview dashboard
+(`/in/dashboard`) that surfaces the five highest-conviction NSE F&O stocks to
+watch for the next trading session, reviewed after market close.
+
+#### `src/app/api/in/top-picks/route.ts` (new file)
+
+`GET /api/in/top-picks?limit=5`
+
+- Flattens the entire `SECTOR_STOCKS` universe (~130+ NSE F&O names) into a
+  deduplicated symbol → primary-sector map (first sector listed per symbol wins).
+- Fetches Yahoo Finance quotes for every symbol in parallel via `yahoo-finance2`.
+- Scores each stock through `computeScore` + `classifySignal` from
+  `src/services/india/signals/score.ts` — the same 8-factor quant model used by
+  the sector-stocks route (SMA-50/200, intraday change, analyst target, RSI,
+  ADX, relative volume, delivery %).
+- Filters out any stock with no price data or an `N/A` signal.
+- Sorts descending by score; upside% (to max of analyst target and 52-week high)
+  is the tiebreaker.
+- Returns the top N (default 5, configurable via `?limit=`).
+- Response: `{ picks: TopPickRow[], universe: number, fetchedAt: string }`.
+- `Cache-Control: no-store` — always fresh.
+
+**`TopPickRow` shape:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `rank` | `number` | 1-based |
+| `symbol` | `string` | NSE ticker |
+| `shortName` | `string \| null` | Yahoo short/long name |
+| `sector` | `string` | Primary sector from `SECTOR_STOCKS` |
+| `price` | `number \| null` | Last traded price |
+| `changePct` | `number \| null` | Day change % |
+| `score` | `number` | −100 … +100 composite quant score |
+| `signal` | `SignalLabel` | `"STRONG BUY"` … `"STRONG SELL"` |
+| `upsidePct` | `number \| null` | % to max(analyst target, 52w-high) |
+| `fromSma50Pct` | `number \| null` | % above/below 50-day SMA |
+| `relativeVolume` | `number \| null` | Today vol ÷ 3-month avg vol |
+| `targetMean` | `number \| null` | Analyst mean target price |
+
+#### `src/components/india/msb-dashboard.tsx` (modified)
+
+- Added `Star` to the lucide-react import list.
+- Added `TopPickRow`, `TopPicksResponse` local types.
+- Added `SIGNAL_GRADIENT` style map — maps each signal label to ring, badge
+  and icon colour tokens.
+- Added `TopPickCard` component — renders one ranked stock card with:
+  - Absolute-positioned rank badge (top-right corner).
+  - Directional icon (`ArrowUpRight` / `ArrowDownRight` / `Activity`) tinted
+    by signal.
+  - TradingView deep-link on the symbol ticker.
+  - Signal badge (colour-coded bull/bear/neutral).
+  - Metrics grid: price · day % · upside · vs SMA50 · relative volume · score
+    pill (reuses existing `ScorePill`).
+- Added `TopPicksSection` component — polls `GET /api/in/top-picks?limit=5`
+  every 5 minutes, renders animated loading skeletons while in-flight, an
+  error banner on failure, and a footer disclaimer. Placed between
+  `<RangeExpansionSection />` and `<MsbSignalsSection />` in the dashboard
+  render tree.
+
+---
+
+### 2. TypeScript / build fixes
+
+Three pre-existing issues blocked `tsc --noEmit` (9 errors across 7 files)
+and `next build`. All errors were in test infrastructure; no source or runtime
+code was changed.
+
+#### `tsconfig.json` — `target` raised from `ES2017` to `ES2018`
+
+**Error fixed:** `TS1501: This regular expression flag is only available when
+targeting 'es2018' or later.`
+
+**Files affected:**
+- `tests/worker/db.test.ts:37` — `/\.env\.example.*docker:up/s`
+- `tests/worker/redis.test.ts:39` — `/docker:up.*\.env\.local/s`
+
+The `s` (dotAll) regex flag requires ES2018. The worker's own
+`worker/tsconfig.json` already targeted ES2022; this fix aligns the root
+config. Safe — Next.js 16 requires Node 18+ which natively supports all
+ES2018+ syntax.
+
+#### `tsconfig.json` — `@worker/*` path alias added
+
+**Error fixed:** `TS2307: Cannot find module '@worker/…' or its corresponding
+type declarations.`
+
+**Files affected:**
+- `tests/worker/config.test.ts:13`
+- `tests/worker/db.test.ts:15`
+- `tests/worker/log.test.ts:26`
+- `tests/worker/observability.test.ts:27`
+- `tests/worker/redis.test.ts:17`
+- `tests/worker/scheduler.test.ts:3`
+
+`@worker/*` was defined in `worker/tsconfig.json` but absent from the root
+`tsconfig.json`. The root config is what `tsc --noEmit` and `next build` use
+to type-check the whole repo (including `tests/`). The Vitest bundler already
+had the alias via `resolve.alias` in `vitest.config.ts` — this fix brings the
+type-checker into alignment.
+
+**Change:** Added `"@worker/*": ["./worker/src/*"]` to `paths` in
+`tsconfig.json`.
+
+#### `tests/setup/vitest.setup.ts` — redundant `NODE_ENV` assignment removed
+
+**Error fixed:** `TS2540: Cannot assign to 'NODE_ENV' because it is a
+read-only property.`
+
+`process.env.NODE_ENV ??= "test"` (line 15) was both redundant and invalid:
+
+- Redundant because `vitest.config.ts` already injects `NODE_ENV=test` via
+  `test.env` before any module is evaluated in the worker VM.
+- Invalid because TypeScript's `ProcessEnv` interface declares `NODE_ENV` as
+  `readonly string | undefined`, making any direct assignment a type error.
+
+**Fix:** Removed the line. A comment was added explaining that `NODE_ENV` is
+set via `test.env` in `vitest.config.ts`.
+
+---
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `src/app/api/in/top-picks/route.ts` | **New** — `GET /api/in/top-picks` API route |
+| `src/components/india/msb-dashboard.tsx` | **Modified** — `Star` import, `TopPickCard`, `TopPicksSection` |
+| `tsconfig.json` | **Modified** — `target` ES2017→ES2018, `@worker/*` path alias added |
+| `tests/setup/vitest.setup.ts` | **Modified** — removed `process.env.NODE_ENV ??= "test"` |
+
+### Backward compatibility
+
+- The new `/api/in/top-picks` route is purely additive.
+- No existing API shapes, Redis keys, or DB schema changed.
+- The `tsconfig.json` target bump is backward-compatible with all existing
+  source — every browser/Node target we deploy to already supports ES2018.
+- `tsc --noEmit` now exits 0. `next build` compiles successfully.
+
+---
+
 ## [Unreleased] — Quant-Grade India Stock Selection Upgrade
 
 **Branch:** `feat/ml-decision-engine`

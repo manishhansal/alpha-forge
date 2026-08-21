@@ -1264,6 +1264,8 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
     invalidationCriteria,
     modelVersion: AI_MODEL_VERSION,
     summary,
+    quantGatePassed: prefilterPassed,
+    mlEnhanced: mlBoost > 0,
   };
 }
 

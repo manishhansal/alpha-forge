@@ -148,6 +148,20 @@ export interface AiSignal {
   modelVersion: string;
   /** Free-form one-liner the AI shows above the rationale. */
   summary: string;
+  /**
+   * India-only: whether this stock passed the quantitative pre-filter
+   * (ADX ≥ 18, relative volume ≥ 1.1×, ATR% ≥ 0.4%). Stocks that fail
+   * receive a confidence penalty. Index underlyings always pass.
+   * Undefined for crypto signals.
+   */
+  quantGatePassed?: boolean;
+  /**
+   * India-only: whether the ML stock ranker provided a rank boost for
+   * this signal. True when the ML service was available and the stock
+   * appeared in the top-20 ranked names.
+   * Undefined for crypto signals.
+   */
+  mlEnhanced?: boolean;
 }
 
 /**
