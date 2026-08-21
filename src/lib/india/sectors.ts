@@ -68,5 +68,6 @@ export const SECTOR_STOCKS: Record<string, string[]> = {
     "LT", "BHEL", "SIEMENS", "ABB", "CUMMINSIND", "CGPOWER", "POWERINDIA",
     "KAYNES", "BEL", "BDL", "HAL", "COCHINSHIP", "MAZDOCK", "IRFC", "RVNL",
     "NBCC", "GMRAIRPORT", "CONCOR", "ADANIPORTS", "ADANIENSOL", "ADANIENT",
+    "KEIINDS", "POLYCAB", "HAVELLS",
   ],
 };

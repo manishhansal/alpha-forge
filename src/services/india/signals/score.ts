@@ -5,7 +5,7 @@
  * mirrors how a desk actually reads a chart:
  *
  *   1. SMA-50 proximity   (15 pts) — medium-term trend anchor
- *   2. SMA-200 proximity  (15 pts) — primary trend direction
+ *   2. SMA-200 proximity  (+15 / −7 pts) — primary trend quality filter
  *   3. Intraday change    (20 pts) — today's tape read
  *   4. Analyst target     (15 pts) — fundamental upside
  *   5. RSI(14)            (10 pts) — momentum / overbought-oversold
@@ -14,6 +14,13 @@
  *   8. Delivery %          ( 8 pts) — delivery-vs-trading quality filter
  *
  * Total available: 100 pts (clamped to [-100, 100]).
+ *
+ * SMA-200 asymmetry (v2): being above SMA-200 earns the full +15 quality
+ * bonus, but being below it only deducts up to −7 pts. This prevents stocks
+ * in genuine recovery phases (e.g. +4 % day on high volume after a
+ * multi-month base) from being vetoed by stale structural data. A strong
+ * momentum + volume read should always be able to surface a BUY signal even
+ * when the long-term average is still overhead.
  *
  * Stocks that pass the quant gate (ADX ≥ 20, volume ≥ 1.2×, delivery ≥ 40%)
  * get a small score multiplier to reward predictable setups.
@@ -61,7 +68,22 @@ export const QUANT_DELIVERY_MIN = 40;
 
 // ─── Score band widths (for tanh normalisation) ───────────────────────────────
 const SMA50_BAND = 0.05;
-const SMA200_BAND = 0.1;
+/**
+ * SMA-200 band is wider (0.25) so the tanh saturates at ±25% away from the
+ * 200-day average rather than ±10%. Stocks 5–15% below SMA-200 receive a
+ * moderate structural penalty; stocks 25%+ below receive the maximum cap.
+ * This matches how a desk actually reads SMA-200: a mild overhead average is
+ * a headwind, not a disqualifier.
+ */
+const SMA200_BAND = 0.25;
+/**
+ * Maximum downside the SMA-200 factor can deduct. Capped at 7 pts (vs the
+ * full 15 pts it can add when the stock is above SMA-200) so a genuine
+ * intraday momentum + volume read can still score BUY even with SMA-200
+ * overhead. Asymmetric: we reward structural quality generously but only
+ * apply a moderate quality discount for broken long-term trend.
+ */
+const SMA200_DOWNSIDE_CAP = -7;
 const TARGET_BAND = 0.1;
 
 function tanhWeight(dist: number, band: number): number {
@@ -96,10 +118,17 @@ export function computeScore(inputs: ScoreInputs): number {
     score += 15 * tanhWeight(dist, SMA50_BAND);
   }
 
-  // ── 2. SMA-200 proximity (15 pts) ────────────────────────────────────────
+  // ── 2. SMA-200 proximity (+15 / −7 pts) ─────────────────────────────────
+  // Being above SMA-200 earns the full structural bonus (up to +15 pts).
+  // Being below only deducts up to −7 pts — a moderate quality discount, not
+  // a veto. This allows recovery-phase stocks (e.g. base-building after a
+  // prolonged downtrend) to still surface a BUY when momentum is genuinely
+  // turning: a +4% day on 2× volume shouldn't be cancelled by a stale 200-day
+  // average that hasn't caught up to the price yet.
   if (inputs.price != null && inputs.sma200 != null && inputs.sma200 > 0) {
     const dist = (inputs.price - inputs.sma200) / inputs.sma200;
-    score += 15 * tanhWeight(dist, SMA200_BAND);
+    const raw = 15 * tanhWeight(dist, SMA200_BAND);
+    score += dist < 0 ? Math.max(raw, SMA200_DOWNSIDE_CAP) : raw;
   }
 
   // ── 3. Intraday change (20 pts) ───────────────────────────────────────────

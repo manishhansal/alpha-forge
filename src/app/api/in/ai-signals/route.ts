@@ -14,7 +14,13 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const data = await getIndiaAiSignals();
-    return NextResponse.json(data, {
+    // Only surface actionable directional signals — WAIT means the engine
+    // found no edge. Consumers should never have to filter noise themselves.
+    const actionable = {
+      ...data,
+      signals: data.signals.filter((s) => s.action !== "WAIT"),
+    };
+    return NextResponse.json(actionable, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {

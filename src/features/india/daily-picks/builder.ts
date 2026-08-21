@@ -270,6 +270,11 @@ async function fetchIndexChains(
  * metadata needed to live-price the option. Picks whose chain is unavailable
  * are dropped (better to ship fewer picks than to ship index-level numbers
  * with an option's risk-reward).
+ *
+ * Already-projected picks (`optionContract != null`) are passed through
+ * untouched — their levels are already option premiums. Re-projecting them
+ * would feed `pick.entry` (a ₹57 premium) back in as the "underlying spot"
+ * and produce a nonsensical stop like ₹1,721 for a ₹57 entry.
  */
 function projectIndicesScalpPicks(
   picks: DailyPick[],
@@ -277,6 +282,12 @@ function projectIndicesScalpPicks(
 ): DailyPick[] {
   return picks.flatMap((pick) => {
     if (pick.bucket !== "INDICES_SCALP") return [pick];
+
+    // Already projected on a prior freeze — keep the frozen option levels.
+    // Re-running the projection would corrupt entry/stop/target because
+    // pick.entry is now a premium (e.g. ₹57), not the underlying spot level.
+    if (pick.optionContract != null) return [pick];
+
     const chain = chains.get(pick.symbol);
     if (!chain) {
       console.warn(
@@ -284,22 +295,22 @@ function projectIndicesScalpPicks(
       );
       return [];
     }
+
     // Reconstruct a minimal AiSignal-shaped object the projection needs.
+    // Always use underlyingPrice as the spot reference — it is never
+    // overwritten by a prior projection and always holds the index level.
+    // entry / stopLoss / takeProfits must also be expressed as underlying
+    // spot levels; since this is a fresh (un-projected) pick they are.
     const proj = projectIndexScalpToOption(
       {
         direction: pick.direction,
-        entry: pick.entry,
-        stopLoss: pick.stopLoss,
+        entry: pick.underlyingPrice,          // spot at selection time
+        stopLoss: pick.stopLoss,              // ATR-based spot stop
         underlyingPrice: pick.underlyingPrice,
         riskReward: pick.riskReward,
         takeProfits: [
-          { level: 1, price: pick.target, percent: 0, allocation: 0.5 },
-          {
-            level: 3,
-            price: pick.canMoveUpto,
-            percent: 0,
-            allocation: 0.25,
-          },
+          { level: 1, price: pick.target,      percent: 0, allocation: 0.5 },
+          { level: 3, price: pick.canMoveUpto, percent: 0, allocation: 0.25 },
         ],
       } as Parameters<typeof projectIndexScalpToOption>[0],
       chain,
@@ -736,7 +747,7 @@ async function loadOrCreateAndTrack(
   // still-open pick is force-squared-off at its last mark (no overnight carry).
   const sessionEnded = isNseSessionEndedForDateIST(tradeDate, new Date(now));
 
-  // The AI-sourced buckets (indices / momentum / scalping / potential) and the
+  // The AI-sourced buckets (indices / momentum / short_momentum / scalping / potential) and the
   // externally-sourced Opening Breakout bucket follow the *same* lifecycle:
   // every minute we (1) live-track whatever's already frozen, then (2) top up
   // any bucket that's currently short of `TARGET_PER_BUCKET` with the latest

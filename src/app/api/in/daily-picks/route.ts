@@ -8,9 +8,9 @@ export const runtime = "nodejs";
 /**
  * GET /api/in/daily-picks — today's Daily Picks board.
  *
- * Returns the top three F&O signals per bucket (Momentum / Scalping /
- * Potential), frozen for the trading day and live-tracked against the latest
- * mark (P&L, progress-to-target, TARGET_HIT / STOP_HIT).
+ * Returns the top three F&O signals per bucket (Momentum / Short Setups /
+ * Scalping / Potential), frozen for the trading day and live-tracked against
+ * the latest mark (P&L, progress-to-target, TARGET_HIT / STOP_HIT).
  */
 export async function GET() {
   try {

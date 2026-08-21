@@ -263,11 +263,12 @@ describe("getIndiaDailyPicks", () => {
       "INDICES_SCALP",
       "OPENING_BREAKOUT",
       "MOMENTUM",
+      "SHORT_MOMENTUM",
       "SCALPING",
       "POTENTIAL",
     ]);
     // The synthetic universe is all stocks (S0..S11) — the three stock buckets
-    // fill to 3 each. Indices + Opening Breakout have no candidates here.
+    // fill to 3 each. Indices + Opening Breakout + SHORT_MOMENTUM have no candidates here.
     const STOCK = ["MOMENTUM", "SCALPING", "POTENTIAL"];
     const stockGroups = res.groups.filter((g) => STOCK.includes(g.bucket));
     for (const g of stockGroups) expect(g.picks.length).toBe(3);

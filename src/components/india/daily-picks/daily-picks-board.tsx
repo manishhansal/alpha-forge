@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Sparkles,
   Sunrise,
+  TrendingDown,
   Zap,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ const BUCKET_ICON: Record<DailyPickBucket, typeof Flame> = {
   INDICES_SCALP: LineChart,
   OPENING_BREAKOUT: Sunrise,
   MOMENTUM: Flame,
+  SHORT_MOMENTUM: TrendingDown,
   SCALPING: Zap,
   POTENTIAL: Sparkles,
 };

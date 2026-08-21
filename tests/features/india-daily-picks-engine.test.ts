@@ -304,7 +304,7 @@ describe("daily-picks engine", () => {
       for (const bucket of ["MOMENTUM", "SCALPING", "POTENTIAL"] as const) {
         expect(sel[bucket].length).toBe(3);
       }
-      // No index underlyings in the pool → the indices bucket stays empty.
+      // SHORT_MOMENTUM may be empty when test universe has no BEARISH signals.
       expect(sel.INDICES_SCALP.length).toBe(0);
     });
 
@@ -323,7 +323,7 @@ describe("daily-picks engine", () => {
         ),
       ).toBe(true);
       // Stock buckets never contain an index.
-      for (const bucket of ["MOMENTUM", "SCALPING", "POTENTIAL"] as const) {
+      for (const bucket of ["MOMENTUM", "SHORT_MOMENTUM", "SCALPING", "POTENTIAL"] as const) {
         expect(
           sel[bucket].every((x) => x.signal.symbol.startsWith("S")),
         ).toBe(true);
@@ -574,6 +574,7 @@ describe("daily-picks engine", () => {
         "INDICES_SCALP",
         "OPENING_BREAKOUT",
         "MOMENTUM",
+        "SHORT_MOMENTUM",
         "SCALPING",
         "POTENTIAL",
       ]);
@@ -656,8 +657,11 @@ describe("daily-picks engine", () => {
         direction: "BULLISH",
         action: "LONG",
       });
-      expect(passesTapeFilter(short, 0.2)).toBe(false);
-      expect(passesTapeFilter(long, 0.2)).toBe(true);
+      // 0.35 > TAPE_HARD_FILTER_BIAS (0.30) — strongly bullish tape blocks shorts
+      expect(passesTapeFilter(short, 0.35)).toBe(false);
+      expect(passesTapeFilter(long, 0.35)).toBe(true);
+      // 0.20 < TAPE_HARD_FILTER_BIAS — mild bias does NOT block shorts any more
+      expect(passesTapeFilter(short, 0.2)).toBe(true);
     });
 
     it("drops longs in a meaningfully-bearish tape", () => {
@@ -671,8 +675,11 @@ describe("daily-picks engine", () => {
         direction: "BULLISH",
         action: "LONG",
       });
-      expect(passesTapeFilter(short, -0.2)).toBe(true);
-      expect(passesTapeFilter(long, -0.2)).toBe(false);
+      // 0.35 > TAPE_HARD_FILTER_BIAS — strongly bearish tape blocks longs
+      expect(passesTapeFilter(short, -0.35)).toBe(true);
+      expect(passesTapeFilter(long, -0.35)).toBe(false);
+      // 0.20 < TAPE_HARD_FILTER_BIAS — mild bias does NOT block longs
+      expect(passesTapeFilter(long, -0.2)).toBe(true);
     });
 
     it("hard-filter threshold sits at the documented constant", () => {
@@ -865,6 +872,9 @@ describe("daily-picks engine", () => {
       const allPicked = (
         ["MOMENTUM", "SCALPING", "POTENTIAL"] as const
       ).flatMap((b) => sel[b].map((x) => x.signal.symbol));
+      // On a mild bullish bias (0.2 < TAPE_HARD_FILTER_BIAS 0.30), longs and
+      // shorts both pass the tape filter. MOMENTUM/SCALPING/POTENTIAL should
+      // still prefer the stronger long signals.
       expect(allPicked.every((s) => s.startsWith("L"))).toBe(true);
       expect(allPicked).not.toContain("S1");
     });
