@@ -1,0 +1,805 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Write failing tests for the indicator adapter": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361719
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297375067
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297820234
+      }
+    ],
+    "1.2 Implement streaming indicator adapter": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361739
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297856449
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298550508
+      }
+    ],
+    "1.3 Migrate helpers.ts to use the adapter": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361782
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298567132
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299189431
+      }
+    ],
+    "2.1 Write failing tests for the chart plugins": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361802
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298571850
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299194135
+      }
+    ],
+    "2.2 Implement Anchored VWAP plugin": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361821
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299849541
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300541111
+      }
+    ],
+    "2.3 Implement Volume Profile plugin": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361839
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300626212
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300630892
+      }
+    ],
+    "2.4 Integrate plugins into price-chart.tsx": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361861
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300635945
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300644851
+      }
+    ],
+    "3. Checkpoint — Indicator and chart layer complete": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361880
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300650591
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301224656
+      }
+    ],
+    "4.1 Write failing Python tests for the greeks engine": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361906
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297378989
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297824924
+      }
+    ],
+    "4.2 Write failing TypeScript tests for the option-chain route degradation": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361930
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297384252
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297829476
+      }
+    ],
+    "4.3 Implement greeks.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361957
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297860993
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298556125
+      }
+    ],
+    "4.4 Wire greeks into /api/in/option-chain route": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297361987
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298577542
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299199082
+      }
+    ],
+    "5.1 Write failing tests for the GEX engine": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362009
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298581972
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299203480
+      }
+    ],
+    "5.2 Implement gex.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362030
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299855032
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300547004
+      }
+    ],
+    "5.3 Implement /api/in/gex route": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362051
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300655595
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301230150
+      }
+    ],
+    "5.4 Implement gex-panel.tsx component": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362074
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300661817
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301235218
+      }
+    ],
+    "6.1 Write failing tests for the IV surface": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362094
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787298586730
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299208196
+      }
+    ],
+    "6.2 Implement vol_surface.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362114
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299860818
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300552069
+      }
+    ],
+    "6.3 Implement /api/in/vol-surface route and vol-surface.tsx component": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362135
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300667154
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301240639
+      }
+    ],
+    "7. Checkpoint — Options analytics layer complete": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362155
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301269285
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301606391
+      }
+    ],
+    "8.1 Write failing Python tests for TA-Lib migration": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362178
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297388205
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297833958
+      }
+    ],
+    "8.2 Implement TA-Lib migration in technical.py": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362200
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299213386
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299832754
+      }
+    ],
+    "9.1 Write failing tests for VPIN": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362219
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297392589
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297839740
+      }
+    ],
+    "9.2 Implement VPIN in volume.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362239
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299218782
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299837927
+      }
+    ],
+    "9.3 Implement /api/in/order-flow route and order-flow-panel.tsx component": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362265
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299865411
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300557478
+      }
+    ],
+    "10.1 Write failing tests for the TFT forecaster": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362287
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299870033
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300562901
+      }
+    ],
+    "10.2 Implement price_forecaster.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362314
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300673476
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301245968
+      }
+    ],
+    "10.3 Wire TFT forecast into india-builder.ts": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362363
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301274817
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301611941
+      }
+    ],
+    "11.1 Write failing tests for the IV classifier": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362398
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299875676
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300568090
+      }
+    ],
+    "11.2 Implement iv_regime_classifier.py and ML service endpoint": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362418
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300678883
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301251798
+      }
+    ],
+    "11.3 Wire IV classifier into option chain and AI engine": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362442
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301280825
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301617088
+      }
+    ],
+    "12.1 Write failing tests for the portfolio optimizer": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362466
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297396945
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297844327
+      }
+    ],
+    "12.2 Implement Riskfolio-Lib portfolio optimizer": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362488
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300684231
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301257501
+      }
+    ],
+    "12.3 Implement /api/in/portfolio-optimizer route and /in/portfolio page": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362512
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301286371
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301622909
+      }
+    ],
+    "13. Checkpoint — ML deep-learning and portfolio layer complete": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362536
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301635657
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301641963
+      }
+    ],
+    "14.1 Write failing tests for the payoff engine": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362564
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299880364
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300602387
+      }
+    ],
+    "14.2 Implement payoff engine and greeks aggregator": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362586
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300689447
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301263452
+      }
+    ],
+    "14.3 Implement /in/options-workbench page": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362608
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301291992
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301629195
+      }
+    ],
+    "15.1 Write failing tests for the OpenAlgo adapter": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362635
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300700795
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302168124
+      }
+    ],
+    "15.2 Implement OpenAlgo adapter": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362656
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302173649
+      }
+    ],
+    "15.3 Implement order confirmation modal and live trading UI": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362677
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302179682
+      }
+    ],
+    "17. Final checkpoint — complete spec integration": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787297362717
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302186600
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302349079
+      }
+    ],
+    "1. Replace hand-rolled indicator helpers with @debut/indicators": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299189455
+      }
+    ],
+    "4. Python — real BS/Black-76 greeks on the option chain": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299199118
+      }
+    ],
+    "8. TA-Lib vectorised feature engineering in the ML service": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787299832801
+      }
+    ],
+    "9. VPIN toxic order flow indicator + order flow panel": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300557513
+      }
+    ],
+    "2. Lightweight-charts v5 plugins — Anchored VWAP + Volume Profile": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787300644883
+      }
+    ],
+    "5. Dealer GEX engine + /api/in/gex + GEX Dashboard panel": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301235238
+      }
+    ],
+    "6. 3D Implied Volatility Surface + IV Term Structure": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301240661
+      }
+    ],
+    "10. Deep-learning TFT price regime forecaster": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301611964
+      }
+    ],
+    "11. IV Regime Classifier — PatchTST": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301617113
+      }
+    ],
+    "12. Upgrade portfolio optimizer to Riskfolio-Lib": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301622929
+      }
+    ],
+    "14. Options strategy workbench — payoff diagrams + multi-leg builder": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787301629217
+      }
+    ],
+    "15. OpenAlgo-compatible broker adapter + live order execution scaffold": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302179729
+      }
+    ],
+    "16. Verify graceful degradation universality": [
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302373060
+      },
+      {
+        "executionId": "b1375606-8677-4538-a9ed-e7e3d782aac8",
+        "chatSessionId": "sess_f55d4dbe-d066-4065-9eda-0d930badecca",
+        "timestamp": 1787302378206
+      }
+    ]
+  }
+}
