@@ -138,20 +138,47 @@ function currentPremium(legPx: OptionLeg): number | null {
  * two feeds disagree on which instrument they're quoting (the MIDCPNIFTY
  * ticker-mapping bug from 2026-06-17 surfaced at ~17% drift). Drop the pick
  * rather than ship a projection built on disagreeing references.
+ *
+ * Exception: when the signal's `underlyingPrice` comes from a Yahoo *proxy*
+ * ticker (e.g. `^NSEMDCP50` for MIDCPNIFTY F&O), the proxy can track a
+ * related-but-numerically-different index and routinely drifts > 5% from the
+ * chain's `underlyingValue`. In that case we trust the chain spot (it comes
+ * from NSE's own feed for the exact underlying the options are written on)
+ * and skip the drift gate entirely for known proxy symbols.
  */
 const MAX_SPOT_DRIFT = 0.05;
+
+/**
+ * Symbols where the AI signal's `underlyingPrice` is sourced from a Yahoo
+ * proxy ticker that tracks a *related* index, not the exact F&O underlying.
+ * For these symbols the drift gate is skipped and the chain spot is always
+ * used as the authoritative reference for ATM strike selection.
+ *
+ * MIDCPNIFTY: Yahoo ^NSEMDCP50 = Nifty Midcap 50, but the F&O underlying is
+ * Nifty Midcap Select — different composition, different level (~10% apart).
+ */
+const PROXY_TICKER_SYMBOLS = new Set<string>(["MIDCPNIFTY"]);
 
 export function projectIndexScalpToOption(
   signal: AiSignal,
   chain: OptionChain,
   underlyingSymbol: string,
 ): OptionProjection | null {
+  // For symbols whose AI-signal underlyingPrice comes from a Yahoo proxy ticker
+  // (^NSEMDCP50 for MIDCPNIFTY, etc.), the proxy level can differ materially
+  // from the F&O underlying level — skip the Yahoo price entirely and use the
+  // chain's own underlyingValue, which NSE populates from the exact contract.
+  const isProxySymbol = PROXY_TICKER_SYMBOLS.has(underlyingSymbol);
+
   // Prefer the AI signal's live underlying price (Yahoo quote) for ATM strike
   // selection — it's always fresh. `chain.spot` is a snapshot from the option
   // chain feed and can lag or, in pathological cases (the MIDCPNIFTY
   // ticker-mapping bug from 2026-06-17), point at the wrong instrument entirely.
+  // Exception: proxy-ticker symbols always use the chain spot (see above).
   const signalSpot =
-    Number.isFinite(signal.underlyingPrice) && signal.underlyingPrice > 0
+    !isProxySymbol &&
+    Number.isFinite(signal.underlyingPrice) &&
+    signal.underlyingPrice > 0
       ? signal.underlyingPrice
       : null;
   const chainSpot =
@@ -161,11 +188,12 @@ export function projectIndexScalpToOption(
   const spot = signalSpot ?? chainSpot;
   if (spot == null) return null;
 
-  // Drift sanity gate: if both spots are present but disagree wildly, the
+  // Drift sanity gate: if both spots are present and disagree wildly, the
   // chain almost certainly belongs to a different instrument (delayed cache,
-  // wrong ticker mapping). Drop the pick rather than ship a projection built
-  // on disagreeing references.
+  // wrong ticker mapping). Skip the gate for proxy-ticker symbols — the
+  // divergence is expected there and chain.spot is the correct reference.
   if (
+    !isProxySymbol &&
     signalSpot != null &&
     chainSpot != null &&
     Math.abs(chainSpot - signalSpot) / signalSpot > MAX_SPOT_DRIFT

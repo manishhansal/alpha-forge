@@ -135,31 +135,45 @@ class MarketRegimeClassifier:
         return self._predict_heuristic(features)
 
     def _predict_ml(self, features: dict[str, float]) -> RegimePredictionResponse:
-        """ML-based prediction using the trained XGBoost model."""
+        """ML-based prediction using the trained XGBoost model.
+
+        Falls back to the heuristic when the model raises any exception
+        (e.g. feature-shape mismatch after a partial reload, corrupt artifact,
+        or an XGBoost version mismatch). This prevents the intermittent 500
+        errors that surface when the XGBoost model is loaded but prediction
+        fails — the heuristic always produces a valid response.
+        """
         import numpy as np
 
-        # Build feature vector in canonical order
-        feature_vector = np.array(
-            [[features.get(f, 0.0) for f in self.feature_names]]
-        )
+        try:
+            # Build feature vector in canonical order
+            feature_vector = np.array(
+                [[features.get(f, 0.0) for f in self.feature_names]]
+            )
 
-        # Get class probabilities
-        probabilities = self.model.predict_proba(feature_vector)[0]
-        predicted_class = int(np.argmax(probabilities))
-        confidence = float(probabilities[predicted_class])
+            # Get class probabilities
+            probabilities = self.model.predict_proba(feature_vector)[0]
+            predicted_class = int(np.argmax(probabilities))
+            confidence = float(probabilities[predicted_class])
 
-        regime = REGIME_CLASSES[predicted_class]
-        prob_dict = {
-            r.value: float(probabilities[i]) for i, r in enumerate(REGIME_CLASSES)
-        }
+            regime = REGIME_CLASSES[predicted_class]
+            prob_dict = {
+                r.value: float(probabilities[i]) for i, r in enumerate(REGIME_CLASSES)
+            }
 
-        return RegimePredictionResponse(
-            regime=regime,
-            confidence=confidence,
-            probabilities=prob_dict,
-            features_used=len(self.feature_names),
-            model_version=self.model_version,
-        )
+            return RegimePredictionResponse(
+                regime=regime,
+                confidence=confidence,
+                probabilities=prob_dict,
+                features_used=len(self.feature_names),
+                model_version=self.model_version,
+            )
+        except Exception as exc:
+            logger.warning(
+                "market_regime_ml_predict_failed_falling_back",
+                error=str(exc),
+            )
+            return self._predict_heuristic(features)
 
     def _predict_heuristic(self, features: dict[str, float]) -> RegimePredictionResponse:
         """

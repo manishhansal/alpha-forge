@@ -58,6 +58,14 @@ risk_predictor: RiskPredictor | None = None
 portfolio_optimizer: PortfolioOptimizer | None = None
 explainer: ModelExplainer | None = None
 
+# PriceForecaster is a singleton — instantiating it inside the request
+# handler on every call was wasteful (and the lazy import made the endpoint
+# appear to return 404 on stale worker processes that hadn't reloaded the
+# route table). A module-level singleton is initialised at startup alongside
+# the other models, so the endpoint is always ready after the first request.
+from .price_forecaster import PriceForecaster as _PriceForecaster
+price_forecaster: _PriceForecaster = _PriceForecaster()
+
 
 def _load_models() -> None:
     """Load all model artifacts (if available) at startup."""
@@ -830,11 +838,8 @@ async def predict_price_regime(req: PriceRegimeRequest):
 
     Validates: Requirements 8.1, 8.3, 8.4
     """
-    from .price_forecaster import PriceForecaster
-
-    forecaster = PriceForecaster()
     start = time.perf_counter()
-    result = forecaster.predict(req.last_60_bars)
+    result = price_forecaster.predict(req.last_60_bars)
     latency_ms = (time.perf_counter() - start) * 1000
 
     logger.info(
