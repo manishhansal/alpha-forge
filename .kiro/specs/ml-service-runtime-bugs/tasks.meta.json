@@ -1,0 +1,226 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration tests (all three bugs)": {
+      "status": "passed",
+      "failingExample": "Counterexample for Bug 1 (test_partial_body_accepted_no_validation_error):\nfields_to_drop = ['nifty_change_pct']\n→ pydantic_core._pydantic_core.ValidationError: 1 validation error for RegimePredictionRequest\n  nifty_change_pct\n    Field required [type=missing, input_value={'banknifty_change_pct': ...}, input_type=dict]\n\nThis confirms Bug 1 exists: any partial body raises ValidationError on unfixed code.\n\nBug 2b and Bug 3 tests PASS on unfixed code (they test safe access patterns and preservation behavior).",
+      "lastRunTimestamp": 1787307031826
+    },
+    "3.2 Verify Bug 1 exploration test now passes": {
+      "status": "passed",
+      "lastRunTimestamp": 1787307179411
+    },
+    "3.3 Verify Bug 1 preservation tests still pass": {
+      "status": "passed",
+      "lastRunTimestamp": 1787307183034
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration tests (all three bugs)": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565498
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306575226
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307059358
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing any fix)": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565533
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307068354
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307129695
+      }
+    ],
+    "3.1 Update `ml-service/src/schemas.py` — make all ten fields `Optional[float] = Field(default=None, ...)`": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565552
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307138866
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307197988
+      }
+    ],
+    "3.2 Verify Bug 1 exploration test now passes": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565570
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307202213
+      }
+    ],
+    "3.3 Verify Bug 1 preservation tests still pass": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565599
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307203026
+      }
+    ],
+    "4. Fix Bug 2a — Document ML service restart (no code change)": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565632
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307204384
+      }
+    ],
+    "5.1 Audit all `priceForecast` accesses in `src/features/ai-signals/india-builder.ts` and `src/lib/india/ml-enhanced-context.ts`": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565651
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307212789
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307303108
+      }
+    ],
+    "5.2 Verify Bug 2b exploration test now passes": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565670
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307308704
+      }
+    ],
+    "5.3 Verify Bug 2 preservation tests still pass": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565687
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307312685
+      }
+    ],
+    "6.1 Add `KNOWN_DELISTED` constant and early-return guard": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565703
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307317473
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307397343
+      }
+    ],
+    "6.2 Verify Bug 3 exploration test now passes (fix-checking)": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565725
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307401583
+      }
+    ],
+    "6.3 Verify Bug 3 preservation tests still pass": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565753
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307405676
+      }
+    ],
+    "7. Checkpoint — Ensure all tests pass": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787306565771
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307410142
+      },
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307513285
+      }
+    ],
+    "3. Fix Bug 1 — Make RegimePredictionRequest fields Optional": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307203048
+      }
+    ],
+    "5. Fix Bug 2b — Add optional-chain guards for `priceForecast` access in `india-builder.ts`": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307312705
+      }
+    ],
+    "6. Fix Bug 3 — Add `KNOWN_DELISTED` denylist and early-return guard in `src/services/india/yahoo/index.ts`": [
+      {
+        "executionId": "76292a03-85af-4cd6-8e98-86627350aaa1",
+        "chatSessionId": "sess_eaa18aea-f481-4281-943e-2f9e16a60f5c",
+        "timestamp": 1787307405696
+      }
+    ]
+  }
+}
