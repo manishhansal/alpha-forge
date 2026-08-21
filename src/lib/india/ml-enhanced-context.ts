@@ -21,6 +21,7 @@ import type { Quote } from "@/types/india";
 
 import {
   isMLServiceHealthy,
+  mlFetch,
   mlRegimeToAiRegime,
   mlRegimeToScore,
   predictRankings,
@@ -37,6 +38,17 @@ import {
 } from "./ml-client";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface PriceForecastResult {
+  /** Predicted price regime for the next 1 hour. */
+  regime: "bull" | "bear" | "flat";
+  /** Probability of the predicted regime [0, 1]. */
+  probability: number;
+  /** 10th percentile expected move %. */
+  q10: number;
+  /** 90th percentile expected move %. */
+  q90: number;
+}
 
 export interface MLEnhancedContext {
   /** Whether the ML service is available this cycle. */
@@ -55,6 +67,12 @@ export interface MLEnhancedContext {
   risks: Map<string, MLRiskResponse>;
   /** Portfolio optimization result. */
   portfolio: MLPortfolioResponse | null;
+  /**
+   * TFT probabilistic 1-hour ahead price regime forecast.
+   * Null when the ML service is offline or the forecast endpoint fails.
+   * Requirement 8.5, 8.6
+   */
+  priceForecast: PriceForecastResult | null;
 }
 
 export interface MLContextInputs {
@@ -182,6 +200,38 @@ export async function buildMLContext(
 
   const regime = regimeResult?.regime ?? "sideways";
 
+  // Fetch the TFT 1-hour ahead price regime forecast (Requirement 8.5, 8.6).
+  // This is independent of the market-regime model and runs after regime+rankings
+  // so it does not block them.
+  let priceForecast: PriceForecastResult | null = null;
+  try {
+    const forecast = await mlFetch<{
+      regime: string;
+      probability: number;
+      q10: number;
+      q90: number;
+    }>("/predict/price-regime", {
+      // Real bars come from the data pipeline; pass empty array for now
+      // as specified in the task (Task 10.3 integration point).
+      last_60_bars: [],
+    });
+    if (
+      forecast &&
+      (forecast.regime === "bull" ||
+        forecast.regime === "bear" ||
+        forecast.regime === "flat")
+    ) {
+      priceForecast = {
+        regime: forecast.regime as "bull" | "bear" | "flat",
+        probability: forecast.probability,
+        q10: forecast.q10,
+        q90: forecast.q90,
+      };
+    }
+  } catch {
+    // Graceful degradation — priceForecast stays null
+  }
+
   const context: MLEnhancedContext = {
     mlAvailable: true,
     regime: regimeResult,
@@ -191,6 +241,7 @@ export async function buildMLContext(
     strategies: new Map(),
     risks: new Map(),
     portfolio: null,
+    priceForecast,
   };
 
   _cachedContext = context;
@@ -335,5 +386,6 @@ function buildFallbackContext(inputs: MLContextInputs): MLEnhancedContext {
     strategies: new Map(),
     risks: new Map(),
     portfolio: null,
+    priceForecast: null,
   };
 }
