@@ -619,6 +619,325 @@ async function runRangeExpansion(
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// FnO Bullish Trend Scanner — Daily F&O Stocks Bullish Trend (MA + ADX + MACD)
+//
+// Replicates the Chartink screener at:
+//   https://chartink.com/screener/daily-fno-stocks-bullish-trend-scanner-moving-average-adx-macd-3
+//
+// Conditions (all must pass, futures segment, daily timeframe):
+//   1.  EMA(5)  > SMA(20)
+//   2.  WMA(10) > SMA(20)
+//   3.  ADX DI+(14) > 20
+//   4.  ADX(14) > 20
+//   5.  Volume  > 100 000
+//   6.  MACD Line(26,12,9) > 0
+//   7.  Close   > previous-day Close
+//   8.  Close   > SMA(50)
+//   9.  Close   > 150
+//  10.  ADX DI+(14) > ADX DI-(14)
+//  11.  RSI(14) > 50
+//  12.  MACD Line > MACD Signal
+//  13.  Close   > 2-days-ago Close
+//  14.  SMA(20) > SMA(40)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Exponential moving average (standard, α = 2/(n+1)). */
+function ema(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const alpha = 2 / (period + 1);
+  let val = closes[0];
+  for (let i = 1; i < closes.length; i++) {
+    val = closes[i] * alpha + val * (1 - alpha);
+  }
+  return val;
+}
+
+/** Weighted moving average. */
+function wma(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const slice = closes.slice(-period);
+  let num = 0;
+  let denom = 0;
+  for (let i = 0; i < slice.length; i++) {
+    const w = i + 1;
+    num += slice[i] * w;
+    denom += w;
+  }
+  return denom === 0 ? null : num / denom;
+}
+
+/** True Range for a single candle. */
+function trueRange(c: Candle, prev: Candle): number {
+  return Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+}
+
+/**
+ * Wilder-smoothed ADX + DI+ / DI- (standard 14-period Wilder formulation).
+ * Requires at least `period + 1` candles.
+ */
+function adx(
+  candles: Candle[],
+  period = 14,
+): { adx: number; diPlus: number; diMinus: number } | null {
+  if (candles.length < period + 1) return null;
+  const slice = candles.slice(-(period * 3 + 1)); // enough history for smooth bootstrap
+
+  // Seed with first `period` bars.
+  let smoothTR = 0;
+  let smoothDMp = 0;
+  let smoothDMm = 0;
+  for (let i = 1; i <= period; i++) {
+    const tr = trueRange(slice[i], slice[i - 1]);
+    const up = slice[i].high - slice[i - 1].high;
+    const down = slice[i - 1].low - slice[i].low;
+    smoothTR += tr;
+    smoothDMp += up > down && up > 0 ? up : 0;
+    smoothDMm += down > up && down > 0 ? down : 0;
+  }
+
+  let dx = 0;
+  let prevAdx = 0;
+  // Continue smoothing for the remaining bars.
+  for (let i = period + 1; i < slice.length; i++) {
+    const tr = trueRange(slice[i], slice[i - 1]);
+    const up = slice[i].high - slice[i - 1].high;
+    const down = slice[i - 1].low - slice[i].low;
+    const dmP = up > down && up > 0 ? up : 0;
+    const dmM = down > up && down > 0 ? down : 0;
+
+    smoothTR = smoothTR - smoothTR / period + tr;
+    smoothDMp = smoothDMp - smoothDMp / period + dmP;
+    smoothDMm = smoothDMm - smoothDMm / period + dmM;
+
+    const diP = smoothTR === 0 ? 0 : (smoothDMp / smoothTR) * 100;
+    const diM = smoothTR === 0 ? 0 : (smoothDMm / smoothTR) * 100;
+    const diSum = diP + diM;
+    dx = diSum === 0 ? 0 : (Math.abs(diP - diM) / diSum) * 100;
+
+    if (i === period + 1) {
+      prevAdx = dx;
+    } else {
+      prevAdx = (prevAdx * (period - 1) + dx) / period;
+    }
+  }
+
+  // Final DI values from last two candles.
+  const last = slice[slice.length - 1];
+  const prev = slice[slice.length - 2];
+  const finalTR = trueRange(last, prev);
+  const finalUp = last.high - prev.high;
+  const finalDown = prev.low - last.low;
+  const finalDMp = finalUp > finalDown && finalUp > 0 ? finalUp : 0;
+  const finalDMm = finalDown > finalUp && finalDown > 0 ? finalDown : 0;
+
+  const finalSmoothTR = smoothTR - smoothTR / period + finalTR;
+  const finalSmoothDMp = smoothDMp - smoothDMp / period + finalDMp;
+  const finalSmoothDMm = smoothDMm - smoothDMm / period + finalDMm;
+
+  const diPlus = finalSmoothTR === 0 ? 0 : (finalSmoothDMp / finalSmoothTR) * 100;
+  const diMinus = finalSmoothTR === 0 ? 0 : (finalSmoothDMm / finalSmoothTR) * 100;
+
+  return { adx: prevAdx, diPlus, diMinus };
+}
+
+/** RSI (Wilder smoothing, standard 14-period). */
+function rsi(closes: number[], period = 14): number | null {
+  if (closes.length < period + 1) return null;
+  const slice = closes.slice(-(period * 3));
+
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = slice[i] - slice[i - 1];
+    avgGain += diff > 0 ? diff : 0;
+    avgLoss += diff < 0 ? -diff : 0;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  for (let i = period + 1; i < slice.length; i++) {
+    const diff = slice[i] - slice[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+/** MACD line, signal line, histogram (standard 12/26/9). */
+function macd(
+  closes: number[],
+  fast = 12,
+  slow = 26,
+  signal = 9,
+): { line: number; signalLine: number; histogram: number } | null {
+  if (closes.length < slow + signal) return null;
+  const emaFast = ema(closes, fast);
+  const emaSlow = ema(closes, slow);
+  if (emaFast == null || emaSlow == null) return null;
+
+  // Build MACD line history for the signal EMA.
+  const macdHistory: number[] = [];
+  for (let i = slow - 1; i < closes.length; i++) {
+    const ef = ema(closes.slice(0, i + 1), fast);
+    const es = ema(closes.slice(0, i + 1), slow);
+    if (ef != null && es != null) macdHistory.push(ef - es);
+  }
+  if (macdHistory.length < signal) return null;
+
+  const signalLine = ema(macdHistory, signal);
+  if (signalLine == null) return null;
+
+  const line = macdHistory[macdHistory.length - 1];
+  return { line, signalLine, histogram: line - signalLine };
+}
+
+type FnoBullishTrendRow = {
+  symbol: string;
+  close: number;
+  changePct: number;
+  volume: number;
+  rsiVal: number;
+  adxVal: number;
+  diPlus: number;
+  diMinus: number;
+  macdLine: number;
+  macdSignal: number;
+  sma20: number;
+  sma50: number;
+  conditionsMet: number; // out of 14
+};
+
+async function evaluateFnoBullishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
+  let candles: Candle[];
+  try {
+    candles = await yahoo.getHistorical({ symbol, interval: "1d", range: "1y" });
+  } catch {
+    return null;
+  }
+  // Need at least ~80 bars for all the indicators (ADX needs ~43, MACD 35, SMA50).
+  if (candles.length < 80) return null;
+
+  const last = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+  if (!last || !prev || !prev2) return null;
+
+  const closes = candles.map((c) => c.close);
+  const c = last.close;
+
+  // ── Moving averages ──────────────────────────────────────────────────────
+  const ema5 = ema(closes, 5);
+  const wma10 = wma(closes, 10);
+  const sma20 = sma(closes, 20);
+  const sma40 = sma(closes, 40);
+  const sma50 = sma(closes, 50);
+  if (ema5 == null || wma10 == null || sma20 == null || sma40 == null || sma50 == null) return null;
+
+  // ── ADX / DI ─────────────────────────────────────────────────────────────
+  const adxResult = adx(candles, 14);
+  if (!adxResult) return null;
+
+  // ── RSI ──────────────────────────────────────────────────────────────────
+  const rsiVal = rsi(closes, 14);
+  if (rsiVal == null) return null;
+
+  // ── MACD ─────────────────────────────────────────────────────────────────
+  const macdResult = macd(closes);
+  if (!macdResult) return null;
+
+  // ── Volume ───────────────────────────────────────────────────────────────
+  const vol = last.volume ?? 0;
+
+  // ── Score all 14 conditions ──────────────────────────────────────────────
+  const conditions = [
+    ema5 > sma20,                              //  1. EMA(5) > SMA(20)
+    wma10 > sma20,                             //  2. WMA(10) > SMA(20)
+    adxResult.diPlus > 20,                     //  3. DI+(14) > 20
+    adxResult.adx > 20,                        //  4. ADX(14) > 20
+    vol > 100_000,                             //  5. Volume > 100 000
+    macdResult.line > 0,                       //  6. MACD Line > 0
+    c > prev.close,                            //  7. Close > prev Close
+    c > sma50,                                 //  8. Close > SMA(50)
+    c > 150,                                   //  9. Close > 150
+    adxResult.diPlus > adxResult.diMinus,      // 10. DI+ > DI-
+    rsiVal > 50,                               // 11. RSI(14) > 50
+    macdResult.line > macdResult.signalLine,   // 12. MACD Line > MACD Signal
+    c > prev2.close,                           // 13. Close > 2-days-ago Close
+    sma20 > sma40,                             // 14. SMA(20) > SMA(40)
+  ];
+
+  const conditionsMet = conditions.filter(Boolean).length;
+  // Only surface stocks that pass all 14 conditions (strict screener match).
+  if (conditionsMet < 14) return null;
+
+  const changePct = prev.close !== 0 ? ((c - prev.close) / prev.close) * 100 : 0;
+
+  return {
+    symbol,
+    close: c,
+    changePct,
+    volume: vol,
+    rsiVal,
+    adxVal: adxResult.adx,
+    diPlus: adxResult.diPlus,
+    diMinus: adxResult.diMinus,
+    macdLine: macdResult.line,
+    macdSignal: macdResult.signalLine,
+    sma20,
+    sma50,
+    conditionsMet,
+  };
+}
+
+async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
+  const rows = await cache.memo(
+    "scanner:fno-bullish-trend",
+    5 * 60_000, // 5-minute cache — daily bars don't change intraday
+    async () => {
+      const evaluated = await pmap(
+        FNO_STOCKS,
+        (s) => evaluateFnoBullishTrend(s).catch(() => null),
+        8,
+      );
+      return evaluated.filter(Boolean) as FnoBullishTrendRow[];
+    },
+  );
+
+  // Rank by ADX strength (trend conviction) then RSI.
+  const sorted = rows
+    .sort((a, b) => b.adxVal - a.adxVal || b.rsiVal - a.rsiVal)
+    .slice(0, limit);
+
+  const hits: ScannerHit[] = sorted.map((r) => ({
+    symbol: r.symbol,
+    price: r.close,
+    changePct: r.changePct,
+    volume: r.volume,
+    metric: r.adxVal,
+    metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
+    kind: "BULLISH",
+    note:
+      `DI+ ${r.diPlus.toFixed(1)} / DI− ${r.diMinus.toFixed(1)} · ` +
+      `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
+      `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
+  }));
+
+  return {
+    type: "fno-bullish-trend",
+    title: "FnO Bullish Trend (MA + ADX + MACD)",
+    description:
+      "Daily F&O stocks passing all 14 conditions: EMA5>SMA20, WMA10>SMA20, ADX DI+>20, ADX>20, Vol>1L, MACD>0, Close>prev/2d close, Close>SMA50, Close>150, DI+>DI−, RSI>50, MACD>Signal, SMA20>SMA40.",
+    hits,
+    fetchedAt: now(),
+  };
+}
+
 export async function runScanner(
   type: ScannerType,
   limit = 25,
@@ -636,5 +955,7 @@ export async function runScanner(
       return runOiBuildup(limit);
     case "range-expansion":
       return runRangeExpansion(limit);
+    case "fno-bullish-trend":
+      return runFnoBullishTrend(limit);
   }
 }
