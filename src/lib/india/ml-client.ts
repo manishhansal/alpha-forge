@@ -193,6 +193,17 @@ async function mlGet<T>(path: string): Promise<T | null> {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Generic POST to the ML service — exposed for route handlers that prefer a
+ * direct call over the typed helper functions. Returns null on any failure.
+ */
+export async function mlFetch<T>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T | null> {
+  return mlPost<T>(path, body);
+}
+
+/**
  * Check if the ML service is reachable and healthy.
  */
 export async function isMLServiceHealthy(): Promise<boolean> {
