@@ -2,10 +2,11 @@ FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# System dependencies for LightGBM / XGBoost / numpy
+# System dependencies for LightGBM / XGBoost / numpy / TA-Lib
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     build-essential \
+    ta-lib \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
