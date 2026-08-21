@@ -17,10 +17,15 @@ from .technical import (
     compute_atr,
     compute_bollinger_position,
     compute_cci,
+    compute_cdl_doji,
+    compute_cdl_engulfing,
+    compute_cdl_hammer,
     compute_cmf,
     compute_ema_stack_score,
+    compute_ht_trendline_dev,
     compute_macd,
     compute_mfi,
+    compute_obv,
     compute_obv_trend,
     compute_rsi,
     compute_stochastic_rsi,
@@ -84,6 +89,7 @@ REGIME_FEATURES = [
     "gap_pct_nifty", "bank_nifty_spread", "global_sentiment",
     "put_call_ratio", "nifty_oi_delta_skew_norm", "vix_mean_reversion",
     "is_expiry_day", "days_to_weekly_expiry", "session_progress",
+    "vpin_score",  # VPIN order-flow toxicity (Requirement 7.8)
 ]
 
 RANKING_FEATURES = [
@@ -114,6 +120,13 @@ RANKING_FEATURES = [
     "atr_pct", "atr_14",
     # Delivery quality gate (NSE-specific)
     "delivery_pct",
+    # Candlestick patterns (Requirement 6.2)
+    "cdl_engulfing", "cdl_hammer", "cdl_doji",
+    # HT_TRENDLINE deviation (Requirement 6.2)
+    "ht_trendline_dev",
+    # Macro context supplement
+    "macd_signal",
+    "obv_last",
 ]
 
 STRATEGY_FEATURES = [
@@ -182,7 +195,6 @@ def compute_stock_features(
     cmf = compute_cmf(h, l, c, v, 20)
     obv_t = compute_obv_trend(c, v, 20)
     supertrend = compute_supertrend(h, l, c, 10, 3.0)
-
     features["rsi_14"] = _last(rsi_14)
     features["rsi_7"] = _last(rsi_7)
     features["macd_line"] = _last(macd_line)
@@ -199,7 +211,19 @@ def compute_stock_features(
     features["mfi"] = _last(mfi)
     features["cmf"] = _last(cmf)
     features["obv_trend"] = _last(obv_t)
+    features["obv_last"] = _last(compute_obv(c, v))
     features["supertrend"] = _last(supertrend)
+
+    # ─── Candlestick patterns & HT_TRENDLINE (Requirement 6.2) ───────────
+    cdl_engulfing = compute_cdl_engulfing(o, h, l, c)
+    cdl_hammer = compute_cdl_hammer(o, h, l, c)
+    cdl_doji = compute_cdl_doji(o, h, l, c)
+    ht_dev = compute_ht_trendline_dev(c)
+
+    features["cdl_engulfing"] = _last(cdl_engulfing)
+    features["cdl_hammer"] = _last(cdl_hammer)
+    features["cdl_doji"] = _last(cdl_doji)
+    features["ht_trendline_dev"] = _last(ht_dev)
 
     # ─── Volume ───────────────────────────────────────────────────────────
     rel_vol = compute_relative_volume(v, 20)
