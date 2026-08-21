@@ -26,7 +26,7 @@ export interface BrokerFetchOptions {
 
 export interface BrokerAdapter {
   /** Stable identifier — used in logs and in env-driven factory selection. */
-  readonly id: "yahoo" | "nse" | "groww" | "zerodha" | "upstox" | "angel" | "shoonya";
+  readonly id: "yahoo" | "nse" | "groww" | "zerodha" | "upstox" | "angel" | "shoonya" | "openalgo";
 
   getQuote(symbol: string): Promise<Quote>;
 

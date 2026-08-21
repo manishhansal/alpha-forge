@@ -131,33 +131,75 @@ export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>>
   const symbolSectorMap = new Map<string, string>();
   for (const [sector, tickers] of Object.entries(SECTOR_STOCKS)) {
     for (const t of tickers) {
-      // First sector wins — keeps a consistent primary label per symbol.
-      if (!symbolSectorMap.has(t)) {
-        symbolSectorMap.set(t, sector);
-      }
+      if (!symbolSectorMap.has(t)) symbolSectorMap.set(t, sector);
     }
   }
 
   const symbols = [...symbolSectorMap.keys()];
-
-  // Fetch all quotes concurrently (yahoo-finance2 handles per-symbol).
   const yfSymbols = symbols.map((s) => `${s}.NS`);
   const quotes = await Promise.all(yfSymbols.map(safeQuote));
 
-  // Build scored rows and filter out any with no price data.
+  // Build scored rows and filter:
+  //  - must have a price
+  //  - must be directional (BUY / STRONG BUY / SELL / STRONG SELL)
+  //  - HOLD and N/A are noise; never actionable for a "tomorrow picks" board
+  const ACTIONABLE: SignalLabel[] = ["STRONG BUY", "BUY", "SELL", "STRONG SELL"];
   const rows = symbols
-    .map((sym, i) =>
-      buildRow(sym, symbolSectorMap.get(sym)!, quotes[i]),
-    )
-    .filter((r) => r.price != null && r.signal !== "N/A");
+    .map((sym, i) => buildRow(sym, symbolSectorMap.get(sym)!, quotes[i]))
+    .filter((r) => r.price != null && ACTIONABLE.includes(r.signal as SignalLabel));
 
-  // Sort by score descending, then by upside% as a tiebreaker.
-  rows.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return (b.upsidePct ?? 0) - (a.upsidePct ?? 0);
-  });
+  /**
+   * "Top gainer / loser" momentum score — mirrors how NSE's own gainers list
+   * works: rank by absolute day % move, then break ties with relative volume
+   * so institutional-volume moves rank above low-volume noise. Stocks likely
+   * to appear in today's top-10 gainers/losers are exactly the ones whose
+   * `|changePct|` × `relVol` product is largest.
+   *
+   * We keep the quant score as a secondary tiebreaker so a +3% move with
+   * strong SMA / RSI alignment beats a raw momentum spike that has nothing
+   * else going for it.
+   */
+  function momentumRank(r: (typeof rows)[0]): number {
+    const absPct = Math.abs(r.changePct ?? 0);
+    const vol = r.relativeVolume ?? 1.0;
+    return absPct * Math.max(vol, 0.5);          // min vol factor 0.5 so no-vol rows aren't zeroed
+  }
 
-  const picks: TopPickRow[] = rows.slice(0, limit).map((r, i) => ({
+  // Split into gainers (bullish signals) and losers (bearish signals),
+  // ranked within each group by momentum score descending.
+  const gainers = rows
+    .filter((r) => r.signal === "STRONG BUY" || r.signal === "BUY")
+    .sort((a, b) => {
+      const dm = momentumRank(b) - momentumRank(a);
+      if (Math.abs(dm) > 0.01) return dm;
+      return b.score - a.score;                  // quant-score tiebreak
+    });
+
+  const losers = rows
+    .filter((r) => r.signal === "STRONG SELL" || r.signal === "SELL")
+    .sort((a, b) => {
+      const dm = momentumRank(b) - momentumRank(a);
+      if (Math.abs(dm) > 0.01) return dm;
+      return a.score - b.score;                  // more negative = stronger sell
+    });
+
+  // Interleave top gainers then top losers (gainers first, losers appended),
+  // sliced to `limit`. A caller that wants only gainers can request
+  // `?limit=5&side=gainers`; default returns the blended list.
+  const side = searchParams.get("side");
+  let merged: typeof rows;
+  if (side === "gainers") {
+    merged = gainers;
+  } else if (side === "losers") {
+    merged = losers;
+  } else {
+    // Default: top gainers followed by top losers, capped at limit each side
+    // so the response is balanced rather than all-gainers on a bullish day.
+    const half = Math.ceil(limit / 2);
+    merged = [...gainers.slice(0, half), ...losers.slice(0, limit - half)];
+  }
+
+  const picks: TopPickRow[] = merged.slice(0, limit).map((r, i) => ({
     ...r,
     rank: i + 1,
   }));

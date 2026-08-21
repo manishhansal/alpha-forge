@@ -105,3 +105,91 @@ def compute_volume_oscillator(volume: pd.Series, fast: int = 5, slow: int = 20) 
     fast_ema = volume.ewm(span=fast, adjust=False).mean()
     slow_ema = volume.ewm(span=slow, adjust=False).mean()
     return ((fast_ema - slow_ema) / slow_ema.replace(0, np.nan)) * 100
+
+
+def compute_vpin(
+    bars: list[dict],
+    bucket_size: float = 50,
+    n_buckets: int = 50,
+) -> dict:
+    """
+    Compute VPIN (Volume-synchronized Probability of Informed Trading)
+    from 5-min OHLCV bars.
+
+    Uses the tick rule to classify each bar's volume into buy/sell fractions:
+      - close > prev_close  → 85% buy
+      - close < prev_close  → 15% buy (85% sell)
+      - close == prev_close → 50% buy
+
+    Volume accumulates into fixed-size buckets. For each completed bucket:
+      bucket_vpin = |buy_vol − sell_vol| / bucket_size
+
+    The current VPIN is the mean of the last `n_buckets` bucket values.
+
+    Args:
+        bars:        List of dicts with keys open/high/low/close/volume.
+        bucket_size: Volume units per bucket (must be > 0).
+        n_buckets:   Number of recent buckets to average for current_vpin.
+
+    Returns:
+        {
+          "vpin_series":  list[float]  — one value per completed bucket,
+          "current_vpin": float        — mean of last n_buckets values.
+        }
+
+    Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.8
+    """
+    buckets: list[float] = []
+    current_buy_vol = 0.0
+    current_sell_vol = 0.0
+    current_total = 0.0
+
+    for i, bar in enumerate(bars):
+        if i == 0:
+            # For the first bar, use the bar's own open as the reference
+            # price so the tick rule works correctly when open != close.
+            prev_close = bar.get("open", bar["close"])
+        else:
+            prev_close = bars[i - 1]["close"]
+
+        if bar["close"] > prev_close:
+            buy_fraction = 0.85
+        elif bar["close"] < prev_close:
+            buy_fraction = 0.15
+        else:
+            buy_fraction = 0.5
+
+        remaining_vol = bar["volume"]
+
+        while remaining_vol > 0:
+            # How much space is left in the current bucket?
+            space = bucket_size - current_total
+
+            if remaining_vol < space:
+                # Bar doesn't complete the current bucket — just accumulate
+                current_buy_vol += remaining_vol * buy_fraction
+                current_sell_vol += remaining_vol * (1.0 - buy_fraction)
+                current_total += remaining_vol
+                remaining_vol = 0.0
+            else:
+                # Fill the bucket to completion using `space` units of this bar
+                current_buy_vol += space * buy_fraction
+                current_sell_vol += space * (1.0 - buy_fraction)
+                current_total += space
+                remaining_vol -= space
+
+                # Emit the completed bucket
+                bucket_vpin = abs(current_buy_vol - current_sell_vol) / bucket_size
+                buckets.append(bucket_vpin)
+
+                # Reset for the next bucket
+                current_buy_vol = 0.0
+                current_sell_vol = 0.0
+                current_total = 0.0
+
+    if not buckets:
+        return {"vpin_series": [], "current_vpin": 0.0}
+
+    recent = buckets[-n_buckets:]
+    current_vpin = sum(recent) / len(recent)
+    return {"vpin_series": buckets, "current_vpin": current_vpin}

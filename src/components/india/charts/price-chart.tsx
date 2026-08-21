@@ -12,6 +12,8 @@ import {
 
 import { useTheme } from "@/components/theme-provider";
 import type { Candle, Interval } from "@/types/india";
+import { AnchoredVwapPlugin, type VwapChartBar } from "./plugins/anchored-vwap";
+import { VolumeProfilePlugin, type ProfileBarWithTime } from "./plugins/volume-profile";
 
 type Props = {
   symbol: string;
@@ -37,14 +39,47 @@ const CHART_THEMES = {
     text: "#cbd5e1",
     grid: "rgba(148,163,184,0.06)",
     border: "rgba(148,163,184,0.20)",
+    // VWAP palette for dark mode
+    vwap: {
+      sessionColor: "#fbbf24",  // amber-400
+      dailyColor:   "#818cf8",  // indigo-400
+      weeklyColor:  "#34d399",  // emerald-400
+    },
+    // Volume Profile palette for dark mode
+    profile: {
+      pocColor: "#fb923c",      // orange-400
+      vahColor: "#94a3b8",      // slate-400
+      valColor: "#94a3b8",
+    },
   },
   light: {
     bg: "rgba(0,0,0,0)",
     text: "#475569",
     grid: "rgba(15,23,42,0.06)",
     border: "rgba(15,23,42,0.18)",
+    vwap: {
+      sessionColor: "#d97706",  // amber-600
+      dailyColor:   "#4f46e5",  // indigo-600
+      weeklyColor:  "#059669",  // emerald-600
+    },
+    profile: {
+      pocColor: "#ea580c",      // orange-600
+      vahColor: "#64748b",      // slate-500
+      valColor: "#64748b",
+    },
   },
 } as const;
+
+/** NSE tick-size calibration used for Volume Profile. */
+function tickSizeForSymbol(symbol: string): number {
+  if (symbol.startsWith("BANKNIFTY")) return 5;
+  if (
+    symbol.startsWith("NIFTY") ||
+    symbol.startsWith("FINNIFTY") ||
+    symbol.startsWith("MIDCPNIFTY")
+  ) return 1;
+  return 0.05;
+}
 
 export function PriceChart({
   symbol,
@@ -53,16 +88,26 @@ export function PriceChart({
   height = 460,
 }: Props) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const chartRef = React.useRef<IChartApi | null>(null);
-  const candleRef = React.useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeRef = React.useRef<ISeriesApi<"Histogram"> | null>(null);
+  const chartRef     = React.useRef<IChartApi | null>(null);
+  const candleRef    = React.useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeRef    = React.useRef<ISeriesApi<"Histogram"> | null>(null);
+
+  // Plugin instances — stable across data reloads; recreated only when chart is destroyed
+  const vwapPluginRef    = React.useRef<AnchoredVwapPlugin | null>(null);
+  const profilePluginRef = React.useRef<VolumeProfilePlugin | null>(null);
 
   const [interval, setInterval] = React.useState<Interval>(initialInterval);
-  const [range, setRange] = React.useState<string>(initialRange);
-  const [candles, setCandles] = React.useState<Candle[] | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const [range, setRange]       = React.useState<string>(initialRange);
+  const [candles, setCandles]   = React.useState<Candle[] | null>(null);
+  const [error, setError]       = React.useState<string | null>(null);
+
+  // Toolbar plugin toggles
+  const [vwapActive,    setVwapActive]    = React.useState(false);
+  const [profileActive, setProfileActive] = React.useState(false);
 
   const { resolvedTheme } = useTheme();
+
+  // ── chart initialisation ─────────────────────────────────────────────────
 
   React.useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
@@ -91,21 +136,25 @@ export function PriceChart({
     chartRef.current = chart;
 
     candleRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: "#10b981",
-      downColor: "#f43f5e",
-      wickUpColor: "#10b981",
+      upColor:      "#10b981",
+      downColor:    "#f43f5e",
+      wickUpColor:  "#10b981",
       wickDownColor: "#f43f5e",
       borderVisible: false,
     });
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
+      priceFormat:  { type: "volume" },
       priceScaleId: "vol",
-      color: "rgba(99, 102, 241, 0.45)",
+      color:        "rgba(99, 102, 241, 0.45)",
     });
     chart.priceScale("vol").applyOptions({
       scaleMargins: { top: 0.82, bottom: 0 },
     });
+
+    // Initialise plugin instances (not yet attached — wait for toolbar toggle)
+    vwapPluginRef.current    = new AnchoredVwapPlugin();
+    profilePluginRef.current = new VolumeProfilePlugin();
 
     const ro = new ResizeObserver((entries) => {
       if (!chartRef.current) return;
@@ -116,8 +165,13 @@ export function PriceChart({
 
     return () => {
       ro.disconnect();
+      // Detach plugins before destroying chart
+      vwapPluginRef.current?.detach();
+      profilePluginRef.current?.detach();
+      vwapPluginRef.current    = null;
+      profilePluginRef.current = null;
       chart.remove();
-      chartRef.current = null;
+      chartRef.current  = null;
       candleRef.current = null;
       volumeRef.current = null;
     };
@@ -127,6 +181,8 @@ export function PriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
 
+  // ── theme sync ───────────────────────────────────────────────────────────
+
   // Re-paint the chart palette when the user toggles dark/light without
   // tearing down the chart instance or re-fetching data.
   React.useEffect(() => {
@@ -135,16 +191,22 @@ export function PriceChart({
     chartRef.current.applyOptions({
       layout: {
         background: { color: palette.bg },
-        textColor: palette.text,
+        textColor:  palette.text,
       },
       grid: {
         vertLines: { color: palette.grid },
         horzLines: { color: palette.grid },
       },
-      timeScale: { borderColor: palette.border },
+      timeScale:       { borderColor: palette.border },
       rightPriceScale: { borderColor: palette.border },
     });
+
+    // Propagate theme change to active plugins (Requirement 2.6)
+    vwapPluginRef.current?.setTheme(palette.vwap);
+    profilePluginRef.current?.setTheme(palette.profile);
   }, [resolvedTheme]);
+
+  // ── data fetch ───────────────────────────────────────────────────────────
 
   React.useEffect(() => {
     const ctrl = new AbortController();
@@ -168,31 +230,120 @@ export function PriceChart({
     return () => ctrl.abort();
   }, [symbol, interval, range]);
 
+  // ── chart data update ────────────────────────────────────────────────────
+
   React.useEffect(() => {
     if (!candleRef.current || !volumeRef.current || !candles) return;
-    candleRef.current.setData(
-      candles.map((c) => ({
-        time: c.time as Time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
+
+    const candleData = candles.map((c) => ({
+      time:  c.time as Time,
+      open:  c.open,
+      high:  c.high,
+      low:   c.low,
+      close: c.close,
+    }));
+
+    candleRef.current.setData(candleData);
     volumeRef.current.setData(
       candles.map((c) => ({
-        time: c.time as Time,
+        time:  c.time as Time,
         value: c.volume ?? 0,
-        color:
-          c.close >= c.open ? "rgba(16,185,129,0.4)" : "rgba(244,63,94,0.4)",
+        color: c.close >= c.open ? "rgba(16,185,129,0.4)" : "rgba(244,63,94,0.4)",
       })),
     );
     chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+
+    // Update VWAP plugin data if active (Requirement 2.5 — persist across timeframe change)
+    if (vwapActive && vwapPluginRef.current && chartRef.current) {
+      const vwapBars: VwapChartBar[] = candles.map((c) => ({
+        time:   c.time as Time,
+        open:   c.open,
+        high:   c.high,
+        low:    c.low,
+        close:  c.close,
+        volume: c.volume ?? 0,
+      }));
+      vwapPluginRef.current.updateData(vwapBars);
+    }
+
+    // Update Volume Profile plugin data if active (Requirement 2.5)
+    if (profileActive && profilePluginRef.current && candleRef.current) {
+      const profileBars: ProfileBarWithTime[] = candles.map((c) => ({
+        time:   c.time as Time,
+        open:   c.open,
+        high:   c.high,
+        low:    c.low,
+        close:  c.close,
+        volume: c.volume ?? 0,
+      }));
+      profilePluginRef.current.updateData(profileBars, { tickSize: tickSizeForSymbol(symbol) });
+    }
+  }, [candles, vwapActive, profileActive, symbol]);
+
+  // ── VWAP toggle handler ──────────────────────────────────────────────────
+
+  const handleVwapToggle = React.useCallback(() => {
+    const nextActive = !vwapActive;
+    setVwapActive(nextActive);
+
+    if (!vwapPluginRef.current || !chartRef.current) return;
+
+    if (nextActive) {
+      const bars: VwapChartBar[] = (candles ?? []).map((c) => ({
+        time:   c.time as Time,
+        open:   c.open,
+        high:   c.high,
+        low:    c.low,
+        close:  c.close,
+        volume: c.volume ?? 0,
+      }));
+      vwapPluginRef.current.attach(chartRef.current, bars);
+      // Apply current theme colours
+      const palette = CHART_THEMES[resolvedTheme];
+      vwapPluginRef.current.setTheme(palette.vwap);
+    } else {
+      vwapPluginRef.current.detach();
+      // Re-create instance so it's ready for the next attach
+      vwapPluginRef.current = new AnchoredVwapPlugin();
+    }
+  }, [vwapActive, candles, resolvedTheme]);
+
+  // ── Volume Profile toggle handler ─────────────────────────────────────────
+
+  const handleProfileToggle = React.useCallback(() => {
+    const nextActive = !profileActive;
+    setProfileActive(nextActive);
+
+    if (!profilePluginRef.current || !candleRef.current) return;
+
+    if (nextActive) {
+      const bars: ProfileBarWithTime[] = (candles ?? []).map((c) => ({
+        time:   c.time as Time,
+        open:   c.open,
+        high:   c.high,
+        low:    c.low,
+        close:  c.close,
+        volume: c.volume ?? 0,
+      }));
+      profilePluginRef.current.attach(
+        candleRef.current,
+        bars,
+        { tickSize: tickSizeForSymbol(symbol) },
+      );
+      const palette = CHART_THEMES[resolvedTheme];
+      profilePluginRef.current.setTheme(palette.profile);
+    } else {
+      profilePluginRef.current.detach();
+      profilePluginRef.current = new VolumeProfilePlugin();
+    }
+  }, [profileActive, candles, symbol, resolvedTheme]);
+
+  // ── render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Interval buttons */}
         {INTERVALS.map((i) => {
           const active = i.value === interval;
           return (
@@ -212,6 +363,36 @@ export function PriceChart({
             </button>
           );
         })}
+
+        {/* Divider */}
+        <span className="h-4 w-px bg-border/60 mx-0.5" aria-hidden />
+
+        {/* VWAP toggle (Requirement 2.3) */}
+        <button
+          onClick={handleVwapToggle}
+          aria-pressed={vwapActive}
+          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+            vwapActive
+              ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/40"
+              : "bg-muted text-muted-foreground hover:bg-muted/70"
+          }`}
+        >
+          VWAP
+        </button>
+
+        {/* Volume Profile toggle (Requirement 2.4) */}
+        <button
+          onClick={handleProfileToggle}
+          aria-pressed={profileActive}
+          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+            profileActive
+              ? "bg-orange-500/20 text-orange-600 dark:text-orange-400 ring-1 ring-orange-500/40"
+              : "bg-muted text-muted-foreground hover:bg-muted/70"
+          }`}
+        >
+          Profile
+        </button>
+
         {error && (
           <span className="text-xs text-rose-500 ml-2">Error: {error}</span>
         )}

@@ -16,7 +16,7 @@ export const revalidate = 0;
 export const metadata = {
   title: "Daily Picks · NSE F&O",
   description:
-    "The day's top F&O signals across five buckets — Indices Scalping, Opening Breakout, Highly Momentum, Highly Scalping and Highly Potential — each with entry, stop, target, how far it can move and what to expect, the time it appeared and how long it took to resolve, tracked live and archived to a daily history.",
+    "The day's top F&O signals across six buckets — Indices Scalping, Opening Breakout, Highly Momentum, Short Setups, Highly Scalping and Highly Potential — each with entry, stop, target, how far it can move and what to expect, the time it appeared and how long it took to resolve, tracked live and archived to a daily history.",
 };
 
 async function DailyPicksSection() {

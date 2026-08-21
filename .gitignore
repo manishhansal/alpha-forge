@@ -65,3 +65,14 @@ ml-service/data/*.parquet
 ml-service/data/*.pkl
 ml-service/data/*.npz
 ml-service/catboost_info/
+
+# Phase 2 additions
+ml-service/artifacts/*.npz
+ml-service/nifty_5m.npz
+ml-service/artifacts/price_forecaster*
+ml-service/artifacts/iv_classifier*
+ml-service/artifacts/vol_surface*
+.hypothesis/
+ml-service/.hypothesis/
+tests/.hypothesis/
+ml-service/tests/.hypothesis/

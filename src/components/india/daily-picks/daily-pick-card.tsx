@@ -84,6 +84,7 @@ export function DailyPickCard({ pick }: Props) {
   // resolve (target / stop / square-off). For a still-live pick we show how
   // long it's been running so far instead.
   const appearedAt = fmtIstTime(pick.generatedAt);
+  // eslint-disable-next-line react-hooks/purity
   const elapsedMs = (pick.resolvedAt ?? Date.now()) - pick.generatedAt;
   const elapsed = fmtDuration(elapsedMs);
 

@@ -23,16 +23,16 @@ class MarketRegime(str, Enum):
 class RegimePredictionRequest(BaseModel):
     """Input features for market regime classification."""
 
-    nifty_change_pct: float = Field(description="NIFTY 50 intraday % change")
-    banknifty_change_pct: float = Field(description="BANKNIFTY intraday % change")
-    india_vix: float = Field(description="India VIX level")
-    nifty_atr_pct: float = Field(description="NIFTY ATR(14) as % of price")
-    nifty_adx: float = Field(description="NIFTY ADX(14)")
-    advance_decline_ratio: float = Field(description="NSE advance/decline ratio")
-    market_breadth: float = Field(description="% of F&O stocks above 20 SMA")
-    sector_strength: float = Field(description="Avg sector % change")
-    volume_ratio: float = Field(description="Market volume vs 20-day avg")
-    gap_pct: float = Field(description="Opening gap % from previous close")
+    nifty_change_pct: Optional[float] = Field(default=None, description="NIFTY 50 intraday % change")
+    banknifty_change_pct: Optional[float] = Field(default=None, description="BANKNIFTY intraday % change")
+    india_vix: Optional[float] = Field(default=None, description="India VIX level")
+    nifty_atr_pct: Optional[float] = Field(default=None, description="NIFTY ATR(14) as % of price")
+    nifty_adx: Optional[float] = Field(default=None, description="NIFTY ADX(14)")
+    advance_decline_ratio: Optional[float] = Field(default=None, description="NSE advance/decline ratio")
+    market_breadth: Optional[float] = Field(default=None, description="% of F&O stocks above 20 SMA")
+    sector_strength: Optional[float] = Field(default=None, description="Avg sector % change")
+    volume_ratio: Optional[float] = Field(default=None, description="Market volume vs 20-day avg")
+    gap_pct: Optional[float] = Field(default=None, description="Opening gap % from previous close")
     # Additional engineered features
     vix_change_pct: Optional[float] = Field(default=None)
     nifty_rsi: Optional[float] = Field(default=None)

@@ -43,7 +43,7 @@ Strategies, Paper Trading, Strategy Backtest, Strategy Lab, Heatmap)
 live in both markets, each routed to `/in/*` so the data and UI are
 scoped to NSE F&O. Crypto-only items (Futures) and India-only items
 (Scanner, Watchlist, Chart) are appended as extras under the shared
-core. Account-level preferences (settings, data sources, API keys,
+core, plus the new **Options Workbench** (`/in/options-workbench`) for multi-leg strategy payoff diagrams and the **Portfolio Optimizer** (`/in/portfolio`) for Riskfolio-Lib–powered institutional portfolio construction. Account-level preferences (settings, data sources, API keys,
 alerts, sign-out) live on the consolidated Profile page (`/profile`,
 `/in/profile`), opened by clicking the user avatar in the top-right of
 the topbar.
@@ -64,6 +64,7 @@ the topbar.
   outside trading hours and on weekends.
 - **Options / Option Chain** (`/in/options`) — live NSE option chain
   with PCR, max-pain, ATM ±5 strikes, IV per strike, OI heat.
+  PHASE2 adds an **IV Surface** tab (SVI-fitted smile + term structure + optional 3D canvas) and a **GEX** tab (Dealer Gamma Exposure bar chart, gamma flip level, expected daily move band).
 - **Signals** (`/in/signals`) — unified F&O signal feed merging all six
   scanner types from `/api/in/scanner` (range-expansion, momentum,
   volume breakout, OI build-up, PCR, IV-spike) into a single ranked
@@ -229,7 +230,7 @@ Shared implementation: `src/components/india/ui/pagination-filter.tsx`
 - Zustand (state management)
 - React Query / TanStack Query
 - Framer Motion
-- Recharts / Lightweight Charts
+- Recharts / Lightweight Charts v5 (with Anchored VWAP + Volume Profile plugins)
 
 ## Backend
 - Next.js API routes OR separate Express server
@@ -1448,9 +1449,19 @@ src/
  │    │       ├── news/             Moneycontrol + global news (India-only)
  │    │       ├── scanner/          (India-only)
  │    │       ├── watchlist/        (India-only)
- │    │       └── chart/[symbol]/   (India-only)
+ │    │       ├── chart/[symbol]/   (India-only)
+ │    │       ├── options-workbench/ Multi-leg options strategy workbench (India-only)
+ │    │       └── portfolio/         Quant portfolio optimizer (India-only)
  │    └── api/
- │        ├── in/                   India API surface
+ │        ├── in/                   India API surface: fno-list, health, historical,
+ │        │                          market-snapshot, nifty-bias, option-chain, quote,
+ │        │                          scanner, sector-stocks, msb-signals, feed/stream,
+ │        │                          ai-signals, daily-picks (+ /history), expiry-trades,
+ │        │                          news, top-picks,
+ │        │                          gex (Dealer GEX, gamma flip, expected move),
+ │        │                          vol-surface (SVI IV surface + term structure),
+ │        │                          order-flow (VPIN toxic order-flow),
+ │        │                          portfolio-optimizer (Riskfolio-Lib allocation)
  │        └── …                     Crypto API surface
  │
  ├── components/
@@ -1490,8 +1501,12 @@ src/
  │    │   │                journal-card, stats-panel, journal-shared
  │    │   ├── strategy/    india-backtest-preview, india-strategy-lab-intake
  │    │   ├── common/      india-feature-preview (shared roadmap shell)
- │    │   ├── msb-dashboard, charts/price-chart, options/option-chain-table,
+ │    │   ├── msb-dashboard, charts/price-chart,
  │    │   │   ticker/live-ticker, ticker/india-ticker-bar
+ │    │   ├── options/  option-chain-table, underlying-flow, gex-panel,
+ │    │   │             vol-surface, iv-regime-badge
+ │    │   ├── dashboard/ order-flow-panel (VPIN gauge + sparkline)
+ │    │   ├── paper-trading/ live-order-modal (double-confirm live order UX)
  │    │   └── ui/          India-flavoured shadcn primitives (button/card/table)
  │    └── ui/
  │
@@ -1539,6 +1554,9 @@ src/
  │                         queries against the shared PaperTrade table —
  │                         segregation boundary between markets),
  │                         journal-constants
+ │        ├── options-workbench/ payoff.ts (computePayoff + aggregateGreeks)
+ │        └── indicators/       src/features/indicators/ — @debut/indicators
+ │                              streaming adapter with dumpState/restoreState
  │
  ├── services/
  │    ├── binance/
@@ -1624,6 +1642,20 @@ Use Redis for:
 - Alerts
 - Backtesting
 - User auth
+
+## Phase 2 (Expert Quant Upgrade — complete)
+- [x] Streaming indicators (@debut/indicators)
+- [x] Chart plugins (Anchored VWAP, Volume Profile)
+- [x] Real greeks + IV solver (Black-76/BS, mibian)
+- [x] Dealer GEX engine + dashboard panel
+- [x] 3D IV surface + term structure
+- [x] TA-Lib vectorised feature engineering
+- [x] VPIN toxic order-flow indicator
+- [x] TFT price regime forecaster
+- [x] IV regime classifier (CRUSH/STABLE/SPIKE)
+- [x] Riskfolio-Lib portfolio optimizer + /in/portfolio page
+- [x] Options Strategy Workbench + payoff engine
+- [x] OpenAlgo broker adapter + live order modal
 
 ---
 
@@ -2059,7 +2091,13 @@ on NSE F&O data:
                            │
                   RL Execution (PPO / Stable-Baselines3)
                            │
-                  Portfolio Optimizer (HRP)
+                  Portfolio Optimizer (Riskfolio-Lib HRP + CVaR)
+                           │
+                  Price Forecaster (TFT heuristic) → priceForecast field in buildMLContext()
+                           │
+                  IV Regime Classifier (heuristic) → iv_regime field on option chain
+                           │
+                  Portfolio Optimizer (Riskfolio-Lib HRP + CVaR) → /in/portfolio
                            │
                   SHAP Explainability
 ```
@@ -2148,6 +2186,13 @@ python -m src.training.train_all --quick
 | POST   | /predict/risk           | Per-trade risk estimation            |
 | POST   | /predict/portfolio      | HRP portfolio optimization           |
 | POST   | /predict/execution      | RL execution decision                |
+| POST   | /predict/price-regime   | TFT heuristic 1h price regime forecast |
+| POST   | /predict/iv-regime      | IV regime classifier (CRUSH/STABLE/SPIKE) |
+| POST   | /predict/portfolio-v2   | Riskfolio-Lib HRP + CVaR allocation  |
+| POST   | /analytics/greeks       | Black-76/BS greeks + IV solver       |
+| POST   | /analytics/gex          | Dealer GEX + gamma flip + expected move |
+| POST   | /analytics/vol-surface  | SVI IV surface + term structure      |
+| POST   | /analytics/vpin         | VPIN toxic order-flow computation    |
 | POST   | /explain/{model}        | SHAP explanation for a prediction    |
 | GET    | /health                 | Service health check                 |
 | GET    | /models/status          | Model load status                    |

@@ -112,7 +112,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Theming          | Unified `<ThemeProvider>` — `light` / `dark` / `system`, persisted to `localStorage`, with a pre-hydration flash-prevention script and a topbar toggle shared by both markets |
 | Client state     | **Zustand 5**                                                          |
 | Server state     | **TanStack Query 5**                                                   |
-| Charts           | **lightweight-charts**, Recharts (planned)                             |
+| Charts           | **lightweight-charts** v5 (with Anchored VWAP + Volume Profile plugins), Recharts |
 | Animation        | **framer-motion**                                                      |
 | Backend          | Next.js Route Handlers (Node runtime)                                  |
 | Validation       | **zod 4** for every external API I/O and env vars                      |
@@ -122,7 +122,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
 | Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain + greeks, first-party F&O gainers-losers / PCR / OI-buildup, FULL-quote enrichment + order-book imbalance) + Groww REST (opt-in via `INDIA_BROKER`) |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
-| ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · PyPortfolioOpt |
+| ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · **Riskfolio-Lib** · mibian · TA-Lib |
 
 ## ML Decision Engine (Indian Market)
 
@@ -136,8 +136,10 @@ NSE Data → Feature Engineering (150+ features)
     ├── Stock Ranker (LightGBM) → outperformance scores
     ├── Strategy Selector (CatBoost) → 8 strategies
     ├── Risk Predictor (XGBoost ×3) → P(stop), P(target), drawdown
-    ├── Portfolio Optimizer (HRP) → diversified allocations
+    ├── Portfolio Optimizer (Riskfolio-Lib HRP + CVaR) → diversified allocations
     ├── RL Executor (PPO) → trade execution timing
+    ├── Price Forecaster (TFT heuristic) → priceForecast
+    ├── IV Regime Classifier (PatchTST heuristic) → iv_regime
     └── SHAP Explainability → transparent factor contributions
 ```
 
@@ -152,6 +154,8 @@ NSE Data → Feature Engineering (150+ features)
   change >0.4%)
 - **Feature Engineering**: `sector_relative_strength` added to
   `RANKING_FEATURES`; per-stock computation in `compute_stock_features()`
+- **TA-Lib vectorised features**: 150+ technical indicators now C-backed; 6 new candlestick pattern features + HT_TRENDLINE deviation added to `RANKING_FEATURES`
+- **VPIN order-flow score**: `vpin_score` added to REGIME_FEATURES; bucket-accumulation tick-rule classifier
 
 All models include **rule-based heuristic fallbacks** — when the ML
 service is down or models are untrained, the existing rule-based engine
@@ -307,6 +311,8 @@ src/
         scanner/                Single-mode F&O scanner UI (India-only)
         watchlist/              Persistent F&O watchlist (zustand-persist, India-only)
         chart/[symbol]/         Per-symbol lightweight-charts deep-dive (India-only)
+        options-workbench/      Options strategy workbench — payoff diagrams + multi-leg builder
+        └── portfolio/          Quant portfolio optimizer (HRP / CVaR / Max Diversification / Factor)
     api/auth/[...nextauth]/     Auth.js v5 credentials + JWT callbacks
     api/market/overview/        Aggregated REST endpoint, Redis-cached
     api/scalper/                signals, journal, journal/[id] (note + cancel),
@@ -322,7 +328,11 @@ src/
                                 frozen + live-tracked picks),
                                 expiry-trades (expiry-only Gamma Blast /
                                 Hero Zero index option plays),
-                                news (Moneycontrol + global RSS sentiment feed)
+                                news (Moneycontrol + global RSS sentiment feed),
+                                gex (Dealer GEX + gamma flip),
+                                vol-surface (SVI IV surface),
+                                order-flow (VPIN order-flow),
+                                portfolio-optimizer (Riskfolio-Lib allocation)
     layout.tsx, not-found.tsx
   proxy.ts                      Next 16 proxy (ex-`middleware.ts`) — Auth.js gate
   components/
@@ -990,6 +1000,18 @@ The Indian surface depends on `yahoo-finance2` (installed by default) and
 shares the existing `REDIS_URL` if you've already configured one — when
 absent, the cache transparently falls back to in-memory.
 
+```bash
+# OpenAlgo-compatible broker adapter (optional) — enables any of 33+ Indian
+# brokers via the normalised OpenAlgo REST API. Set INDIA_BROKER=openalgo
+# and provide the base URL + API key. Order placement requires LIVE_TRADING_ENABLED=true.
+OPENALGO_BASE_URL=
+OPENALGO_API_KEY=         # AES-256-GCM encrypted at rest (same path as Angel One keys)
+LIVE_TRADING_ENABLED=     # Must be exactly "true" to allow placeOrder/modifyOrder/cancelOrder
+
+# Override the default ML service URL (defaults to http://localhost:8100).
+ML_SERVICE_URL=http://localhost:8100
+```
+
 ## Roadmap
 
 - [x] **Phase 1** — Foundation, layout shell, Binance WS price feed, Market Overview
@@ -1404,6 +1426,20 @@ absent, the cache transparently falls back to in-memory.
   - Redundant `process.env.NODE_ENV ??= "test"` removed from
     `tests/setup/vitest.setup.ts` (TypeScript marks `NODE_ENV` read-only;
     the value is already injected via `vitest.config.ts` `test.env`).
+- [x] **Phase 2 — Expert Quant Upgrade** — upgrades Alphaforge from "advanced retail" to prop-desk level with five new capability layers:
+  - [x] **Streaming indicator library** (`@debut/indicators@2.0.1`) — replaces hand-rolled helpers in `scalping/helpers.ts` with streaming `.nextValue()` classes; `dumpState()`/`restoreState()` for Redis-backed warm starts; ATR/RSI/EMA/Bollinger match original output to within 0.01%
+  - [x] **Anchored VWAP + Volume Profile chart plugins** — two `IChartSeriesPlugin` implementations on the lightweight-charts v5 price chart at `/in/chart/[symbol]`. VWAP: three anchors (session open 09:15 IST, daily, weekly). Profile: POC/VAH/VAL horizontal lines. Both togglable via toolbar; palette synced to `useTheme()`.
+  - [x] **Real Black-76/BS greeks on the NSE option chain** — `ml-service/src/greeks.py` (mibian, analytic, Newton-Raphson IV solver + brentq fallback); all sign invariants enforced. Per-strike delta/gamma/theta/vega/IV returned by `/api/in/option-chain`; fallback to Angel One greeks when ML is down.
+  - [x] **Dealer GEX engine** — `ml-service/src/gex.py`; per-strike GEX formula `gamma × OI × lot_size × spot²` (CE sign −1, PE sign +1); canonical NSE lot sizes; gamma flip + expected daily move. `/api/in/gex` (5-min Redis cache). `GexPanel` on `/in/options`.
+  - [x] **3D Implied Volatility Surface** — `ml-service/src/vol_surface.py`; SVI fit (scipy L-BFGS-B, arbitrage-free), IV surface builder, ATM term structure. `/api/in/vol-surface` (5-min Redis cache). `VolSurface` component with 2D smile chart, term-structure area chart, optional 3D canvas, added as "IV Surface" tab on `/in/options`.
+  - [x] **TA-Lib vectorised feature engineering** — all pure-Python indicator loops in `technical.py` replaced with `talib.*` C-backed calls; 6 new candlestick pattern features (CDLENGULFING, CDLHAMMER, CDLDOJI, binary) + HT_TRENDLINE deviation added to `RANKING_FEATURES`. Batch scoring 200+ stocks now < 300 ms.
+  - [x] **VPIN toxic order-flow indicator** — `compute_vpin()` in `volume.py`; tick-rule volume bucket classification [0,1]; `vpin_score` wired into Market Regime model. `/api/in/order-flow` (2-min Redis cache). `OrderFlowPanel` (horizontal gauge + sparkline) on India Overview dashboard.
+  - [x] **TFT price regime forecaster** — `ml-service/src/price_forecaster.py` (`PriceForecaster.predict()` returns `{regime, probability, q10, q90}`); `POST /predict/price-regime`. `priceForecast` field added to `buildMLContext()` — null when ML service offline.
+  - [x] **IV regime classifier** — `ml-service/src/iv_regime_classifier.py` (CRUSH/STABLE/SPIKE); `POST /predict/iv-regime`. `iv_regime` field in `/api/in/option-chain` response (null when untrained/offline). `IvRegimeBadge` on `/in/options`.
+  - [x] **Riskfolio-Lib portfolio optimizer** — `portfolio_optimizer.py` upgraded from PyPortfolioOpt to Riskfolio-Lib 6.x; `hrp_allocation` (via `rp.HCPortfolio`) + `cvar_allocation` (Classic CVaR/MinRisk). `POST /predict/portfolio-v2`. New `/in/portfolio` page with symbol multi-select, method selector, allocation pie chart, risk metrics table.
+  - [x] **Options Strategy Workbench** — pure TypeScript payoff engine (`src/features/india/options-workbench/payoff.ts`): `computePayoff` + `aggregateGreeks` with exact formulas; linear-interpolation break-evens. New `/in/options-workbench` page: 13-strategy picker, ATM auto-populate from live chain, SVG payoff diagram, break-evens, net greeks, GEX-guided "Scan for best strikes".
+  - [x] **OpenAlgo broker adapter** — `OpenAlgoAdapter` implementing `BrokerAdapter`; normalised OpenAlgo REST API contract covering 33+ Indian brokers. `placeOrder`/`modifyOrder`/`cancelOrder` gated behind `LIVE_TRADING_ENABLED=true`. Registered under `INDIA_BROKER=openalgo`. `LiveOrderModal` with double-confirm UX + win-rate warning badge.
+  - [x] **Graceful degradation** — all new API routes return `{ available: false, reason }` with HTTP 200 when ML service is unreachable; never 5xx.
 
 ## Troubleshooting
 
@@ -1441,3 +1477,11 @@ If you still hit the fork wall:
    `npm run test:watch` (or `npm run dev:tdd`) concurrently on Windows.
 3. As a last resort restart the machine to flush the commit pool, then
    start Docker → dev server → worker in that order.
+
+**`Module not found: Can't resolve 'next/dist/server/app-render/...'`**
+This means `node_modules` is incomplete or corrupted. Fix with a clean reinstall:
+```bash
+rm -rf node_modules .next
+npm install
+npm run dev
+```

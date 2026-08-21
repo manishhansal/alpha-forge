@@ -170,24 +170,37 @@ class StockRanker:
         regime: MarketRegime,
         top_n: int,
     ) -> RankingResponse:
-        """ML-based ranking using the trained LightGBM model."""
-        # Build feature matrix
-        X = np.array([
-            [feat.get(f, 0.0) for f in self.feature_names]
-            for feat in stocks
-        ])
+        """ML-based ranking using the trained LightGBM model.
 
-        # Get raw scores from the model
-        raw_scores = self.model.predict(X)
+        Falls back to the heuristic when the model raises any exception
+        (e.g. feature count mismatch after the feature engineering layer
+        added new columns since the artifact was trained). This prevents
+        the intermittent 500 errors while preserving the heuristic path.
+        """
+        try:
+            # Build feature matrix in canonical order
+            X = np.array([
+                [feat.get(f, 0.0) for f in self.feature_names]
+                for feat in stocks
+            ])
 
-        # Normalize to 0-100 scale using percentile ranking
-        rankings = self._scores_to_rankings(raw_scores, symbols, stocks, top_n)
+            # Get raw scores from the model
+            raw_scores = self.model.predict(X)
 
-        return RankingResponse(
-            rankings=rankings,
-            model_version=self.model_version,
-            regime_used=regime,
-        )
+            # Normalize to 0-100 scale using percentile ranking
+            rankings = self._scores_to_rankings(raw_scores, symbols, stocks, top_n)
+
+            return RankingResponse(
+                rankings=rankings,
+                model_version=self.model_version,
+                regime_used=regime,
+            )
+        except Exception as exc:
+            logger.warning(
+                "stock_ranker_ml_predict_failed_falling_back",
+                error=str(exc),
+            )
+            return self._rank_heuristic(stocks, symbols, regime, top_n)
 
     def _rank_heuristic(
         self,

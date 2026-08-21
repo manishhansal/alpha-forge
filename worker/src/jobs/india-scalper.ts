@@ -1,3 +1,4 @@
+import { feedBar, type IndicatorConfig, type IndicatorHandle } from "@/features/indicators";
 import { getIndiaScalpSignals } from "@/features/india/scalping/fetch-signals";
 import {
   getIndiaIntradayAtr,
@@ -8,9 +9,17 @@ import type {
   IndiaScalpStrategyId,
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
+import { FNO_INDICES } from "@/lib/india/fno-symbols";
+import { yahoo } from "@/services/india/yahoo";
+import type { Candle } from "@/types/india/market";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
+import {
+  indicatorStateKey,
+  loadIndicatorState,
+  saveIndicatorState,
+} from "../indicator-state";
 import { createLogger } from "../log";
 import { scheduleJob, type JobHandle } from "../scheduler";
 
@@ -23,6 +32,82 @@ const log = createLogger("worker:india-scalper");
  * record and the UI filters down to the lanes the user attached.
  */
 const TIMEFRAMES: ReadonlyArray<IndiaScalpTimeframe> = ["1m", "5m", "15m"];
+
+/** Default indicator configuration for India F&O indices. */
+const INDICATOR_CONFIG: IndicatorConfig = {
+  emaPeriod: 20,
+  atrPeriod: 14,
+  rsiPeriod: 14,
+  bollingerPeriod: 20,
+  bollingerK: 2,
+};
+
+/** NSE interval string → India yahoo interval map */
+const TF_TO_INTERVAL: Record<IndiaScalpTimeframe, "1m" | "5m" | "15m"> = {
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+};
+
+/**
+ * Convert an India `Candle` (time in seconds) to the `OHLCVBar` shape
+ * expected by `feedBar`. openTime and closeTime are derived from `time`
+ * (seconds, IST-aligned Unix timestamp).
+ */
+function candleToBar(candle: Candle, intervalSec: number): Parameters<typeof feedBar>[1] {
+  const openTimeMs = candle.time * 1000;
+  return {
+    openTime: openTimeMs,
+    closeTime: openTimeMs + intervalSec * 1000 - 1,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume ?? 0,
+  };
+}
+
+/**
+ * Feed the latest 5-min candles for an F&O index into a persisted indicator
+ * handle, then save the updated state back to Redis. This ensures indicator
+ * state survives worker restarts — on the next tick, the handle is restored
+ * and only new bars need to be fed (warm-up in ≤ 5 bars per Requirement 1.6).
+ *
+ * Best-effort — any error is logged and swallowed so the main trade-opening
+ * logic is never blocked.
+ */
+async function refreshIndiaIndicatorState(
+  yahooSymbol: string,
+  underlying: string,
+  timeframe: IndiaScalpTimeframe,
+): Promise<void> {
+  try {
+    const interval = TF_TO_INTERVAL[timeframe];
+    const intervalSec = interval === "1m" ? 60 : interval === "5m" ? 300 : 900;
+
+    const candles = await yahoo.getHistorical({
+      symbol: yahooSymbol,
+      interval,
+      range: "5d",
+    });
+    if (candles.length === 0) return;
+
+    const key = indicatorStateKey("india-scalper", underlying, timeframe);
+    const handle: IndicatorHandle = await loadIndicatorState(key, INDICATOR_CONFIG);
+
+    for (const candle of candles) {
+      feedBar(handle, candleToBar(candle, intervalSec));
+    }
+
+    await saveIndicatorState(key, handle);
+  } catch (err) {
+    log.warn("refreshIndiaIndicatorState failed", {
+      underlying,
+      timeframe,
+      err: (err as Error).message,
+    });
+  }
+}
 
 /**
  * Two-stage tick (mirrors the crypto scalper):
@@ -55,6 +140,15 @@ export function startIndiaScalperJob(): JobHandle {
         for (const tf of TIMEFRAMES) {
           try {
             const { signals } = await getIndiaScalpSignals({ timeframe: tf });
+
+            // Wire streaming indicator state persistence for F&O indices.
+            // Fire-and-forget so Redis errors never block trade opening.
+            void Promise.allSettled(
+              FNO_INDICES.map((idx) =>
+                refreshIndiaIndicatorState(idx.symbol, idx.underlying, tf),
+              ),
+            );
+
             for (const sig of signals) {
               if (!atrBySymbol.has(sig.symbol)) {
                 atrBySymbol.set(sig.symbol, await getIndiaIntradayAtr(sig.symbol));

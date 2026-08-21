@@ -1354,11 +1354,60 @@ function buildIndiaContext(args: {
 }
 
 /**
- * Build the F&O ticker universe the AI engine covers. We focus on the four
- * index underlyings (best option-chain coverage) and three high-liquidity
- * F&O leaders for stock-level signals.
+ * Marquee F&O stock leaders shown on the AI Signals board — one or two names
+ * per major sector so the board gives actionable reads across the full market
+ * rather than just three mega-caps.
+ *
+ * Criteria for inclusion:
+ *   - Listed on NSE F&O (futures + options available)
+ *   - High liquidity (ADV > ₹200 Cr, tight bid-ask on options)
+ *   - Option chains are fetched for these names so they get full 13-factor
+ *     AI scoring (PCR, OI build-up, max-pain, IV, scanner agreement)
+ *   - Covers all major sectors: Bank, IT, Metal, Energy, Pharma, FMCG,
+ *     Auto, Realty, Fin Services, Infra, PSU
+ *
+ * Keep this list ≤ 25 symbols — each name triggers an NSE option-chain call
+ * so the AI Signals fan-out must complete within the 60s Lambda timeout.
+ * The full 170-symbol universe is covered by Daily Picks (technicals-only
+ * scoring for the long tail, chains only for the leaders here).
  */
-const FNO_STOCK_LEADERS = ["RELIANCE", "HDFCBANK", "TCS"] as const;
+const FNO_STOCK_LEADERS = [
+  // ── Bank ────────────────────────────────────────────────────────────────
+  "HDFCBANK",    // largest private bank by market cap
+  "ICICIBANK",   // second largest, strong F&O liquidity
+  "AXISBANK",    // mid-tier private, high options activity
+  "SBIN",        // PSU banking bellwether
+  // ── IT ──────────────────────────────────────────────────────────────────
+  "TCS",         // index heavyweight
+  "INFY",        // most-traded IT option
+  "HCLTECH",     // midcap IT leader
+  // ── Energy / Oil & Gas ──────────────────────────────────────────────────
+  "RELIANCE",    // largest market cap
+  "ONGC",        // PSU oil bellwether
+  "POWERGRID",   // power transmission PSU
+  // ── Metal ───────────────────────────────────────────────────────────────
+  "TATASTEEL",   // most-traded metal option
+  "HINDALCO",    // aluminium + copper, global cyclical proxy
+  "VEDL",        // zinc/lead/oil, recovery play when commodity cycles turn
+  // ── Pharma ──────────────────────────────────────────────────────────────
+  "SUNPHARMA",   // largest pharma by market cap
+  "DRREDDY",     // high ADV, liquid options
+  // ── FMCG ────────────────────────────────────────────────────────────────
+  "HINDUNILVR",  // defensive FMCG proxy
+  "BRITANNIA",   // high short-interest name, useful for SELL signals
+  // ── Auto ────────────────────────────────────────────────────────────────
+  "MARUTI",      // passenger vehicle leader
+  "BAJAJ-AUTO",  // 2W leader, strong F&O participation
+  // ── Fin Services / Insurance ────────────────────────────────────────────
+  "BAJFINANCE",  // most-traded NBFC option
+  "ICICIPRULI",  // life insurance proxy
+  "HDFCLIFE",    // life insurance peer
+  // ── Realty ──────────────────────────────────────────────────────────────
+  "DLF",         // largest listed developer
+  // ── Infra / Defence ─────────────────────────────────────────────────────
+  "LT",          // engineering & infra conglomerate
+  "HAL",         // defence PSU bellwether
+] as const;
 
 interface UniverseEntry {
   symbol: string;
@@ -1688,7 +1737,7 @@ async function computeIndiaUniverse(
 }
 
 export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
-  return indiaCache.memo("ai-signals:india:v2", CACHE_TTL_MS, async () => {
+  return indiaCache.memo("ai-signals:india:v3", CACHE_TTL_MS, async () => {
     const r = await computeIndiaUniverse(buildUniverse());
     return {
       market: "india",
@@ -1725,10 +1774,10 @@ export interface IndiaDailyPickCandidates {
  * fetched only for the indices + AI leaders to keep the fan-out fast.
  */
 export async function getIndiaDailyPickCandidates(): Promise<IndiaDailyPickCandidates> {
-  // v6 — full F&O universe expansion (174 symbols, replacing the 37-symbol
-  // curated set). Bumping the key forces every in-memory + Redis entry
-  // built against the older universe to be evicted on the first read.
-  return indiaCache.memo("daily-picks:candidates:v6", CACHE_TTL_MS, async () => {
+  // v7 — expanded AI-leader set (25 stocks, replacing the 3-stock set).
+  // Bumping the key forces every in-memory + Redis entry built against the
+  // older universe to be evicted on the first read.
+  return indiaCache.memo("daily-picks:candidates:v7", CACHE_TTL_MS, async () => {
     const r = await computeIndiaUniverse(buildDailyPickUniverse(), {
       fetchChainFor: (u) =>
         u.isIndex || (FNO_STOCK_LEADERS as readonly string[]).includes(u.symbol),

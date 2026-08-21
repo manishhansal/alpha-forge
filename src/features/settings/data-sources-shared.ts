@@ -18,6 +18,7 @@ export type DataSourceId =
   | "zerodha"
   | "bse"
   | "angel"
+  | "openalgo"
   // Crypto
   | "binance"
   | "delta";
@@ -107,6 +108,17 @@ export const DATA_SOURCES: readonly DataSourceMeta[] = [
     requiresApiKey: true,
     implemented: true,
     homeUrl: "https://smartapi.angelone.in",
+  },
+  {
+    id: "openalgo",
+    market: "india",
+    label: "OpenAlgo",
+    blurb:
+      "OpenAlgo-compatible broker adapter — quotes, history, and live order execution via any OpenAlgo-compatible Indian broker. Requires OPENALGO_BASE_URL and OPENALGO_API_KEY.",
+    capabilities: ["quotes", "history", "feed"],
+    requiresApiKey: true,
+    implemented: true,
+    homeUrl: "https://openalgo.in",
   },
 
   // ── Crypto ───────────────────────────────────────────────────────────────

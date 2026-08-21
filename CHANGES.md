@@ -2,6 +2,323 @@
 
 ---
 
+## [Unreleased] — Phase 2: Expert Quant Upgrade
+
+**Branch:** `feature/phase2-expert-quant`
+**Scope:** ML service · TypeScript chart layer · New India pages · OpenAlgo adapter
+**Test coverage:** 1084/1084 Vitest tests · 143/143 pytest tests · 0 TypeScript errors
+
+Upgrades Alphaforge from "advanced retail" to expert quant / prop desk level
+for the Indian F&O market. Twelve self-contained, TDD-driven increments — each
+additive and degrade-safe; no existing route, store, or worker job is broken.
+
+---
+
+### Track A — Streaming Indicators + Chart Plugins
+
+#### `src/features/indicators/index.ts` (new)
+
+Streaming indicator adapter wrapping `@debut/indicators@2.0.1`.
+
+- `streamIndicators(bars, config)` — batch mode; feeds all bars through streaming instances
+- `createIndicators(config)` / `feedBar(handle, bar)` — stateful streaming mode (O(1) per bar)
+- `dumpState(handle)` / `restoreState(state, config)` — Redis-serialisable snapshots; warm-start in ≤ 5 bars after worker restart
+- `computeVolumeProfile(bars, {tickSize})` — POC/VAH/VAL with 70% value area; NSE tick calibration (0.05 stocks, 1 NIFTY, 5 BANKNIFTY)
+- All outputs match existing `scalping/helpers.ts` ATR/RSI/EMA/Bollinger to within 0.01%
+
+`worker/src/indicator-state.ts` — `saveIndicatorState` + `loadIndicatorState` wiring Redis persistence into both `scalper.ts` and `india-scalper.ts` jobs.
+
+#### `src/components/india/charts/plugins/anchored-vwap.ts` (new)
+
+`computeAnchoredVwap(bars, anchorIndex)` — exact `Σ(HLC3×vol)/Σvol` IEEE-754 arithmetic.
+`AnchoredVwapPlugin` — three `LineSeries` overlays (session 09:15 IST, daily, weekly); `attach(chart, bars)` / `detach()` / `setTheme(palette)`.
+
+#### `src/components/india/charts/plugins/volume-profile.ts` (new)
+
+`getPocPrice(bars, {tickSize})` — tick-aligned POC via `computeVolumeProfile`.
+`VolumeProfilePlugin` — POC (solid orange), VAH/VAL (dashed) as `series.createPriceLine()` overlays; `setTheme()` on theme flip.
+
+#### `src/components/india/charts/price-chart.tsx` (modified)
+
+- VWAP toolbar button (`aria-pressed`, amber palette) — calls `AnchoredVwapPlugin.attach()`
+- Profile toolbar button (orange palette) — calls `VolumeProfilePlugin.attach()`
+- Both plugins persist across timeframe changes via `updateData()` on new candles
+- `useTheme()` propagates to both plugins on every theme toggle
+
+---
+
+### Track B — Python Options Analytics
+
+#### `ml-service/src/greeks.py` (new)
+
+Analytic Black-Scholes / Black-76 greeks engine.
+
+- `compute_greeks_bs(spot, strike, r, t, sigma, flag)` — delta ∈ (0,1) for calls, ∈ (−1,0) for puts; gamma/vega > 0; theta < 0 — enforced via `_safe_cdf`/`_safe_pdf` using `scipy.special.log_ndtr` for deep-OTM numerical stability
+- `solve_iv(ltp, spot, strike, r, t, flag)` — Newton-Raphson + `scipy.optimize.brentq` fallback; returns `None` for zero price or non-convergent inputs
+- `compute_chain_greeks(chain_rows, spot, india_vix, expiry_dt)` — vectorised over all strikes; Black-76 for index options, Black-Scholes for stocks; `t = trading_days / 252`, `r = 0.071` (G-Sec)
+- Exposed at `POST /analytics/greeks`
+
+#### `ml-service/src/gex.py` (new)
+
+Dealer Gamma Exposure engine.
+
+- `compute_gex(chain_snapshot, spot, lot_size)` — CE sign −1 (dealers short calls), PE sign +1 (dealers short puts); cumulative zero-crossing gamma flip; expected move from `|aggregate_gex| / (spot² × total_oi × lot_size) × spot`
+- `LOT_SIZES = {"NIFTY": 50, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 75}`
+- Returns: `{strikes, gex_per_strike, aggregate_gex, gamma_flip, expected_move_pct, positive_gex_wall, negative_gex_wall}`
+- Exposed at `POST /analytics/gex`
+
+#### `ml-service/src/vol_surface.py` (new)
+
+SVI implied volatility surface.
+
+- `fit_svi(strikes, ivs, forward)` — L-BFGS-B minimisation; bounds: a∈[0,1], b∈[0,2], ρ∈(−0.999,0.999), m∈[−2,2], σ∈[0,2]; returns `{a,b,rho,m,sigma}`
+- `build_iv_surface(snapshots_by_expiry)` — per-expiry `[{strike, iv}]` dicts
+- `compute_term_structure(atm_ivs_by_expiry)` — sorted ascending by `days_to_expiry`
+- Exposed at `POST /analytics/vol-surface`
+
+#### `ml-service/src/iv_regime_classifier.py` (new)
+
+Rule-based IV regime classifier (drop-in interface for future PatchTST).
+
+- `IVClassifier.predict(data)` — input shape `[20, 5]` (`atm_iv, pcr, oi_change, vix, spot_change`); returns `"CRUSH" | "STABLE" | "SPIKE"`
+- Heuristic: VIX trend < −1 pt + low realised vol → CRUSH; VIX trend > 1.5 pt + high realised vol → SPIKE
+- Exposed at `POST /predict/iv-regime`
+
+#### `src/app/api/in/option-chain/route.ts` (modified)
+
+- Calls `POST http://localhost:8100/analytics/greeks` after broker fetch; merges enriched per-strike greeks (overwrites Angel One delta/gamma fallback)
+- Calls `POST /predict/iv-regime`; adds `iv_regime: "CRUSH" | "STABLE" | "SPIKE" | null` to response
+- Both calls wrapped in try/catch with 3s timeout; `iv_regime: null` and original greeks preserved on any failure
+
+#### `src/app/api/in/gex/route.ts` (new)
+
+`GET /api/in/gex?symbol=NIFTY` — calls ML service `POST /analytics/gex`; 5-min Redis cache; returns `{ available: false, reason }` on ML service failure.
+
+#### `src/app/api/in/vol-surface/route.ts` (new)
+
+`GET /api/in/vol-surface?symbol=NIFTY` — calls `GET /analytics/vol-surface`; 5-min Redis cache; graceful degradation.
+
+#### `src/components/india/options/gex-panel.tsx` (new)
+
+GEX bar chart (green = positive/stabilising, red = negative/destabilising), gamma flip dashed marker, expected move subtitle. `useGex()` hook with 5-min polling.
+
+#### `src/components/india/options/vol-surface.tsx` (new)
+
+IV Smile SVG chart (one polyline per expiry, `data-testid="expiry-line"`), Term Structure SVG area chart, optional 3D canvas toggle. `useVolSurface()` hook with 5-min polling. Added as "IV Surface" tab on `/in/options`.
+
+#### `src/components/india/options/iv-regime-badge.tsx` (new)
+
+`IvRegimeBadge({ivRegime})` — "Crush" green (`data-regime="CRUSH"`), "Spike" red (`data-regime="SPIKE"`), "Stable" amber; returns `null` when `ivRegime` is null/undefined.
+
+#### `src/hooks/india/use-gex.ts` / `use-vol-surface.ts` (new)
+
+Polling hooks wrapping the new API routes; follow the `use-order-flow` pattern.
+
+---
+
+### Track C — ML Service Upgrade
+
+#### `ml-service/src/features/technical.py` (modified)
+
+All pure-Python indicator loops replaced with `talib.*` C-backed vectorised calls:
+- `compute_rsi` → `talib.RSI`; `compute_macd` → `talib.MACD`; `compute_adx` → `talib.ADX`; `compute_atr` → `talib.ATR`; `compute_bollinger_bands` → `talib.BBANDS`; `compute_ema_stack_score` → `talib.EMA` (5 periods); `compute_stochastic_rsi` → `talib.STOCHRSI`; `compute_cci` → `talib.CCI`; `compute_mfi` → `talib.MFI`; `compute_obv` → `talib.OBV`
+
+New functions:
+- `compute_cdl_engulfing(o,h,l,c)` → `talib.CDLENGULFING` (binary 0/1)
+- `compute_cdl_hammer(o,h,l,c)` → `talib.CDLHAMMER` (binary)
+- `compute_cdl_doji(o,h,l,c)` → `talib.CDLDOJI` (binary)
+- `compute_ht_trendline_dev(close)` → `talib.HT_TRENDLINE` deviation `(close − HT) / HT`
+
+#### `ml-service/src/features/engineer.py` (modified)
+
+`RANKING_FEATURES` extended with: `cdl_engulfing`, `cdl_hammer`, `cdl_doji`, `ht_trendline_dev`, `macd_signal`, `obv_last`.
+`REGIME_FEATURES` extended with: `vpin_score`.
+`compute_stock_features()` wires all new candlestick + HT features.
+
+#### `ml-service/src/features/volume.py` (modified)
+
+New `compute_vpin(bars, bucket_size=50, n_buckets=50)`:
+- Tick rule: `close > prev_close` → 85% buy; `close < prev_close` → 15% buy; equal → 50%
+- Fractional bucket accumulation (volume apportioned across bucket boundaries)
+- Returns `{"vpin_series": list[float], "current_vpin": float}` — all values ∈ [0,1]
+- Exposed at `POST /analytics/vpin`
+
+#### `ml-service/src/price_forecaster.py` (new)
+
+Rule-based drop-in for TFT (darts).
+
+- `PriceForecaster.predict(bars)` — input `[60, 9]` (OHLCV + VPIN + ATM IV + PCR + OI buildup); 10-bar close trend + VPIN + PCR + OI composite score → `{regime, probability, q10, q90}`
+- Probability ∈ [0,1]; q90 ≥ q10 guaranteed
+- Exposed at `POST /predict/price-regime`
+
+#### `src/lib/india/ml-enhanced-context.ts` (modified)
+
+`MLEnhancedContext` interface extended with `priceForecast: PriceForecastResult | null`.
+`buildMLContext()` calls `POST /predict/price-regime` after regime+rankings; stores result in context; falls back to `priceForecast: null` on any failure or when ML is offline.
+`buildFallbackContext()` sets `priceForecast: null`.
+
+#### `src/app/api/in/order-flow/route.ts` (new)
+
+`GET /api/in/order-flow?symbol=NIFTY` — calls ML service `POST /analytics/vpin`; 2-min Redis cache; returns `{symbol, vpin, bucketHistory, classification, available}`.
+
+#### `src/components/india/dashboard/order-flow-panel.tsx` (new)
+
+Horizontal VPIN gauge (`role="meter"`, `data-testid="vpin-gauge"`): red ≥ 0.7 (toxic), amber 0.3–0.7 (elevated), green < 0.3 (benign). SVG sparkline (`data-testid="vpin-sparkline"`). Placed on India Overview between Range Expansion and Top 5 Stocks.
+
+#### `src/hooks/india/use-order-flow.ts` (new)
+
+Polling hook; 2-min interval; `{data, isLoading, error}`.
+
+---
+
+### Track D — Standalone Features
+
+#### `ml-service/src/models/portfolio_optimizer.py` (modified)
+
+Upgraded from PyPortfolioOpt to Riskfolio-Lib 6.x. New public API (used by `/predict/portfolio-v2`):
+- `hrp_allocation(returns_df)` — via `rp.HCPortfolio.optimization(model="HRP", codependence="pearson", rm="MV")`
+- `cvar_allocation(returns_df, alpha=0.05)` — via `rp.Portfolio.optimization(model="Classic", rm="CVaR", obj="MinRisk")`
+- Both return `{weights: dict, risk_metrics: {volatility, cvar, sharpe, max_dd}}`
+- `_compute_risk_metrics()` — annualised vol, historical CVaR, annualised Sharpe, max drawdown
+- Legacy `optimize()` preserved unchanged for `/predict/portfolio` backward compat
+
+#### `src/app/api/in/portfolio-optimizer/route.ts` (new)
+
+`POST /api/in/portfolio-optimizer` — accepts `{symbols, method}`; calls `/predict/portfolio-v2`; returns `PortfolioAllocation`; `{available: false, reason}` on ML service failure.
+
+#### `src/app/(dashboard)/in/portfolio/page.tsx` (new)
+
+Portfolio Optimizer page:
+- Symbol multi-select from F&O universe (toggle chips)
+- Method selector radio-group (HRP / CVaR / Max Diversification / Factor)
+- Allocation pie chart (CSS `conic-gradient` + legend)
+- Risk metrics table (Sharpe/CVaR/Volatility/Max DD with bull/bear badges)
+- Efficient frontier SVG scatter chart
+- `UnavailableBadge` when ML service offline
+
+#### `src/features/india/options-workbench/payoff.ts` (new)
+
+Pure TypeScript payoff engine:
+- `computePayoff(legs, spotRange, premiums)` — CE: `q × (max(0,S−K) − p)`; PE: `q × (max(0,K−S) − p)`; break-evens via linear sign-crossing interpolation; `maxProfit` / `maxLoss`
+- `aggregateGreeks(legs, greeksPerLeg)` — `net_greek += quantity × greek` per leg (short quantity naturally negates)
+- Types exported: `OptionLeg`, `Greeks`, `StrategyAnalysis`
+
+#### `src/app/(dashboard)/in/options-workbench/page.tsx` (new)
+
+Options Strategy Workbench:
+- 13-strategy picker (Long/Short Call, Long/Short Put, Bull/Bear Call Spread, Bear Put Spread, Iron Condor, Straddle, Strangle, Butterfly, Jade Lizard, Custom)
+- ATM auto-populate from `/api/in/option-chain`; per-leg strike/premium auto-fills from chain LTPs
+- SVG payoff diagram with filled green/red areas, yellow dashed break-even annotations, P&L axis labels
+- Break-even list with profit-zone narrative
+- Net greeks table (delta/gamma/theta/vega) from `aggregateGreeks()`
+- "Scan for Best Strikes" — fetches `/api/in/gex` for expected move band; suggests Iron Condor / spread strikes accordingly
+
+#### `src/services/india/broker/openalgo-adapter.ts` (new)
+
+`OpenAlgoAdapter implements BrokerAdapter`:
+- `id = "openalgo"`
+- `getQuote(symbol)` → `GET {baseUrl}/api/v1/quotes` with `X-Api-Key` header; normalises to `Quote`
+- `getHistorical(req)` → `GET /api/v1/historical`; normalises to `Candle[]` (unix seconds)
+- `placeOrder(params)` → `POST /api/v1/placeorder`; **throws** `"Live trading is not enabled…"` before any `fetch()` call when `LIVE_TRADING_ENABLED !== "true"`
+- `modifyOrder(id, params)` / `cancelOrder(id)` — same live-trading guard
+- `getOptionChain()` — throws "not supported" (no OpenAlgo chain endpoint)
+- `OPENALGO_API_KEY` expected to be AES-256-GCM decrypted before passing to constructor
+
+#### `src/services/india/broker/factory.ts` (modified)
+
+- Added `getOpenAlgoAdapter()` lazy factory (returns null when env vars absent)
+- Added `case "openalgo"` in `getBroker()` and `getBrokerById()`
+
+#### `src/features/settings/data-sources-shared.ts` (modified)
+
+Added `"openalgo"` to `DataSourceId` union and a `DATA_SOURCES` entry with `implemented: true`.
+
+#### `src/components/india/paper-trading/live-order-modal.tsx` (new)
+
+Double-confirm live order modal:
+- Signal details grid (symbol, direction badge, entry/stop/target in ₹)
+- Paper-trade win rate percentage; `<Badge variant="warning" data-testid="win-rate-warning">` when < 50%
+- Confirmation checkbox (`data-testid="confirm-checkbox"`, accessible label)
+- "Place Real Order" button (`data-testid="place-order-btn"`) — disabled until checkbox checked; switches to danger variant when enabled
+- `role="dialog"` + `aria-modal="true"` on root; backdrop click closes
+
+#### `src/components/dashboard/sidebar.tsx` (modified)
+
+Added to `INDIA_NAV`:
+- `{ href: "/in/options-workbench", label: "Options Workbench", icon: TrendingUp }`
+- `{ href: "/in/portfolio", label: "Portfolio Optimizer", icon: BarChart3 }`
+
+---
+
+### Graceful Degradation (all new routes)
+
+All four new Phase 2 API routes (`/api/in/gex`, `/api/in/vol-surface`, `/api/in/order-flow`, `/api/in/portfolio-optimizer`) follow the contract:
+- Network error, timeout, ML HTTP 500 → HTTP 200 with `{ available: false, reason: string }`
+- Never returns a 5xx status
+- Covered by `tests/api/graceful-degradation.test.ts` (25 tests, 4 suites)
+
+---
+
+### New Dependencies
+
+| Package | Version | Purpose |
+|---|---|---|
+| `@debut/indicators` | 2.0.1 (pinned) | Streaming TA library (npm) |
+| `mibian` | 0.1.3 (pip) | Black-Scholes / Black-76 greeks (pure Python) |
+| `TA-Lib` | 0.6.8 (pip) | Vectorised C indicator library |
+| `Riskfolio-Lib` | 6.3.1 (pip) | HRP + CVaR portfolio optimiser |
+| `darts` | 0.32.* (pip, optional) | TFT forecasting — commented out |
+| `tsai` | 1.0.* (pip, optional) | PatchTST classifier — commented out |
+
+---
+
+### New Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENALGO_BASE_URL` | — | OpenAlgo broker REST base URL |
+| `OPENALGO_API_KEY` | — | AES-256-GCM encrypted API key |
+| `LIVE_TRADING_ENABLED` | unset | Must be exactly `"true"` to allow order placement |
+| `ML_SERVICE_URL` | `http://localhost:8100` | ML microservice base URL |
+
+---
+
+### Files Changed (summary)
+
+| Layer | New files | Modified files |
+|---|---|---|
+| TypeScript — indicators | `src/features/indicators/index.ts`, `worker/src/indicator-state.ts` | `worker/src/jobs/scalper.ts`, `worker/src/jobs/india-scalper.ts` |
+| TypeScript — chart plugins | `plugins/anchored-vwap.ts`, `plugins/volume-profile.ts` | `charts/price-chart.tsx` |
+| TypeScript — option chain | `api/in/gex/route.ts`, `api/in/vol-surface/route.ts` | `api/in/option-chain/route.ts` |
+| TypeScript — order flow | `api/in/order-flow/route.ts`, `hooks/india/use-order-flow.ts`, `components/india/dashboard/order-flow-panel.tsx` | `components/india/msb-dashboard.tsx` |
+| TypeScript — portfolio | `api/in/portfolio-optimizer/route.ts`, `in/portfolio/page.tsx` | — |
+| TypeScript — workbench | `features/india/options-workbench/payoff.ts`, `in/options-workbench/page.tsx` | — |
+| TypeScript — OpenAlgo | `services/india/broker/openalgo-adapter.ts`, `components/india/paper-trading/live-order-modal.tsx` | `services/india/broker/factory.ts`, `features/settings/data-sources-shared.ts`, `components/dashboard/sidebar.tsx` |
+| TypeScript — IV classifier | `components/india/options/iv-regime-badge.tsx`, `hooks/india/use-gex.ts`, `hooks/india/use-vol-surface.ts` | — |
+| TypeScript — ML context | — | `lib/india/ml-enhanced-context.ts` |
+| TypeScript — GEX/Vol UI | `components/india/options/gex-panel.tsx`, `components/india/options/vol-surface.tsx` | `app/(dashboard)/in/options/page.tsx` |
+| Python — greeks | `ml-service/src/greeks.py` | `ml-service/src/server.py` |
+| Python — GEX | `ml-service/src/gex.py` | — |
+| Python — vol surface | `ml-service/src/vol_surface.py` | — |
+| Python — IV classifier | `ml-service/src/iv_regime_classifier.py` | — |
+| Python — TA-Lib | — | `ml-service/src/features/technical.py`, `ml-service/src/features/engineer.py` |
+| Python — VPIN | — | `ml-service/src/features/volume.py` |
+| Python — TFT | `ml-service/src/price_forecaster.py` | — |
+| Python — portfolio | — | `ml-service/src/models/portfolio_optimizer.py` |
+| Config | — | `ml-service/requirements.txt`, `ml-service/Dockerfile` |
+
+---
+
+### Backward Compatibility
+
+- No existing API route shape changed (all changes are additive fields or new routes)
+- No existing Redux/Zustand store modified
+- No existing worker job broken — indicator state persistence is fire-and-forget
+- Legacy `/predict/portfolio` endpoint preserved unchanged; new `/predict/portfolio-v2` is the Riskfolio path
+- ML service degrades gracefully at every consumer — `{ available: false }` rather than 503
+
+---
+
 ## [Unreleased] — Top 5 Stocks for Tomorrow + TypeScript / Build Fixes
 
 **Branch:** `feat/ml-decision-engine`

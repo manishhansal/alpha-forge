@@ -6,12 +6,15 @@ import { motion } from "framer-motion";
 import { AlertTriangle, Layers, RefreshCw } from "lucide-react";
 import { OptionChainTable } from "@/components/india/options/option-chain-table";
 import { UnderlyingFlow } from "@/components/india/options/underlying-flow";
+import { VolSurface } from "@/components/india/options/vol-surface";
 import { Button } from "@/components/india/ui/button";
 import { useIndiaOptionChainStore } from "@/store/india/optionChainStore";
 import { useOptionChain } from "@/hooks/india/useOptionChain";
 import { useFetchPoll, getJson } from "@/hooks/india/useFetchPoll";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import type { Quote } from "@/types/india";
+
+type OptionsTab = "chain" | "iv-surface";
 
 const SUGGESTED_STOCKS = [
   "RELIANCE",
@@ -49,6 +52,7 @@ function OptionsInner() {
   // rides the quote endpoint, not the chain payload — poll it alongside.
   const [underlying, setUnderlying] = React.useState<Quote | null>(null);
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUnderlying(null);
   }, [symbol]);
   useFetchPoll<{ quotes: Quote[] }>(
@@ -61,6 +65,8 @@ function OptionsInner() {
     { intervalMs: 20_000 },
     [symbol],
   );
+
+  const [activeTab, setActiveTab] = React.useState<OptionsTab>("chain");
 
   const [search2, setSearch2] = React.useState("");
 
@@ -188,16 +194,47 @@ function OptionsInner() {
 
       <UnderlyingFlow quote={underlying} />
 
-      {data ? (
-        <OptionChainTable data={data} loading={loading} spread={10} />
-      ) : (
-        <div className="glass rounded-2xl p-12 text-center text-sm text-muted-foreground">
-          {loading
-            ? "Loading option chain…"
-            : error
-              ? "No chain to display while the upstream source is rate-limiting."
-              : "No data."}
-        </div>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-border/60">
+        {(
+          [
+            { key: "chain", label: "Option Chain" },
+            { key: "iv-surface", label: "IV Surface" },
+          ] as { key: OptionsTab; label: string }[]
+        ).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === tab.key
+                ? "border-blue-500 text-blue-500"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === "chain" && (
+        <>
+          {data ? (
+            <OptionChainTable data={data} loading={loading} spread={10} />
+          ) : (
+            <div className="glass rounded-2xl p-12 text-center text-sm text-muted-foreground">
+              {loading
+                ? "Loading option chain…"
+                : error
+                  ? "No chain to display while the upstream source is rate-limiting."
+                  : "No data."}
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === "iv-surface" && (
+        <VolSurface symbol={symbol} />
       )}
     </div>
   );

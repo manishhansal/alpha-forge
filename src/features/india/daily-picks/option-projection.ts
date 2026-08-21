@@ -138,20 +138,66 @@ function currentPremium(legPx: OptionLeg): number | null {
  * two feeds disagree on which instrument they're quoting (the MIDCPNIFTY
  * ticker-mapping bug from 2026-06-17 surfaced at ~17% drift). Drop the pick
  * rather than ship a projection built on disagreeing references.
+ *
+ * Exception: when the signal's `underlyingPrice` comes from a Yahoo *proxy*
+ * ticker (e.g. `^NSEMDCP50` for MIDCPNIFTY F&O), the proxy can track a
+ * related-but-numerically-different index and routinely drifts > 5% from the
+ * chain's `underlyingValue`. In that case we trust the chain spot (it comes
+ * from NSE's own feed for the exact underlying the options are written on)
+ * and skip the drift gate entirely for known proxy symbols.
  */
 const MAX_SPOT_DRIFT = 0.05;
+
+/**
+ * Symbols where the AI signal's `underlyingPrice` is sourced from a Yahoo
+ * proxy ticker that tracks a *related* index, not the exact F&O underlying.
+ * For these symbols the drift gate is skipped and the chain spot is always
+ * used as the authoritative reference for ATM strike selection.
+ *
+ * MIDCPNIFTY: Yahoo ^NSEMDCP50 = Nifty Midcap 50, but the F&O underlying is
+ * Nifty Midcap Select — different composition, different level (~10% apart).
+ */
+const PROXY_TICKER_SYMBOLS = new Set<string>(["MIDCPNIFTY"]);
 
 export function projectIndexScalpToOption(
   signal: AiSignal,
   chain: OptionChain,
   underlyingSymbol: string,
 ): OptionProjection | null {
-  // Prefer the AI signal's live underlying price (Yahoo quote) for ATM strike
-  // selection — it's always fresh. `chain.spot` is a snapshot from the option
-  // chain feed and can lag or, in pathological cases (the MIDCPNIFTY
-  // ticker-mapping bug from 2026-06-17), point at the wrong instrument entirely.
+  // Sanity guard: if the signal's entry price looks like an option premium
+  // (< 500 for indices that trade at 10,000+) rather than an underlying spot,
+  // the caller has accidentally passed an already-projected pick's entry. Drop
+  // it rather than project garbage. The strike step-size serves as a proxy for
+  // the minimum meaningful index level (NIFTY ~24,000 >> step 50; any entry
+  // below 10× the step is clearly a premium, not a spot price).
+  const guardStep = INDEX_STRIKE_STEP[underlyingSymbol] ?? 50;
+  const MIN_PLAUSIBLE_SPOT = guardStep * 10;
+  if (
+    signal.entry > 0 &&
+    signal.entry < MIN_PLAUSIBLE_SPOT &&
+    signal.underlyingPrice > MIN_PLAUSIBLE_SPOT
+  ) {
+    console.warn(
+      `[option-projection] ${underlyingSymbol}: entry ${signal.entry} looks like a premium, not a spot — dropping projection`,
+    );
+    return null;
+  }
+
+  // For symbols whose AI-signal underlyingPrice comes from a Yahoo proxy ticker
+  // (^NSEMDCP50 for MIDCPNIFTY, etc.), the proxy level can differ materially
+  // from the F&O underlying level — skip the Yahoo price entirely and use the
+  // chain's own underlyingValue for ATM strike selection (it comes from NSE's
+  // own feed for the exact contract). However we still validate drift below.
+  const isProxySymbol = PROXY_TICKER_SYMBOLS.has(underlyingSymbol);
+
+  // For ATM strike selection, always prefer the freshest price source:
+  // - Non-proxy symbols: signal's live Yahoo quote (fresher than chain.spot).
+  // - Proxy symbols: chain.spot (the proxy Yahoo level is numerically wrong
+  //   for the F&O underlying; the chain uses the real NSE level).
   const signalSpot =
-    Number.isFinite(signal.underlyingPrice) && signal.underlyingPrice > 0
+    !isProxySymbol &&
+    Number.isFinite(signal.underlyingPrice) &&
+    signal.underlyingPrice > 0
       ? signal.underlyingPrice
       : null;
   const chainSpot =
@@ -161,14 +207,26 @@ export function projectIndexScalpToOption(
   const spot = signalSpot ?? chainSpot;
   if (spot == null) return null;
 
-  // Drift sanity gate: if both spots are present but disagree wildly, the
-  // chain almost certainly belongs to a different instrument (delayed cache,
-  // wrong ticker mapping). Drop the pick rather than ship a projection built
-  // on disagreeing references.
+  // Drift sanity gate: drop the pick when the chain's spot and the signal's
+  // underlying price disagree by more than MAX_SPOT_DRIFT. This catches ticker
+  // mapping bugs (e.g. the 2026-06-17 MIDCPNIFTY incident where the chain
+  // returned a spot 21% below what the signal expected).
+  //
+  // We always run this gate — even for proxy-ticker symbols. The proxy
+  // exception only controls *which* price is used for ATM strike selection; it
+  // does not mean the drift between the two feeds is acceptable. When
+  // signal.underlyingPrice and chain.spot diverge by >5% the chain almost
+  // certainly belongs to a different instrument and the pick must be dropped.
+  // We use signal.underlyingPrice (the raw Yahoo level) as the reference in
+  // all cases — it is always populated and never null.
+  const rawSignalPrice =
+    Number.isFinite(signal.underlyingPrice) && signal.underlyingPrice > 0
+      ? signal.underlyingPrice
+      : null;
   if (
-    signalSpot != null &&
+    rawSignalPrice != null &&
     chainSpot != null &&
-    Math.abs(chainSpot - signalSpot) / signalSpot > MAX_SPOT_DRIFT
+    Math.abs(chainSpot - rawSignalPrice) / rawSignalPrice > MAX_SPOT_DRIFT
   ) {
     return null;
   }

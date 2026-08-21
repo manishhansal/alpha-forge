@@ -151,13 +151,13 @@ describe("features/ai-signals/engine", () => {
       expect(gradeFromConfidence(0.72)).toBe("A");
       expect(gradeFromConfidence(0.8)).toBe("A");
     });
-    it("publishes B for 58-71", () => {
+    it("publishes B for 54-67 (quant v2 thresholds)", () => {
       expect(gradeFromConfidence(0.58)).toBe("B");
-      expect(gradeFromConfidence(0.7)).toBe("B");
+      expect(gradeFromConfidence(0.65)).toBe("B");
     });
-    it("publishes C for 42-57 and D below", () => {
+    it("publishes C for 38-53 and D below (quant v2 thresholds)", () => {
       expect(gradeFromConfidence(0.42)).toBe("C");
-      expect(gradeFromConfidence(0.41)).toBe("D");
+      expect(gradeFromConfidence(0.35)).toBe("D");
       expect(gradeFromConfidence(0)).toBe("D");
     });
   });
@@ -166,8 +166,8 @@ describe("features/ai-signals/engine", () => {
     it("never exceeds 0.85 — no signal is 'almost certain'", () => {
       expect(calibrateWinProbability(1, 1)).toBeLessThanOrEqual(0.85);
     });
-    it("never dips below 0.3 — even pure noise has coin-flip floor", () => {
-      expect(calibrateWinProbability(0, 0)).toBeGreaterThanOrEqual(0.3);
+    it("never dips below 0.28 — even pure noise has coin-flip floor (quant v2)", () => {
+      expect(calibrateWinProbability(0, 0)).toBeGreaterThanOrEqual(0.28);
     });
     it("increases monotonically with score magnitude", () => {
       const low = calibrateWinProbability(0.2, 0.5);

@@ -40,6 +40,7 @@ export const DAILY_PICK_BUCKETS = [
   "INDICES_SCALP",
   "OPENING_BREAKOUT",
   "MOMENTUM",
+  "SHORT_MOMENTUM",
   "SCALPING",
   "POTENTIAL",
 ] as const;
@@ -51,6 +52,7 @@ const INDEX_BUCKETS = ["INDICES_SCALP"] as const satisfies readonly DailyPickBuc
 /** Buckets filled from F&O stocks. */
 const STOCK_BUCKETS = [
   "MOMENTUM",
+  "SHORT_MOMENTUM",
   "SCALPING",
   "POTENTIAL",
 ] as const satisfies readonly DailyPickBucket[];
@@ -142,6 +144,12 @@ export const DAILY_PICK_BUCKET_META: Record<
     label: "Highly Momentum Stocks",
     description:
       "Strongest directional trend — SMA stack, 5-day momentum and volume thrust all pushing the same way. Ride the move.",
+  },
+  SHORT_MOMENTUM: {
+    bucket: "SHORT_MOMENTUM",
+    label: "Short Setups",
+    description:
+      "Highest-conviction bearish setups — broken SMA stack, 5-day negative momentum and distribution volume aligned to the downside. Actionable shorts / PE buys regardless of the broad-tape direction.",
   },
   SCALPING: {
     bucket: "SCALPING",
@@ -304,26 +312,33 @@ export function marketAlignment(
 
 /**
  * Above this absolute regime score we *hard-filter* counter-tape directional
- * picks out of the stock buckets rather than merely demoting them — desks
- * don't take 5-day-momentum shorts in a tape that's grinding up.
+ * picks out of the **long** stock buckets rather than merely demoting them.
  *
- * Quant v2: raised from 0.10 to 0.15 so the filter only kicks in when the
- * tape has a genuinely meaningful directional lean, preventing premature
- * filtering on flat/borderline days.
+ * Raised from 0.15 → 0.30 so the filter only activates on a genuinely
+ * strong one-sided tape. A flat/mixed day (NIFTY ±0.1 %, regime score 0.08)
+ * no longer silently drops valid SHORT setups — only a clearly trending
+ * bullish day (regime > 0.30) blocks counter-tape longs/shorts from the
+ * momentum buckets. The SHORT_MOMENTUM bucket ignores this filter entirely
+ * (see `passesTapeFilter`) so actionable bearish setups always surface.
  */
-export const TAPE_HARD_FILTER_BIAS = 0.15;
+export const TAPE_HARD_FILTER_BIAS = 0.30;
 
 /**
- * True when a signal's direction is compatible with the broader tape. Returns
- * true unconditionally when the tape is weak / mixed (|bias| < threshold) so
- * name-specific edges still surface. WAIT / NEUTRAL signals are always
- * compatible.
+ * True when a signal's direction is compatible with the broader tape for a
+ * given bucket. The SHORT_MOMENTUM bucket is exempt — it is designed to
+ * surface bearish setups regardless of the broad-market bias (the desk needs
+ * to know which names to short / buy PEs even on a mild up-tape).
+ * All other buckets respect the tape filter at the `TAPE_HARD_FILTER_BIAS`
+ * threshold so longs aren't silently blocked on a weak up day.
  */
 export function passesTapeFilter(
   signal: AiSignal,
   marketBias = 0,
   threshold = TAPE_HARD_FILTER_BIAS,
+  bucket?: DailyPickBucket,
 ): boolean {
+  // SHORT_MOMENTUM is the dedicated short surface — always pass it through.
+  if (bucket === "SHORT_MOMENTUM") return true;
   if (Math.abs(marketBias) < threshold) return true;
   const dir = dirSign(signal.direction);
   if (dir === 0) return true;
@@ -358,6 +373,16 @@ const BUCKET_GATES: Record<
   // direction. Quant v2: require ADX-proxied direction (day-change ≥ 0.3)
   // so we don't surface names that are just drifting up without conviction.
   MOMENTUM: (s) =>
+    s.direction === "BULLISH" &&
+    s.confidence >= 0.25 &&
+    aligned(s, "dayChange") >= 0.3 &&
+    (aligned(s, "trend") >= 0.3 || aligned(s, "momentum") >= 0.3) &&
+    aligned(s, "breakout") >= 0,
+  // SHORT_MOMENTUM: mirror of MOMENTUM but for BEARISH signals. The tape
+  // filter is bypassed for this bucket (see passesTapeFilter) so shorts
+  // surface even on mild up-tape days. All other gates are symmetric.
+  SHORT_MOMENTUM: (s) =>
+    s.direction === "BEARISH" &&
     s.confidence >= 0.25 &&
     aligned(s, "dayChange") >= 0.3 &&
     (aligned(s, "trend") >= 0.3 || aligned(s, "momentum") >= 0.3) &&
@@ -405,6 +430,7 @@ export interface BucketScores {
   INDICES_SCALP: number;
   OPENING_BREAKOUT: number;
   MOMENTUM: number;
+  SHORT_MOMENTUM: number;
   SCALPING: number;
   POTENTIAL: number;
 }
@@ -439,6 +465,13 @@ export function bucketScores(signal: AiSignal): BucketScores {
   const MOMENTUM =
     0.26 * trend + 0.20 * mom + 0.13 * vol + 0.08 * scan + 0.07 * conf + 0.26 * screen;
 
+  // SHORT_MOMENTUM uses the same formula as MOMENTUM — the direction gate in
+  // BUCKET_GATES already ensures only BEARISH signals reach this bucket, and
+  // all factors are projected onto the trade direction via `aligned()`, so a
+  // bearish trend + negative momentum + distribution volume all score
+  // positively here without any formula change.
+  const SHORT_MOMENTUM = MOMENTUM;
+
   const SCALPING =
     0.28 * expectedMove +
     0.20 * rr +
@@ -468,6 +501,7 @@ export function bucketScores(signal: AiSignal): BucketScores {
     // AI universe, so its bucket score here is unused.
     OPENING_BREAKOUT: 0,
     MOMENTUM: clamp01(MOMENTUM),
+    SHORT_MOMENTUM: clamp01(SHORT_MOMENTUM),
     SCALPING: clamp01(SCALPING),
     POTENTIAL: clamp01(POTENTIAL),
   };
@@ -498,6 +532,15 @@ export function bucketLogic(signal: AiSignal, bucket: DailyPickBucket): string {
         ? "volume thrust all aligned"
         : "trend and momentum aligned (volume light)";
       return `Momentum leader — daily trend, 5-day momentum and ${volPhrase} to the ${dirWord}.${
+        drivers ? ` ${drivers}.` : ""
+      }`;
+    }
+    case "SHORT_MOMENTUM": {
+      const volAligned = aligned(signal, "volume") > 0;
+      const volPhrase = volAligned
+        ? "distribution volume confirming the sell"
+        : "trend and momentum breaking down (volume light)";
+      return `Short setup — broken SMA stack, 5-day negative momentum and ${volPhrase} to the ${dirWord}.${
         drivers ? ` ${drivers}.` : ""
       }`;
     }
@@ -544,6 +587,9 @@ const BUCKET_INDICATORS: Record<DailyPickBucket, readonly string[]> = {
   OPENING_BREAKOUT: ["ORB", "Vol", "VWAP", "PDH/PDL"],
   // Momentum is a trend + flow read.
   MOMENTUM: ["RSI", "EMA", "OI", "Vol", "ADX"],
+  // Short setups lean on breakdown confirmation: RSI divergence, OI buildup
+  // on the put side, bearish SMA stack and distribution volume.
+  SHORT_MOMENTUM: ["RSI", "EMA", "OI", "Vol", "ADX"],
   // Scalping wants liquidity + volatility + execution price (VWAP).
   SCALPING: ["VWAP", "ATR", "Vol", "Beta"],
   // Potential is structural with derivative confluence.
@@ -592,6 +638,11 @@ export function setupTypeFor(
       if (breakout >= 0.6) return "Trend Continuation Breakout";
       return "Trend Continuation";
     }
+    case "SHORT_MOMENTUM": {
+      const breakout = factorScore(signal, "breakout") * dirSign(signal.direction);
+      if (breakout >= 0.6) return "Breakdown Continuation";
+      return "Distribution & Trend Reversal";
+    }
     case "SCALPING": {
       if (signal.horizon === "scalp") return "Quick Scalp (VWAP Pullback)";
       const breakout = factorScore(signal, "breakout") * dirSign(signal.direction);
@@ -630,6 +681,11 @@ const BUCKET_TIME_WINDOWS: Record<DailyPickBucket, DailyPickTimeWindow> = {
     start: "09:45",
     end: "15:00",
     label: "Trending session",
+  },
+  SHORT_MOMENTUM: {
+    start: "09:45",
+    end: "15:00",
+    label: "Trending session (short side)",
   },
   SCALPING: {
     start: "09:15",
@@ -693,9 +749,11 @@ export function buildResearchNote(args: {
         ? `${signal.symbol} cleared its first 5-min range and successfully retested the broken level — ${primaryDriver}.`
         : bucket === "MOMENTUM"
           ? `${signal.symbol} is one of today's strongest aligned movers — ${primaryDriver}.`
-          : bucket === "SCALPING"
-            ? `${signal.symbol} is set up for a clean intraday scalp — ${primaryDriver}.`
-            : `${signal.symbol} carries the day's tightest multi-factor confluence — ${primaryDriver}.`;
+          : bucket === "SHORT_MOMENTUM"
+            ? `${signal.symbol} is one of today's clearest breakdown candidates — ${primaryDriver}.`
+            : bucket === "SCALPING"
+              ? `${signal.symbol} is set up for a clean intraday scalp — ${primaryDriver}.`
+              : `${signal.symbol} carries the day's tightest multi-factor confluence — ${primaryDriver}.`;
 
   const structure = secondaryDriver
     ? `Structure check: ${secondaryDriver}.`
@@ -802,9 +860,12 @@ export function buildSoftWarnings(args: {
   }
 
   if (args.marketBias != null && Number.isFinite(args.marketBias)) {
-    const COUNTER_TAPE_THRESHOLD = 0.25;
+    // Only flag COUNTER_TAPE for non-SHORT_MOMENTUM buckets — the short bucket
+    // is intentionally designed to surface bearish setups on any tape.
+    const isShortBucket = args.bucket === "SHORT_MOMENTUM";
+    const COUNTER_TAPE_THRESHOLD = 0.30;
     const bias = args.marketBias;
-    const fightingBull = bias > COUNTER_TAPE_THRESHOLD && args.signal.direction === "BEARISH";
+    const fightingBull = !isShortBucket && bias > COUNTER_TAPE_THRESHOLD && args.signal.direction === "BEARISH";
     const fightingBear = bias < -COUNTER_TAPE_THRESHOLD && args.signal.direction === "BULLISH";
     if (fightingBull || fightingBear) {
       out.push({
@@ -1232,30 +1293,26 @@ function fillBuckets(
   used: Set<string>,
 ): void {
   const directional = pool.filter((s) => s.action !== "WAIT");
-  // Tape hard-filter: drop counter-tape directional picks once the broader
-  // regime is meaningfully one-sided. The filter is *always* honored — we
-  // never fall back past it, because a counter-tape pick is precisely the
-  // failure mode we're trying to prevent (the "all SHORT in a flat-to-bullish
-  // day" incident on 2026-06-17).
   const needed = perBucket * buckets.length;
-  // Single soft fallback: if the WAIT-stripped pool is too small to fill every
-  // bucket, include WAIT signals too (keeps the board populated out-of-hours
-  // when most candidates are WAIT). The tape filter still applies to the
-  // fallback pool.
+  // Soft fallback: if the WAIT-stripped pool is too small to fill every
+  // bucket, include WAIT signals too (keeps the board populated out-of-hours).
   const base = directional.length >= needed ? directional : pool;
-  const usable = base.filter((s) => passesTapeFilter(s, marketBias));
 
-  const scored: Scored[] = usable.map((signal) => {
-    const base = bucketScores(signal);
+  // Score every candidate in the base pool (pre-tape-filter) so the
+  // SHORT_MOMENTUM bucket can draw from the full set. The tape filter is
+  // applied per-bucket in the sort step below so SHORT_MOMENTUM bypasses it.
+  const scored: Scored[] = base.map((signal) => {
+    const bs = bucketScores(signal);
     const m = marketAlignment(signal.direction, marketBias);
     return {
       signal,
       scores: {
-        INDICES_SCALP: base.INDICES_SCALP * m,
-        OPENING_BREAKOUT: base.OPENING_BREAKOUT * m,
-        MOMENTUM: base.MOMENTUM * m,
-        SCALPING: base.SCALPING * m,
-        POTENTIAL: base.POTENTIAL * m,
+        INDICES_SCALP:   bs.INDICES_SCALP * m,
+        OPENING_BREAKOUT: bs.OPENING_BREAKOUT * m,
+        MOMENTUM:        bs.MOMENTUM * m,
+        SHORT_MOMENTUM:  bs.SHORT_MOMENTUM,   // no tape-alignment penalty for shorts
+        SCALPING:        bs.SCALPING * m,
+        POTENTIAL:       bs.POTENTIAL * m,
       },
     };
   });
@@ -1265,7 +1322,9 @@ function fillBuckets(
     // Per-bucket quality gate: a candidate must clear the bucket's floor (vol
     // agreement / RR / confidence) before it can be ranked. No fallback —
     // empty bucket is strictly preferable to a garbage pick.
+    // Tape filter: applied here per-bucket; SHORT_MOMENTUM bypasses it.
     sortedByBucket[bucket] = scored
+      .filter((s) => passesTapeFilter(s.signal, marketBias, TAPE_HARD_FILTER_BIAS, bucket))
       .filter((s) => passesBucketGate(s.signal, bucket))
       .sort((a, b) => b.scores[bucket] - a.scores[bucket]);
   }
@@ -1304,6 +1363,7 @@ export function selectDailyPicks(
     // strategy, not by ranking the AI universe here.
     OPENING_BREAKOUT: [],
     MOMENTUM: [],
+    SHORT_MOMENTUM: [],
     SCALPING: [],
     POTENTIAL: [],
   };

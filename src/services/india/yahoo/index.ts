@@ -98,6 +98,15 @@ interface YfRawCandle {
   volume?: number | null;
 }
 
+/**
+ * NSE symbols that are permanently unresolvable on Yahoo Finance
+ * (renamed, delisted, or under a different ticker on Yahoo).
+ * getHistorical returns [] silently for these — no console.error noise.
+ */
+const KNOWN_DELISTED = new Set<string>([
+  "TATAMOTORS", // TATAMOTORS.NS not recognised by Yahoo Finance; stock renamed
+]);
+
 export class YahooAdapter implements BrokerAdapter {
   readonly id = "yahoo" as const;
 
@@ -137,6 +146,7 @@ export class YahooAdapter implements BrokerAdapter {
   }
 
   async getHistorical(req: HistoricalRequest): Promise<Candle[]> {
+    if (KNOWN_DELISTED.has(req.symbol)) return [];
     const yfSym = toYahooSymbol(req.symbol);
     const interval = YF_INTERVAL[req.interval];
     const period1 = rangeToFrom(req.range);

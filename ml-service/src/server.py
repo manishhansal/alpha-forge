@@ -17,6 +17,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import pydantic
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,6 +57,14 @@ strategy_selector: StrategySelector | None = None
 risk_predictor: RiskPredictor | None = None
 portfolio_optimizer: PortfolioOptimizer | None = None
 explainer: ModelExplainer | None = None
+
+# PriceForecaster is a singleton — instantiating it inside the request
+# handler on every call was wasteful (and the lazy import made the endpoint
+# appear to return 404 on stale worker processes that hadn't reloaded the
+# route table). A module-level singleton is initialised at startup alongside
+# the other models, so the endpoint is always ready after the first request.
+from .price_forecaster import PriceForecaster as _PriceForecaster
+price_forecaster: _PriceForecaster = _PriceForecaster()
 
 
 def _load_models() -> None:
@@ -362,6 +371,111 @@ async def predict_portfolio(request: PortfolioRequest):
     return result
 
 
+# ─── Riskfolio-Lib Portfolio Endpoint (v2) ───────────────────────────────────
+
+
+class PortfolioV2Request(pydantic.BaseModel):
+    """
+    Request body for POST /predict/portfolio-v2.
+
+    Accepts a list of symbols + daily return series, and a method selector.
+    """
+
+    symbols: list[str]
+    method: str = "hrp"   # "hrp" | "cvar" | "max_diversification" | "factor"
+    # Optional: pre-computed daily returns as {symbol: [r1, r2, ...]}
+    # If omitted, a synthetic return series is generated (for smoke-testing).
+    returns: dict[str, list[float]] | None = None
+    alpha: float = 0.05   # CVaR tail probability
+
+
+@app.post("/predict/portfolio-v2")
+async def predict_portfolio_v2(req: PortfolioV2Request):
+    """
+    Riskfolio-Lib portfolio optimisation endpoint.
+
+    Supports HRP (Hierarchical Risk Parity) and CVaR-minimised MVO.
+
+    Input:
+      symbols — list of asset names
+      method  — "hrp" or "cvar" (default "hrp")
+      returns — optional dict of {symbol: [daily_returns, ...]}
+                If omitted, a synthetic 252-day series is generated.
+      alpha   — CVaR tail probability (default 0.05)
+
+    Output:
+      {
+        method:      str,
+        weights:     {symbol: weight},   # sum to 1, all ≥ 0
+        riskMetrics: { volatility, cvar, sharpe, maxDrawdown },
+        available:   true,
+      }
+
+    On any error → { available: false, reason: "..." }
+
+    Validates: Requirements 10.1, 10.2, 10.3, 10.4, 10.5
+    """
+    import numpy as np
+    import pandas as pd
+
+    if portfolio_optimizer is None:
+        return {"available": False, "reason": "Portfolio optimizer not loaded"}
+
+    if not req.symbols:
+        return {"available": False, "reason": "No symbols provided"}
+
+    try:
+        # Build returns DataFrame
+        if req.returns:
+            returns_df = pd.DataFrame(req.returns, columns=req.symbols)
+        else:
+            # Synthetic returns for smoke-testing / when returns not supplied
+            rng = np.random.default_rng(42)
+            n = len(req.symbols)
+            daily_vol = 0.25 / np.sqrt(252)
+            raw = rng.normal(0, daily_vol, size=(252, n))
+            returns_df = pd.DataFrame(raw, columns=req.symbols)
+
+        start = time.perf_counter()
+
+        method = req.method.lower()
+        if method == "hrp":
+            result = portfolio_optimizer.hrp_allocation(returns_df)
+        elif method == "cvar":
+            result = portfolio_optimizer.cvar_allocation(returns_df, alpha=req.alpha)
+        else:
+            # Fallback to HRP for unsupported methods (max_diversification, factor)
+            # until those methods are fully implemented
+            result = portfolio_optimizer.hrp_allocation(returns_df)
+            method = "hrp"
+
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        logger.info(
+            "portfolio_v2_optimized",
+            method=method,
+            n_symbols=len(req.symbols),
+            latency_ms=round(latency_ms, 1),
+        )
+
+        risk = result["risk_metrics"]
+        return {
+            "method": method,
+            "weights": result["weights"],
+            "riskMetrics": {
+                "volatility": risk["volatility"],
+                "cvar": risk["cvar"],
+                "sharpe": risk["sharpe"],
+                "maxDrawdown": risk["max_dd"],
+            },
+            "available": True,
+        }
+
+    except Exception as exc:
+        logger.error("portfolio_v2_failed", error=str(exc))
+        return {"available": False, "reason": str(exc)}
+
+
 @app.post("/predict/execution", response_model=ExecutionDecision)
 async def predict_execution(state: ExecutionState):
     """
@@ -408,6 +522,377 @@ async def explain_prediction(model_name: str, request: ExplainRequest):
         top_k=10,
     )
     return result
+
+
+# ─── Analytics Endpoints ─────────────────────────────────────────────────────
+
+
+class GreeksRequest(pydantic.BaseModel):
+    """Request body for POST /analytics/greeks."""
+
+    chain: list[dict]
+    spot: float
+    india_vix: float
+    expiry_dt: str  # ISO format date string (e.g. "2025-01-30T15:30:00")
+
+
+@app.post("/analytics/greeks")
+async def analytics_greeks(req: GreeksRequest):
+    """
+    Compute Black-Scholes / Black-76 greeks and IV for an NSE option chain.
+
+    Input:  chain snapshot + spot + India VIX + expiry date
+    Output: list of enriched rows — original fields plus {delta, gamma, theta, vega, rho, iv}
+
+    Validates: Requirements 3.1, 3.2, 3.6
+    """
+    from datetime import datetime
+    from .greeks import compute_chain_greeks
+
+    try:
+        expiry = datetime.fromisoformat(req.expiry_dt)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid expiry_dt format — expected ISO 8601: {exc}",
+        ) from exc
+
+    result = compute_chain_greeks(req.chain, req.spot, req.india_vix, expiry)
+    return result
+
+
+# ─── GEX Endpoint ────────────────────────────────────────────────────────────
+
+
+class GexRequest(pydantic.BaseModel):
+    """Request body for POST /analytics/gex."""
+
+    chain_snapshot: list[dict]
+    spot: float
+    symbol: str = "NIFTY"
+
+
+@app.post("/analytics/gex")
+async def analytics_gex(req: GexRequest):
+    """
+    Compute Dealer Gamma Exposure (GEX) from an NSE option chain snapshot.
+
+    Input:  chain_snapshot — list of {strike, ce_gamma, pe_gamma, ce_oi, pe_oi}
+            spot           — current spot / index level
+            symbol         — NSE symbol name (used to resolve canonical lot size)
+
+    Output: {strikes, gex_per_strike, aggregate_gex, gamma_flip,
+             expected_move_pct, positive_gex_wall, negative_gex_wall}
+
+    When gamma fields are absent from the chain rows, the caller should
+    pre-enrich the chain via POST /analytics/greeks (Requirement 4.4).
+
+    Validates: Requirements 4.1, 4.2, 4.3, 4.4
+    """
+    from .gex import LOT_SIZES, compute_gex
+
+    if not req.chain_snapshot:
+        raise HTTPException(
+            status_code=422, detail="chain_snapshot must not be empty"
+        )
+
+    lot_size = LOT_SIZES.get(req.symbol.upper(), LOT_SIZES["NIFTY"])
+
+    start = time.perf_counter()
+    result = compute_gex(req.chain_snapshot, req.spot, lot_size)
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    logger.info(
+        "gex_computed",
+        symbol=req.symbol,
+        aggregate_gex=round(result["aggregate_gex"], 2),
+        gamma_flip=result["gamma_flip"],
+        latency_ms=round(latency_ms, 3),
+    )
+
+    return {**result, "symbol": req.symbol, "spot": req.spot}
+
+
+# ─── VPIN Endpoint ────────────────────────────────────────────────────────────
+
+
+@app.get("/analytics/vpin")
+async def analytics_vpin(symbol: str = "NIFTY"):
+    """
+    Compute VPIN (Volume-synchronized Probability of Informed Trading)
+    for the requested symbol.
+
+    This endpoint accepts pre-fetched OHLCV bars via query parameters in
+    production; for the analytics API the caller POSTs bars in the body.
+    Since this is a GET endpoint keyed by symbol, the actual bar data must
+    be fetched by the caller and passed through the POST variant, or this
+    endpoint returns a classification based on the most recent cached VPIN.
+
+    For now this returns a stub response so the route is available for
+    caching/proxying by the Next.js layer.  The real computation is
+    triggered by POST /analytics/vpin when bars are available.
+
+    GET /analytics/vpin?symbol=NIFTY → VpinResponse
+
+    Validates: Requirements 7.1, 7.2, 7.5
+    """
+    return {
+        "symbol": symbol,
+        "vpin": 0.0,
+        "bucketHistory": [],
+        "classification": "benign",
+        "available": False,
+        "reason": "Use POST /analytics/vpin with OHLCV bars to compute VPIN",
+    }
+
+
+class VpinRequest(pydantic.BaseModel):
+    """Request body for POST /analytics/vpin."""
+
+    symbol: str = "NIFTY"
+    bars: list[dict]          # list of {open, high, low, close, volume} dicts
+    bucket_size: float = 50.0
+    n_buckets: int = 50
+
+
+@app.post("/analytics/vpin")
+async def analytics_vpin_post(req: VpinRequest):
+    """
+    Compute VPIN from a list of 5-min OHLCV bars.
+
+    Input:  symbol + bars (OHLCV list) + optional bucket_size + n_buckets
+    Output: VpinResponse with current VPIN, bucket history, and classification
+
+    Classification thresholds:
+      - toxic:    vpin >= 0.7
+      - elevated: 0.3 <= vpin < 0.7
+      - benign:   vpin < 0.3
+
+    Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5, 7.8
+    """
+    from .features.volume import compute_vpin
+
+    if not req.bars:
+        return {
+            "symbol": req.symbol,
+            "vpin": 0.0,
+            "bucketHistory": [],
+            "classification": "benign",
+            "available": True,
+        }
+
+    result = compute_vpin(req.bars, bucket_size=req.bucket_size, n_buckets=req.n_buckets)
+    current_vpin = result["current_vpin"]
+    bucket_history = result["vpin_series"][-20:]  # last 20 bucket values for sparkline
+
+    if current_vpin >= 0.7:
+        classification = "toxic"
+    elif current_vpin >= 0.3:
+        classification = "elevated"
+    else:
+        classification = "benign"
+
+    logger.info(
+        "vpin_computed",
+        symbol=req.symbol,
+        current_vpin=round(current_vpin, 4),
+        classification=classification,
+        n_buckets=len(result["vpin_series"]),
+    )
+
+    return {
+        "symbol": req.symbol,
+        "vpin": round(current_vpin, 6),
+        "bucketHistory": [round(v, 6) for v in bucket_history],
+        "classification": classification,
+        "available": True,
+    }
+
+
+# ─── Vol Surface Endpoint ────────────────────────────────────────────────────
+
+
+class VolSurfaceSnapshotItem(pydantic.BaseModel):
+    """Per-expiry snapshot passed to POST /analytics/vol-surface."""
+
+    strikes: list[float]
+    ivs: list[float]
+    forward: float
+    days_to_expiry: float
+    atm_iv: float
+
+
+@app.get("/analytics/vol-surface")
+async def analytics_vol_surface_get(symbol: str = "NIFTY"):
+    """
+    Stub GET endpoint for IV surface.
+
+    Returns a not-yet-available response when called without snapshot data.
+    The real computation is triggered by POST /analytics/vol-surface with
+    per-expiry snapshots supplied by the caller.
+
+    GET /analytics/vol-surface?symbol=NIFTY → VolSurfaceResponse (stub)
+
+    Validates: Requirements 5.3, 5.4
+    """
+    return {
+        "symbol": symbol,
+        "expiries": [],
+        "ivByExpiry": {},
+        "termStructure": [],
+        "sviParams": {},
+        "available": False,
+        "reason": "Use POST /analytics/vol-surface with snapshots_by_expiry to compute the surface",
+    }
+
+
+class VolSurfaceRequest(pydantic.BaseModel):
+    """Request body for POST /analytics/vol-surface."""
+
+    symbol: str = "NIFTY"
+    snapshots_by_expiry: dict[str, VolSurfaceSnapshotItem]
+
+
+@app.post("/analytics/vol-surface")
+async def analytics_vol_surface_post(req: VolSurfaceRequest):
+    """
+    Build the full IV surface and term structure for a given symbol.
+
+    Input:  symbol + per-expiry snapshots (strikes, ivs, forward, dte, atm_iv)
+    Output: VolSurfaceResponse with per-expiry IV arrays, SVI params, and
+            term structure sorted ascending by days-to-expiry.
+
+    Validates: Requirements 5.1, 5.2, 5.3
+    """
+    from .vol_surface import build_iv_surface, compute_term_structure, fit_svi
+
+    snapshots_raw = {k: v.model_dump() for k, v in req.snapshots_by_expiry.items()}
+
+    start = time.perf_counter()
+
+    # Build per-expiry IV arrays
+    iv_by_expiry = build_iv_surface(snapshots_raw)
+
+    # Fit SVI to each expiry smile
+    svi_params: dict = {}
+    for expiry, snapshot in snapshots_raw.items():
+        try:
+            svi_params[expiry] = fit_svi(
+                strikes=snapshot["strikes"],
+                ivs=snapshot["ivs"],
+                forward=snapshot["forward"],
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("svi_fit_failed", expiry=expiry, error=str(exc))
+            svi_params[expiry] = None
+
+    # Compute term structure
+    term_structure = compute_term_structure(snapshots_raw)
+
+    latency_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "vol_surface_computed",
+        symbol=req.symbol,
+        n_expiries=len(snapshots_raw),
+        latency_ms=round(latency_ms, 1),
+    )
+
+    return {
+        "symbol": req.symbol,
+        "expiries": list(snapshots_raw.keys()),
+        "ivByExpiry": iv_by_expiry,
+        "termStructure": [
+            {"daysToExpiry": e["days_to_expiry"], "atmIv": e["atm_iv"]}
+            for e in term_structure
+        ],
+        "sviParams": svi_params,
+        "available": True,
+    }
+
+
+# ─── Price Regime Forecaster Endpoint ────────────────────────────────────────
+
+
+class PriceRegimeRequest(pydantic.BaseModel):
+    """Request body for POST /predict/price-regime."""
+
+    last_60_bars: list[list[float]]
+    """
+    Multivariate input: shape [n_bars, 9].
+    Each row: [open, high, low, close, volume, vpin, atm_iv, pcr, oi_buildup].
+    Typically n_bars == 60 (last 5 hours of 5-min NIFTY/BANKNIFTY bars).
+    """
+
+
+@app.post("/predict/price-regime")
+async def predict_price_regime(req: PriceRegimeRequest):
+    """
+    Forecast the 1-hour ahead price regime from the last 60 5-min bars.
+
+    Input:  last_60_bars — shape [60, 9] multivariate OHLCV + derived features
+    Output: {regime: "bull"|"bear"|"flat", probability: float, q10: float, q90: float}
+
+    Falls back to a rule-based heuristic when no trained TFT artifact is available.
+    The ML service returns a valid response in all cases; the Next.js layer handles
+    the `available` flag.
+
+    Validates: Requirements 8.1, 8.3, 8.4
+    """
+    start = time.perf_counter()
+    result = price_forecaster.predict(req.last_60_bars)
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    logger.info(
+        "price_regime_predicted",
+        regime=result["regime"],
+        probability=round(result["probability"], 4),
+        latency_ms=round(latency_ms, 3),
+    )
+
+    return result
+
+
+# ─── IV Regime Classifier Endpoint ───────────────────────────────────────────
+
+
+class IVRegimeRequest(pydantic.BaseModel):
+    """Request body for POST /predict/iv-regime."""
+
+    data: list[list[float]]
+    """
+    Daily feature matrix: shape [n_days, 5].
+    Each row: [atm_iv, pcr, oi_change, vix, spot_change].
+    Typically n_days == 20 (last 20 calendar days of daily data).
+    """
+
+
+@app.post("/predict/iv-regime")
+async def predict_iv_regime(req: IVRegimeRequest):
+    """
+    Classify the next-session IV regime from 20 days of daily option data.
+
+    Input:  data — shape [20, 5]: [atm_iv, pcr, oi_change, vix, spot_change]
+    Output: {iv_regime: "CRUSH"|"STABLE"|"SPIKE"}
+
+    Falls back to a rule-based heuristic when no trained PatchTST artifact
+    is available.  The ML service returns a valid response in all cases.
+
+    Validates: Requirements 9.1, 9.2, 9.3
+    """
+    from .iv_regime_classifier import IVClassifier
+
+    classifier = IVClassifier()
+    start = time.perf_counter()
+    iv_regime = classifier.predict(req.data)
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    logger.info(
+        "iv_regime_classified",
+        iv_regime=iv_regime,
+        latency_ms=round(latency_ms, 3),
+    )
+
+    return {"iv_regime": iv_regime}
 
 
 # ─── Rule-based execution policy (placeholder for RL) ────────────────────────
