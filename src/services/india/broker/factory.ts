@@ -4,6 +4,18 @@ import { yahoo } from "../yahoo";
 import { nse } from "../nse";
 import { groww } from "../groww";
 import { angel, isAngelConfigured } from "../angelone";
+import { OpenAlgoAdapter } from "./openalgo-adapter";
+
+/**
+ * Lazily construct the OpenAlgo adapter from environment variables.
+ * Returns null when OPENALGO_BASE_URL or OPENALGO_API_KEY are not set.
+ */
+function getOpenAlgoAdapter(): BrokerAdapter | null {
+  const baseUrl = process.env.OPENALGO_BASE_URL;
+  const apiKey = process.env.OPENALGO_API_KEY;
+  if (!baseUrl || !apiKey) return null;
+  return new OpenAlgoAdapter(baseUrl, apiKey);
+}
 
 /**
  * Returns the active broker adapter, picked from the BROKER env var. Used as
@@ -23,6 +35,11 @@ export function getBroker(): BrokerAdapter {
       return nse;
     case "angel":
       return angel;
+    case "openalgo": {
+      const adapter = getOpenAlgoAdapter();
+      if (!adapter) throw new Error("OPENALGO_BASE_URL and OPENALGO_API_KEY must be set when INDIA_BROKER=openalgo");
+      return adapter;
+    }
     case "yahoo":
     default:
       return yahoo;
@@ -64,6 +81,8 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
       return groww;
     case "angel":
       return angel;
+    case "openalgo":
+      return getOpenAlgoAdapter();
     // bse + zerodha are catalogued in the UI but not yet implemented; the
     // resolver returns null so the caller can fall back to a default.
     default:

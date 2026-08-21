@@ -18,6 +18,7 @@ import {
   Radar,
   Sparkles,
   Trophy,
+  TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -92,6 +93,7 @@ export const INDIA_NAV: NavItem[] = [
   { href: "/in/scanner", label: "Scanner", icon: Radar },
   { href: "/in/watchlist", label: "Watchlist", icon: Eye },
   { href: "/in/chart/RELIANCE", label: "Chart", icon: BarChart3 },
+  { href: "/in/options-workbench", label: "Options Workbench", icon: TrendingUp },
 ];
 
 function isItemActive(item: NavItem, pathname: string | null): boolean {
