@@ -10,6 +10,7 @@ import type {
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
+import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { yahoo } from "@/services/india/yahoo";
 import type { Candle } from "@/types/india/market";
 
@@ -129,6 +130,11 @@ export function startIndiaScalperJob(): JobHandle {
       runOnStart: false,
       tick: async () => {
         const child = log.child("tick");
+
+        // All India paper trades are intraday only — skip entirely outside
+        // the NSE session (09:15–15:30 IST, Mon–Fri).
+        if (!isNseMarketOpenIST(new Date())) return;
+
         const prisma = getPrisma();
 
         let opened = 0;
