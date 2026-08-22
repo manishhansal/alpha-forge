@@ -55,8 +55,8 @@ function ConditionBadge({ label, detail }: { label: string; detail: string }) {
   );
 }
 
-// chevron + Symbol + Price + Chg% + ADX·RSI = 5
-const COL_SPAN = 5;
+// chevron + Symbol + Price + Chg% + Entry + SL + TP1 + ADX·RSI = 8
+const COL_SPAN = 8;
 
 /**
  * FnoBullishTrendSection
@@ -236,7 +236,12 @@ export function FnoBullishTrendSection() {
               <thead>
                 <SignalTableHead
                   extraTrailHeaders={
-                    <th className="p-2.5 text-right font-medium">ADX · RSI</th>
+                    <>
+                      <th className="p-2.5 text-right font-medium">Entry</th>
+                      <th className="p-2.5 text-right font-medium">SL</th>
+                      <th className="p-2.5 text-right font-medium">TP1</th>
+                      <th className="p-2.5 text-right font-medium">ADX · RSI</th>
+                    </>
                   }
                 />
               </thead>
@@ -255,9 +260,20 @@ export function FnoBullishTrendSection() {
                         )
                       }
                       extraTrailCells={
-                        <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
-                          {hit.metricLabel}
-                        </td>
+                        <>
+                          <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
+                            {hit.entry != null ? `₹${hit.entry.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
+                            {hit.stopLoss != null ? `₹${hit.stopLoss.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
+                            {hit.tp1 != null ? `₹${hit.tp1.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
+                            {hit.metricLabel}
+                          </td>
+                        </>
                       }
                     />
                   ))}

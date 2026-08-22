@@ -822,6 +822,26 @@ function macd(
   return { line, signalLine: signalEma, histogram: line - signalEma };
 }
 
+// ─── Wilder ATR for level computation ──────────────────────────────────────
+function wilderAtr(candles: Candle[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    trs.push(trueRange(candles[i], candles[i - 1]));
+  }
+  let val = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    val = (val * (period - 1) + trs[i]) / period;
+  }
+  return val;
+}
+
+// ─── Intraday level profiles (matches AI engine HORIZON_PROFILE.intraday) ───
+const INTRADAY_SL_MULT   = 1.4;
+const INTRADAY_TP1_MULT  = 1.6;
+const INTRADAY_TP2_MULT  = 2.6;
+const INTRADAY_TP3_MULT  = 4.0;
+
 type FnoBullishTrendRow = {
   symbol: string;
   close: number;
@@ -836,6 +856,7 @@ type FnoBullishTrendRow = {
   sma20: number;
   sma50: number;
   conditionsMet: number; // out of 14
+  atr14: number;         // Wilder ATR(14) for level computation
 };
 
 async function evaluateFnoBullishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
@@ -917,6 +938,7 @@ async function evaluateFnoBullishTrend(symbol: string): Promise<FnoBullishTrendR
     sma20,
     sma50,
     conditionsMet,
+    atr14: wilderAtr(candles, 14) ?? 0,
   };
 }
 
@@ -939,19 +961,33 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
     .sort((a, b) => b.changePct - a.changePct)
     .slice(0, limit);
 
-  const hits: ScannerHit[] = sorted.map((r) => ({
-    symbol: r.symbol,
-    price: r.close,
-    changePct: r.changePct,
-    volume: r.volume,
-    metric: r.adxVal,
-    metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
-    kind: "BULLISH",
-    note:
-      `DI+ ${r.diPlus.toFixed(1)} / DI− ${r.diMinus.toFixed(1)} · ` +
-      `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
-      `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
-  }));
+  const hits: ScannerHit[] = sorted.map((r) => {
+    const atr   = r.atr14 > 0 ? r.atr14 : 0;
+    const entry    = r.close;
+    const stopLoss = entry - INTRADAY_SL_MULT  * atr;
+    const tp1      = entry + INTRADAY_TP1_MULT * atr;
+    const tp2      = entry + INTRADAY_TP2_MULT * atr;
+    const tp3      = entry + INTRADAY_TP3_MULT * atr;
+    return {
+      symbol: r.symbol,
+      price: r.close,
+      changePct: r.changePct,
+      volume: r.volume,
+      metric: r.adxVal,
+      metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
+      kind: "BULLISH",
+      note:
+        `DI+ ${r.diPlus.toFixed(1)} / DI− ${r.diMinus.toFixed(1)} · ` +
+        `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
+        `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
+      entry,
+      stopLoss,
+      tp1,
+      tp2,
+      tp3,
+      atr: atr > 0 ? atr : null,
+    };
+  });
 
   return {
     type: "fno-bullish-trend",
@@ -1054,6 +1090,7 @@ async function evaluateFnoBearishTrend(symbol: string): Promise<FnoBullishTrendR
     sma20,
     sma50,
     conditionsMet,
+    atr14: wilderAtr(candles, 14) ?? 0,
   };
 }
 
@@ -1076,19 +1113,33 @@ async function runFnoBearishTrend(limit: number): Promise<ScannerResult> {
     .sort((a, b) => a.changePct - b.changePct)
     .slice(0, limit);
 
-  const hits: ScannerHit[] = sorted.map((r) => ({
-    symbol: r.symbol,
-    price: r.close,
-    changePct: r.changePct,
-    volume: r.volume,
-    metric: r.adxVal,
-    metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
-    kind: "BEARISH",
-    note:
-      `DI− ${r.diMinus.toFixed(1)} / DI+ ${r.diPlus.toFixed(1)} · ` +
-      `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
-      `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
-  }));
+  const hits: ScannerHit[] = sorted.map((r) => {
+    const atr   = r.atr14 > 0 ? r.atr14 : 0;
+    const entry    = r.close;
+    const stopLoss = entry + INTRADAY_SL_MULT  * atr;   // short: SL above entry
+    const tp1      = entry - INTRADAY_TP1_MULT * atr;   // short: targets below
+    const tp2      = entry - INTRADAY_TP2_MULT * atr;
+    const tp3      = entry - INTRADAY_TP3_MULT * atr;
+    return {
+      symbol: r.symbol,
+      price: r.close,
+      changePct: r.changePct,
+      volume: r.volume,
+      metric: r.adxVal,
+      metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
+      kind: "BEARISH",
+      note:
+        `DI− ${r.diMinus.toFixed(1)} / DI+ ${r.diPlus.toFixed(1)} · ` +
+        `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
+        `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
+      entry,
+      stopLoss,
+      tp1,
+      tp2,
+      tp3,
+      atr: atr > 0 ? atr : null,
+    };
+  });
 
   return {
     type: "fno-bearish-trend",

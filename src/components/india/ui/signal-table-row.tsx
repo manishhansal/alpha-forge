@@ -41,6 +41,18 @@ export type SignalRow = {
   metricLabel: string;
   kind?: string;
   note?: string;
+  /** Suggested entry price */
+  entry?: number | null;
+  /** Stop loss level */
+  stopLoss?: number | null;
+  /** Take-profit 1 */
+  tp1?: number | null;
+  /** Take-profit 2 */
+  tp2?: number | null;
+  /** Take-profit 3 / stretch */
+  tp3?: number | null;
+  /** ATR used for level computation */
+  atr?: number | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,6 +166,67 @@ function DetailPanel({
 
           {/* ── Right: note + actions ──────────────────────────────── */}
           <div className="flex flex-1 flex-col justify-between gap-2 min-w-0">
+            {/* Trade levels — entry / SL / TP */}
+            {(hit.entry != null || hit.stopLoss != null || hit.tp1 != null) && (
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[11px]">
+                {hit.entry != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">Entry</span>
+                    <span className="font-semibold tabular text-[var(--color-fg)]">₹{fmt(hit.entry)}</span>
+                  </div>
+                )}
+                {hit.stopLoss != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">Stop Loss</span>
+                    <span className="font-semibold tabular text-rose-600 dark:text-rose-400">₹{fmt(hit.stopLoss)}</span>
+                    {hit.entry != null && (
+                      <span className="text-[10px] tabular text-rose-500">
+                        {(((hit.stopLoss - hit.entry) / hit.entry) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {hit.tp1 != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP1</span>
+                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp1)}</span>
+                    {hit.entry != null && (
+                      <span className="text-[10px] tabular text-emerald-500">
+                        +{(((hit.tp1 - hit.entry) / hit.entry) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {hit.tp2 != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP2</span>
+                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp2)}</span>
+                    {hit.entry != null && (
+                      <span className="text-[10px] tabular text-emerald-500">
+                        +{(((hit.tp2 - hit.entry) / hit.entry) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {hit.tp3 != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP3 (Stretch)</span>
+                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp3)}</span>
+                    {hit.entry != null && (
+                      <span className="text-[10px] tabular text-emerald-500">
+                        +{(((hit.tp3 - hit.entry) / hit.entry) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {hit.atr != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">ATR(14)</span>
+                    <span className="font-semibold tabular text-[var(--color-fg-muted)]">₹{fmt(hit.atr)}</span>
+                  </div>
+                )}
+              </div>
+            )}
             {hit.note && (
               <p className="text-[11px] text-[var(--color-fg-muted)] break-words">
                 {hit.note}

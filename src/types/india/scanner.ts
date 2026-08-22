@@ -25,6 +25,18 @@ export type ScannerHit = {
   metricLabel: string;
   kind?: OiBuildupKind | string;
   note?: string;
+  /** Suggested entry price (last close for screener hits). */
+  entry?: number | null;
+  /** ATR-based stop loss level. */
+  stopLoss?: number | null;
+  /** Take-profit 1 (1.6×ATR for intraday). */
+  tp1?: number | null;
+  /** Take-profit 2 (2.6×ATR for intraday). */
+  tp2?: number | null;
+  /** Take-profit 3 / stretch target (4.0×ATR for intraday). */
+  tp3?: number | null;
+  /** ATR(14) used to compute the levels. */
+  atr?: number | null;
 };
 
 export type ScannerResult = {
