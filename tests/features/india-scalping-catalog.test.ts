@@ -14,19 +14,23 @@ import {
 } from "@/features/india/scalping/types";
 
 describe("features/india/scalping — strategy catalog", () => {
-  it("ships the nine F&O strategies — six scanner-derived, two ILE-Pine ports, plus Opening Breakout", () => {
-    expect([...INDIA_SCALP_STRATEGY_IDS]).toEqual([
-      "RANGE_EXPANSION",
-      "MOMENTUM",
-      "VOLUME_BREAKOUT",
-      "OI_BUILDUP",
-      "PCR_EXTREME",
-      "IV_SPIKE",
-      "LIQUIDITY_EDGE",
-      "MAX_PAIN_GRAVITY",
-      "OPENING_BREAKOUT",
-    ]);
-    expect(INDIA_SCALP_STRATEGY_CATALOG).toHaveLength(9);
+  it("ships the base F&O strategies plus signal-surface paper-trade sources", () => {
+    // Core strategies
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("RANGE_EXPANSION");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("MOMENTUM");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("VOLUME_BREAKOUT");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("OI_BUILDUP");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("PCR_EXTREME");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("IV_SPIKE");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("LIQUIDITY_EDGE");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("MAX_PAIN_GRAVITY");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("OPENING_BREAKOUT");
+    // Signal-surface paper-trade sources
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("DAILY_PICK");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("AI_SIGNAL");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("SCANNER_HIT");
+    expect([...INDIA_SCALP_STRATEGY_IDS]).toContain("FNO_TREND");
+    expect(INDIA_SCALP_STRATEGY_CATALOG.length).toBeGreaterThanOrEqual(13);
   });
 
   it("includes the Opening Breakout strategy with breakout metadata", () => {

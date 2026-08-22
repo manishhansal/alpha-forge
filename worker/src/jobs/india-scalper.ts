@@ -44,9 +44,10 @@ const INDICATOR_CONFIG: IndicatorConfig = {
 
 /** NSE interval string → India yahoo interval map */
 const TF_TO_INTERVAL: Record<IndiaScalpTimeframe, "1m" | "5m" | "15m"> = {
-  "1m": "1m",
-  "5m": "5m",
+  "1m":  "1m",
+  "5m":  "5m",
   "15m": "15m",
+  "1d":  "5m",  // daily-based signals use 5m candles for intraday tracking
 };
 
 /**

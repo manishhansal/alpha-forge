@@ -89,9 +89,10 @@ describe("features/india/scalping/journal — source-prefix segregation", () => 
     const call = calls.find((c) => c.fn === "findMany");
     const where = getSourceWhere(call!.args.where);
     expect(where).not.toBeNull();
-    // 3 timeframes × 1 strategy = 3 sources.
+    // 4 timeframes × 1 strategy = 4 sources.
     expect(where!.source.in.sort()).toEqual([
       "in:MOMENTUM:15m",
+      "in:MOMENTUM:1d",
       "in:MOMENTUM:1m",
       "in:MOMENTUM:5m",
     ]);

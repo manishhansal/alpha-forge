@@ -2,20 +2,7 @@
 
 /**
  * SignalTableRow + SignalDetailPanel
- *
- * A shared, reusable table-row component used by every Indian-market signal
- * list. Compact by default; expands inline on click to show the full detail
- * panel — TradingView link, metric breakdown, notes, and quick actions.
- *
- * Usage:
- *   <tbody>
- *     {items.map((hit) => (
- *       <SignalTableRow key={hit.symbol} hit={hit} colSpan={N} />
- *     ))}
- *   </tbody>
- *
- * `extraCols` lets callers inject additional <td> cells (e.g. Source badge,
- * Side badge) before the standard Symbol/Price/Chg% columns.
+ * ...
  */
 
 import * as React from "react";
@@ -29,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { fmt, fmtPct } from "@/lib/india/format";
 import { useIndiaWatchlistStore } from "@/store/india/watchlistStore";
+import { PaperTradeButton } from "@/components/india/paper-trading/paper-trade-button";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +41,11 @@ export type SignalRow = {
   tp3?: number | null;
   /** ATR used for level computation */
   atr?: number | null;
+  /**
+   * Strategy ID to use when opening a paper trade from this row.
+   * Defaults to "SCANNER_HIT" when not specified.
+   */
+  paperTradeStrategyId?: string;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -256,6 +249,27 @@ function DetailPanel({
                 <PlusCircle className="h-3 w-3" />
                 Watchlist
               </button>
+              {/* Paper trade button — only when entry/SL/target are available */}
+              {hit.entry != null && hit.stopLoss != null && hit.tp1 != null && (
+                <PaperTradeButton
+                  size="xs"
+                  payload={{
+                    strategyId: (hit.paperTradeStrategyId ?? "SCANNER_HIT") as import("@/features/india/scalping/strategies/catalog").IndiaScalpStrategyId,
+                    symbol:     sym,
+                    direction:  (hit.kind === "BEARISH" || hit.kind === "SHORT_BUILDUP" || hit.kind === "LOSER" || hit.kind === "BEAR_VOLUME" || hit.kind === "LONG_UNWINDING")
+                                  ? "SHORT" : "LONG",
+                    entry:      hit.entry,
+                    stopLoss:   hit.stopLoss,
+                    target:     hit.tp1,
+                    riskReward: hit.tp1 > 0 && hit.entry > 0 && hit.stopLoss > 0
+                                  ? Math.abs(hit.tp1 - hit.entry) / Math.abs(hit.stopLoss - hit.entry)
+                                  : 1,
+                    atr:        hit.atr ?? null,
+                    rationale:  hit.note ? [hit.note] : [],
+                    extras:     { kind: hit.kind ?? null, metric: hit.metricLabel },
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

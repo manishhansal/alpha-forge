@@ -35,6 +35,7 @@ import type {
 } from "@/features/india/daily-picks/engine";
 import type { DailyPicksResponse } from "@/features/india/daily-picks/builder";
 import { MarketContextPanel } from "./market-context-panel";
+import { PaperTradeButton } from "@/components/india/paper-trading/paper-trade-button";
 
 interface Props {
   initialData: DailyPicksResponse;
@@ -252,6 +253,21 @@ function PickDetail({ pick, colSpan }: { pick: DailyPick; colSpan: number }) {
             >
               Chart
             </a>
+            <PaperTradeButton
+              payload={{
+                strategyId:  "DAILY_PICK",
+                symbol:      pick.symbol.replace(".NS", ""),
+                symbolName:  pick.displayName,
+                direction:   pick.direction === "BEARISH" ? "SHORT" : "LONG",
+                entry:       pick.entry,
+                stopLoss:    pick.stopLoss,
+                target:      pick.target,
+                riskReward:  pick.riskReward,
+                confidence:  pick.confidence,
+                rationale:   pick.rationale,
+                extras:      { bucket: pick.bucket, grade: pick.grade },
+              }}
+            />
           </div>
         </div>
       </td>

@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { AiMarketContextBanner } from "./ai-market-context-banner";
 import type { AiSignal, AiSignalsResponse, AiGrade } from "@/types/ai-signals";
+import { PaperTradeButton } from "@/components/india/paper-trading/paper-trade-button";
 
 interface Props {
   initialData: AiSignalsResponse;
@@ -232,6 +233,24 @@ function AiSignalDetail({ signal, currency, colSpan }: { signal: AiSignal; curre
             >
               Chart
             </a>
+            {signal.market === "india" && (
+              <PaperTradeButton
+                payload={{
+                  strategyId:  "AI_SIGNAL",
+                  symbol:      signal.symbol.replace(".NS", ""),
+                  symbolName:  signal.displayName,
+                  direction:   signal.direction === "BEARISH" ? "SHORT" : "LONG",
+                  entry:       signal.entry,
+                  stopLoss:    signal.stopLoss,
+                  target:      signal.takeProfits?.[0]?.price ?? signal.entry,
+                  riskReward:  signal.riskReward,
+                  atr:         null,
+                  confidence:  signal.confidence,
+                  rationale:   signal.reasons?.map((r) => r.text) ?? [],
+                  extras:      { grade: signal.grade, horizon: signal.horizon },
+                }}
+              />
+            )}
           </div>
         </div>
       </td>

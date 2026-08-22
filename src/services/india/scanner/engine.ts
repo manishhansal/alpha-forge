@@ -986,6 +986,7 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
       tp2,
       tp3,
       atr: atr > 0 ? atr : null,
+      paperTradeStrategyId: "FNO_TREND",
     };
   });
 
@@ -1138,6 +1139,7 @@ async function runFnoBearishTrend(limit: number): Promise<ScannerResult> {
       tp2,
       tp3,
       atr: atr > 0 ? atr : null,
+      paperTradeStrategyId: "FNO_TREND",
     };
   });
 

@@ -37,6 +37,8 @@ export type ScannerHit = {
   tp3?: number | null;
   /** ATR(14) used to compute the levels. */
   atr?: number | null;
+  /** Strategy ID to use when opening a paper trade from this signal. */
+  paperTradeStrategyId?: string;
 };
 
 export type ScannerResult = {

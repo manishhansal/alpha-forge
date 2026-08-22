@@ -21,13 +21,16 @@ export type IndiaScalpDirection = "LONG" | "SHORT";
  * we wrap today, the timeframe is largely cosmetic because the underlying
  * scans run on daily / 15m option-chain snapshots. When the proper F&O
  * paper-trader lands it'll use these as the actual bar interval.
+ * `"1d"` is used for manual paper trades opened from signal surfaces
+ * (Daily Picks, AI Signals, Scanner) where the signal is daily-bar-based.
  */
-export type IndiaScalpTimeframe = "1m" | "5m" | "15m";
+export type IndiaScalpTimeframe = "1m" | "5m" | "15m" | "1d";
 
 export const INDIA_SCALP_TIMEFRAMES: ReadonlyArray<IndiaScalpTimeframe> = [
   "1m",
   "5m",
   "15m",
+  "1d",
 ];
 
 /** Re-exported here so consumers can import everything from one place. */
