@@ -14,6 +14,7 @@ import { useTheme } from "@/components/theme-provider";
 import type { Candle, Interval } from "@/types/india";
 import { AnchoredVwapPlugin, type VwapChartBar } from "./plugins/anchored-vwap";
 import { VolumeProfilePlugin, type ProfileBarWithTime } from "./plugins/volume-profile";
+import { SuperConfluencePlugin } from "./plugins/super-confluence-plugin";
 
 type Props = {
   symbol: string;
@@ -95,6 +96,7 @@ export function PriceChart({
   // Plugin instances — stable across data reloads; recreated only when chart is destroyed
   const vwapPluginRef    = React.useRef<AnchoredVwapPlugin | null>(null);
   const profilePluginRef = React.useRef<VolumeProfilePlugin | null>(null);
+  const scPluginRef      = React.useRef<SuperConfluencePlugin | null>(null);
 
   const [interval, setInterval] = React.useState<Interval>(initialInterval);
   const [range, setRange]       = React.useState<string>(initialRange);
@@ -104,6 +106,7 @@ export function PriceChart({
   // Toolbar plugin toggles
   const [vwapActive,    setVwapActive]    = React.useState(false);
   const [profileActive, setProfileActive] = React.useState(false);
+  const [scActive,      setScActive]      = React.useState(false);
 
   const { resolvedTheme } = useTheme();
 
@@ -155,6 +158,7 @@ export function PriceChart({
     // Initialise plugin instances (not yet attached — wait for toolbar toggle)
     vwapPluginRef.current    = new AnchoredVwapPlugin();
     profilePluginRef.current = new VolumeProfilePlugin();
+    scPluginRef.current      = new SuperConfluencePlugin();
 
     const ro = new ResizeObserver((entries) => {
       if (!chartRef.current) return;
@@ -168,8 +172,10 @@ export function PriceChart({
       // Detach plugins before destroying chart
       vwapPluginRef.current?.detach();
       profilePluginRef.current?.detach();
+      scPluginRef.current?.detach();
       vwapPluginRef.current    = null;
       profilePluginRef.current = null;
+      scPluginRef.current      = null;
       chart.remove();
       chartRef.current  = null;
       candleRef.current = null;
@@ -278,7 +284,12 @@ export function PriceChart({
       }));
       profilePluginRef.current.updateData(profileBars, { tickSize: tickSizeForSymbol(symbol) });
     }
-  }, [candles, vwapActive, profileActive, symbol]);
+
+    // Update Super Confluence plugin data if active
+    if (scActive && scPluginRef.current) {
+      scPluginRef.current.updateData(candles);
+    }
+  }, [candles, vwapActive, profileActive, scActive, symbol]);
 
   // ── VWAP toggle handler ──────────────────────────────────────────────────
 
@@ -338,6 +349,27 @@ export function PriceChart({
     }
   }, [profileActive, candles, symbol, resolvedTheme]);
 
+  // ── Super Confluence toggle handler ───────────────────────────────────────
+
+  const handleScToggle = React.useCallback(() => {
+    const nextActive = !scActive;
+    setScActive(nextActive);
+
+    if (!scPluginRef.current || !chartRef.current || !candleRef.current) return;
+
+    if (nextActive) {
+      scPluginRef.current.attach(
+        chartRef.current,
+        candleRef.current,
+        candles ?? [],
+      );
+    } else {
+      scPluginRef.current.detach();
+      // Re-create so it is ready for the next attach
+      scPluginRef.current = new SuperConfluencePlugin();
+    }
+  }, [scActive, candles]);
+
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
@@ -391,6 +423,20 @@ export function PriceChart({
           }`}
         >
           Profile
+        </button>
+
+        {/* Super Confluence toggle */}
+        <button
+          onClick={handleScToggle}
+          aria-pressed={scActive}
+          title="Super Confluence Engine — UT Bot + AI Neural Trend + SMC Structure. Highlights high-confidence entries (entry, stop, targets) and eliminates fake signals by requiring all three systems to agree."
+          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+            scActive
+              ? "bg-lime-500/20 text-lime-600 dark:text-lime-400 ring-1 ring-lime-500/40"
+              : "bg-muted text-muted-foreground hover:bg-muted/70"
+          }`}
+        >
+          🔥 SC
         </button>
 
         {error && (

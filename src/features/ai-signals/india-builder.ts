@@ -66,6 +66,7 @@ import {
   type MLContextInputs,
 } from "@/lib/india/ml-enhanced-context";
 import type { MLStockRank } from "@/lib/india/ml-client";
+import { computeSuperConfluence } from "@/features/india/indicators/super-confluence";
 
 // Daily Picks rescans the full F&O universe on this cadence — bumped to a
 // minute per the spec ("scan all F&O stocks every minute"). The minute is the
@@ -631,6 +632,13 @@ interface IndiaSignalInputs {
    * not altered, only the final confidence is nudged.
    */
   mlRankBoost?: number;
+  /**
+   * Super Confluence Engine score in [-1, 1].
+   * +1 = fresh UT Buy + AI trend bullish + SMC bullish (triple agreement).
+   * -1 = fresh UT Sell + AI trend bearish + SMC bearish.
+   * Null when candle history is too short for the indicator warmup.
+   */
+  superConfluenceScore?: number | null;
 }
 
 /**
@@ -937,6 +945,27 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
         args.inActiveWindow
           ? `Inside ${args.windowLabel} — F&O liquidity active`
           : `Outside ${args.windowLabel} — wait for market open`,
+    }),
+    makeFactor({
+      id: "superConfluence",
+      category: "technical",
+      label: "Super Confluence (UT+AI+SMC)",
+      // Weighted at 0.10 — same tier as scanner agreement. The three-way
+      // filter is a strong fake-signal eliminator: a signal that passes all
+      // three (score ≥ 0.9) gets a meaningful confidence boost; a signal that
+      // contradicts the engine (score ≤ -0.5) gets penalised.
+      weight: 0.10,
+      raw: args.superConfluenceScore ?? null,
+      denominator: 1,
+      describe: () => {
+        const s = args.superConfluenceScore;
+        if (s == null) return "Unavailable — insufficient history";
+        if (s >= 0.9)  return "🔥 Super Buy — UT Bot + AI Neural + SMC all bullish";
+        if (s <= -0.9) return "🔥 Super Sell — UT Bot + AI Neural + SMC all bearish";
+        if (s >= 0.4)  return `Partial bullish confluence (score ${s.toFixed(2)})`;
+        if (s <= -0.4) return `Partial bearish confluence (score ${s.toFixed(2)})`;
+        return `Weak confluence (score ${s.toFixed(2)}) — mixed signals`;
+      },
     }),
   ];
 
@@ -1687,6 +1716,16 @@ async function computeIndiaUniverse(
         : null,
       quantPrefilterPassed: prefilter.passes,
       mlRankBoost,
+      superConfluenceScore: (() => {
+        // Compute on demand — daily candles already in memory. Fail-soft so
+        // a single symbol's indicator warmup failure never blocks the board.
+        try {
+          const sc = computeSuperConfluence(dailies);
+          return sc?.score ?? null;
+        } catch {
+          return null;
+        }
+      })(),
     });
   });
 
