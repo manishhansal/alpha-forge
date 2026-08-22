@@ -3,6 +3,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
+import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { yahoo } from "@/services/india/yahoo";
 
 import {
@@ -37,7 +38,8 @@ export type OpenIndiaTradeReason =
   | "fired"
   | "duplicate-signal"
   | "already-open"
-  | "expiry-cooldown";
+  | "expiry-cooldown"
+  | "market-closed";
 
 export interface OpenIndiaTradeResult {
   opened: boolean;
@@ -64,6 +66,13 @@ export async function openIndiaPaperTrade(
 ): Promise<OpenIndiaTradeResult> {
   const prisma = opts.prisma ?? getPrisma();
   const now = opts.now ?? new Date();
+
+  // All India paper trades are strictly intraday — refuse to open outside
+  // the NSE session (09:15–15:30 IST, Mon–Fri), even if the caller forgot
+  // to check. This is a second line of defence after the worker-level guard.
+  if (!isNseMarketOpenIST(now)) {
+    return { opened: false, reason: "market-closed" };
+  }
 
   if (isExpiryCooldownIST(now)) {
     return { opened: false, reason: "expiry-cooldown" };
