@@ -146,7 +146,7 @@ describe("worker/config", () => {
       });
       expect(workerConfig.signalIngest.intervalMs).toBe(60_000);
       expect(workerConfig.alerts.intervalMs).toBe(30_000);
-      expect(workerConfig.indiaDailyPicks.intervalMs).toBe(5 * 60_000);
+      expect(workerConfig.indiaDailyPicks.intervalMs).toBe(60_000);
     });
 
     it("parses integer overrides", async () => {

@@ -25,7 +25,7 @@ export function startIndiaDailyPicksJob(): JobHandle {
     {
       name: "india-daily-picks",
       intervalMs: workerConfig.indiaDailyPicks.intervalMs,
-      runOnStart: false,
+      runOnStart: true,
       tick: async () => {
         const child = log.child("tick");
         if (!isNseMarketOpenIST(new Date())) return;
