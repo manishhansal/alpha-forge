@@ -90,9 +90,7 @@ function HitRow({ hit, index }: { hit: ScannerHit; index: number }) {
             : "text-rose-600 dark:text-rose-400",
         )}
       >
-        {hit.changePct != null
-          ? `${up ? "+" : ""}${fmtPct(hit.changePct / 100)}`
-          : "—"}
+        {hit.changePct != null ? fmtPct(hit.changePct) : "—"}
       </td>
 
       {/* ADX · RSI */}
