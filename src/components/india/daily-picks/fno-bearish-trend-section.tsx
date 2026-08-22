@@ -114,7 +114,8 @@ export function FnoBearishTrendSection() {
               FnO Bearish Trend Scanner
             </h2>
             <p className="text-[11px] text-[var(--color-fg-subtle)]">
-              Daily F&amp;O stocks · Moving Average + ADX + MACD · all 14 bearish conditions met
+              Daily F&amp;O stocks · Moving Average + ADX + MACD · all 14 bearish conditions met ·{" "}
+              <span className="font-medium text-amber-600 dark:text-amber-400">Daily setup — not intraday</span>
             </p>
           </div>
         </div>

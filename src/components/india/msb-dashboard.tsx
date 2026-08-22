@@ -1541,7 +1541,8 @@ function RangeExpansionSection() {
               <p className="text-[11px] text-muted-foreground">
                 F&amp;O longs: today&apos;s H−L is the widest of 8 sessions,
                 bullish D/W/M, SMA 20&gt;50&gt;200, vol ≥ 1.5× avg, close in
-                upper half of range.
+                upper half of range.{" "}
+                <span className="font-medium text-amber-600 dark:text-amber-400">Daily setup — swing / next-session, not intraday.</span>
               </p>
             </div>
           </div>
@@ -1910,7 +1911,8 @@ function TopPicksSection() {
               </h2>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 Highest-conviction NSE F&amp;O picks ranked by quant score across
-                all sectors — review after market close.
+                all sectors — review after market close.{" "}
+                <span className="font-medium text-amber-600 dark:text-amber-400">Swing / Next session — not intraday.</span>
               </p>
             </div>
           </div>

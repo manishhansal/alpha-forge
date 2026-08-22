@@ -418,7 +418,12 @@ function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
           <Icon className="h-4 w-4" />
         </span>
         <div className="flex flex-col">
-          <h2 className="text-sm font-semibold text-[var(--color-fg)]">{group.label}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-[var(--color-fg)]">{group.label}</h2>
+            <span className="rounded-full bg-[color-mix(in_oklch,var(--color-bull)_12%,transparent)] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-bull)_25%,transparent)]">
+              Intraday
+            </span>
+          </div>
           <p className="text-[11px] text-[var(--color-fg-subtle)]">{group.description}</p>
         </div>
       </div>

@@ -42,19 +42,21 @@ const DIRECTION_OPTIONS: Array<{
   { id: "wait",    label: "Wait",    icon: Pause         },
 ];
 
-const HORIZON_OPTIONS: Array<{ id: AiSignal["horizon"] | "all"; label: string }> = [
-  { id: "all",         label: "Any horizon"  },
-  { id: "scalp",       label: "Scalp"        },
-  { id: "intraday",    label: "Intraday"     },
-  { id: "swing",       label: "Swing"        },
-  { id: "positional",  label: "Positional"   },
+const HORIZON_OPTIONS: Array<{ id: AiSignal["horizon"] | "all" | "intraday+scalp"; label: string }> = [
+  { id: "intraday+scalp", label: "Intraday (default)" },
+  { id: "all",            label: "All horizons"        },
+  { id: "scalp",          label: "Scalp only"          },
+  { id: "intraday",       label: "Intraday only"       },
+  { id: "swing",          label: "Swing"               },
+  { id: "positional",     label: "Positional"          },
 ];
 
 const STORAGE_KEY_DIR     = "ai-signals:dir";
 const STORAGE_KEY_HORIZON = "ai-signals:horizon";
 
-const VALID_DIRECTIONS: DirectionFilter[]                  = ["all", "bullish", "bearish", "wait"];
-const VALID_HORIZONS:   Array<AiSignal["horizon"] | "all"> = ["all", "scalp", "intraday", "swing", "positional"];
+const VALID_DIRECTIONS: DirectionFilter[] = ["all", "bullish", "bearish", "wait"];
+const VALID_HORIZONS = ["intraday+scalp", "all", "scalp", "intraday", "swing", "positional"] as const;
+type HorizonFilter = (typeof VALID_HORIZONS)[number];
 
 // ─── localStorage helpers ────────────────────────────────────────────────────
 
@@ -398,7 +400,7 @@ export function AiSignalsBoard({
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
 
   const [directionFilter, setDirectionFilter] = usePersistedFilter(STORAGE_KEY_DIR, VALID_DIRECTIONS, "all");
-  const [horizonFilter,   setHorizonFilter]   = usePersistedFilter(STORAGE_KEY_HORIZON, VALID_HORIZONS, "all");
+  const [horizonFilter,   setHorizonFilter]   = usePersistedFilter(STORAGE_KEY_HORIZON, VALID_HORIZONS, "intraday+scalp");
 
   const refresh = React.useCallback(async (sig?: AbortSignal) => {
     setRefreshing(true);
@@ -425,7 +427,12 @@ export function AiSignalsBoard({
         if (directionFilter === "bullish" && s.direction !== "BULLISH") return false;
         if (directionFilter === "bearish" && s.direction !== "BEARISH") return false;
         if (directionFilter === "wait"    && s.action    !== "WAIT")    return false;
-        if (horizonFilter !== "all"       && s.horizon   !== horizonFilter) return false;
+        // Horizon filter — "intraday+scalp" is the intraday-only default
+        if (horizonFilter === "intraday+scalp") {
+          if (s.horizon !== "intraday" && s.horizon !== "scalp") return false;
+        } else if (horizonFilter !== "all") {
+          if (s.horizon !== horizonFilter) return false;
+        }
         return true;
       })
       .slice()
@@ -475,7 +482,7 @@ export function AiSignalsBoard({
         <div className="flex items-center gap-2">
           <select
             value={horizonFilter}
-            onChange={(e) => setHorizonFilter(e.target.value as AiSignal["horizon"] | "all")}
+            onChange={(e) => setHorizonFilter(e.target.value as HorizonFilter)}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11px] text-[var(--color-fg-muted)] outline-none focus:border-[var(--color-border-strong)]"
           >
             {HORIZON_OPTIONS.map((opt) => (
