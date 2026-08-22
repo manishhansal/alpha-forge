@@ -51,6 +51,12 @@ export interface SuperConfluenceTheme {
   swingHigh:    string;
   /** SMC swing-low line colour */
   swingLow:     string;
+  /** EMA 9 line colour */
+  ema9:         string;
+  /** EMA 15 line colour */
+  ema15:        string;
+  /** EMA 21 line colour */
+  ema21:        string;
 }
 
 const DEFAULT_THEME: SuperConfluenceTheme = {
@@ -62,6 +68,9 @@ const DEFAULT_THEME: SuperConfluenceTheme = {
   superSell: "#e040fb",   // fuchsia
   swingHigh: "#ef5350",   // red-400
   swingLow:  "#42a5f5",   // blue-400
+  ema9:      "#fbbf24",   // amber-400  — fastest, brightest
+  ema15:     "#f59e0b",   // amber-500  — medium
+  ema21:     "#d97706",   // amber-600  — slowest, darkest
 };
 
 
@@ -79,6 +88,9 @@ export class SuperConfluencePlugin {
   private utTrailBearSeries: ISeriesApi<"Line"> | null = null;
   private swingHighSeries:   ISeriesApi<"Line"> | null = null;
   private swingLowSeries:    ISeriesApi<"Line"> | null = null;
+  private ema9Series:        ISeriesApi<"Line"> | null = null;
+  private ema15Series:       ISeriesApi<"Line"> | null = null;
+  private ema21Series:       ISeriesApi<"Line"> | null = null;
 
   // v5 markers plugin (replaces the removed series.setMarkers API)
   private markersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
@@ -155,6 +167,32 @@ export class SuperConfluencePlugin {
     // Create the v5 markers plugin on the price series
     this.markersPlugin = createSeriesMarkers(priceSeries, []);
 
+    // EMA 9 / 15 / 21 — entry & exit confirmation
+    this.ema9Series = chart.addSeries(LineSeries, {
+      color:             this.theme.ema9,
+      lineWidth:         1,
+      title:             "EMA 9",
+      priceLineVisible:  false,
+      lastValueVisible:  true,
+      lineStyle:         0,
+    });
+    this.ema15Series = chart.addSeries(LineSeries, {
+      color:             this.theme.ema15,
+      lineWidth:         1,
+      title:             "EMA 15",
+      priceLineVisible:  false,
+      lastValueVisible:  true,
+      lineStyle:         0,
+    });
+    this.ema21Series = chart.addSeries(LineSeries, {
+      color:             this.theme.ema21,
+      lineWidth:         1,
+      title:             "EMA 21",
+      priceLineVisible:  false,
+      lastValueVisible:  true,
+      lineStyle:         0,
+    });
+
     this.updateData(candles);
   }
 
@@ -172,6 +210,9 @@ export class SuperConfluencePlugin {
     remove(this.utTrailBearSeries);
     remove(this.swingHighSeries);
     remove(this.swingLowSeries);
+    remove(this.ema9Series);
+    remove(this.ema15Series);
+    remove(this.ema21Series);
 
     // Dispose markers plugin
     this.markersPlugin?.detach();
@@ -185,6 +226,9 @@ export class SuperConfluencePlugin {
     this.utTrailBearSeries = null;
     this.swingHighSeries   = null;
     this.swingLowSeries    = null;
+    this.ema9Series        = null;
+    this.ema15Series       = null;
+    this.ema21Series       = null;
     this.chart             = null;
   }
 
@@ -215,6 +259,9 @@ export class SuperConfluencePlugin {
       this.utTrailBearSeries.setData([]);
       this.swingHighSeries.setData([]);
       this.swingLowSeries.setData([]);
+      this.ema9Series?.setData([]);
+      this.ema15Series?.setData([]);
+      this.ema21Series?.setData([]);
       this.markersPlugin?.setMarkers([]);
       return;
     }
@@ -254,6 +301,20 @@ export class SuperConfluencePlugin {
     }
     this.swingHighSeries.setData(shData);
     this.swingLowSeries.setData(slData);
+
+    // ── EMA 9 / 15 / 21 ──────────────────────────────────────────────────────
+    const ema9Data:  { time: Time; value: number }[] = [];
+    const ema15Data: { time: Time; value: number }[] = [];
+    const ema21Data: { time: Time; value: number }[] = [];
+    for (const b of bars) {
+      const t = b.time as Time;
+      if (isFinite(b.ema9))  ema9Data.push({ time: t, value: b.ema9 });
+      if (isFinite(b.ema15)) ema15Data.push({ time: t, value: b.ema15 });
+      if (isFinite(b.ema21)) ema21Data.push({ time: t, value: b.ema21 });
+    }
+    this.ema9Series?.setData(ema9Data);
+    this.ema15Series?.setData(ema15Data);
+    this.ema21Series?.setData(ema21Data);
 
     // ── Markers on the price series ───────────────────────────────────────────
     const markers: SeriesMarker<Time>[] = [];
@@ -338,6 +399,9 @@ export class SuperConfluencePlugin {
     this.utTrailBearSeries?.applyOptions({ color: this.theme.bear });
     this.swingHighSeries?.applyOptions({ color: this.theme.swingHigh });
     this.swingLowSeries?.applyOptions({ color: this.theme.swingLow });
+    this.ema9Series?.applyOptions({ color: this.theme.ema9 });
+    this.ema15Series?.applyOptions({ color: this.theme.ema15 });
+    this.ema21Series?.applyOptions({ color: this.theme.ema21 });
   }
 
   // ── visibility ──────────────────────────────────────────────────────────────
@@ -350,5 +414,8 @@ export class SuperConfluencePlugin {
     this.utTrailBearSeries?.applyOptions(opts);
     this.swingHighSeries?.applyOptions(opts);
     this.swingLowSeries?.applyOptions(opts);
+    this.ema9Series?.applyOptions(opts);
+    this.ema15Series?.applyOptions(opts);
+    this.ema21Series?.applyOptions(opts);
   }
 }

@@ -5,19 +5,18 @@
  *   2. AI Neural Trend Line      (HMA-smoothed adaptive trailing stop,
  *                                  speed=14, atrMult=2.0)
  *   3. SMC Swing Structure       (BOS / CHoCH pivot bias, pivotLen=50)
+ *   4. EMA 9 / 15 / 21 stack    (entry & exit confirmation filter)
  *
- * A Super Buy fires when ALL THREE agree bullish simultaneously:
+ * A Super Buy fires when ALL FOUR agree bullish simultaneously:
  *   ut_buy  AND  aiTrendDir == 1  AND  smcBias == 1
+ *   AND  ema9 > ema15 > ema21  (price in bullish EMA order)
  *
- * A Super Sell fires when ALL THREE agree bearish:
+ * A Super Sell fires when ALL FOUR agree bearish:
  *   ut_sell  AND  aiTrendDir == -1  AND  smcBias == -1
+ *   AND  ema9 < ema15 < ema21  (bearish EMA order)
  *
- * This eliminates the majority of fake signals produced by any single
- * system in isolation.
- *
- * The module works on India `Candle` objects (OHLCV with `.time` in Unix
- * seconds). It bridges to the existing `KlineCandle`-based scalping
- * indicators via a lightweight adapter.
+ * The EMA stack eliminates entries against the prevailing trend structure
+ * — the most common source of fake signals from the three-system engine.
  */
 
 import type { Candle } from "@/types/india/market";
@@ -64,6 +63,24 @@ function hma(vals: number[], period: number): number[] {
     if (!isNaN(wmaH[i]) && !isNaN(wmaF[i])) diff[i] = 2 * wmaH[i] - wmaF[i];
   }
   return wma(diff, sqrt);
+}
+
+// ─── EMA ─────────────────────────────────────────────────────────────────────
+// Standard EMA seeded from SMA of first `period` closes (TradingView convention).
+
+function emaSeries(vals: number[], period: number): number[] {
+  const n     = vals.length;
+  const out   = new Array<number>(n).fill(NaN);
+  if (n < period) return out;
+  const alpha = 2 / (period + 1);
+  // Seed with SMA of first `period` bars.
+  let prev = vals.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = 0; i < period; i++) out[i] = prev;
+  for (let i = period; i < n; i++) {
+    prev   = vals[i] * alpha + prev * (1 - alpha);
+    out[i] = prev;
+  }
+  return out;
 }
 
 // ─── AI Neural Trend Line ────────────────────────────────────────────────────
@@ -155,6 +172,16 @@ export interface SuperConfluenceBar {
   utBuy:       boolean;
   /** UT Bot sell trigger */
   utSell:      boolean;
+  /** EMA 9 value */
+  ema9:        number;
+  /** EMA 15 value */
+  ema15:       number;
+  /** EMA 21 value */
+  ema21:       number;
+  /** EMA stack is bullish: ema9 > ema15 > ema21 */
+  emaBull:     boolean;
+  /** EMA stack is bearish: ema9 < ema15 < ema21 */
+  emaBear:     boolean;
   /** Triple-confluence long signal */
   superBuy:    boolean;
   /** Triple-confluence short signal */
@@ -215,15 +242,30 @@ export function computeSuperConfluence(
   const warmup = Math.max(aiSpeed * 2 + 5, aiAtrLen + 1, smcPivotLen * 2 + 5, utAtrPeriod + 5);
   if (candles.length < warmup) return null;
 
-  const kline = toKlineCandles(candles);
-  const ut    = utBot(kline, utKeyValue, utAtrPeriod);
-  const ai    = aiNeuralLine(kline, aiSpeed, aiAtrLen, aiAtrMult);
-  const smc   = smcStructure(kline, smcPivotLen);
-  const n     = candles.length;
+  const kline  = toKlineCandles(candles);
+  const ut     = utBot(kline, utKeyValue, utAtrPeriod);
+  const ai     = aiNeuralLine(kline, aiSpeed, aiAtrLen, aiAtrMult);
+  const smc    = smcStructure(kline, smcPivotLen);
+  const n      = candles.length;
+  const closes = candles.map((c) => c.close);
+
+  // EMA 9 / 15 / 21 — entry & exit confirmation stack
+  const e9  = emaSeries(closes, 9);
+  const e15 = emaSeries(closes, 15);
+  const e21 = emaSeries(closes, 21);
 
   const bars: SuperConfluenceBar[] = candles.map((c, i) => {
-    const superBuy  = ut.buy[i]  && ai.dir[i] === 1  && smc.bias[i] === 1;
-    const superSell = ut.sell[i] && ai.dir[i] === -1 && smc.bias[i] === -1;
+    const ema9    = e9[i];
+    const ema15   = e15[i];
+    const ema21   = e21[i];
+    const emaBull = isFinite(ema9) && isFinite(ema15) && isFinite(ema21)
+      && ema9 > ema15 && ema15 > ema21;
+    const emaBear = isFinite(ema9) && isFinite(ema15) && isFinite(ema21)
+      && ema9 < ema15 && ema15 < ema21;
+
+    // All four systems must agree for a full Super signal.
+    const superBuy  = ut.buy[i]  && ai.dir[i] === 1  && smc.bias[i] === 1  && emaBull;
+    const superSell = ut.sell[i] && ai.dir[i] === -1 && smc.bias[i] === -1 && emaBear;
     return {
       time:      c.time,
       close:     c.close,
@@ -236,6 +278,11 @@ export function computeSuperConfluence(
       swingLow:  smc.lastSwingLow[i],
       utBuy:     ut.buy[i],
       utSell:    ut.sell[i],
+      ema9,
+      ema15,
+      ema21,
+      emaBull,
+      emaBear,
       superBuy,
       superSell,
     };
@@ -244,23 +291,27 @@ export function computeSuperConfluence(
   // ── Score the most recent bar ─────────────────────────────────────────────
   const last = bars[bars.length - 1];
 
-  // Full triple-confluence → ±1.0
-  // Two-way partial alignment (e.g. UT + AI agree but SMC neutral) → ±0.5
-  // One-way → ±0.25; nothing → 0
+  // Full four-way confluence → ±1.0
+  // Three-way partial alignment → ±0.75
+  // Two-way → ±0.5; One-way → ±0.25; nothing → 0
   let score = 0;
   const bullComponents = [
     last.utBuy  || ut.pos[n - 1] === 1,
     last.aiDir  === 1,
     last.smcBias === 1,
+    last.emaBull,
   ].filter(Boolean).length;
   const bearComponents = [
     last.utSell || ut.pos[n - 1] === -1,
     last.aiDir  === -1,
     last.smcBias === -1,
+    last.emaBear,
   ].filter(Boolean).length;
 
-  if (last.superBuy)       score = 1.0;
-  else if (last.superSell) score = -1.0;
+  if (last.superBuy)            score = 1.0;
+  else if (last.superSell)      score = -1.0;
+  else if (bullComponents === 3) score = 0.75;
+  else if (bearComponents === 3) score = -0.75;
   else if (bullComponents === 2) score = 0.5;
   else if (bearComponents === 2) score = -0.5;
   else if (bullComponents === 1) score = 0.25;
@@ -268,12 +319,14 @@ export function computeSuperConfluence(
 
   // ── Tag ───────────────────────────────────────────────────────────────────
   let tag: string;
-  if (last.superBuy)              tag = "🔥 Super Buy — UT+AI+SMC bullish";
-  else if (last.superSell)        tag = "🔥 Super Sell — UT+AI+SMC bearish";
-  else if (bullComponents === 2)  tag = "Partial bullish (2/3 agree)";
-  else if (bearComponents === 2)  tag = "Partial bearish (2/3 agree)";
-  else if (last.aiDir === 1)      tag = "AI trend bullish — awaiting UT trigger";
-  else if (last.aiDir === -1)     tag = "AI trend bearish — awaiting UT trigger";
+  if (last.superBuy)              tag = "🔥 Super Buy — UT+AI+SMC+EMA all bullish";
+  else if (last.superSell)        tag = "🔥 Super Sell — UT+AI+SMC+EMA all bearish";
+  else if (bullComponents === 3)  tag = "Strong bullish (3/4 agree)";
+  else if (bearComponents === 3)  tag = "Strong bearish (3/4 agree)";
+  else if (bullComponents === 2)  tag = "Partial bullish (2/4 agree)";
+  else if (bearComponents === 2)  tag = "Partial bearish (2/4 agree)";
+  else if (last.aiDir === 1)      tag = "AI trend bullish — awaiting UT + EMA confirmation";
+  else if (last.aiDir === -1)     tag = "AI trend bearish — awaiting UT + EMA confirmation";
   else                            tag = "No confluence";
 
   // ── Bars since last signal ────────────────────────────────────────────────

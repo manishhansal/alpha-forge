@@ -949,19 +949,22 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
     makeFactor({
       id: "superConfluence",
       category: "technical",
-      label: "Super Confluence (UT+AI+SMC)",
-      // Weighted at 0.10 — same tier as scanner agreement. The three-way
-      // filter is a strong fake-signal eliminator: a signal that passes all
-      // three (score ≥ 0.9) gets a meaningful confidence boost; a signal that
-      // contradicts the engine (score ≤ -0.5) gets penalised.
+      label: "Super Confluence (UT+AI+SMC+EMA)",
+      // Weighted at 0.10 — same tier as scanner agreement. The four-way
+      // filter (UT Bot + AI Neural + SMC structure + EMA 9/15/21 stack) is
+      // the strongest fake-signal eliminator in the engine: a signal that
+      // passes all four (score ≥ 0.9) gets a meaningful confidence boost;
+      // a signal that contradicts the engine (score ≤ -0.5) gets penalised.
       weight: 0.10,
       raw: args.superConfluenceScore ?? null,
       denominator: 1,
       describe: () => {
         const s = args.superConfluenceScore;
         if (s == null) return "Unavailable — insufficient history";
-        if (s >= 0.9)  return "🔥 Super Buy — UT Bot + AI Neural + SMC all bullish";
-        if (s <= -0.9) return "🔥 Super Sell — UT Bot + AI Neural + SMC all bearish";
+        if (s >= 0.9)  return "🔥 Super Buy — UT Bot + AI Neural + SMC + EMA 9/15/21 all bullish";
+        if (s <= -0.9) return "🔥 Super Sell — UT Bot + AI Neural + SMC + EMA 9/15/21 all bearish";
+        if (s >= 0.6)  return `Strong bullish confluence (score ${s.toFixed(2)}) — 3/4 agree`;
+        if (s <= -0.6) return `Strong bearish confluence (score ${s.toFixed(2)}) — 3/4 agree`;
         if (s >= 0.4)  return `Partial bullish confluence (score ${s.toFixed(2)})`;
         if (s <= -0.4) return `Partial bearish confluence (score ${s.toFixed(2)})`;
         return `Weak confluence (score ${s.toFixed(2)}) — mixed signals`;
