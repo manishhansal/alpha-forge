@@ -400,12 +400,6 @@ export default function MsbDashboard() {
         </motion.div>
       </section>
 
-      {/* Range Expansion (WR8 + Bullish Trend) — F&O long-side scanner */}
-      <RangeExpansionSection />
-
-      {/* Top 5 Stocks for Tomorrow */}
-      <TopPicksSection />
-
       {/* Signals Table */}
       <MsbSignalsSection data={data} loading={loading} addJournal={addJournal} />
 
