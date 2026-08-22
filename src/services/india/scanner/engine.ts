@@ -642,12 +642,14 @@ async function runRangeExpansion(
 //  14.  SMA(20) > SMA(40)
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Exponential moving average (standard, α = 2/(n+1)). */
+/** Exponential moving average — seeded with SMA of first `period` bars,
+ *  then run forward (matches TradingView / Chartink). */
 function ema(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   const alpha = 2 / (period + 1);
-  let val = closes[0];
-  for (let i = 1; i < closes.length; i++) {
+  // Seed = SMA of the first `period` values.
+  let val = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < closes.length; i++) {
     val = closes[i] * alpha + val * (1 - alpha);
   }
   return val;
@@ -777,24 +779,47 @@ function macd(
   signal = 9,
 ): { line: number; signalLine: number; histogram: number } | null {
   if (closes.length < slow + signal) return null;
-  const emaFast = ema(closes, fast);
-  const emaSlow = ema(closes, slow);
-  if (emaFast == null || emaSlow == null) return null;
 
-  // Build MACD line history for the signal EMA.
-  const macdHistory: number[] = [];
-  for (let i = slow - 1; i < closes.length; i++) {
-    const ef = ema(closes.slice(0, i + 1), fast);
-    const es = ema(closes.slice(0, i + 1), slow);
-    if (ef != null && es != null) macdHistory.push(ef - es);
+  // Seed EMAs using the SMA of the first `period` bars (TradingView / Chartink
+  // convention), then run them forward in a single pass. This avoids the
+  // error of restarting the EMA from scratch for every historical bar.
+  const alphaFast = 2 / (fast + 1);
+  const alphaSlow = 2 / (slow + 1);
+  const alphaSignal = 2 / (signal + 1);
+
+  // Seed: SMA of first `slow` bars.
+  let emaFast =
+    closes.slice(0, fast).reduce((a, b) => a + b, 0) / fast;
+  let emaSlow =
+    closes.slice(0, slow).reduce((a, b) => a + b, 0) / slow;
+
+  // Run fast EMA from bar `fast` to bar `slow-1` (catching up).
+  for (let i = fast; i < slow; i++) {
+    emaFast = closes[i] * alphaFast + emaFast * (1 - alphaFast);
   }
+
+  // From bar `slow` onward, both EMAs tick together and we accumulate the
+  // MACD line history needed to seed the signal EMA.
+  const macdLine0 = emaFast - emaSlow; // first MACD value at index `slow-1`
+  const macdHistory: number[] = [macdLine0];
+
+  for (let i = slow; i < closes.length; i++) {
+    emaFast = closes[i] * alphaFast + emaFast * (1 - alphaFast);
+    emaSlow = closes[i] * alphaSlow + emaSlow * (1 - alphaSlow);
+    macdHistory.push(emaFast - emaSlow);
+  }
+
   if (macdHistory.length < signal) return null;
 
-  const signalLine = ema(macdHistory, signal);
-  if (signalLine == null) return null;
+  // Seed signal EMA as SMA of first `signal` MACD values.
+  let signalEma =
+    macdHistory.slice(0, signal).reduce((a, b) => a + b, 0) / signal;
+  for (let i = signal; i < macdHistory.length; i++) {
+    signalEma = macdHistory[i] * alphaSignal + signalEma * (1 - alphaSignal);
+  }
 
   const line = macdHistory[macdHistory.length - 1];
-  return { line, signalLine, histogram: line - signalLine };
+  return { line, signalLine: signalEma, histogram: line - signalEma };
 }
 
 type FnoBullishTrendRow = {
