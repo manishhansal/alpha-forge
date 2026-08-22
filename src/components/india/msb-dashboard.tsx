@@ -33,6 +33,11 @@ import {
   PaginationStrip,
   usePaginationFilter,
 } from "@/components/india/ui/pagination-filter";
+import {
+  SignalTableHead,
+  SignalTableRow,
+  kindClass,
+} from "@/components/india/ui/signal-table-row";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { dataSourceLabels } from "@/features/settings/data-sources-shared";
 
@@ -664,13 +669,14 @@ function MsbSignalsSection({
   loading: boolean;
   addJournal: (row: MsbSignalRow) => void;
 }) {
+  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+
   const getConfidence = useCallback(
     (row: MsbSignalRow) => Number(row.Strength) || 0,
     [],
   );
   const getWinrate = useCallback(
     (row: MsbSignalRow) => {
-      // Use strength as a proxy — higher strength ≈ higher winrate potential
       const s = Number(row.Strength) || 0;
       return Math.min(s / 1.5, 1);
     },
@@ -695,6 +701,26 @@ function MsbSignalsSection({
     confidenceThreshold: 0.7,
     winrateThreshold: 0.6,
   });
+
+  // Convert MsbSignalRow to the generic SignalRow shape for SignalTableRow.
+  // We surface Entry/SL/Target/Strike/Strength in the detail panel via `note`.
+  const toSignalRow = useCallback(
+    (row: MsbSignalRow) => ({
+      symbol: String(row.Symbol),
+      price: typeof row.Entry === "number" ? row.Entry : null,
+      changePct: null,
+      metric: Number(row.Strength) || 0,
+      metricLabel: `Str ${Number(row.Strength).toFixed(2)}`,
+      kind: row.Side?.toUpperCase() === "BUY" ? "BULLISH" : "BEARISH",
+      note:
+        `Entry ${row.Entry} · SL ${row.SL_ATR} · Tgt ${row.TGT_ATR} · ` +
+        `Strike ${row.Strike} · ${row.Type}`,
+    }),
+    [],
+  );
+
+  // col count: chevron + Symbol + Price(Entry) + Chg% + Side + Strength + Journal = 7
+  const COL_SPAN = 7;
 
   return (
     <section>
@@ -724,99 +750,75 @@ function MsbSignalsSection({
         <div className="overflow-x-auto -mx-1 px-1">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b border-border/60 text-muted-foreground text-xs uppercase tracking-wide">
-                <th className="p-2.5 font-medium">Symbol</th>
-                <th className="p-2.5 font-medium">Side</th>
-                <th className="p-2.5 font-medium text-right">Entry</th>
-                <th className="p-2.5 font-medium text-right">SL (ATR)</th>
-                <th className="p-2.5 font-medium text-right">Target</th>
-                <th className="p-2.5 font-medium text-right">Strike</th>
-                <th className="p-2.5 font-medium">Type</th>
-                <th className="p-2.5 font-medium text-right">Strength</th>
-                <th className="p-2.5"></th>
-              </tr>
+              <SignalTableHead
+                extraTrailHeaders={
+                  <>
+                    <th className="p-2.5 font-medium">Side</th>
+                    <th className="p-2.5 text-right font-medium">Strength</th>
+                    <th className="p-2.5" />
+                  </>
+                }
+              />
             </thead>
             <tbody>
               <AnimatePresence>
                 {pageItems.map((row, i) => (
-                  <motion.tr
+                  <SignalTableRow
                     key={`${row.Symbol}-${(page - 1) * pageSize + i}`}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{
-                      duration: 0.25,
-                      delay: Math.min(i * 0.03, 0.4),
-                    }}
-                    className="border-b border-border/40 hover:bg-muted/40 transition-colors"
-                  >
-                    <td className="p-2.5 font-medium">
-                      <a
-                        href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${String(row.Symbol).replace(".NS", "")}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:text-blue-400 hover:underline"
-                      >
-                        {row.Symbol}
-                      </a>
-                    </td>
-                    <td className="p-2.5">
-                      <SideBadge side={row.Side} />
-                    </td>
-                    <td className="p-2.5 text-right tabular">{row.Entry}</td>
-                    <td className="p-2.5 text-right tabular">{row.SL_ATR}</td>
-                    <td className="p-2.5 text-right tabular">{row.TGT_ATR}</td>
-                    <td className="p-2.5 text-right tabular">{row.Strike}</td>
-                    <td className="p-2.5">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
-                        {row.Type}
-                      </span>
-                    </td>
-                    <td className="p-2.5 text-right tabular font-semibold">
-                      {Number(row.Strength).toFixed(2)}
-                    </td>
-                    <td className="p-2.5">
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => addJournal(row)}
-                        title="Add to journal"
-                      >
-                        <PlusCircle className="h-3 w-3 mr-1" />
-                        Journal
-                      </Button>
-                    </td>
-                  </motion.tr>
+                    hit={toSignalRow(row)}
+                    colSpan={COL_SPAN}
+                    index={i}
+                    expanded={expandedSymbol === row.Symbol}
+                    onToggle={() =>
+                      setExpandedSymbol((prev) =>
+                        prev === row.Symbol ? null : row.Symbol,
+                      )
+                    }
+                    extraTrailCells={
+                      <>
+                        <td className="p-2.5">
+                          <SideBadge side={row.Side} />
+                        </td>
+                        <td className="p-2.5 text-right tabular font-semibold">
+                          {Number(row.Strength).toFixed(2)}
+                        </td>
+                        <td className="p-2.5">
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addJournal(row);
+                            }}
+                            title="Add to journal"
+                          >
+                            <PlusCircle className="h-3 w-3 mr-1" />
+                            Journal
+                          </Button>
+                        </td>
+                      </>
+                    }
+                  />
                 ))}
               </AnimatePresence>
 
               {data.length === 0 && !loading && (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="p-8 text-center text-muted-foreground text-sm"
-                  >
-                    No setups available — run the Python scanner during
-                    market hours.
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
+                    No setups available — run the Python scanner during market hours.
                   </td>
                 </tr>
               )}
               {data.length > 0 && pageItems.length === 0 && !loading && (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="p-8 text-center text-muted-foreground text-sm"
-                  >
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
                     No setups match the current filter.
                   </td>
                 </tr>
               )}
               {loading && data.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="p-8 text-center text-muted-foreground text-sm"
-                  >
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
                     Loading signals…
                   </td>
                 </tr>
@@ -1434,6 +1436,7 @@ function RangeExpansionSection() {
   const [data, setData] = useState<ScannerResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rxExpanded, setRxExpanded] = useState<string | null>(null);
   const inFlightRef = useRef(false);
   const ctrlRef = useRef<AbortController | null>(null);
 
@@ -1516,6 +1519,7 @@ function RangeExpansionSection() {
   });
 
   const pageOffset = (page - 1) * pageSize;
+  void pageOffset; // kept for potential future use
 
   return (
     <section>
@@ -1566,95 +1570,52 @@ function RangeExpansionSection() {
         <div className="overflow-x-auto -mx-1 px-1">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b border-border/60 text-muted-foreground text-xs uppercase tracking-wide">
-                <th className="p-2.5 font-medium">#</th>
-                <th className="p-2.5 font-medium">Symbol</th>
-                <th className="p-2.5 font-medium text-right">Close</th>
-                <th className="p-2.5 font-medium text-right">Day %</th>
-                <th className="p-2.5 font-medium text-right">Range / Vol</th>
-                <th className="p-2.5 font-medium hidden md:table-cell">
-                  Trend
-                </th>
-                <th className="p-2.5"></th>
-              </tr>
+              <SignalTableHead
+                extraTrailHeaders={
+                  <th className="p-2.5 text-right font-medium">Range / Vol</th>
+                }
+              />
             </thead>
             <tbody>
               <AnimatePresence>
                 {pageItems.map((h, i) => (
-                  <motion.tr
+                  <SignalTableRow
                     key={h.symbol}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ delay: Math.min(i * 0.02, 0.4) }}
-                    className="border-b border-border/40 hover:bg-muted/40 transition-colors"
-                  >
-                    <td className="p-2.5 text-muted-foreground">
-                      {pageOffset + i + 1}
-                    </td>
-                    <td className="p-2.5 font-medium">
-                      <Link
-                        href={`/in/chart/${encodeURIComponent(h.symbol)}`}
-                        className="text-blue-500 hover:text-blue-400 hover:underline"
-                      >
-                        {h.symbol}
-                      </Link>
-                    </td>
-                    <td className="p-2.5 text-right tabular">{fmt(h.price)}</td>
-                    <td
-                      className={`p-2.5 text-right tabular font-medium ${
-                        (h.changePct ?? 0) >= 0
-                          ? "text-emerald-500"
-                          : "text-rose-500"
-                      }`}
-                    >
-                      {h.changePct == null
-                        ? "—"
-                        : `${h.changePct >= 0 ? "+" : ""}${h.changePct.toFixed(2)}%`}
-                    </td>
-                    <td className="p-2.5 text-right tabular text-xs font-semibold">
-                      {h.metricLabel}
-                    </td>
-                    <td className="p-2.5 hidden md:table-cell text-[11px] text-muted-foreground max-w-[260px] truncate">
-                      {h.note ?? ""}
-                    </td>
-                    <td className="p-2.5">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
-                        WR8
-                      </span>
-                    </td>
-                  </motion.tr>
+                    hit={h}
+                    colSpan={5}
+                    index={i}
+                    expanded={rxExpanded === h.symbol}
+                    onToggle={() =>
+                      setRxExpanded((prev) =>
+                        prev === h.symbol ? null : h.symbol,
+                      )
+                    }
+                    extraTrailCells={
+                      <td className="p-2.5 text-right tabular text-[11px] font-semibold text-[var(--color-fg-muted)]">
+                        {h.metricLabel}
+                      </td>
+                    }
+                  />
                 ))}
               </AnimatePresence>
 
               {!data && loading && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="p-6 text-center text-muted-foreground text-sm"
-                  >
-                    Scanning F&amp;O universe (this may take ~10–20s on the
-                    first run)…
+                  <td colSpan={5} className="p-6 text-center text-muted-foreground text-sm">
+                    Scanning F&amp;O universe (this may take ~10–20s on the first run)…
                   </td>
                 </tr>
               )}
               {data && hits.length === 0 && !loading && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="p-6 text-center text-muted-foreground text-sm"
-                  >
-                    No range-expansion setups right now — market may be
-                    ranging or risk-off.
+                  <td colSpan={5} className="p-6 text-center text-muted-foreground text-sm">
+                    No range-expansion setups right now — market may be ranging or risk-off.
                   </td>
                 </tr>
               )}
               {data && hits.length > 0 && pageItems.length === 0 && !loading && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="p-6 text-center text-muted-foreground text-sm"
-                  >
+                  <td colSpan={5} className="p-6 text-center text-muted-foreground text-sm">
                     No hits match the current filter.
                   </td>
                 </tr>

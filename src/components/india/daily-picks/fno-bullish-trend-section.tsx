@@ -10,12 +10,15 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 
 import { cn } from "@/lib/utils";
-import { fmt, fmtPct } from "@/lib/india/format";
 import {
   PaginationStrip,
   usePaginationFilter,
 } from "@/components/india/ui/pagination-filter";
-import type { ScannerResult, ScannerHit } from "@/types/india/scanner";
+import {
+  SignalTableHead,
+  SignalTableRow,
+} from "@/components/india/ui/signal-table-row";
+import type { ScannerResult } from "@/types/india/scanner";
 
 const CHARTINK_URL =
   "https://chartink.com/screener/daily-fno-stocks-bullish-trend-scanner-moving-average-adx-macd-3";
@@ -52,59 +55,8 @@ function ConditionBadge({ label, detail }: { label: string; detail: string }) {
   );
 }
 
-function HitRow({ hit, index }: { hit: ScannerHit; index: number }) {
-  const up = (hit.changePct ?? 0) >= 0;
-  const tvSymbol = hit.symbol.replace(".NS", "");
-
-  return (
-    <motion.tr
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.22, delay: Math.min(index * 0.025, 0.4) }}
-      className="border-b border-[var(--color-border)]/40 hover:bg-[var(--color-bg-elevated)] transition-colors"
-    >
-      {/* Symbol */}
-      <td className="p-2.5 font-medium text-sm">
-        <a
-          href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${tvSymbol}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[var(--color-brand)] hover:underline"
-        >
-          {tvSymbol}
-        </a>
-      </td>
-
-      {/* Price */}
-      <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
-        {hit.price != null ? fmt(hit.price) : "—"}
-      </td>
-
-      {/* Change % */}
-      <td
-        className={cn(
-          "p-2.5 text-right tabular text-sm font-medium",
-          up
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-rose-600 dark:text-rose-400",
-        )}
-      >
-        {hit.changePct != null ? fmtPct(hit.changePct) : "—"}
-      </td>
-
-      {/* ADX · RSI */}
-      <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
-        {hit.metricLabel}
-      </td>
-
-      {/* Note (DI / MACD / SMA) */}
-      <td className="hidden p-2.5 text-[10px] text-[var(--color-fg-subtle)] xl:table-cell">
-        {hit.note ?? "—"}
-      </td>
-    </motion.tr>
-  );
-}
+// chevron + Symbol + Price + Chg% + ADX·RSI = 5
+const COL_SPAN = 5;
 
 /**
  * FnoBullishTrendSection
@@ -119,6 +71,7 @@ export function FnoBullishTrendSection() {
   const [error, setError] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [showConditions, setShowConditions] = React.useState(false);
+  const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
     setRefreshing(true);
@@ -279,21 +232,33 @@ export function FnoBullishTrendSection() {
         <>
           <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
             <table className="w-full text-left">
-              <thead className="bg-[var(--color-bg-elevated)] text-[11px] uppercase tracking-wide text-[var(--color-fg-muted)]">
-                <tr>
-                  <th className="p-2.5 font-medium">Symbol</th>
-                  <th className="p-2.5 text-right font-medium">Price</th>
-                  <th className="p-2.5 text-right font-medium">Chg%</th>
-                  <th className="p-2.5 text-right font-medium">ADX · RSI</th>
-                  <th className="hidden p-2.5 font-medium xl:table-cell">
-                    DI / MACD / MA
-                  </th>
-                </tr>
+              <thead>
+                <SignalTableHead
+                  extraTrailHeaders={
+                    <th className="p-2.5 text-right font-medium">ADX · RSI</th>
+                  }
+                />
               </thead>
               <tbody>
                 <AnimatePresence>
                   {pageItems.map((hit, i) => (
-                    <HitRow key={hit.symbol} hit={hit} index={i} />
+                    <SignalTableRow
+                      key={hit.symbol}
+                      hit={hit}
+                      colSpan={COL_SPAN}
+                      index={i}
+                      expanded={expandedSymbol === hit.symbol}
+                      onToggle={() =>
+                        setExpandedSymbol((prev) =>
+                          prev === hit.symbol ? null : hit.symbol,
+                        )
+                      }
+                      extraTrailCells={
+                        <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
+                          {hit.metricLabel}
+                        </td>
+                      }
+                    />
                   ))}
                 </AnimatePresence>
               </tbody>
