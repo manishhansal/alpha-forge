@@ -934,9 +934,9 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
     },
   );
 
-  // Rank by ADX strength (trend conviction) then RSI.
+  // Rank by change % descending (matches Chartink default sort).
   const sorted = rows
-    .sort((a, b) => b.adxVal - a.adxVal || b.rsiVal - a.rsiVal)
+    .sort((a, b) => b.changePct - a.changePct)
     .slice(0, limit);
 
   const hits: ScannerHit[] = sorted.map((r) => ({
