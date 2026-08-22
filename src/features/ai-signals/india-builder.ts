@@ -68,11 +68,11 @@ import {
 import type { MLStockRank } from "@/lib/india/ml-client";
 import { computeSuperConfluence } from "@/features/india/indicators/super-confluence";
 
-// Daily Picks rescans the full F&O universe on this cadence — bumped to a
-// minute per the spec ("scan all F&O stocks every minute"). The minute is the
-// natural NSE intraday candle; finer than that the macro factors (PCR, OI
-// buildup, daily-RSI/MACD) don't change meaningfully.
-const CACHE_TTL_MS = 60_000;
+// During market hours: refresh every 60s so signals stay live.
+// Outside market hours: cache for 5 minutes — the data is daily-bar-based
+// and doesn't meaningfully change between requests.
+const CACHE_TTL_MS          = 60_000;
+const CACHE_TTL_CLOSED_MS   = 5 * 60_000;
 
 /**
  * Concurrency cap when fanning Yahoo historical fetches across the full F&O
@@ -1779,8 +1779,25 @@ async function computeIndiaUniverse(
 }
 
 export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
-  return indiaCache.memo("ai-signals:india:v3", CACHE_TTL_MS, async () => {
+  // ── Step 1: try the last-session snapshot first (highest priority) ──────
+  // When the market is closed, always serve the last live-session snapshot
+  // when it exists — it has real intraday signals and is far more useful
+  // than freshly-generated off-hours swing signals.
+  const lastSession = await indiaCache.get<AiSignalsResponse>(
+    "ai-signals:india:last-session",
+  );
+  if (lastSession && !lastSession.context.inActiveWindow) {
+    // Market is still closed — return the cached live-session signals.
+    // Don't bother regenerating until the session opens.
+    return lastSession;
+  }
+
+  // ── Step 2: normal memo path with dynamic TTL ────────────────────────────
+  const ttl = lastSession?.context.inActiveWindow ? CACHE_TTL_MS : CACHE_TTL_CLOSED_MS;
+
+  return indiaCache.memo(`ai-signals:india:v3`, ttl, async () => {
     const r = await computeIndiaUniverse(buildUniverse());
+
     const result: AiSignalsResponse = {
       market: "india",
       generatedAt: r.generatedAt,
@@ -1790,24 +1807,21 @@ export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
       stats: r.stats,
     };
 
-    // When the market is open, also snapshot these signals as the
-    // "last session" cache so they remain available after close.
-    if (r.inActiveWindow) {
+    // ── Step 3: snapshot when market is open ─────────────────────────────
+    // Persist the live-session signals so they're available after close.
+    if (r.inActiveWindow && r.signals.some(s => s.horizon === "intraday" || s.horizon === "scalp")) {
       await indiaCache.set(
         "ai-signals:india:last-session",
         result,
-        // 48h — covers weekends + any single holiday gap
-        48 * 60 * 60_000,
+        48 * 60 * 60_000, // 48h — covers weekends + single holidays
       );
     }
 
-    // Outside market hours: if we just generated stale/off-hours signals,
-    // prefer the last live-session snapshot when available.
-    if (!r.inActiveWindow) {
-      const lastSession = await indiaCache.get<AiSignalsResponse>(
-        "ai-signals:india:last-session",
-      );
-      if (lastSession) return lastSession;
+    // ── Step 4: never return fewer signals than the last snapshot ─────────
+    // If Yahoo throttled and we only got indices (4 signals), prefer the
+    // last-session snapshot over the degraded result.
+    if (!r.inActiveWindow && lastSession && r.signals.length < lastSession.signals.length) {
+      return lastSession;
     }
 
     return result;
