@@ -424,7 +424,7 @@ export function AiSignalsBoard({
         if (b.winProbability !== a.winProbability) return b.winProbability - a.winProbability;
         return b.riskRewardBlended - a.riskRewardBlended;
       });
-  }, [data.signals, directionFilter, horizonFilter]);
+  }, [data.signals, directionFilter]);
 
   const generatedLabel = new Date(data.generatedAt).toLocaleTimeString();
   const nextSessionLabel   = data.context.nextSessionLabel   ?? null;
