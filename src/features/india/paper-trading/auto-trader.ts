@@ -59,8 +59,14 @@ const TRADE_NOTIONAL = DAILY_BUDGET / MAX_CONCURRENT_TRADES; // ₹20,000
 const MINIMUM_SCORE = 0.52;
 /** Maximum risk per trade as a fraction of trade notional (e.g. 0.02 = 2%). */
 const MAX_RISK_PER_TRADE_PCT = 0.025;
-/** Source tag written to PaperTrade.source for auto-trades. */
-const AUTO_TRADE_SOURCE_PREFIX = "in:AUTO";
+/** Source tag written to PaperTrade.source for auto-trades — uses the real
+ *  strategy IDs so the journal and open-positions card show them correctly. */
+const AUTO_TRADE_SOURCE_DAILY_PICK = "in:DAILY_PICK:1d";
+const AUTO_TRADE_SOURCE_AI_SIGNAL  = "in:AI_SIGNAL:1d";
+
+/** Prefix used to identify ANY auto-trader trade when searching for duplicates.
+ *  Both DAILY_PICK and AI_SIGNAL sources belong to the auto-trader. */
+const AUTO_TRADE_SOURCES = [AUTO_TRADE_SOURCE_DAILY_PICK, AUTO_TRADE_SOURCE_AI_SIGNAL] as const;
 /** Don't open more trades after this point in the session (IST minutes). */
 const LAST_ENTRY_MINUTES = 14 * 60 + 45; // 14:45 IST
 
@@ -185,7 +191,7 @@ function safeDb(): PrismaClient | null {
 async function getDailyBudgetState(db: PrismaClient, tradeDate: string) {
   const [openCount, session] = await Promise.all([
     db.paperTrade.count({
-      where: { status: "OPEN", source: { startsWith: AUTO_TRADE_SOURCE_PREFIX } },
+      where: { status: "OPEN", source: { in: [...AUTO_TRADE_SOURCES] } },
     }),
     db.indiaDaySession.findUnique({ where: { tradeDate } }).catch(() => null),
   ]);
@@ -307,10 +313,12 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     if (riskFraction > MAX_RISK_PER_TRADE_PCT) { skipped++; continue; }
     if (deployedThisTick + TRADE_NOTIONAL > budget.remaining) { skipped++; break; }
 
-    // Duplicate check
-    const source = `${AUTO_TRADE_SOURCE_PREFIX}:${c.source}:1d`;
+    // Duplicate check — skip if any auto trade already open for this symbol
+    const source = c.source === "DAILY_PICK"
+      ? AUTO_TRADE_SOURCE_DAILY_PICK
+      : AUTO_TRADE_SOURCE_AI_SIGNAL;
     const dup = await db.paperTrade.findFirst({
-      where: { symbol: c.symbol, status: "OPEN", source: { startsWith: `${AUTO_TRADE_SOURCE_PREFIX}:` } },
+      where: { symbol: c.symbol, status: "OPEN", source: { in: [...AUTO_TRADE_SOURCES] } },
       select: { id: true },
     });
     if (dup) { skipped++; continue; }
