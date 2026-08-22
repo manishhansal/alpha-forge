@@ -374,8 +374,9 @@ export function PriceChart({
 
   return (
     <div className="space-y-3">
+      {/* ── Toolbar ──────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Interval buttons */}
+        {/* Interval pills */}
         {INTERVALS.map((i) => {
           const active = i.value === interval;
           return (
@@ -385,42 +386,54 @@ export function PriceChart({
                 setInterval(i.value);
                 setRange(i.range);
               }}
-              className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+              className={[
+                "relative text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
                 active
-                  ? "bg-foreground text-background"
-                  : "bg-muted text-muted-foreground hover:bg-muted/70"
-              }`}
+                  ? "bg-[var(--color-fg)] text-[var(--color-bg)] shadow-sm"
+                  : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+              ].join(" ")}
             >
-              {i.label}
+              {active && (
+                <span
+                  className="absolute inset-0 rounded-full"
+                  style={{
+                    boxShadow: "0 0 10px 1px color-mix(in oklch, var(--brand) 18%, transparent)",
+                  }}
+                  aria-hidden
+                />
+              )}
+              <span className="relative">{i.label}</span>
             </button>
           );
         })}
 
         {/* Divider */}
-        <span className="h-4 w-px bg-border/60 mx-0.5" aria-hidden />
+        <span className="h-4 w-px bg-[var(--color-border)] mx-0.5" aria-hidden />
 
-        {/* VWAP toggle (Requirement 2.3) */}
+        {/* VWAP toggle */}
         <button
           onClick={handleVwapToggle}
           aria-pressed={vwapActive}
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+          className={[
+            "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
             vwapActive
-              ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
+              ? "bg-[color-mix(in_oklch,var(--warning)_18%,transparent)] text-[var(--warning)] ring-1 ring-[color-mix(in_oklch,var(--warning)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--warning)_20%,transparent)]"
+              : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+          ].join(" ")}
         >
           VWAP
         </button>
 
-        {/* Volume Profile toggle (Requirement 2.4) */}
+        {/* Volume Profile toggle */}
         <button
           onClick={handleProfileToggle}
           aria-pressed={profileActive}
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+          className={[
+            "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
             profileActive
-              ? "bg-orange-500/20 text-orange-600 dark:text-orange-400 ring-1 ring-orange-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
+              ? "bg-[color-mix(in_oklch,var(--btc)_18%,transparent)] text-[var(--btc)] ring-1 ring-[color-mix(in_oklch,var(--btc)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--btc)_20%,transparent)]"
+              : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+          ].join(" ")}
         >
           Profile
         </button>
@@ -430,23 +443,25 @@ export function PriceChart({
           onClick={handleScToggle}
           aria-pressed={scActive}
           title="Super Confluence Engine — UT Bot + AI Neural Trend + SMC Structure. Highlights high-confidence entries (entry, stop, targets) and eliminates fake signals by requiring all three systems to agree."
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+          className={[
+            "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
             scActive
-              ? "bg-lime-500/20 text-lime-600 dark:text-lime-400 ring-1 ring-lime-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
+              ? "bg-[color-mix(in_oklch,var(--bull)_18%,transparent)] text-[var(--bull)] ring-1 ring-[color-mix(in_oklch,var(--bull)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--bull)_20%,transparent)]"
+              : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+          ].join(" ")}
         >
           🔥 SC
         </button>
 
         {error && (
-          <span className="text-xs text-rose-500 ml-2">Error: {error}</span>
+          <span className="text-xs text-[var(--color-bear)] ml-2">Error: {error}</span>
         )}
       </div>
 
+      {/* ── Chart canvas ──────────────────────────────────────────── */}
       <div
         ref={containerRef}
-        className="rounded-xl border border-border/60 bg-card/50 overflow-hidden"
+        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 overflow-hidden"
         style={{ height }}
       />
     </div>
