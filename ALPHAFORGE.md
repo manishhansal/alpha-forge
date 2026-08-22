@@ -150,28 +150,19 @@ the topbar.
 #### India-specific extras (kept under the shared core)
 
 - **Daily Picks** (`/in/daily-picks`) — the day's standout F&O signals
-  distilled into the **top three per bucket**: *Indices Scalping* (institutional
-  index plays on OI build-up + PCR + max-pain), *Highly Momentum* (strongest
-  aligned trend + 5-day momentum + volume thrust), *Highly Scalping*
-  (cleanest intraday setups — expected range, sharp R:R, scanner agreement,
-  short horizon) and *Highly Potential* (highest conviction + win-probability
-  + blended payoff). Each pick carries entry, stop loss, target, **can move
-  upto** (stretch target), **can expect** (% move to the stretch), the **time
-  it appeared** on the board and **how long it took to take profit/loss**, plus
-  the logic for why it sits in its bucket. Picks are **frozen** once per IST
-  trading day (`IndiaDailyPick` table, one row per
-  `tradeDate × bucket × rank`) so entry/stop/target never move under the
-  user, then **tracked live** against the latest mark — current P&L and
-  progress-to-target update every refresh, resolving to TARGET_HIT /
-  STOP_HIT and **CLOSED** (squared off) at the 15:30 IST close. Every past
-  trading day's picks + outcomes are archived to a queryable history. Indices
-  feed only the indices bucket and stocks the other three, and a symbol only
-  ever appears once, so all picks are distinct. DB-resilient: degrades to
-  ephemeral live picks when Postgres is unreachable.
-- **News** (`/in/news`) — top market news pulled from fresh Indian market
-  RSS feeds (Economic Times Markets / Stocks / Economy, with Moneycontrol
-  as a best-effort extra) plus global business feeds (WSJ), filtered to the
-  last few days so only the latest news surfaces. Each headline is tagged
+  distilled into the **top three per bucket**: *Indices Scalping*, *Opening Breakout*,
+  *Highly Momentum*, *Highly Scalping* and *Highly Potential*. Each pick carries
+  entry, stop, target, can-move-upto, can-expect, P&L tracking and logic.
+  All picks are intraday-only; squared off at 15:30 IST.
+  Also shows the **FnO Bullish Trend Scanner** (14-condition MA+ADX+MACD screener
+  with ATR-based entry/SL/TP levels) and **FnO Bearish Trend Scanner** (bearish mirror).
+- **Trade History** (`/in/history`) — unified trade history across three sources:
+  **Daily Picks** (frozen picks with TARGET_HIT/STOP_HIT/CLOSED outcomes, aggregate
+  stats, bucket heat strip, day accordions with outcome/direction filters),
+  **Scalper Trades** (strategy paper trades from the PaperTrade DB with per-strategy
+  win rate heat strip), and **FnO Trend Scanner** (persisted scan results with
+  TP1/SL outcome tracking). Time range filters: 7d / 14d / 30d / 60d.
+- **News** (`/in/news`) — top market news pulled from Indian market RSS feeds. Each headline is tagged
   with the F&O stocks /
   index underlyings / sectors it impacts (high / medium / low) and scored
   for bull/bear sentiment via a deterministic lexicon engine; the
