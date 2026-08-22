@@ -1739,7 +1739,7 @@ async function computeIndiaUniverse(
 export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
   return indiaCache.memo("ai-signals:india:v3", CACHE_TTL_MS, async () => {
     const r = await computeIndiaUniverse(buildUniverse());
-    return {
+    const result: AiSignalsResponse = {
       market: "india",
       generatedAt: r.generatedAt,
       modelVersion: AI_MODEL_VERSION,
@@ -1747,6 +1747,28 @@ export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
       signals: r.signals,
       stats: r.stats,
     };
+
+    // When the market is open, also snapshot these signals as the
+    // "last session" cache so they remain available after close.
+    if (r.inActiveWindow) {
+      await indiaCache.set(
+        "ai-signals:india:last-session",
+        result,
+        // 48h — covers weekends + any single holiday gap
+        48 * 60 * 60_000,
+      );
+    }
+
+    // Outside market hours: if we just generated stale/off-hours signals,
+    // prefer the last live-session snapshot when available.
+    if (!r.inActiveWindow) {
+      const lastSession = await indiaCache.get<AiSignalsResponse>(
+        "ai-signals:india:last-session",
+      );
+      if (lastSession) return lastSession;
+    }
+
+    return result;
   });
 }
 
