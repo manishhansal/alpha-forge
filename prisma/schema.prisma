@@ -452,3 +452,48 @@ model FnoTrendScan {
   @@index([symbol, tradeDate])
   @@index([status, tradeDate])
 }
+
+/// One trading-day session for the India auto paper-trader. Tracks the
+/// ₹1L daily budget, how much was deployed, and the end-of-day result.
+/// Created at the first trade of each IST session; finalised at 15:30 IST.
+model IndiaDaySession {
+  id              String   @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD`.
+  tradeDate       String   @unique
+  /// Starting capital for the day (always ₹1,00,000).
+  startingCapital Float    @default(100000)
+  /// Capital deployed across all trades opened today.
+  deployed        Float    @default(0)
+  /// Realised P&L in ₹ across all closed trades.
+  realisedPnl     Float    @default(0)
+  /// Realised P&L as % of starting capital.
+  realisedPnlPct  Float    @default(0)
+  /// Total number of trades opened today.
+  totalTrades     Int      @default(0)
+  /// Trades that hit TP1.
+  wins            Int      @default(0)
+  /// Trades that hit SL.
+  losses          Int      @default(0)
+  /// Trades squared off at session close (EXPIRED).
+  expired         Int      @default(0)
+  /// Win rate = wins / (wins + losses). Null until at least one resolved trade.
+  winRate         Float?
+  /// Best trade P&L % today.
+  bestTradePct    Float?
+  /// Worst trade P&L % today.
+  worstTradePct   Float?
+  /// Average P&L % per trade.
+  avgTradePct     Float?
+  /// Maximum intraday drawdown % (from peak to trough during the session).
+  maxDrawdownPct  Float?
+  /// Whether the session has been finalised (post 15:30 IST).
+  finalised       Boolean  @default(false)
+  /// Compact trade IDs opened today (for fast cross-reference).
+  tradeIds        String[]
+  openedAt        DateTime @default(now())
+  finalisedAt     DateTime?
+  updatedAt       DateTime @updatedAt
+
+  @@index([tradeDate])
+  @@index([finalised, tradeDate])
+}
