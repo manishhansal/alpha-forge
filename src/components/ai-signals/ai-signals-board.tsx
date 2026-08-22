@@ -329,13 +329,28 @@ function AiSignalRow({
           {fmtPrice(signal.underlyingPrice, currency)}
         </td>
 
+        {/* Entry */}
+        <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
+          {fmtPrice(signal.entry, currency)}
+        </td>
+
+        {/* Stop Loss */}
+        <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
+          {fmtPrice(signal.stopLoss, currency)}
+        </td>
+
+        {/* TP1 */}
+        <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
+          {signal.takeProfits?.[0] ? fmtPrice(signal.takeProfits[0].price, currency) : "—"}
+        </td>
+
         {/* Confidence */}
-        <td className="p-2.5 text-right tabular text-sm font-semibold text-[var(--color-fg)]">
+        <td className="hidden p-2.5 text-right tabular text-sm font-semibold text-[var(--color-fg)] md:table-cell">
           {signal.confidenceScore}%
         </td>
 
         {/* Win Prob */}
-        <td className={cn("p-2.5 text-right tabular text-sm font-medium",
+        <td className={cn("hidden p-2.5 text-right tabular text-sm font-medium md:table-cell",
           isBull ? "text-emerald-600 dark:text-emerald-400"
           : isBear ? "text-rose-600 dark:text-rose-400"
           : "text-[var(--color-fg-muted)]"
@@ -344,12 +359,12 @@ function AiSignalRow({
         </td>
 
         {/* R:R */}
-        <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
+        <td className="hidden p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)] lg:table-cell">
           {signal.riskReward.toFixed(1)}:1
         </td>
 
         {/* Horizon */}
-        <td className="hidden p-2.5 text-[11px] text-[var(--color-fg-subtle)] sm:table-cell">
+        <td className="hidden p-2.5 text-[11px] text-[var(--color-fg-subtle)] xl:table-cell">
           <span className={cn(
             "inline-flex items-center gap-1",
             (signal.horizon === "swing" || signal.horizon === "positional")
@@ -376,8 +391,8 @@ function AiSignalRow({
   );
 }
 
-// total cols: chevron + symbol + action + grade + price + conf + winprob + rr + horizon = 9
-const COL_SPAN = 9;
+// total cols: chevron + symbol + action + grade + ltp + entry + sl + tp1 + conf + winprob + rr + horizon = 12
+const COL_SPAN = 12;
 
 // ─── Board ────────────────────────────────────────────────────────────────────
 
@@ -522,11 +537,14 @@ export function AiSignalsBoard({
                 <th className="p-2.5 text-left font-medium">Symbol</th>
                 <th className="p-2.5 text-left font-medium">Action</th>
                 <th className="p-2.5 text-left font-medium">Grade</th>
-                <th className="p-2.5 text-right font-medium">Price</th>
-                <th className="p-2.5 text-right font-medium">Conf</th>
-                <th className="p-2.5 text-right font-medium">Win%</th>
-                <th className="p-2.5 text-right font-medium">R:R</th>
-                <th className="hidden p-2.5 text-left font-medium sm:table-cell">Horizon</th>
+                <th className="p-2.5 text-right font-medium">LTP</th>
+                <th className="p-2.5 text-right font-medium">Entry</th>
+                <th className="p-2.5 text-right font-medium">SL</th>
+                <th className="p-2.5 text-right font-medium">TP1</th>
+                <th className="hidden p-2.5 text-right font-medium md:table-cell">Conf</th>
+                <th className="hidden p-2.5 text-right font-medium md:table-cell">Win%</th>
+                <th className="hidden p-2.5 text-right font-medium lg:table-cell">R:R</th>
+                <th className="hidden p-2.5 text-left font-medium xl:table-cell">Horizon</th>
               </tr>
             </thead>
             <tbody>

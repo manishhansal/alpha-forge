@@ -283,7 +283,8 @@ function DetailCell({ label, value, sub, subTone, icon }: {
 // ─── Single pick row ──────────────────────────────────────────────────────────
 
 // chevron + symbol + direction + grade + status + P&L + conf + winprob + rr = 9
-const COL_SPAN = 9;
+// chevron + symbol + dir + grade + status + pnl + entry + sl + target + conf + winprob + rr = 12
+const COL_SPAN = 12;
 
 function PickRow({
   pick,
@@ -372,20 +373,35 @@ function PickRow({
           {pnl == null ? "—" : fmtPct(pnl)}
         </td>
 
-        {/* Conf */}
+        {/* Entry */}
         <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
+          ₹{fmt(pick.entry)}
+        </td>
+
+        {/* Stop Loss */}
+        <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
+          ₹{fmt(pick.stopLoss)}
+        </td>
+
+        {/* Target (TP1) */}
+        <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
+          ₹{fmt(pick.target)}
+        </td>
+
+        {/* Conf */}
+        <td className="hidden p-2.5 text-right tabular text-sm text-[var(--color-fg)] md:table-cell">
           {pick.confidenceScore}
         </td>
 
         {/* Win Prob */}
-        <td className={cn("p-2.5 text-right tabular text-sm font-medium",
+        <td className={cn("hidden p-2.5 text-right tabular text-sm font-medium md:table-cell",
           isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
         )}>
           {Math.round(pick.winProbability * 100)}%
         </td>
 
         {/* R:R */}
-        <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
+        <td className="hidden p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)] lg:table-cell">
           {pick.riskReward.toFixed(1)}:1
         </td>
       </motion.tr>
@@ -444,9 +460,12 @@ function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
                   <th className="p-2.5 text-left font-medium">Grade</th>
                   <th className="p-2.5 text-left font-medium">Status</th>
                   <th className="p-2.5 text-right font-medium">P&amp;L</th>
-                  <th className="p-2.5 text-right font-medium">Conf</th>
-                  <th className="p-2.5 text-right font-medium">Win%</th>
-                  <th className="p-2.5 text-right font-medium">R:R</th>
+                  <th className="p-2.5 text-right font-medium">Entry</th>
+                  <th className="p-2.5 text-right font-medium">SL</th>
+                  <th className="p-2.5 text-right font-medium">Target</th>
+                  <th className="hidden p-2.5 text-right font-medium md:table-cell">Conf</th>
+                  <th className="hidden p-2.5 text-right font-medium md:table-cell">Win%</th>
+                  <th className="hidden p-2.5 text-right font-medium lg:table-cell">R:R</th>
                 </tr>
               </thead>
               <tbody>
