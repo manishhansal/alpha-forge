@@ -2,7 +2,6 @@ import { Suspense } from "react";
 
 import { IndiaBestTimeBanner } from "@/components/india/best-time/india-best-time-banner";
 import { DailyPicksBoard } from "@/components/india/daily-picks/daily-picks-board";
-import { DailyPicksHistory } from "@/components/india/daily-picks/daily-picks-history";
 import { ExpiryTradesSection } from "@/components/india/daily-picks/expiry-trades-section";
 import { FnoBullishTrendSection } from "@/components/india/daily-picks/fno-bullish-trend-section";
 import { FnoBearishTrendSection } from "@/components/india/daily-picks/fno-bearish-trend-section";
@@ -11,7 +10,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { getIndiaDailyPicks } from "@/features/india/daily-picks/builder";
 import { getIndiaExpiryTrades } from "@/features/india/expiry-trades/builder";
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -86,15 +84,6 @@ export default function IndiaDailyPicksPage() {
       <FnoBullishTrendSection />
 
       <FnoBearishTrendSection />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Past picks &amp; outcomes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <DailyPicksHistory />
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
