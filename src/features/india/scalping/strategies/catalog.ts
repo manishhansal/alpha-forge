@@ -34,6 +34,15 @@ export const INDIA_SCALP_STRATEGY_IDS = [
   "LIQUIDITY_EDGE",
   "MAX_PAIN_GRAVITY",
   "OPENING_BREAKOUT",
+  // ── Signal-surface paper-trade sources ─────────────────────────────────
+  // These are not "strategies" in the picker sense — they represent trades
+  // opened manually from the Daily Picks board, AI Signals board, or the
+  // F&O Scanner. They follow the same `in:<id>:1d` source convention so the
+  // journal stays fully isolated from crypto rows.
+  "DAILY_PICK",     // from /in/daily-picks
+  "AI_SIGNAL",      // from /in/ai-signals
+  "SCANNER_HIT",    // from /in/scanner
+  "FNO_TREND",      // from FnO Bullish/Bearish Trend Scanner
 ] as const;
 export type IndiaScalpStrategyId = (typeof INDIA_SCALP_STRATEGY_IDS)[number];
 
@@ -161,6 +170,43 @@ export const INDIA_SCALP_STRATEGY_CATALOG: ReadonlyArray<IndiaScalpStrategyMeta>
       tags: ["Opening range", "5-min breakout", "Retest", "2R", "PCR/OI"],
       badge: "bull",
       monogram: "B",
+    },
+    // ── Signal-surface paper-trade sources ─────────────────────────────────
+    {
+      id: "DAILY_PICK",
+      label: "Daily Pick",
+      description: "Paper trade opened manually from the Daily Picks board. Levels (entry/SL/target) are taken directly from the frozen pick.",
+      category: "momentum",
+      tags: ["Daily Picks", "Manual", "Intraday"],
+      badge: "bull",
+      monogram: "D",
+    },
+    {
+      id: "AI_SIGNAL",
+      label: "AI Signal",
+      description: "Paper trade opened manually from the AI Signals board. Entry/SL/TP from the multi-confluence AI engine.",
+      category: "momentum",
+      tags: ["AI", "Multi-confluence", "Intraday"],
+      badge: "info",
+      monogram: "A",
+    },
+    {
+      id: "SCANNER_HIT",
+      label: "Scanner Hit",
+      description: "Paper trade opened manually from the F&O Scanner (Momentum, Volume, OI, PCR, IV, Range Expansion).",
+      category: "momentum",
+      tags: ["Scanner", "Manual", "Intraday"],
+      badge: "neutral",
+      monogram: "S",
+    },
+    {
+      id: "FNO_TREND",
+      label: "FnO Trend",
+      description: "Paper trade opened manually from the FnO Bullish or Bearish Trend Scanner (14-condition MA+ADX+MACD screener).",
+      category: "trend",
+      tags: ["FnO Trend", "MA+ADX+MACD", "Daily conditions"],
+      badge: "outline",
+      monogram: "T",
     },
   ] as const;
 

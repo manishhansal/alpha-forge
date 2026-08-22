@@ -2,6 +2,145 @@
 
 ---
 
+## [Unreleased] — FnO Intelligence & Paper Trading Engine
+
+**Branch:** `feature/fno-bullish-trend-scanner`
+**Test coverage:** 1101/1101 Vitest tests · 0 TypeScript errors
+
+Major enhancement of the India F&O surface: Smart Money Concepts + UT Bot
+Super Confluence indicator, FnO trend scanners with full level tracking,
+unified signal table UI, intelligent auto paper-trading engine with daily ₹1L
+budget, and a rich trade history & analytics page.
+
+---
+
+### FnO Bullish & Bearish Trend Scanner
+
+- New Chartink-mirrored 14-condition screener on the Daily Picks page
+- **Bullish conditions:** EMA(5) > SMA(20), WMA(10) > SMA(20), ADX DI+(14) > 20,
+  ADX(14) > 20, Volume > 1L, MACD Line > 0, Close > prev/2d close,
+  Close > SMA(50), Close > ₹150, DI+ > DI−, RSI > 50, MACD > Signal,
+  SMA(20) > SMA(40)
+- **Bearish conditions:** exact bearish mirror of all 14 conditions
+- Results sorted by Chg% descending (bullish) / ascending (bearish) to match
+  Chartink default
+- ATR(14)-based entry/SL/TP1/TP2/TP3 levels on every hit (intraday profile:
+  SL = 1.4×ATR, TP1 = 1.6×ATR, TP2 = 2.6×ATR, TP3 = 4.0×ATR)
+- Results persisted to `FnoTrendScan` DB table (one row per tradeDate+scanType+symbol)
+- Worker tracks TARGET_HIT / STOP_HIT / CLOSED every 60s during market hours
+- `/api/in/fno-bullish-trend` and `/api/in/fno-bearish-trend` routes with cache-bust support
+- EMA calculation seeded from SMA (TradingView/Chartink convention) for screener parity
+
+### Super Confluence Engine (UT Bot + AI Neural + SMC + EMA 9/15/21)
+
+- Port of the combined Pine Script "Super Confluence Engine" to TypeScript
+- **UT Bot ATR Trailing Stop:** keyValue=1, atrPeriod=10 (LuxAlgo port)
+- **AI Neural Trend Line:** HMA-smoothed adaptive trailing stop (speed=14, mult=2.0)
+- **SMC Swing Structure:** BOS/CHoCH pivot bias (pivotLen=50)
+- **EMA 9/15/21 stack:** 4th gate — all three must be in correct order
+- Super Buy fires only when UT_buy AND aiDir==1 AND smcBias==1 AND ema9>ema15>ema21
+- Score in [-1, 1]: full 4-way confluence = ±1.0, 3/4 = ±0.75, 2/4 = ±0.5
+- `superConfluence` factor added to the India AI signal engine (weight 0.10)
+- Chart overlay plugin: AI Neural Line (green/red), UT Bot trailing stop (dotted),
+  SMC swing H/L lines (dashed), UT/Super Buy/Sell markers, EMA lines (amber shades)
+- `🔥 SC` button added to the price chart toolbar
+
+### Unified Signal Table UI
+
+- `SignalTableRow` + `SignalTableHead` shared components for all India signal lists
+- Click any row to expand inline detail panel (entry/SL/TP, metric, volume, note,
+  TradingView link, Chart link, +Watchlist button, Paper Trade button)
+- Applied to: F&O Scanner, India Signals board, MSB Dashboard (Range Expansion +
+  MSB Signals), Watchlist, Daily Picks board, FnO Trend sections
+- Entry/SL/TP1 columns visible directly in compact rows (no expand required)
+- Daily Picks board: full table with Symbol/Dir/Grade/Status/P&L/Entry/SL/Target/Conf/Win%/R:R
+- AI Signals board: Symbol/Action/Grade/LTP/Entry/SL/TP1/Conf/Win%/R:R/Horizon
+
+### Intraday-Only Signal Filtering
+
+- AI Signals board hard-locked to scalp+intraday horizon only
+- Horizon dropdown removed — no swing/positional signals shown
+- Market-closed state: shows last-session intraday signals (48h cache),
+  falls back to planning signals with amber horizon badge when no snapshot exists
+- Stale-while-revalidate: never returns fewer signals than last successful response
+- Previous-session fallback in Daily Picks board when market is closed
+
+### Paper Trading Enhancements
+
+- New source IDs: `DAILY_PICK`, `AI_SIGNAL`, `SCANNER_HIT`, `FNO_TREND`
+- `IndiaScalpTimeframe` extended with `"1d"` for manual signal-surface trades
+- `POST /api/in/paper-trade` universal endpoint: market-hours guard (09:15–15:30 IST),
+  expiry cooldown, duplicate check, symbol normalisation, risk gate
+- `PaperTradeButton` component with idle/loading/success/error/closed states
+- Paper Trade buttons on: Daily Picks expand panel, AI Signals expand panel,
+  all SignalTableRow expand panels
+- `FNO_TREND` `paperTradeStrategyId` on FnO trend scanner hits
+- `POST /api/in/scalper/close-all`: force-closes all OPEN India trades at current price
+- "Close All (N)" button in Open Positions card header
+- EOD worker (`india-eod-squareoff`): closes all OPEN India trades at 15:30 IST
+
+### Intelligent Auto Paper-Trading Engine
+
+- Signal scoring: 35%×confidence + 25%×winProbability + 25%×grade + 15%×R:R
+- Only signals scoring ≥ 0.52 are traded (eliminates low-conviction setups)
+- Feeds from Daily Picks (DB) + AI Signals (intraday/scalp only)
+- Daily ₹1,00,000 budget: max 5 positions × ₹20,000 notional each
+- Risk gate: SL distance / entry ≤ 2.5% (no wide-stop gambles)
+- No new entries after 14:45 IST; all positions closed at 15:30 IST
+- `IndiaDaySession` table tracks daily budget utilisation and session P&L
+- Worker job `india-auto-trader` runs every 60s during market hours
+- `GET /api/in/paper-trade/analytics?range=1d|7d|15d|30d|6mo|1y|all`
+- Analytics: equity curve, Sharpe ratio, consistency %, best/worst day, max drawdown
+
+### Trade History Page (`/in/history`)
+
+- New sidebar item "Trade History" (History icon) after Daily Picks
+- "Past picks & outcomes" card removed from Daily Picks page
+- Three source tabs: Daily Picks · Scalper Trades · FnO Trend Scanner
+- Daily Picks tab: aggregate stats banner, bucket heat strip, day accordions (7/page),
+  outcome/direction filters, 7d/14d/30d/60d range selector
+- Scalper Trades tab: fetches `/api/in/scalper/journal`, strategy heat strip,
+  per-trade inline detail with rationale + TradingView + Full Journal links
+- FnO Trend Scanner tab: BULLISH/BEARISH/ALL sub-filter, per-day accordion,
+  per-scan detail with all levels + ADX/RSI
+
+### AI Signals Bug Fixes
+
+- Fixed `horizonFilter is not defined` ReferenceError (stale dep in useMemo)
+- Fixed blank board when market is closed (show last-session or planning signals)
+- Fixed 29→4 signal drop: increased off-hours TTL to 5min, stale-while-revalidate,
+  last-session snapshot stored during market hours (48h TTL)
+- AI Signals board: shows market-closed banner with context when serving planning signals
+
+### Worker Improvements
+
+- `india-daily-picks` job: default interval reduced from 5min to 1min,
+  `runOnStart: true` for immediate first tick
+- New jobs wired: `india-fno-trend-track`, `india-eod-squareoff`, `india-auto-trader`
+- `india-eod-squareoff`: closes all OPEN India trades at 15:30 IST with Yahoo prices
+- `india-fno-trend-track`: tracks FnO trend scan TP1/SL resolution every 60s
+
+### New DB Models
+
+- `FnoTrendScan`: daily FnO trend scanner results with outcome tracking
+- `IndiaDaySession`: daily auto-trading session (budget, P&L, win rate, drawdown)
+- Migration: `20260821000000_fno_trend_scan` + `20260822000000_india_day_session`
+
+### New Tests
+
+- `tests/features/india-fno-trend-scanner.test.ts` — ScannerHit fields,
+  ATR level arithmetic, EMA seeding convention, MACD streaming
+- `tests/features/india-super-confluence.test.ts` — warmup guard, result shape,
+  EMA 9/15/21 gate, partial score, barsSinceSignal
+- `tests/features/india-auto-trader.test.ts` — signal scoring formula,
+  budget arithmetic, analytics aggregation, range date calculation
+- `tests/features/india-fno-trend-history.test.ts` — P&L direction math,
+  outcome resolution, day summary aggregation
+- `tests/api/in-paper-trade.test.ts` — market-hours guard, expiry cooldown,
+  input validation, duplicate detection, symbol normalisation
+
+---
+
 ## [Unreleased] — Phase 2: Expert Quant Upgrade
 
 **Branch:** `feature/phase2-expert-quant`
@@ -13,6 +152,7 @@ for the Indian F&O market. Twelve self-contained, TDD-driven increments — each
 additive and degrade-safe; no existing route, store, or worker job is broken.
 
 ---
+
 
 ### Track A — Streaming Indicators + Chart Plugins
 

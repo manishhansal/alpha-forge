@@ -109,11 +109,11 @@ export const workerConfig = {
   indiaDailyPicks: {
     // India F&O Daily Picks. Freezes the day's top-3-per-bucket picks on the
     // first in-session tick, then live-tracks them (P&L / progress / outcome)
-    // every cadence. Ticks outside market hours are skipped by the job. A
-    // 5-minute cadence keeps the live tracking fresh without hammering the
-    // Yahoo / NSE fan-out.
+    // every cadence. Ticks outside market hours are skipped by the job.
+    // 1-minute cadence matches the intraday signal refresh cadence and ensures
+    // TARGET_HIT / STOP_HIT are recorded within 60s of the price touching the level.
     intervalMs: Number(
-      process.env.WORKER_INDIA_DAILY_PICKS_INTERVAL_MS ?? 5 * 60_000,
+      process.env.WORKER_INDIA_DAILY_PICKS_INTERVAL_MS ?? 60_000,
     ),
   },
 

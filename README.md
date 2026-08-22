@@ -11,13 +11,96 @@ top-of-sidebar switcher:
   IST-anchored Best Time to Trade indicator, and two paper-trading engines.
 - **Indian Market (NSE F&O)** — full sidebar parity with the crypto
   surface. Every crypto sidebar item has an NSE-scoped counterpart under
-  `/in/*`: Overview (NIFTY indices + sectoral heatmap + MSB–OB signals +
-  range-expansion scanner), an **NSE-anchored Best Time** indicator
-  (Pre-Open / Opening Volatility / Morning Trend / Midday Lull /
-  Afternoon Trend / Power Hour / Closing Auction with weekly-expiry
-  awareness), full option chain with PCR / max-pain, a unified
-  **Signals** board merging six F&O scanners (range-expansion, momentum,
-  volume, OI build-up, PCR, IV-spike), window-pinned **Strategies** and
+  `/in/*`: Overview (NIFTY indices + sectoral heatmap + MSB–OB signals),
+  an **NSE-anchored Best Time** indicator, full option chain with PCR /
+  max-pain, a unified **Signals** board merging six F&O scanners,
+  window-pinned **Strategies** and **Paper Trading** desks, **AI Signals**
+  (multi-confluence engine with Entry/SL/TP1 in every row), plus India-only
+  **Daily Picks** (intraday-only, frozen picks with live tracking),
+  **FnO Trend Scanners** (14-condition MA+ADX+MACD screeners with entry/SL/TP),
+  **Trade History** (unified history across Daily Picks + Scalper + FnO Trend),
+  and an **Intelligent Auto Paper-Trading Engine** (daily ₹1L budget,
+  signal scoring, 5-position max, EOD close-out).
+
+## What's New (FnO Intelligence Branch)
+
+### Intelligent Auto Paper-Trading Engine
+- Scores every Daily Pick and AI Signal: `35%×confidence + 25%×winProbability + 25%×grade + 15%×R:R`
+- Only signals scoring ≥ 0.52 are traded — eliminates low-conviction setups
+- Daily ₹1,00,000 budget: max 5 positions × ₹20,000 notional each
+- Risk gate: SL distance / entry ≤ 2.5% (no wide-stop gambles)
+- All positions are intraday-only — closed at 15:30 IST, fresh ₹1L budget every day
+- Run the worker to activate: `npm run worker:dev`
+
+### Super Confluence Engine (UT Bot + AI Neural + SMC + EMA 9/15/21)
+- Eliminates fake signals by requiring all 4 systems to agree simultaneously
+- Click `🔥 SC` in the chart toolbar to overlay the indicator on any NSE stock
+- Used as a confidence factor in AI signal scoring
+
+### FnO Trend Scanners
+- 14-condition Chartink-mirrored screeners for bullish and bearish trends
+- Entry/SL/TP1/TP2/TP3 computed from ATR(14) on every signal
+- Results persisted to DB with TARGET_HIT/STOP_HIT/CLOSED outcome tracking
+- Paper Trade button on every signal row
+
+### Trade History Page
+- `/in/history` in the sidebar under Daily Picks
+- Three tabs: Daily Picks · Scalper Trades · FnO Trend Scanner
+- Time range filters: 7d / 14d / 30d / 60d
+- Per-day accordion with aggregate stats, equity curve, win rate
+
+### Paper Trade from Any Signal
+- Paper Trade button on Daily Picks, AI Signals, Scanner, FnO Trend sections
+- Market-hours guard: button shows "Market is closed" outside 09:15–15:30 IST
+- "Close All" button in Open Positions card for manual position reset
+
+## Setup
+
+### Prerequisites
+- Node.js 18+
+- PostgreSQL (for Daily Picks + Paper Trading history)
+- Redis (optional — in-memory fallback available)
+
+### Environment Variables
+```env
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://localhost:6379
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+# Optional: Angel One SmartAPI for first-party F&O data
+ANGEL_API_KEY=...
+ANGEL_CLIENT_ID=...
+```
+
+### Run the DB migration
+```bash
+npx prisma migrate deploy
+```
+This creates the `FnoTrendScan` and `IndiaDaySession` tables required for
+the trend scanner history and auto-trading analytics.
+
+### Start the app
+```bash
+npm run dev
+```
+
+### Start the worker (for auto-trading, EOD close-out, signal tracking)
+```bash
+npm run worker:dev
+```
+The worker runs the following jobs every minute during NSE market hours:
+- `india-daily-picks` — freeze and track Daily Picks
+- `india-auto-trader` — score signals, open top trades within ₹1L budget
+- `india-fno-trend-track` — resolve FnO trend scan TP1/SL outcomes
+- `india-eod-squareoff` — close all OPEN India trades at 15:30 IST
+
+### Run tests
+```bash
+npm test               # full suite (1101 tests)
+npm run test:features  # feature engine tests only
+npm run test:api       # API route tests only
+```
+
+
   **Paper Trading** desks, **Strategy Backtest** + **Strategy Lab**
   scaffolds wired to the live
   historical fetcher, a sector + stock **Heatmap** with continuous tint

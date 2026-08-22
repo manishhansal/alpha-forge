@@ -1,11 +1,8 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   Eye,
   Plus,
   Trash2,
@@ -16,24 +13,32 @@ import {
   PaginationStrip,
   usePaginationFilter,
 } from "@/components/india/ui/pagination-filter";
+import {
+  SignalTableHead,
+  SignalTableRow,
+} from "@/components/india/ui/signal-table-row";
 import { useIndiaWatchlistStore } from "@/store/india/watchlistStore";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { useFeedStream } from "@/hooks/india/useFeedStream";
 import { useLiveQuotes } from "@/hooks/india/useLiveQuotes";
-import { fmt, fmtPct } from "@/lib/india/format";
+import { fmt } from "@/lib/india/format";
 import { FNO_STOCKS } from "@/lib/india/fno-symbols";
 
+// chevron + Symbol + Price + Chg% + High + Low + Remove = 7
+const COL_SPAN = 7;
+
 export default function WatchlistPage() {
-  const items = useIndiaWatchlistStore((s) => s.items);
+  const items  = useIndiaWatchlistStore((s) => s.items);
   const remove = useIndiaWatchlistStore((s) => s.remove);
-  const add = useIndiaWatchlistStore((s) => s.add);
+  const add    = useIndiaWatchlistStore((s) => s.add);
+  const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
 
   const symbols = React.useMemo(() => items.map((i) => i.symbol), [items]);
 
   useFeedStream(symbols, 4000);
   useLiveQuotes(symbols, 12_000);
 
-  const ticks = useIndiaMarketStore((s) => s.ticks);
+  const ticks  = useIndiaMarketStore((s) => s.ticks);
   const quotes = useIndiaMarketStore((s) => s.quotes);
 
   const [search, setSearch] = React.useState("");
@@ -43,17 +48,34 @@ export default function WatchlistPage() {
     return FNO_STOCKS.filter((s) => s.includes(q)).slice(0, 8);
   }, [search]);
 
-  const {
-    pageItems,
-    page,
-    setPage,
-    totalPages,
-    filteredTotal,
-    pageSize,
-  } = usePaginationFilter({
-    items,
-    pageSize: 5,
-  });
+  const { pageItems, page, setPage, totalPages, filteredTotal, pageSize } =
+    usePaginationFilter({ items, pageSize: 15 });
+
+  // Build SignalRow shape from live tick + quote data for each watchlist item.
+  const toSignalRow = React.useCallback(
+    (symbol: string) => {
+      const tick = ticks[symbol];
+      const q    = quotes[symbol];
+      const ltp  = tick?.ltp ?? q?.price ?? null;
+      const changePct = tick?.changePct ?? q?.changePct ?? null;
+      return {
+        symbol,
+        price: ltp,
+        changePct,
+        metric: Math.abs(changePct ?? 0),
+        metricLabel: q?.open != null ? `Open ${fmt(q.open)}` : "",
+        note:
+          [
+            q?.high != null ? `H ${fmt(q.high)}` : null,
+            q?.low  != null ? `L ${fmt(q.low)}`  : null,
+            q?.name ? q.name : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined,
+      };
+    },
+    [ticks, quotes],
+  );
 
   return (
     <div className="space-y-6">
@@ -67,21 +89,18 @@ export default function WatchlistPage() {
             <Eye className="h-5 w-5 text-amber-500" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-              Watchlist
-            </h1>
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Watchlist</h1>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Live diff updates via SSE feed — only your visible symbols are
-              subscribed.
+              Live diff updates via SSE feed — only your visible symbols are subscribed.
             </p>
           </div>
         </div>
-
         <span className="text-[10px] text-muted-foreground">
           {items.length} symbol{items.length === 1 ? "" : "s"}
         </span>
       </motion.div>
 
+      {/* Symbol search / add */}
       <div className="relative">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -106,10 +125,7 @@ export default function WatchlistPage() {
             {filtered.map((s) => (
               <button
                 key={s}
-                onClick={() => {
-                  add(s);
-                  setSearch("");
-                }}
+                onClick={() => { add(s); setSearch(""); }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-muted/40 flex items-center justify-between"
               >
                 <span className="font-medium">{s}</span>
@@ -128,92 +144,63 @@ export default function WatchlistPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b border-border/60 text-muted-foreground text-xs uppercase tracking-wide">
-                <th className="p-3 font-medium">Symbol</th>
-                <th className="p-3 font-medium text-right">LTP</th>
-                <th className="p-3 font-medium text-right">Change %</th>
-                <th className="p-3 font-medium text-right">Open</th>
-                <th className="p-3 font-medium text-right">High</th>
-                <th className="p-3 font-medium text-right">Low</th>
-                <th className="p-3"></th>
-              </tr>
+              <SignalTableHead
+                extraTrailHeaders={
+                  <>
+                    <th className="p-2.5 text-right font-medium">High</th>
+                    <th className="p-2.5 text-right font-medium">Low</th>
+                    <th className="p-2.5" />
+                  </>
+                }
+              />
             </thead>
             <tbody>
               <AnimatePresence>
-                {pageItems.map((item) => {
-                  const tick = ticks[item.symbol];
+                {pageItems.map((item, i) => {
                   const q = quotes[item.symbol];
-                  const ltp = tick?.ltp ?? q?.price ?? null;
-                  const changePct = tick?.changePct ?? q?.changePct ?? null;
-                  const up = (changePct ?? 0) >= 0;
                   return (
-                    <motion.tr
+                    <SignalTableRow
                       key={item.symbol}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      className="border-b border-border/40 hover:bg-muted/30 transition-colors"
-                    >
-                      <td className="p-3 font-medium">
-                        <Link
-                          href={`/in/chart/${encodeURIComponent(item.symbol)}`}
-                          className="text-blue-500 hover:text-blue-400 hover:underline"
-                        >
-                          {item.symbol}
-                        </Link>
-                        {q?.name && (
-                          <div className="text-[10px] text-muted-foreground truncate max-w-[220px]">
-                            {q.name}
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-3 text-right tabular font-semibold">
-                        {fmt(ltp)}
-                      </td>
-                      <td
-                        className={`p-3 text-right tabular ${
-                          up ? "text-emerald-500" : "text-rose-500"
-                        }`}
-                      >
-                        <span className="inline-flex items-center justify-end gap-0.5">
-                          {up ? (
-                            <ArrowUpRight className="h-3 w-3" />
-                          ) : (
-                            <ArrowDownRight className="h-3 w-3" />
-                          )}
-                          {changePct == null ? "—" : fmtPct(changePct)}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right tabular text-muted-foreground">
-                        {fmt(q?.open ?? null)}
-                      </td>
-                      <td className="p-3 text-right tabular text-muted-foreground">
-                        {fmt(q?.high ?? null)}
-                      </td>
-                      <td className="p-3 text-right tabular text-muted-foreground">
-                        {fmt(q?.low ?? null)}
-                      </td>
-                      <td className="p-3 text-right">
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          onClick={() => remove(item.symbol)}
-                          aria-label="Remove"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </td>
-                    </motion.tr>
+                      hit={toSignalRow(item.symbol)}
+                      colSpan={COL_SPAN}
+                      index={i}
+                      expanded={expandedSymbol === item.symbol}
+                      onToggle={() =>
+                        setExpandedSymbol((prev) =>
+                          prev === item.symbol ? null : item.symbol,
+                        )
+                      }
+                      extraTrailCells={
+                        <>
+                          <td className="p-2.5 text-right tabular text-[var(--color-fg-muted)] text-sm">
+                            {fmt(q?.high ?? null)}
+                          </td>
+                          <td className="p-2.5 text-right tabular text-[var(--color-fg-muted)] text-sm">
+                            {fmt(q?.low ?? null)}
+                          </td>
+                          <td className="p-2.5">
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                remove(item.symbol);
+                              }}
+                              aria-label="Remove"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </>
+                      }
+                    />
                   );
                 })}
               </AnimatePresence>
 
               {items.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="p-8 text-center text-sm text-muted-foreground"
-                  >
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-sm text-muted-foreground">
                     Watchlist empty — add a symbol above.
                   </td>
                 </tr>

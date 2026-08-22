@@ -10,6 +10,7 @@ import type {
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
+import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { yahoo } from "@/services/india/yahoo";
 import type { Candle } from "@/types/india/market";
 
@@ -44,9 +45,10 @@ const INDICATOR_CONFIG: IndicatorConfig = {
 
 /** NSE interval string → India yahoo interval map */
 const TF_TO_INTERVAL: Record<IndiaScalpTimeframe, "1m" | "5m" | "15m"> = {
-  "1m": "1m",
-  "5m": "5m",
+  "1m":  "1m",
+  "5m":  "5m",
   "15m": "15m",
+  "1d":  "5m",  // daily-based signals use 5m candles for intraday tracking
 };
 
 /**
@@ -128,6 +130,11 @@ export function startIndiaScalperJob(): JobHandle {
       runOnStart: false,
       tick: async () => {
         const child = log.child("tick");
+
+        // All India paper trades are intraday only — skip entirely outside
+        // the NSE session (09:15–15:30 IST, Mon–Fri).
+        if (!isNseMarketOpenIST(new Date())) return;
+
         const prisma = getPrisma();
 
         let opened = 0;

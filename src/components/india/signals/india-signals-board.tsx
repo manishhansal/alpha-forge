@@ -1,24 +1,27 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   Activity,
   Expand,
   Flame,
   Gauge,
-  PlusCircle,
   Rocket,
   Sparkles,
   TrendingUp,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/india/ui/button";
-import { useIndiaWatchlistStore } from "@/store/india/watchlistStore";
-import { fmt, fmtPct } from "@/lib/india/format";
+import {
+  SignalTableHead,
+  SignalTableRow,
+  kindClass,
+} from "@/components/india/ui/signal-table-row";
 import type { ScannerHit, ScannerResult, ScannerType } from "@/types/india/scanner";
+
+// chevron + Symbol + Price + Chg% + Source + Metric + Tag = 7
+const COL_SPAN = 7;
 
 type SourceMeta = {
   id: ScannerType;
@@ -110,30 +113,6 @@ function persistSelection(set: Set<ScannerType>) {
   }
 }
 
-function kindToneClass(kind?: string): string {
-  switch (kind) {
-    case "LONG_BUILDUP":
-    case "BULLISH":
-    case "GAINER":
-    case "BULL_VOLUME":
-    case "SHORT_COVERING":
-    case "RANGE_EXPANSION":
-      return "bg-[color-mix(in_oklch,var(--color-bull)_15%,transparent)] text-[var(--color-bull)]";
-    case "SHORT_BUILDUP":
-    case "BEARISH":
-    case "LOSER":
-    case "BEAR_VOLUME":
-    case "LONG_UNWINDING":
-      return "bg-[color-mix(in_oklch,var(--color-bear)_15%,transparent)] text-[var(--color-bear)]";
-    case "ELEVATED":
-      return "bg-[color-mix(in_oklch,var(--color-warning)_15%,transparent)] text-[var(--color-warning)]";
-    case "LOW":
-      return "bg-[color-mix(in_oklch,var(--color-info)_15%,transparent)] text-[var(--color-info)]";
-    default:
-      return "bg-[var(--color-surface-hover)] text-[var(--color-fg-muted)]";
-  }
-}
-
 export function IndiaSignalsBoard() {
   const [active, setActive] = React.useState<Set<ScannerType>>(() => loadSelection());
   const [state, setState] = React.useState<Record<ScannerType, SourceState>>(() =>
@@ -141,15 +120,12 @@ export function IndiaSignalsBoard() {
       SOURCES.map((s) => [s.id, { result: null, loading: false, error: null }]),
     ) as Record<ScannerType, SourceState>,
   );
-  const addToWatchlist = useIndiaWatchlistStore((s) => s.add);
+  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     persistSelection(active);
   }, [active]);
 
-  // One effect that fans out a poll-loop per active source. Each source has
-  // its own AbortController + interval so flipping a source off (or
-  // unmounting) cancels just its in-flight fetch.
   React.useEffect(() => {
     const cancellers: Array<() => void> = [];
 
@@ -209,8 +185,6 @@ export function IndiaSignalsBoard() {
         out.push({ ...h, source: meta.id, rank: i + 1, fetchedAt: r.fetchedAt });
       });
     }
-    // Rank by metric magnitude (so the strongest signals across the merged
-    // set bubble up). Fall back to rank-within-source when metric is equal.
     return out.sort((a, b) => {
       const am = Math.abs(a.metric ?? 0);
       const bm = Math.abs(b.metric ?? 0);
@@ -224,11 +198,10 @@ export function IndiaSignalsBoard() {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      // Don't allow disabling everything — keep at least one source on so the
-      // page is never blank.
       if (next.size === 0) next.add(id);
       return next;
     });
+    setExpandedKey(null);
   };
 
   return (
@@ -259,9 +232,7 @@ export function IndiaSignalsBoard() {
                 >
                   <Icon className="h-3 w-3" />
                   {meta.label}
-                  <span className="text-[10px] text-[var(--color-fg-subtle)]">
-                    {meta.hint}
-                  </span>
+                  <span className="text-[10px] text-[var(--color-fg-subtle)]">{meta.hint}</span>
                   {on && count > 0 && (
                     <span className="ml-1 rounded-full bg-[var(--color-bg-elevated)] px-1.5 text-[10px]">
                       {count}
@@ -288,92 +259,62 @@ export function IndiaSignalsBoard() {
             </span>
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[var(--color-border)] text-left text-[11px] uppercase tracking-wider text-[var(--color-fg-subtle)]">
-                <th className="py-2 pr-3 font-medium">Source</th>
-                <th className="py-2 pr-3 font-medium">Symbol</th>
-                <th className="py-2 pr-3 text-right font-medium">Price</th>
-                <th className="py-2 pr-3 text-right font-medium">Day %</th>
-                <th className="py-2 pr-3 text-right font-medium">Metric</th>
-                <th className="py-2 pr-3 font-medium">Tag</th>
-                <th className="py-2 pr-3 font-medium">Note</th>
-                <th className="py-2"></th>
-              </tr>
+              <SignalTableHead
+                extraTrailHeaders={
+                  <>
+                    <th className="p-2.5 font-medium">Source</th>
+                    <th className="p-2.5 text-right font-medium">Metric</th>
+                    <th className="p-2.5 font-medium">Tag</th>
+                  </>
+                }
+              />
             </thead>
             <tbody>
               {merged.map((h, i) => {
                 const meta = SOURCE_BY_ID[h.source];
                 const Icon = meta.icon;
-                const up = (h.changePct ?? 0) >= 0;
+                const rowKey = `${h.source}:${h.symbol}`;
                 return (
-                  <motion.tr
-                    key={`${h.source}:${h.symbol}:${i}`}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(i * 0.01, 0.3) }}
-                    className="border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
-                  >
-                    <td className="py-2 pr-3">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]">
-                        <Icon className="h-3 w-3" />
-                        {meta.label}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 font-medium">
-                      <Link
-                        href={`/in/chart/${encodeURIComponent(h.symbol)}`}
-                        className="text-[var(--color-brand)] hover:underline"
-                      >
-                        {h.symbol}
-                      </Link>
-                    </td>
-                    <td className="py-2 pr-3 tabular text-right">
-                      {fmt(h.price)}
-                    </td>
-                    <td
-                      className={`py-2 pr-3 tabular text-right font-medium ${
-                        up ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
-                      }`}
-                    >
-                      {h.changePct == null ? "—" : fmtPct(h.changePct)}
-                    </td>
-                    <td className="py-2 pr-3 tabular text-right font-semibold">
-                      {h.metricLabel}
-                    </td>
-                    <td className="py-2 pr-3">
-                      {h.kind && (
-                        <span
-                          className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${kindToneClass(String(h.kind))}`}
-                        >
-                          {String(h.kind).replace("_", " ")}
-                        </span>
-                      )}
-                    </td>
-                    <td className="max-w-[280px] truncate py-2 pr-3 text-[12px] text-[var(--color-fg-muted)]">
-                      {h.note ?? ""}
-                    </td>
-                    <td className="py-2">
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => addToWatchlist(h.symbol)}
-                        title="Add to watchlist"
-                      >
-                        <PlusCircle className="h-3 w-3 mr-1" />
-                        Watch
-                      </Button>
-                    </td>
-                  </motion.tr>
+                  <SignalTableRow
+                    key={rowKey}
+                    hit={h}
+                    colSpan={COL_SPAN}
+                    index={i}
+                    expanded={expandedKey === rowKey}
+                    onToggle={() =>
+                      setExpandedKey((prev) => (prev === rowKey ? null : rowKey))
+                    }
+                    extraTrailCells={
+                      <>
+                        <td className="p-2.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]">
+                            <Icon className="h-3 w-3" />
+                            {meta.label}
+                          </span>
+                        </td>
+                        <td className="p-2.5 text-right tabular text-[11px] font-semibold text-[var(--color-fg-muted)]">
+                          {h.metricLabel}
+                        </td>
+                        <td className="p-2.5">
+                          {h.kind && (
+                            <span
+                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${kindClass(h.kind)}`}
+                            >
+                              {String(h.kind).replace(/_/g, " ")}
+                            </span>
+                          )}
+                        </td>
+                      </>
+                    }
+                  />
                 );
               })}
               {merged.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={8}
-                    className="py-8 text-center text-sm text-[var(--color-fg-muted)]"
-                  >
+                  <td colSpan={COL_SPAN} className="py-8 text-center text-sm text-[var(--color-fg-muted)]">
                     {SOURCES.some((m) => state[m.id]?.loading)
                       ? "Loading scanners…"
                       : "No active signals — try selecting another source."}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
   computeIndiaLivePnl,
@@ -31,8 +31,20 @@ import { fmt } from "@/lib/india/format";
  * even if the server response hasn't refreshed yet.
  */
 export function IndiaOpenPositionsCard() {
-  const { open, prices, cancelTrade } = useIndiaJournalData();
+  const { open, prices, cancelTrade, refresh } = useIndiaJournalData();
   const { selected, timeframesFor } = useIndiaStrategyFilter();
+  const [closingAll, setClosingAll] = useState(false);
+
+  const handleCloseAll = useCallback(async () => {
+    if (closingAll) return;
+    setClosingAll(true);
+    try {
+      await fetch("/api/in/scalper/close-all", { method: "POST" });
+      await refresh();
+    } finally {
+      setClosingAll(false);
+    }
+  }, [closingAll, refresh]);
 
   const isRowSelected = useCallback(
     (t: ApiIndiaPaperTrade) =>
@@ -93,6 +105,17 @@ export function IndiaOpenPositionsCard() {
         <div className="flex items-center gap-2">
           {visibleOpen.length > 0 && (
             <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+          )}
+          {open.length > 0 && (
+            <button
+              type="button"
+              onClick={handleCloseAll}
+              disabled={closingAll}
+              className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-600 transition-colors hover:bg-rose-500/20 disabled:opacity-60 dark:text-rose-400"
+              title="Close all open India paper trades at current market price"
+            >
+              {closingAll ? "Closing…" : `Close All (${open.length})`}
+            </button>
           )}
           <Badge variant={visibleOpen.length > 0 ? "info" : "outline"}>
             {filteredTotal} open

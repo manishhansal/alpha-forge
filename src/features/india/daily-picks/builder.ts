@@ -857,6 +857,7 @@ export async function getIndiaDailyPicks(
 ): Promise<DailyPicksResponse> {
   const now = Date.now();
   const tradeDate = istDateKey(new Date(now));
+
   // INDICES_SCALP picks need live option chains both at freeze time (to pick
   // the ATM strike + entry premium) and on every refresh (to re-price the
   // option). Fetched here in parallel with the candidate signals + the
@@ -901,6 +902,7 @@ export async function getIndiaDailyPicks(
 
   let picks: DailyPick[];
   let persisted = false;
+  let displayDate = tradeDate; // may be overridden to prev session date below
 
   const db = prisma ?? safeGetPrisma();
   if (db) {
@@ -917,6 +919,33 @@ export async function getIndiaDailyPicks(
         softCtx,
       );
       persisted = true;
+
+      // ── Previous-session fallback ──────────────────────────────────────
+      // When the market is currently closed (pre-open, post-close, weekend)
+      // and no picks have been frozen for today yet, show the most recent
+      // prior session's frozen picks rather than an empty board. Once the
+      // session opens at 09:15 and fresh picks are frozen, today's picks
+      // replace the previous session's automatically.
+      if (picks.length === 0 && !candidates.inActiveWindow) {
+        const lastDates = (await db.indiaDailyPick.findMany({
+          where: { tradeDate: { not: tradeDate } },
+          distinct: ["tradeDate"],
+          orderBy: { tradeDate: "desc" },
+          take: 1,
+          select: { tradeDate: true },
+        })) as Array<{ tradeDate: string }>;
+
+        if (lastDates.length > 0) {
+          const prevDate = lastDates[0].tradeDate;
+          const prevRows = (await db.indiaDailyPick.findMany({
+            where: { tradeDate: prevDate },
+            orderBy: [{ bucket: "asc" }, { rank: "asc" }],
+          })) as unknown as DailyPickRow[];
+          picks = prevRows.map((row) => rowToPick(row));
+          displayDate = prevDate; // show the date the picks belong to
+        }
+      }
+      // ──────────────────────────────────────────────────────────────────
     } catch (err) {
       console.warn(
         "[daily-picks] DB unavailable, serving ephemeral picks:",
@@ -975,7 +1004,7 @@ export async function getIndiaDailyPicks(
 
   return {
     market: "india",
-    tradeDate,
+    tradeDate: displayDate,
     generatedAt: now,
     modelVersion: AI_MODEL_VERSION,
     context: candidates.context,

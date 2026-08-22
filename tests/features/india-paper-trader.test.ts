@@ -63,7 +63,9 @@ afterEach(() => vi.clearAllMocks());
 describe("india/scalping/paper-trader — openIndiaPaperTrade", () => {
   it("opens a fresh trade tagged with the `in:<id>:<tf>` source", async () => {
     const { prisma, pt } = fakePrisma();
-    const res = await openIndiaPaperTrade(signal(), { prisma });
+    // Wednesday 10:00 IST = 04:30 UTC — within market hours (09:15–15:30 IST)
+    const now = new Date("2026-06-10T04:30:00Z");
+    const res = await openIndiaPaperTrade(signal(), { prisma, now });
 
     expect(res.opened).toBe(true);
     expect(res.reason).toBe("fired");
@@ -76,8 +78,10 @@ describe("india/scalping/paper-trader — openIndiaPaperTrade", () => {
 
   it("recomputes ATR-sized levels (rounded to tick) when an ATR is supplied", async () => {
     const { prisma, pt } = fakePrisma();
+    // Wednesday 10:00 IST = 04:30 UTC — within market hours
+    const now = new Date("2026-06-10T04:30:00Z");
     // LONG entry 22000, atr 50, slMult 1, RR 2.5 → stop 21950, target 22125.
-    await openIndiaPaperTrade(signal(), { prisma, atr: 50 });
+    await openIndiaPaperTrade(signal(), { prisma, atr: 50, now });
     const data = pt.create.mock.calls[0][0].data;
     expect(data.atr).toBe(50);
     expect(data.stopLoss).toBeCloseTo(21950, 5);
@@ -86,10 +90,22 @@ describe("india/scalping/paper-trader — openIndiaPaperTrade", () => {
 
   it("falls back to the signal's own levels when no ATR is supplied", async () => {
     const { prisma, pt } = fakePrisma();
-    await openIndiaPaperTrade(signal(), { prisma });
+    // Wednesday 10:00 IST = 04:30 UTC — within market hours
+    const now = new Date("2026-06-10T04:30:00Z");
+    await openIndiaPaperTrade(signal(), { prisma, now });
     const data = pt.create.mock.calls[0][0].data;
     expect(data.stopLoss).toBe(21890);
     expect(data.target).toBe(22275);
+  });
+
+  it("blocks opening when market is closed (outside 09:15–15:30 IST)", async () => {
+    const { prisma, pt } = fakePrisma();
+    // Wednesday 02:42 IST = 21:12 UTC previous day — market closed
+    const now = new Date("2026-06-09T21:12:00Z");
+    const res = await openIndiaPaperTrade(signal(), { prisma, now });
+    expect(res.opened).toBe(false);
+    expect(res.reason).toBe("market-closed");
+    expect(pt.create).not.toHaveBeenCalled();
   });
 
   it("skips opening during the expiry-day cooldown (Thursday ≥ 14:30 IST)", async () => {
@@ -107,7 +123,8 @@ describe("india/scalping/paper-trader — openIndiaPaperTrade", () => {
     const { prisma, pt } = fakePrisma({
       findFirst: vi.fn().mockResolvedValueOnce({ id: "open-1" }),
     });
-    const res = await openIndiaPaperTrade(signal(), { prisma });
+    const now = new Date("2026-06-10T04:30:00Z");
+    const res = await openIndiaPaperTrade(signal(), { prisma, now });
     expect(res.opened).toBe(false);
     expect(res.reason).toBe("already-open");
     expect(pt.create).not.toHaveBeenCalled();

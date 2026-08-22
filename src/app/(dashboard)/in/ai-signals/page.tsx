@@ -56,7 +56,10 @@ export default function IndiaAiSignalsPage() {
           option-chain positioning (PCR, IV, OI build-up, max-pain) and
           live scanner agreement, then publishes a confidence-scored trade
           plan with strike, stop, tiered targets and the exact NSE-session
-          entry / exit window.
+          entry / exit window.{" "}
+          <span className="font-medium text-[var(--color-fg)]">
+            Filtered to intraday &amp; scalp by default — change the horizon selector to see swing / positional setups.
+          </span>
         </p>
       </header>
 

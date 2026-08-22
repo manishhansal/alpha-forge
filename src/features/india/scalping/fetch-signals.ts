@@ -112,7 +112,9 @@ export async function getIndiaScalpSignals(
   const scannerIds = requested.filter(isScannerBacked);
   const wantsOpeningBreakout = requested.includes("OPENING_BREAKOUT");
   const positioningIds = requested.filter(
-    (id) => !isScannerBacked(id) && id !== "OPENING_BREAKOUT",
+    (id) => !isScannerBacked(id) && id !== "OPENING_BREAKOUT"
+      && id !== "DAILY_PICK" && id !== "AI_SIGNAL"
+      && id !== "SCANNER_HIT" && id !== "FNO_TREND",
   );
 
   const [scannerResults, positioningSignals, openingBreakoutSignals] =

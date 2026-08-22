@@ -66,12 +66,13 @@ import {
   type MLContextInputs,
 } from "@/lib/india/ml-enhanced-context";
 import type { MLStockRank } from "@/lib/india/ml-client";
+import { computeSuperConfluence } from "@/features/india/indicators/super-confluence";
 
-// Daily Picks rescans the full F&O universe on this cadence — bumped to a
-// minute per the spec ("scan all F&O stocks every minute"). The minute is the
-// natural NSE intraday candle; finer than that the macro factors (PCR, OI
-// buildup, daily-RSI/MACD) don't change meaningfully.
-const CACHE_TTL_MS = 60_000;
+// During market hours: refresh every 60s so signals stay live.
+// Outside market hours: cache for 5 minutes — the data is daily-bar-based
+// and doesn't meaningfully change between requests.
+const CACHE_TTL_MS          = 60_000;
+const CACHE_TTL_CLOSED_MS   = 5 * 60_000;
 
 /**
  * Concurrency cap when fanning Yahoo historical fetches across the full F&O
@@ -631,6 +632,13 @@ interface IndiaSignalInputs {
    * not altered, only the final confidence is nudged.
    */
   mlRankBoost?: number;
+  /**
+   * Super Confluence Engine score in [-1, 1].
+   * +1 = fresh UT Buy + AI trend bullish + SMC bullish (triple agreement).
+   * -1 = fresh UT Sell + AI trend bearish + SMC bearish.
+   * Null when candle history is too short for the indicator warmup.
+   */
+  superConfluenceScore?: number | null;
 }
 
 /**
@@ -937,6 +945,30 @@ function indiaFactors(args: IndiaSignalInputs): AiConfluenceFactor[] {
         args.inActiveWindow
           ? `Inside ${args.windowLabel} — F&O liquidity active`
           : `Outside ${args.windowLabel} — wait for market open`,
+    }),
+    makeFactor({
+      id: "superConfluence",
+      category: "technical",
+      label: "Super Confluence (UT+AI+SMC+EMA)",
+      // Weighted at 0.10 — same tier as scanner agreement. The four-way
+      // filter (UT Bot + AI Neural + SMC structure + EMA 9/15/21 stack) is
+      // the strongest fake-signal eliminator in the engine: a signal that
+      // passes all four (score ≥ 0.9) gets a meaningful confidence boost;
+      // a signal that contradicts the engine (score ≤ -0.5) gets penalised.
+      weight: 0.10,
+      raw: args.superConfluenceScore ?? null,
+      denominator: 1,
+      describe: () => {
+        const s = args.superConfluenceScore;
+        if (s == null) return "Unavailable — insufficient history";
+        if (s >= 0.9)  return "🔥 Super Buy — UT Bot + AI Neural + SMC + EMA 9/15/21 all bullish";
+        if (s <= -0.9) return "🔥 Super Sell — UT Bot + AI Neural + SMC + EMA 9/15/21 all bearish";
+        if (s >= 0.6)  return `Strong bullish confluence (score ${s.toFixed(2)}) — 3/4 agree`;
+        if (s <= -0.6) return `Strong bearish confluence (score ${s.toFixed(2)}) — 3/4 agree`;
+        if (s >= 0.4)  return `Partial bullish confluence (score ${s.toFixed(2)})`;
+        if (s <= -0.4) return `Partial bearish confluence (score ${s.toFixed(2)})`;
+        return `Weak confluence (score ${s.toFixed(2)}) — mixed signals`;
+      },
     }),
   ];
 
@@ -1687,6 +1719,16 @@ async function computeIndiaUniverse(
         : null,
       quantPrefilterPassed: prefilter.passes,
       mlRankBoost,
+      superConfluenceScore: (() => {
+        // Compute on demand — daily candles already in memory. Fail-soft so
+        // a single symbol's indicator warmup failure never blocks the board.
+        try {
+          const sc = computeSuperConfluence(dailies);
+          return sc?.score ?? null;
+        } catch {
+          return null;
+        }
+      })(),
     });
   });
 
@@ -1737,9 +1779,26 @@ async function computeIndiaUniverse(
 }
 
 export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
-  return indiaCache.memo("ai-signals:india:v3", CACHE_TTL_MS, async () => {
+  // ── Step 1: try the last-session snapshot first (highest priority) ──────
+  // When the market is closed, always serve the last live-session snapshot
+  // when it exists — it has real intraday signals and is far more useful
+  // than freshly-generated off-hours swing signals.
+  const lastSession = await indiaCache.get<AiSignalsResponse>(
+    "ai-signals:india:last-session",
+  );
+  if (lastSession && !lastSession.context.inActiveWindow) {
+    // Market is still closed — return the cached live-session signals.
+    // Don't bother regenerating until the session opens.
+    return lastSession;
+  }
+
+  // ── Step 2: normal memo path with dynamic TTL ────────────────────────────
+  const ttl = lastSession?.context.inActiveWindow ? CACHE_TTL_MS : CACHE_TTL_CLOSED_MS;
+
+  return indiaCache.memo(`ai-signals:india:v3`, ttl, async () => {
     const r = await computeIndiaUniverse(buildUniverse());
-    return {
+
+    const result: AiSignalsResponse = {
       market: "india",
       generatedAt: r.generatedAt,
       modelVersion: AI_MODEL_VERSION,
@@ -1747,6 +1806,25 @@ export async function getIndiaAiSignals(): Promise<AiSignalsResponse> {
       signals: r.signals,
       stats: r.stats,
     };
+
+    // ── Step 3: snapshot when market is open ─────────────────────────────
+    // Persist the live-session signals so they're available after close.
+    if (r.inActiveWindow && r.signals.some(s => s.horizon === "intraday" || s.horizon === "scalp")) {
+      await indiaCache.set(
+        "ai-signals:india:last-session",
+        result,
+        48 * 60 * 60_000, // 48h — covers weekends + single holidays
+      );
+    }
+
+    // ── Step 4: never return fewer signals than the last snapshot ─────────
+    // If Yahoo throttled and we only got indices (4 signals), prefer the
+    // last-session snapshot over the degraded result.
+    if (!r.inActiveWindow && lastSession && r.signals.length < lastSession.signals.length) {
+      return lastSession;
+    }
+
+    return result;
   });
 }
 
