@@ -963,6 +963,143 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// FnO Bearish Trend Scanner — exact bearish mirror of the Bullish scanner
+//
+// Conditions (all must pass, futures segment, daily timeframe):
+//   1.  EMA(5)  < SMA(20)
+//   2.  WMA(10) < SMA(20)
+//   3.  ADX DI−(14) > 20
+//   4.  ADX(14) > 20
+//   5.  Volume  > 100 000
+//   6.  MACD Line(26,12,9) < 0
+//   7.  Close   < previous-day Close
+//   8.  Close   < SMA(50)
+//   9.  Close   > 150  (liquidity — keep same floor)
+//  10.  ADX DI−(14) > ADX DI+(14)
+//  11.  RSI(14) < 50
+//  12.  MACD Line < MACD Signal
+//  13.  Close   < 2-days-ago Close
+//  14.  SMA(20) < SMA(40)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function evaluateFnoBearishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
+  let candles: Candle[];
+  try {
+    candles = await yahoo.getHistorical({ symbol, interval: "1d", range: "1y" });
+  } catch {
+    return null;
+  }
+  if (candles.length < 80) return null;
+
+  const last  = candles[candles.length - 1];
+  const prev  = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+  if (!last || !prev || !prev2) return null;
+
+  const closes = candles.map((c) => c.close);
+  const c = last.close;
+
+  const ema5  = ema(closes, 5);
+  const wma10 = wma(closes, 10);
+  const sma20 = sma(closes, 20);
+  const sma40 = sma(closes, 40);
+  const sma50 = sma(closes, 50);
+  if (ema5 == null || wma10 == null || sma20 == null || sma40 == null || sma50 == null) return null;
+
+  const adxResult = adx(candles, 14);
+  if (!adxResult) return null;
+
+  const rsiVal = rsi(closes, 14);
+  if (rsiVal == null) return null;
+
+  const macdResult = macd(closes);
+  if (!macdResult) return null;
+
+  const vol = last.volume ?? 0;
+
+  const conditions = [
+    ema5  < sma20,                              //  1. EMA(5) < SMA(20)
+    wma10 < sma20,                              //  2. WMA(10) < SMA(20)
+    adxResult.diMinus > 20,                     //  3. DI−(14) > 20
+    adxResult.adx > 20,                         //  4. ADX(14) > 20
+    vol > 100_000,                              //  5. Volume > 100 000
+    macdResult.line < 0,                        //  6. MACD Line < 0
+    c < prev.close,                             //  7. Close < prev Close
+    c < sma50,                                  //  8. Close < SMA(50)
+    c > 150,                                    //  9. Close > 150 (liquidity floor)
+    adxResult.diMinus > adxResult.diPlus,       // 10. DI− > DI+
+    rsiVal < 50,                                // 11. RSI(14) < 50
+    macdResult.line < macdResult.signalLine,    // 12. MACD Line < MACD Signal
+    c < prev2.close,                            // 13. Close < 2-days-ago Close
+    sma20 < sma40,                              // 14. SMA(20) < SMA(40)
+  ];
+
+  const conditionsMet = conditions.filter(Boolean).length;
+  if (conditionsMet < 14) return null;
+
+  const changePct = prev.close !== 0 ? ((c - prev.close) / prev.close) * 100 : 0;
+
+  return {
+    symbol,
+    close: c,
+    changePct,
+    volume: vol,
+    rsiVal,
+    adxVal: adxResult.adx,
+    diPlus: adxResult.diPlus,
+    diMinus: adxResult.diMinus,
+    macdLine: macdResult.line,
+    macdSignal: macdResult.signalLine,
+    sma20,
+    sma50,
+    conditionsMet,
+  };
+}
+
+async function runFnoBearishTrend(limit: number): Promise<ScannerResult> {
+  const rows = await cache.memo(
+    "scanner:fno-bearish-trend",
+    5 * 60_000,
+    async () => {
+      const evaluated = await pmap(
+        FNO_STOCKS,
+        (s) => evaluateFnoBearishTrend(s).catch(() => null),
+        8,
+      );
+      return evaluated.filter(Boolean) as FnoBullishTrendRow[];
+    },
+  );
+
+  // Rank by change % ascending (biggest losers first — mirrors Chartink default).
+  const sorted = rows
+    .sort((a, b) => a.changePct - b.changePct)
+    .slice(0, limit);
+
+  const hits: ScannerHit[] = sorted.map((r) => ({
+    symbol: r.symbol,
+    price: r.close,
+    changePct: r.changePct,
+    volume: r.volume,
+    metric: r.adxVal,
+    metricLabel: `ADX ${r.adxVal.toFixed(1)} · RSI ${r.rsiVal.toFixed(0)}`,
+    kind: "BEARISH",
+    note:
+      `DI− ${r.diMinus.toFixed(1)} / DI+ ${r.diPlus.toFixed(1)} · ` +
+      `MACD ${r.macdLine.toFixed(2)} / Sig ${r.macdSignal.toFixed(2)} · ` +
+      `SMA20 ${r.sma20.toFixed(0)} · SMA50 ${r.sma50.toFixed(0)}`,
+  }));
+
+  return {
+    type: "fno-bearish-trend",
+    title: "FnO Bearish Trend (MA + ADX + MACD)",
+    description:
+      "Daily F&O stocks passing all 14 bearish conditions: EMA5<SMA20, WMA10<SMA20, ADX DI->20, ADX>20, Vol>1L, MACD<0, Close<prev/2d close, Close<SMA50, Close>150, DI->DI+, RSI<50, MACD<Signal, SMA20<SMA40.",
+    hits,
+    fetchedAt: now(),
+  };
+}
+
 export async function runScanner(
   type: ScannerType,
   limit = 25,
@@ -982,5 +1119,7 @@ export async function runScanner(
       return runRangeExpansion(limit);
     case "fno-bullish-trend":
       return runFnoBullishTrend(limit);
+    case "fno-bearish-trend":
+      return runFnoBearishTrend(limit);
   }
 }

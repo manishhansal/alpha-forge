@@ -5,6 +5,7 @@ import { DailyPicksBoard } from "@/components/india/daily-picks/daily-picks-boar
 import { DailyPicksHistory } from "@/components/india/daily-picks/daily-picks-history";
 import { ExpiryTradesSection } from "@/components/india/daily-picks/expiry-trades-section";
 import { FnoBullishTrendSection } from "@/components/india/daily-picks/fno-bullish-trend-section";
+import { FnoBearishTrendSection } from "@/components/india/daily-picks/fno-bearish-trend-section";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
@@ -83,6 +84,8 @@ export default function IndiaDailyPicksPage() {
       </Suspense>
 
       <FnoBullishTrendSection />
+
+      <FnoBearishTrendSection />
 
       <Card>
         <CardHeader>

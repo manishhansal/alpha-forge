@@ -7,7 +7,8 @@ export type ScannerType =
   | "volume-breakout"
   | "momentum"
   | "range-expansion"
-  | "fno-bullish-trend";
+  | "fno-bullish-trend"
+  | "fno-bearish-trend";
 
 export type OiBuildupKind =
   | "LONG_BUILDUP"
