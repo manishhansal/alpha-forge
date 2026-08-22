@@ -350,7 +350,12 @@ function AiSignalRow({
 
         {/* Horizon */}
         <td className="hidden p-2.5 text-[11px] text-[var(--color-fg-subtle)] sm:table-cell">
-          <span className="inline-flex items-center gap-1">
+          <span className={cn(
+            "inline-flex items-center gap-1",
+            (signal.horizon === "swing" || signal.horizon === "positional")
+              ? "text-amber-600 dark:text-amber-400"
+              : "",
+          )}>
             <Clock className="h-3 w-3" />
             {HORIZON_LABEL[signal.horizon] ?? signal.horizon}
           </span>
@@ -409,10 +414,19 @@ export function AiSignalsBoard({
   }, [intervalMs, refresh]);
 
   const filtered = React.useMemo(() => {
+    // When the market is open enforce intraday/scalp only.
+    // When the market is closed (inActiveWindow=false) we either have a
+    // last-session snapshot (all intraday) or freshly generated off-hours
+    // signals (may be swing/positional). Show whatever is available so the
+    // board is never empty — still apply the direction filter.
+    const hasIntradaySignals = data.signals.some(
+      (s) => s.horizon === "intraday" || s.horizon === "scalp",
+    );
+    const enforceIntraday = data.context.inActiveWindow || hasIntradaySignals;
+
     return data.signals
       .filter((s) => {
-        // Hard-lock to intraday only — scalp and intraday horizons only
-        if (s.horizon !== "intraday" && s.horizon !== "scalp") return false;
+        if (enforceIntraday && s.horizon !== "intraday" && s.horizon !== "scalp") return false;
         if (directionFilter === "bullish" && s.direction !== "BULLISH") return false;
         if (directionFilter === "bearish" && s.direction !== "BEARISH") return false;
         if (directionFilter === "wait"    && s.action    !== "WAIT")    return false;
@@ -492,6 +506,15 @@ export function AiSignalsBoard({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
+          {!data.context.inActiveWindow && (
+            <div className="flex items-center gap-2 border-b border-[var(--color-border)]/60 bg-[color-mix(in_oklch,var(--color-info)_8%,var(--color-bg-elevated))] px-4 py-2 text-[11px] text-[var(--color-fg-muted)]">
+              <span className="font-semibold text-[var(--color-fg)]">Market closed</span>
+              {" — showing "}
+              {data.signals.some((s) => s.horizon === "intraday" || s.horizon === "scalp")
+                ? "last session's intraday signals"
+                : "planning signals for next session (intraday signals appear after 09:15 IST)"}
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-[var(--color-bg-elevated)] text-[11px] uppercase tracking-wide text-[var(--color-fg-muted)]">
               <tr className="border-b border-[var(--color-border)]/60">
