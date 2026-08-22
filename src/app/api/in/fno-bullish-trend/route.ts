@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cache } from "@/services/india/cache";
 import { runScanner } from "@/services/india/scanner/engine";
+import { snapshotFnoTrendScan } from "@/features/india/fno-trend-history/service";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -9,10 +10,8 @@ export const revalidate = 0;
  * GET /api/in/fno-bullish-trend?limit=50[&bust=1]
  *
  * Returns NSE F&O stocks passing the full 14-condition daily bullish trend
- * screener (MA + ADX + MACD), mirroring the Chartink screener at:
- * https://chartink.com/screener/daily-fno-stocks-bullish-trend-scanner-moving-average-adx-macd-3
- *
- * Pass `bust=1` to invalidate the 5-minute cache and force a fresh scan.
+ * screener (MA + ADX + MACD). Results are persisted to FnoTrendScan once
+ * per IST trading day so the board builds a track record.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -25,6 +24,12 @@ export async function GET(req: Request) {
 
   try {
     const result = await runScanner("fno-bullish-trend", limit);
+
+    // Persist today's results (fail-soft — snapshot failure never blocks the response)
+    if (result.hits.length > 0) {
+      void snapshotFnoTrendScan(result.hits, "BULLISH").catch(() => null);
+    }
+
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },
     });

@@ -412,3 +412,43 @@ model OptionChainSnapshot {
   @@index([underlying, capturedAt])
   @@index([capturedAt])
 }
+
+/// One daily scan result from the FnO Bullish or Bearish Trend Scanner
+/// (14-condition Chartink screener, MA + ADX + MACD). Persisted once per
+/// IST trading day per symbol so the board builds an auditable track record.
+/// Live-tracking (lastPrice / pnlPct / status) is refreshed intraday by the
+/// worker and finalised at the 15:30 IST session close.
+model FnoTrendScan {
+  id          String   @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
+  tradeDate   String
+  /// "BULLISH" | "BEARISH"
+  scanType    String
+  symbol      String
+  /// Last close when the scan ran — the suggested entry price.
+  entry       Float
+  stopLoss    Float
+  tp1         Float
+  tp2         Float
+  tp3         Float
+  /// ATR(14) used to compute the levels.
+  atr         Float
+  /// ADX(14) at scan time.
+  adxVal      Float
+  /// RSI(14) at scan time.
+  rsiVal      Float
+  /// Day % change when scan ran.
+  changePct   Float
+  /// "OPEN" | "TARGET_HIT" | "STOP_HIT" | "CLOSED" | "EXPIRED"
+  status      String   @default("OPEN")
+  lastPrice   Float?
+  pnlPct      Float?
+  resolvedAt  DateTime?
+  scannedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tradeDate, scanType, symbol])
+  @@index([tradeDate, scanType])
+  @@index([symbol, tradeDate])
+  @@index([status, tradeDate])
+}
