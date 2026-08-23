@@ -1,10 +1,11 @@
-import { LogIn, Search, Zap } from "lucide-react";
+import { LogIn, Zap } from "lucide-react";
 import Link from "next/link";
 
 import { ConnectionPill } from "@/components/dashboard/connection-pill";
 import { NotificationsBell } from "@/components/dashboard/notifications-bell";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { UserMenu } from "@/components/dashboard/user-menu";
+import { TopbarSearch } from "@/components/dashboard/topbar-search";
 
 interface TopbarUser {
   email: string;
@@ -39,31 +40,16 @@ function SignInCta() {
 export function Topbar({ user }: TopbarProps) {
   return (
     <header className="sticky top-0 z-20 flex h-13 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 px-5 backdrop-blur-xl">
-      {/* Left: search */}
+      {/* Left: command palette trigger */}
       <div className="flex items-center gap-3">
-        <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-[var(--color-fg-subtle)]" />
-          <input
-            type="search"
-            placeholder="Search symbol, signal, alert…"
-            className="h-8 w-[280px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-3 text-[13px] text-[var(--color-fg)] placeholder:text-[var(--color-fg-subtle)] transition-all focus:border-[var(--color-brand)] focus:outline-none focus:shadow-[0_0_0_3px_color-mix(in_oklch,var(--color-brand)_15%,transparent)] focus:ring-0"
-          />
-          {/* kbd hint */}
-          <kbd className="pointer-events-none absolute right-2.5 hidden rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-fg-subtle)] sm:block">
-            ⌘K
-          </kbd>
-        </div>
+        <TopbarSearch />
       </div>
 
       {/* Right: status + controls */}
       <div className="flex items-center gap-2">
         <ConnectionPill />
-
-        {/* thin separator */}
         <span className="h-4 w-px bg-[var(--color-border)]" aria-hidden />
-
         <ThemeToggle />
-
         {user ? (
           <>
             <NotificationsBell />

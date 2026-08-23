@@ -92,8 +92,7 @@ function BrandHeader({ market, collapsed }: { market: Market; collapsed: boolean
     <Link href={href} className="mb-5 flex items-center gap-3 px-1">
       {/* Logo mark — always visible */}
       <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[var(--color-brand)] via-[oklch(0.70_0.20_200)] to-[var(--color-info)] shadow-lg">
-        <Activity className="h-4.5 w-4.5 text-white" />
-        {/* subtle inner glow ring */}
+        <Activity className="h-4 w-4 text-white" />
         <span className="absolute inset-0 rounded-xl ring-2 ring-white/10" />
       </div>
 
@@ -107,7 +106,7 @@ function BrandHeader({ market, collapsed }: { market: Market; collapsed: boolean
             className="overflow-hidden"
           >
             <div className="flex flex-col leading-tight whitespace-nowrap">
-              <span className="text-sm font-bold tracking-tight gradient-text-brand">
+              <span className="text-sm font-bold tracking-tight text-[var(--color-fg)]">
                 Alphaforge
               </span>
               <span className="text-[9px] uppercase tracking-[0.20em] text-[var(--color-fg-subtle)]">

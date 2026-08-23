@@ -40,6 +40,10 @@ import {
 } from "@/components/india/ui/signal-table-row";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { dataSourceLabels } from "@/features/settings/data-sources-shared";
+import { MarketCoreWidget } from "@/components/3d/market-core-widget";
+import { notify } from "@/lib/toast";
+import { SectorStocksTable } from "@/components/india/options/sector-stocks-table";
+import type { StockRow as SectorStockRow } from "@/components/india/options/sector-stocks-table";
 
 type IndexQuote = {
   name: string;
@@ -234,7 +238,21 @@ export default function MsbDashboard() {
         snapRes.json(),
       ]);
       if (ctrl.signal.aborted) return;
-      setData(Array.isArray(signalsJson) ? signalsJson : []);
+      const incoming: MsbSignalRow[] = Array.isArray(signalsJson) ? signalsJson : [];
+      setData(incoming);
+      // Toast when new strong signals appear (compare against previous data)
+      setData((prev) => {
+        const prevSymbols = new Set(prev.map((r) => r.Symbol));
+        const fresh = incoming.filter((r) => !prevSymbols.has(r.Symbol));
+        for (const row of fresh.slice(0, 3)) {
+          notify.signal(
+            String(row.Symbol),
+            row.Side?.toUpperCase() === "BUY" ? "BUY" : "SELL",
+            Number(row.Strength) || undefined,
+          );
+        }
+        return incoming;
+      });
       setNifty(biasJson);
       setSnapshot(snapJson);
     } catch (err: unknown) {
@@ -292,11 +310,14 @@ export default function MsbDashboard() {
         >
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight gradient-text-brand">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--color-fg)]">
                 Market Pulse
               </h1>
               {sourceBadge && (
-                <span className="neon-badge inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold">
+                <span
+                  className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
+                  title="Live data source(s) actually serving this snapshot"
+                >
                   {sourceBadge}
                 </span>
               )}
@@ -319,7 +340,12 @@ export default function MsbDashboard() {
           </Button>
         </motion.div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 perspective-1000">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4 perspective-1000">
+          {/* Market Intelligence Core — 3D regime visualizer */}
+          <div className="col-span-2 sm:col-span-3 lg:col-span-1 row-span-1">
+            <MarketCoreWidget niftyBias={nifty.bias} height={200} />
+          </div>
+
           <AnimatePresence>
             {snapshot.indices.map((idx, i) => (
               <IndexCard
@@ -1106,250 +1132,22 @@ function SectorStocksModal({
               </Button>
             </div>
 
+            {/* ── TanStack Table replaces hand-rolled table ─── */}
             <div className="overflow-auto flex-1">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card/95 backdrop-blur z-10 border-b border-border/60">
-                  <tr>
-                    <SortHeader
-                      label="Symbol"
-                      k="symbol"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Price"
-                      k="price"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Day %"
-                      k="changePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="vs SMA50"
-                      k="fromSma50Pct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Upside"
-                      k="upsidePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Downside"
-                      k="downsidePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Score"
-                      k="score"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Signal"
-                      k="signal"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Held for"
-                      k="heldFor"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </tr>
-                </thead>
-                <tbody>
-                  <AnimatePresence>
-                    {paginatedRows.map((r, i) => {
-                      const age = ageFor(r);
-                      const ageMs = age?.ms ?? null;
-                      const ageSource = age?.source ?? null;
-                      const isStrong =
-                        r.signal === "STRONG BUY" ||
-                        r.signal === "STRONG SELL";
-                      const ageTone =
-                        r.signal === "STRONG BUY"
-                          ? "text-emerald-500"
-                          : r.signal === "STRONG SELL"
-                            ? "text-rose-500"
-                            : "text-muted-foreground";
-                      const sinceMs =
-                        ageSource === "server"
-                          ? r.signalSince
-                          : signalAges[r.symbol]?.since;
-                      return (
-                        <motion.tr
-                          key={r.symbol}
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0 }}
-                          transition={{
-                            duration: 0.2,
-                            delay: Math.min(i * 0.015, 0.3),
-                          }}
-                          className="border-b border-border/40 hover:bg-muted/30 transition-colors"
-                        >
-                          <td className="p-2.5 font-medium">
-                            <a
-                              href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${r.symbol}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-400 hover:underline"
-                            >
-                              {r.symbol}
-                            </a>
-                            {r.shortName && (
-                              <div className="text-[10px] text-muted-foreground truncate max-w-[180px]">
-                                {r.shortName}
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {fmt(r.price)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {pctCell(r.changePct)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {pctCell(r.fromSma50Pct)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {r.upsidePct == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span className="text-emerald-500 font-medium">
-                                +{r.upsidePct.toFixed(1)}%
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {r.downsidePct == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span className="text-rose-500 font-medium">
-                                -{r.downsidePct.toFixed(1)}%
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            <ScorePill score={r.score} />
-                          </td>
-                          <td className="p-2.5">
-                            <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                              <span
-                                className={`text-[10px] font-bold px-2 py-1 rounded-full ${signalClass(r.signal)}`}
-                              >
-                                {r.signal}
-                              </span>
-                              {isStrong && ageMs != null && (
-                                <span
-                                  className={`text-[10px] tabular ${ageTone}`}
-                                  title={`${r.signal} since ${new Date(
-                                    sinceMs ?? nowTs,
-                                  ).toLocaleString()} · source: ${
-                                    ageSource === "server"
-                                      ? "server snapshot log"
-                                      : "local observation only"
-                                  }`}
-                                >
-                                  {formatDuration(ageMs)}
-                                  {ageSource === "local" && (
-                                    <span
-                                      aria-label="local-only (server snapshot not yet available)"
-                                      className="ml-0.5 opacity-60"
-                                    >
-                                      *
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-2.5 text-right tabular text-xs">
-                            {ageMs == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span
-                                className={`font-medium ${ageTone}`}
-                                title={`${r.signal} since ${new Date(
-                                  sinceMs ?? nowTs,
-                                ).toLocaleString()} · source: ${
-                                  ageSource === "server"
-                                    ? "server snapshot log"
-                                    : "local observation only"
-                                }`}
-                              >
-                                {formatDuration(ageMs)}
-                                {ageSource === "local" && (
-                                  <span className="ml-0.5 opacity-60">*</span>
-                                )}
-                              </span>
-                            )}
-                          </td>
-                        </motion.tr>
-                      );
-                    })}
-                  </AnimatePresence>
-
-                  {sortedRows.length === 0 && !loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        No stocks in this sector.
-                      </td>
-                    </tr>
-                  )}
-                  {sortedRows.length > 0 && paginatedRows.length === 0 && !loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        No stocks match the current filter.
-                      </td>
-                    </tr>
-                  )}
-                  {sortedRows.length === 0 && loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        Loading sector data…
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              <SectorStocksTable
+                rows={sortedRows.map((r) => {
+                  const age = ageFor(r);
+                  return {
+                    ...r,
+                    ageMs:     age?.ms     ?? null,
+                    ageSource: age?.source ?? null,
+                  } as SectorStockRow;
+                })}
+                loading={loading}
+              />
             </div>
 
-            <div className="px-4 sm:px-5 py-2 border-t border-border/60">
+            <div className="px-4 sm:px-5 py-2 border-t border-[var(--color-border)]">
               <PaginationStrip
                 page={sectorPage}
                 totalPages={sectorTotalPages}
@@ -1362,7 +1160,7 @@ function SectorStocksModal({
               />
             </div>
 
-            <div className="p-3 sm:p-4 border-t border-border/60 bg-muted/30 text-[10px] sm:text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+            <div className="p-3 sm:p-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]/40 text-[10px] sm:text-[11px] text-[var(--color-fg-subtle)] flex flex-wrap gap-x-4 gap-y-1">
               <span>
                 <b>Upside</b>: % to max(52w-high, analyst target).
               </span>
