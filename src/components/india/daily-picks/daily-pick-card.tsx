@@ -1,3 +1,5 @@
+"use client";
+
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -12,9 +14,11 @@ import {
   Target,
   TrendingUp,
 } from "lucide-react";
+import { useReducedMotion } from "framer-motion";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { NumberMorph } from "@/components/trading/NumberMorph";
 import type {
   DailyPick,
   DailyPickStatus,
@@ -65,6 +69,7 @@ const WARNING_VARIANT: Record<
  * derived percentage.
  */
 export function DailyPickCard({ pick }: Props) {
+  const reducedMotion = useReducedMotion();
   const isBull = pick.direction !== "BEARISH";
   const DirIcon = isBull ? ArrowUpRight : ArrowDownRight;
   const status = STATUS_META[pick.status];
@@ -76,7 +81,6 @@ export function DailyPickCard({ pick }: Props) {
   const targetTone: "bull" | "bear" = isOption ? "bull" : isBull ? "bull" : "bear";
 
   const pnl = pick.pnlPct;
-  const pnlTone = pnl == null ? "neutral" : pnl >= 0 ? "bull" : "bear";
   const achieved = pick.achievedPct;
   const progressWidth = Math.max(0, Math.min(100, achieved ?? 0));
 
@@ -108,6 +112,8 @@ export function DailyPickCard({ pick }: Props) {
         isBull
           ? "ring-[color-mix(in_oklch,var(--color-bull)_35%,transparent)]"
           : "ring-[color-mix(in_oklch,var(--color-bear)_35%,transparent)]",
+        !reducedMotion && pick.status === "TARGET_HIT" && "[animation:celebration-pulse_800ms_ease-out]",
+        !reducedMotion && pick.status === "STOP_HIT"   && "[animation:vix-warning-pulse_500ms_ease-out]",
       )}
     >
       <CardHeader className="px-4">
@@ -156,17 +162,19 @@ export function DailyPickCard({ pick }: Props) {
           </div>
           <div className="flex flex-col items-end">
             <span
-              className={cn(
-                "num text-sm font-semibold",
-                pnlTone === "bull"
-                  ? "text-bull"
-                  : pnlTone === "bear"
-                    ? "text-bear"
-                    : "text-[var(--color-fg-muted)]",
-              )}
+              className="num text-sm font-semibold"
+              style={{
+                color: pnl == null
+                  ? "var(--color-fg-muted)"
+                  : pnl >= 0
+                    ? "var(--color-data-positive)"
+                    : "var(--color-data-negative)",
+              }}
               aria-label="Live P&L"
             >
-              {pnl == null ? "—" : fmtPct(pnl)}
+              {pnl == null ? "—" : (
+                <NumberMorph value={pnl} prefix={pnl > 0 ? "+" : ""} suffix="%" decimals={2} />
+              )}
             </span>
             <span className="text-[10px] text-[var(--color-fg-subtle)]">
               {pick.lastPrice != null ? `LTP ₹${fmt(pick.lastPrice)}` : "awaiting tick"}
@@ -253,13 +261,13 @@ export function DailyPickCard({ pick }: Props) {
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-elevated)]">
             <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                pick.status === "STOP_HIT"
-                  ? "bg-[var(--color-bear)]"
-                  : "bg-[var(--color-bull)]",
-              )}
-              style={{ width: `${progressWidth}%` }}
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${progressWidth}%`,
+                backgroundColor: pick.status === "STOP_HIT"
+                  ? "var(--color-data-negative)"
+                  : "var(--color-data-positive)",
+              }}
             />
           </div>
         </div>

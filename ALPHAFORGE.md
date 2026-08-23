@@ -217,11 +217,23 @@ Shared implementation: `src/components/india/ui/pagination-filter.tsx`
 - Next.js (App Router)
 - TypeScript
 - TailwindCSS
-- Shadcn UI
+- Shadcn UI (design system base — IIT design language layered on top via `globals.css` `@theme inline` tokens and `src/components/trading/` + `src/components/layout/` primitives)
 - Zustand (state management)
+  - **Zustand UIStore** (`src/store/uiStore.ts`) — dedicated store for high-frequency UI state: active market regime, table density, sidebar collapse, radar visibility, chart fullscreen, command palette. Persists `sidebarCollapsed` + `tableDensity` to `localStorage`.
 - React Query / TanStack Query
-- Framer Motion
+- Framer Motion (Spring preset system: `SPRING_FAST` 600/35, `SPRING_DEFAULT` 400/28, `SPRING_GENTLE` 240/24, `SPRING_MICRO` 800/40 — all interactive transitions use named presets from `src/lib/motion-presets.ts`)
+- **TanStack Table v9** — primary table library for AI Radar, Options Chain, Daily Picks History, Paper Trading Journal, and all data-dense tables
 - Recharts / Lightweight Charts v5 (with Anchored VWAP + Volume Profile plugins)
+
+### Design System (IIT)
+
+The dashboard's visual language is the **Institutional Intelligence Terminal (IIT)** — a precision-first, data-dense aesthetic applied uniformly across all components.
+
+- **OKLCH color token architecture** — all color values defined exclusively in OKLCH via the `@theme inline` block in `globals.css`. New semantic tokens: `--color-panel-bg`, `--color-panel-border`, `--color-data-positive`, `--color-data-negative`, `--color-data-neutral`, `--color-ai-accent`, `--color-regime-bull/bear/sideways/highvol`. No hardcoded hex or RGB in component files.
+- **`data-density` attribute pattern** — components read `data-density="compact"` (32px rows), `"default"` (40px), or `"comfortable"` (48px) from their DOM ancestor for spacing without prop drilling.
+- **Spring motion preset system** — four named constants (`SPRING_FAST`, `SPRING_DEFAULT`, `SPRING_GENTLE`, `SPRING_MICRO`) exported from `src/lib/motion-presets.ts`. All spring animations reference these constants; no ad-hoc stiffness/damping values in components.
+- **Regime-reactive UI system** — `RegimeProvider` wraps the `(dashboard)` layout, reading `UIStore.activeRegime` and injecting `--aurora-regime-a` CSS variable for the shell aurora background (1200ms CSS transition). `RegimeSync` and `CryptoRegimeSync` bridge their respective market stores into the `UIStore` without direct store coupling. `RegimeBadge` components update with `SPRING_MICRO` scale animation on regime change.
+- **BentoGrid layout system** — `BentoGrid` + `BentoCell` components in `src/components/layout/` provide a 12-column CSS grid for Overview pages. Cells use `data-bento-cell` for mobile reflow priority; the grid stacks to single-column below 768px in visual-priority order.
 
 ## Backend
 - Next.js API routes OR separate Express server

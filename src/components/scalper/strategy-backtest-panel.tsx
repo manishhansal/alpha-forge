@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SCALP_STRATEGY_META } from "@/features/scalping/strategies/catalog";
 import type { BacktestInterval } from "@/features/scalping/backtest-intervals";
-import { cn, formatUsd } from "@/lib/utils";
+import { cn, formatUsd, fmtDateTime } from "@/lib/utils";
 import type { SymbolId } from "@/types/market";
 
 type SymbolOption = "ALL" | SymbolId;
@@ -213,7 +213,7 @@ function OverviewCard({
             {data.symbols.join(" · ")} · {data.interval} bars · $
             {data.notional.toLocaleString()} per trade ·{" "}
             <CandleSourceLabel data={data} /> · generated{" "}
-            {new Date(data.generatedAt).toLocaleString()}
+            {fmtDateTime(data.generatedAt)}
           </p>
         </div>
         <button

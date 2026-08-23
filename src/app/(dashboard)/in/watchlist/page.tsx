@@ -90,12 +90,12 @@ export default function WatchlistPage() {
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Watchlist</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
+            <p className="text-xs sm:text-sm text-[var(--color-fg-muted)]">
               Live diff updates via SSE feed — only your visible symbols are subscribed.
             </p>
           </div>
         </div>
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-[10px] text-[var(--color-fg-muted)]">
           {items.length} symbol{items.length === 1 ? "" : "s"}
         </span>
       </motion.div>
@@ -108,12 +108,12 @@ export default function WatchlistPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Add F&O symbol (e.g. RELIANCE)…"
-              className="w-full text-sm px-3 py-2 rounded-md bg-card/80 border border-border/60 outline-none focus:border-blue-400 transition-colors"
+              className="w-full text-sm px-3 py-2 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] outline-none focus:border-[var(--color-brand)] transition-colors"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -126,10 +126,10 @@ export default function WatchlistPage() {
               <button
                 key={s}
                 onClick={() => { add(s); setSearch(""); }}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-muted/40 flex items-center justify-between"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--color-surface-hover)] flex items-center justify-between"
               >
                 <span className="font-medium">{s}</span>
-                <Plus className="h-3.5 w-3.5 text-muted-foreground" />
+                <Plus className="h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
               </button>
             ))}
           </div>
@@ -200,7 +200,7 @@ export default function WatchlistPage() {
 
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-sm text-[var(--color-fg-muted)]">
                     Watchlist empty — add a symbol above.
                   </td>
                 </tr>

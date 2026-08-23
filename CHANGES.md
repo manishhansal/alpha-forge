@@ -2,6 +2,186 @@
 
 ---
 
+## [Unreleased] — Institutional Intelligence Terminal (IIT) UI Overhaul
+
+**Branch:** `feat/trading-ui-overhaul`
+**Test coverage:** 1238/1238 Vitest tests · 0 TypeScript errors
+
+Complete visual and architectural overhaul of every page and shell component under the IIT (Institutional Intelligence Terminal) design language — a precision-first, data-dense aesthetic. Purely frontend: no new API routes, no logic changes, all existing data flows and backend contracts preserved.
+
+---
+
+### Design System Foundation
+
+- Full OKLCH color token system added to `globals.css` `@theme inline` block — no hardcoded hex/RGB in component files
+- New semantic tokens: `--color-panel-bg`, `--color-panel-border`, `--color-data-positive`, `--color-data-negative`, `--color-data-neutral`, `--color-ai-accent`, `--color-regime-bull`, `--color-regime-bear`, `--color-regime-sideways`, `--color-regime-highvol`
+- `--radius-panel` token (0.75rem) as the canonical Panel border-radius
+- Spacing scale via Tailwind v4 CSS variables: `--space-1` through `--space-12`
+- Three typographic roles: `--font-data` (tabular-nums monospace for prices), `--font-label` (small uppercase tracked for stat keys), `--font-body` (inheriting `--font-sans`)
+- `data-density` attribute pattern: `compact` (32px rows), `default` (40px), `comfortable` (48px) — readable by any component without prop drilling
+- `prefers-reduced-motion` global safety net applied across all animation-driven code
+- 6 new CSS `@keyframes`: `price-flash-up`, `price-flash-down`, `breakout-pulse`, `vix-warning-pulse`, `celebration-pulse`, `shimmer-border`
+- 4 Spring motion presets exported from `src/lib/motion-presets.ts`: `SPRING_FAST` (stiffness 600, damping 35), `SPRING_DEFAULT` (400/28), `SPRING_GENTLE` (240/24), `SPRING_MICRO` (800/40)
+- `TRANSITION_STAGGER` helper: `stagger(count, baseDelay?)` returns the correct Framer Motion `transition` object for staggered list animations
+
+---
+
+### UIStore + RegimeContext
+
+- New `useUIStore` (`src/store/uiStore.ts`) — Zustand v5, single store, typed interface:
+  - Slices: `sidebarCollapsed`, `commandPaletteOpen`, `activeRegime`, `tableDensity`, `chartFullscreen`, `radarVisible`
+  - Actions: `toggleSidebar`, `openCommandPalette`, `closeCommandPalette`, `setRegime`, `setDensity`, `setChartFullscreen`, `toggleRadar`
+  - `sidebarCollapsed` persisted to `localStorage` key `af-ui-sidebar-collapsed`
+  - `tableDensity` persisted to `localStorage` key `af-ui-table-density`
+  - `commandPaletteOpen` blocks body scroll via `useEffect` toggling `document.body.style.overflow`
+- `RegimeProvider` + `RegimeContext` (`src/lib/regime-context.tsx`) — wraps the `(dashboard)` layout, injects `--aurora-regime-a` CSS variable for regime-reactive aurora background with 1200ms CSS transition
+- `RegimeSync` component — bridges `useIndiaMarketStore` → `UIStore.setRegime` on the India surface
+- `CryptoRegimeSync` component — bridges crypto market store → `UIStore.setRegime` on the Crypto surface
+
+---
+
+### Shell Refactor — Sidebar
+
+- Collapses to 56px icon-only rail, expands to 248px labeled view, animated with `SPRING_DEFAULT`
+- 2px right-edge regime indicator strip (India market only): green (BULL), red (BEAR), neutral otherwise — reads from `useIndiaMarketStore`
+- `FooterDataStrip`: active data source label, last-refresh timestamp, live connection quality dot (green/yellow/red) — replaces the old static footer text
+- Shimmer `SignInNudge` CTA for unauthenticated users — `shimmer-border` CSS animation replaces the plain dashed border
+- Nav group separator divider between primary market pages and analytics/tools pages
+- Active nav item: 3px left-edge accent bar animated via Framer Motion `layoutId="sidebar-pill"`
+- Floating tooltips on collapsed items appear within 120ms (no delay)
+- Keyboard navigation: `ArrowUp`/`ArrowDown` to move, `Enter` to navigate, `Escape` to close tooltips — WCAG 2.1 AA compliant
+- `useBreakpoint(1024)` hook: sidebar auto-collapses below 1024px viewport width (JS `window.innerWidth` observer, not a CSS media query)
+
+---
+
+### Shell Refactor — Topbar
+
+- Height exactly 52px with `backdrop-blur-xl` frosted background (`--color-bg/85`) and 1px bottom border (`--color-panel-border`)
+- `TopbarBreadcrumb`: derives `Market · Section` label from `usePathname()` (e.g. "India · AI Signals")
+- `VixWarningChip`: rendered when India VIX > 25 using `--color-data-negative` background + `vix-warning-pulse` 2s border animation; disappears when VIX drops below 22
+- `ThemeToggle`: three-segment pill (Light · System · Dark) with `layoutId="theme-pill"` sliding indicator + `SPRING_FAST` animation
+- `CommandPalette` chip: shows `⌘K` shortcut with 8-second animated pulse on the `K` character (respects `prefers-reduced-motion`)
+- All topbar elements have `aria-label` attributes; notification bell uses `aria-live="polite"`
+
+---
+
+### Shell Refactor — MarketTickerBar
+
+- 36px frosted strip with `bg-[var(--color-bg-elevated)]/60` and 1px bottom border
+- `NumberMorph` prices on every ticker chip
+- Price flash on tick: 400ms CSS `price-flash-up`/`price-flash-down` animation, fades to transparent (not a persistent color)
+- SENSEX chip added to India ticker strip (NIFTY 50, BANKNIFTY, FINNIFTY, India VIX, SENSEX)
+- Crypto ticker auto-scroll pauses on hover, resumes immediately on mouse-leave
+- "Market Closed" pill on the right edge when outside trading session hours
+- Below 640px: static 2-chip strip (BTC + NIFTY or BTC + ETH) with no animation
+
+---
+
+### Trading Component Library (`src/components/trading/`)
+
+- `SignalBadge.tsx`: LONG/SHORT/BUY/SELL/WAIT with IIT color tokens, optional icon, standardised sizing — replaces all ad-hoc badge implementations
+- `ConfidenceBar.tsx`: 0–100 horizontal gradient fill (`--color-data-neutral` → `--color-data-positive`), optional numeric label, `data-testid="confidence-bar-fill"`
+- `RegimeBadge.tsx`: BULL/BEAR/SIDEWAYS/HIGH_VOL/UNKNOWN with `--color-regime-*` tokens, icon, `SPRING_MICRO` entrance animation
+- `NumberMorph.tsx`: Framer Motion `animate()` number interpolation, `durationFor()` magnitude-scaled timing (120ms < 1%, 240ms 1–10%, 360ms > 10%), props: `value`, `prefix?`, `suffix?`, `decimals?`, `className?`
+- `StatGrid.tsx`: responsive CSS grid of stat cells (2/3/4 cols via `cols` prop), `--font-label` keys and `--font-data` values
+- `PanelHeader.tsx`: 40px fixed row with title (left), optional icon, optional badge, optional right-aligned action slot
+- `RiskMeter.tsx`: segmented bar (green 0–33, yellow 33–66, red 66–100), `data-active-segment` attribute, horizontal or vertical orientation
+- `AiRadar.tsx`: TanStack Table v9, hover detail panels (200ms delay), multi-column sort, client-side symbol/sector filter, keyboard nav (`Tab`/`Enter`/`Escape`), density toggle
+
+---
+
+### Layout Primitives (`src/components/layout/`)
+
+- `PageHeader.tsx`: `<h1>` title + optional subtitle + optional right-slot + optional `regime` prop (renders inline `RegimeBadge`), `mb-6` spacing
+- `EmptyState.tsx`: centered, Lucide icon, heading, description, optional action button — replaces all raw "No data" text nodes
+- `ErrorState.tsx`: centered, red-tinted icon, error message, "Retry" action that calls nearest TanStack Query `refetch()`
+- `BentoGrid.tsx` + `BentoCell.tsx`: 12-column CSS grid, `data-bento-cell` attribute for mobile reflow, single-column stacked layout below 768px
+- `PageTransition.tsx`: `SPRING_GENTLE` fade-from-below entrance wrapper for page default exports (not placed in the layout file)
+
+---
+
+### 3D Component Suite
+
+- `MarketIntelligenceCore`: added `quality` prop — `low` (32×32 segments), `medium` (64×64, default), `high` (128×128); `useReducedMotion()` halts frame updates when `prefers-reduced-motion` is active
+- `RiskSphere` (`src/components/3d/risk-sphere.tsx`): simplified R3F sphere with `MeshStandardMaterial`; color, scale, and opacity encode portfolio risk 0–100 (green → yellow → red); max 120×120px; used on Paper Trading stats panel
+- `PortfolioGalaxy` (`src/components/3d/portfolio-galaxy.tsx`): R3F `Points` particle system, Fibonacci sphere distribution, particle size = position size, particle color = P&L sign (positive green, negative red), slow rotation responding to mouse via `useFrame`
+- All 3D components use `next/dynamic` with `ssr: false` and skeleton loading states matching canvas dimensions
+
+---
+
+### Page Redesigns
+
+#### Crypto Overview
+
+- `BentoGrid` 12-column layout: Market Core (4×2 top-left), BTC card (4×1), ETH + SOL (2×1 each), global stats full-width strip
+- `CryptoRegimeSync` bridges market store to `UIStore`
+- `PageTransition` entrance + `PageHeader` with regime badge
+
+#### India Overview
+
+- Full client-side `BentoGrid`: Market Core (4×3 top-left), index strips (5×1 stacked center), Top 5 Stocks (3×3 right)
+- `RegimeBanner` strip at top (full-width 28px, `--color-regime-*` background, human-readable context sentence)
+- `IntersectionObserver` lazy-mount for 3D canvas — only mounts after parent Panel is visible
+- VPIN `OrderFlowPanel` redesigned as 2-column widget (gauge arc + sparkline)
+- MSB Signals section uses TanStack Table with `data-density="compact"` and `SPRING_MICRO` row entrance animations
+
+#### AI Signals (Crypto + India)
+
+- `PageTransition` + `PageHeader` on both pages
+- Animated confidence ring: `motion.circle` arc fill using `SPRING_DEFAULT` on load, 50ms stagger between cards
+- Hover expansion (> 300ms): SHAP factor breakdown, mini payoff diagram (when `signal.strike` available), invalidation criteria — collapses on mouse-leave with `SPRING_FAST`
+- Stale overlay: frosted glass "Signal Expired" panel + "Refresh" action triggering manual refetch
+- `NumberMorph` animates `confidenceScore` from 0 to actual value on initial load
+
+#### India AI Signals + AiRadar
+
+- `AiRadarSection` toggle (Show/Hide Radar button) below the existing `AiSignalsBoard`
+- `signalToRadarRow` server-safe utility moved to `src/lib/signal-to-radar-row.ts` (no `"use client"` directive)
+
+#### Options Chain
+
+- `IvHeatDot`: green (IV < 20%), yellow (20–40%), red (> 40%), `data-testid` on each dot
+- Max-pain strike background encoding via `--color-warning/20`; ATM strike via `--color-brand/20`
+- `StatGrid` PCR strip above the chain table (PCR color-coded, max pain strike, ATM IV, IV regime badge)
+- `layoutId="options-tab-pill"` on the Chain/IV Surface/GEX/Payoff tab selector with `SPRING_FAST` animation
+- Greeks columns reveal via `AnimatePresence` column slide-in
+
+#### Daily Picks
+
+- `PanelHeader` bucket headers for all five sections
+- `NumberMorph` P&L values (polling every 30s)
+- `celebration-pulse` (800ms green border glow) on `TARGET_HIT` status change
+- `vix-warning-pulse` (500ms red border pulse) on `STOP_HIT` status change
+- Expiry Trades section: regime-reactive header border + `NumberMorph` countdown timer updating every second
+- FnO Trend Scanner sections (Bullish/Bearish) collapsible via `details`/`summary` + animated chevron, collapsed by default
+- `DailyPicksHistory` redesigned with TanStack Table, `data-density=compact`
+
+#### Paper Trading
+
+- `BentoGrid` stats row: total P&L (2 cols, `NumberMorph`, bull/bear colored), win rate arc gauge (1 col), `RiskSphere` (1 col)
+- `data-density="compact"` throughout
+- Double-confirm Close All: first click shows `Tooltip`, second click within 3 seconds executes
+- `PnlLineChart` using lightweight-charts line series (consistent with existing chart library)
+- Open Positions table: `NumberMorph` mark prices, `--color-data-positive` left-border on P&L ≥ +5% rows, `--color-data-negative` border on P&L ≤ -3% rows
+
+---
+
+### Bug Fixes
+
+- **Hydration fix**: Added `fmtTime()` and `fmtDateTime()` to `src/lib/utils.ts` pinning `en-GB` locale to always produce `HH:MM:SS` format regardless of server/client timezone; replaced all bare `toLocaleTimeString()` / `toLocaleString()` calls across 21 files
+- **Server/client boundary fix**: Moved `signalToRadarRow` to `src/lib/signal-to-radar-row.ts` — removed `"use client"` directive so the utility is server-safe
+- **Canvas color fix**: `CHART_THEMES` in `price-chart.tsx` had `var(--fg-muted, #94a3b8)` in the `text` field — lightweight-charts canvas cannot parse CSS variables; replaced with literal hex `#94a3b8`
+
+---
+
+### New Tests
+
+- 50 smoke tests for all layout primitives and trading components (`tests/components/`)
+- `durationFor()` property tests with fast-check (500 runs) — validates `NumberMorph` magnitude-scaling contract
+- All 1238 Vitest tests passing, 0 TypeScript errors
+
+---
+
 ## [Unreleased] — FnO Intelligence & Paper Trading Engine
 
 **Branch:** `feature/fno-bullish-trend-scanner`

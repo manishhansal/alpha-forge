@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Activity } from "lucide-react";
 import type { OptionChain, OptionLeg } from "@/types/india";
 import { fmt, fmtCompact } from "@/lib/india/format";
+import { fmtTime } from "@/lib/utils";
 import { useIndiaOptionChainStore } from "@/store/india/optionChainStore";
 
 type Props = {
@@ -32,10 +33,14 @@ function legBg(leg: OptionLeg | null, side: "ce" | "pe"): string {
   if (!leg) return "";
   const change = leg.changeInOi;
   if (change > 0) {
-    return side === "ce" ? "bg-rose-500/10" : "bg-emerald-500/10";
+    return side === "ce"
+      ? "bg-[color-mix(in_oklch,var(--bear)_8%,transparent)]"
+      : "bg-[color-mix(in_oklch,var(--bull)_8%,transparent)]";
   }
   if (change < 0) {
-    return side === "ce" ? "bg-emerald-500/10" : "bg-rose-500/10";
+    return side === "ce"
+      ? "bg-[color-mix(in_oklch,var(--bull)_8%,transparent)]"
+      : "bg-[color-mix(in_oklch,var(--bear)_8%,transparent)]";
   }
   return "";
 }
@@ -60,8 +65,8 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                 onClick={() => setExpiry(e)}
                 className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
                   active
-                    ? "bg-foreground text-background border-transparent"
-                    : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground"
+                    ? "bg-[var(--color-fg)] text-[var(--color-bg)] border-transparent"
+                    : "bg-[var(--color-surface)]/40 text-[var(--color-fg-muted)] border-[var(--color-border)]/60 hover:text-[var(--color-fg)]"
                 }`}
               >
                 {e}
@@ -70,27 +75,27 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
           })}
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-2 text-[10px] text-[var(--color-fg-muted)]">
           <button
             type="button"
             onClick={() => setShowGreeks((v) => !v)}
             aria-pressed={showGreeks}
             className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
               showGreeks
-                ? "bg-foreground text-background border-transparent"
-                : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground"
+                ? "bg-[var(--color-fg)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)]/40 text-[var(--color-fg-muted)] border-[var(--color-border)]/60 hover:text-[var(--color-fg)]"
             }`}
           >
             Greeks
           </button>
           {loading && (
-            <span className="flex items-center gap-1 text-blue-500">
+            <span className="flex items-center gap-1 text-[var(--color-info)]">
               <Activity className="h-3 w-3 animate-pulse" />
               refreshing
             </span>
           )}
           {data.fetchedAt && (
-            <span>updated {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+            <span>updated {fmtTime(data.fetchedAt)}</span>
           )}
         </div>
       </div>
@@ -104,25 +109,25 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
       >
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-muted/40">
-              <tr className="text-muted-foreground uppercase tracking-wide">
+            <thead className="bg-[var(--color-surface)]/40">
+              <tr className="text-[var(--color-fg-muted)] uppercase tracking-wide">
                 <th
                   colSpan={showGreeks ? 5 : 4}
-                  className="text-center py-2 font-semibold text-emerald-700 dark:text-emerald-400"
+                  className="text-center py-2 font-semibold text-[var(--color-bull)]"
                 >
                   CALLS
                 </th>
-                <th className="py-2 px-3 text-center font-semibold text-foreground">
+                <th className="py-2 px-3 text-center font-semibold text-[var(--color-fg)]">
                   Strike
                 </th>
                 <th
                   colSpan={showGreeks ? 5 : 4}
-                  className="text-center py-2 font-semibold text-rose-700 dark:text-rose-400"
+                  className="text-center py-2 font-semibold text-[var(--color-bear)]"
                 >
                   PUTS
                 </th>
               </tr>
-              <tr className="text-[10px] text-muted-foreground border-b border-border/60">
+              <tr className="text-[10px] text-[var(--color-fg-muted)] border-b border-[var(--color-border)]/60">
                 <th className="p-1.5 text-right">OI</th>
                 <th className="p-1.5 text-right">ΔOI</th>
                 <th className="p-1.5 text-right">IV</th>
@@ -150,9 +155,9 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                 return (
                   <tr
                     key={row.strike}
-                    className={`border-b border-border/30 ${
-                      isAtm ? "bg-amber-500/10" : ""
-                    } hover:bg-muted/30 transition-colors`}
+                    className={`border-b border-[var(--color-border)]/30 ${
+                      isAtm ? "bg-[color-mix(in_oklch,var(--warning)_10%,transparent)]" : ""
+                    } hover:bg-[var(--color-surface-hover)] transition-colors`}
                   >
                     <td className={`p-1.5 text-right tabular ${legBg(ce, "ce")}`}>
                       {ce ? fmtCompact(ce.oi) : "—"}
@@ -161,9 +166,9 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                       <span
                         className={
                           ce && ce.changeInOi > 0
-                            ? "text-rose-500"
+                            ? "text-[var(--color-bear)]"
                             : ce && ce.changeInOi < 0
-                              ? "text-emerald-500"
+                              ? "text-[var(--color-bull)]"
                               : ""
                         }
                       >
@@ -185,7 +190,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                     >
                       {ce?.ltp != null ? fmt(ce.ltp) : "—"}
                     </td>
-                    <td className="p-1.5 text-center font-semibold tabular bg-muted/20">
+                    <td className="p-1.5 text-center font-semibold tabular bg-[var(--color-surface)]/20">
                       {row.strike}
                     </td>
                     <td
@@ -207,9 +212,9 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                       <span
                         className={
                           pe && pe.changeInOi > 0
-                            ? "text-emerald-500"
+                            ? "text-[var(--color-bull)]"
                             : pe && pe.changeInOi < 0
-                              ? "text-rose-500"
+                              ? "text-[var(--color-bear)]"
                               : ""
                         }
                       >
@@ -226,7 +231,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
                 <tr>
                   <td
                     colSpan={showGreeks ? 11 : 9}
-                    className="p-8 text-center text-muted-foreground"
+                    className="p-8 text-center text-[var(--color-fg-muted)]"
                   >
                     No option chain rows.
                   </td>
@@ -246,13 +251,13 @@ function AnalyticsBar({ data }: { data: OptionChain }) {
     a.pcrOi == null
       ? ""
       : a.pcrOi > 1.3
-        ? "text-emerald-500"
+        ? "text-[var(--color-bull)]"
         : a.pcrOi < 0.7
-          ? "text-rose-500"
-          : "text-foreground";
+          ? "text-[var(--color-bear)]"
+          : "text-[var(--color-fg)]";
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-      <Tile label="Spot" value={fmt(data.spot)} accent="text-foreground" />
+      <Tile label="Spot" value={fmt(data.spot)} accent="text-[var(--color-fg)]" />
       <Tile
         label="PCR (OI)"
         value={a.pcrOi != null ? a.pcrOi.toFixed(2) : "—"}
@@ -270,13 +275,13 @@ function AnalyticsBar({ data }: { data: OptionChain }) {
       <Tile
         label="Max CE OI"
         value={a.maxCeOiStrike != null ? String(a.maxCeOiStrike) : "—"}
-        accent="text-rose-500"
+        accent="text-[var(--color-bear)]"
         sub={`Resistance · ${fmtCompact(a.totalCeOi)}`}
       />
       <Tile
         label="Max PE OI"
         value={a.maxPeOiStrike != null ? String(a.maxPeOiStrike) : "—"}
-        accent="text-emerald-500"
+        accent="text-[var(--color-bull)]"
         sub={`Support · ${fmtCompact(a.totalPeOi)}`}
       />
     </div>
@@ -286,7 +291,7 @@ function AnalyticsBar({ data }: { data: OptionChain }) {
 function Tile({
   label,
   value,
-  accent = "text-foreground",
+  accent = "text-[var(--color-fg)]",
   sub,
 }: {
   label: string;
@@ -296,14 +301,14 @@ function Tile({
 }) {
   return (
     <div className="glass rounded-xl p-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
         {label}
       </div>
       <div className={`mt-1 text-lg font-semibold tabular ${accent}`}>
         {value}
       </div>
       {sub && (
-        <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+        <div className="text-[10px] text-[var(--color-fg-muted)] mt-0.5 truncate">
           {sub}
         </div>
       )}

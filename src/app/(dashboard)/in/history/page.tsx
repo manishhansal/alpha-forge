@@ -46,11 +46,11 @@ type SourceTab    = "picks" | "scalper" | "fno-trend";
 
 function OutcomeTag({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    TARGET_HIT: { label: "Target ✓",    cls: "text-emerald-600 dark:text-emerald-400" },
-    STOP_HIT:   { label: "Stopped",     cls: "text-rose-600 dark:text-rose-400" },
-    WIN:        { label: "Win ✓",       cls: "text-emerald-600 dark:text-emerald-400" },
-    LOSS:       { label: "Loss",        cls: "text-rose-600 dark:text-rose-400" },
-    OPEN:       { label: "Open",        cls: "text-amber-600 dark:text-amber-400" },
+    TARGET_HIT: { label: "Target ✓",    cls: "text-[var(--color-bull)]" },
+    STOP_HIT:   { label: "Stopped",     cls: "text-[var(--color-bear)]" },
+    WIN:        { label: "Win ✓",       cls: "text-[var(--color-bull)]" },
+    LOSS:       { label: "Loss",        cls: "text-[var(--color-bear)]" },
+    OPEN:       { label: "Open",        cls: "text-[var(--color-warning)]" },
     CLOSED:     { label: "Squared off", cls: "text-[var(--color-fg-muted)]" },
     EXPIRED:    { label: "Expired",     cls: "text-[var(--color-warning)]" },
     CANCELLED:  { label: "Cancelled",   cls: "text-[var(--color-fg-subtle)]" },
@@ -95,8 +95,8 @@ function AggregateBanner({ days }: { days: DailyPicksHistoryDay[] }) {
         <div key={s.label} className="flex flex-col gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">{s.label}</span>
           <span className={cn("text-xl font-semibold tabular-nums",
-            s.tone === "bull" ? "text-emerald-600 dark:text-emerald-400"
-            : s.tone === "bear" ? "text-rose-600 dark:text-rose-400"
+            s.tone === "bull" ? "text-[var(--color-bull)]"
+            : s.tone === "bear" ? "text-[var(--color-bear)]"
             : "text-[var(--color-fg)]"
           )}>{s.value}</span>
           {(s as { sub?: string }).sub && <span className="text-[10px] text-[var(--color-fg-subtle)]">{(s as { sub?: string }).sub}</span>}
@@ -121,7 +121,7 @@ function BucketHeatStrip({ days }: { days: DailyPicksHistoryDay[] }) {
             <span className="font-medium text-[var(--color-fg)]">{DAILY_PICK_BUCKET_META[bucket]?.label?.replace("Highly ", "") ?? bucket}</span>
             <span className="text-[var(--color-fg-subtle)]">{bp.length} picks</span>
             {wr != null && (
-              <span className={cn("font-semibold", wr >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+              <span className={cn("font-semibold", wr >= 0.5 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]")}>
                 {(wr * 100).toFixed(0)}% win
               </span>
             )}
@@ -135,13 +135,13 @@ function BucketHeatStrip({ days }: { days: DailyPicksHistoryDay[] }) {
 function DaySummaryBadge({ summary }: { summary: DailyPicksDaySummary }) {
   return (
     <span className="flex items-center gap-3 text-[11px] text-[var(--color-fg-muted)]">
-      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><Target className="h-3 w-3" />{summary.targetHit} hit</span>
-      <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400"><TrendingDown className="h-3 w-3" />{summary.stopHit} stop</span>
+      <span className="flex items-center gap-1 text-[var(--color-bull)]"><Target className="h-3 w-3" />{summary.targetHit} hit</span>
+      <span className="flex items-center gap-1 text-[var(--color-bear)]"><TrendingDown className="h-3 w-3" />{summary.stopHit} stop</span>
       {summary.closed > 0 && <span>{summary.closed} squared</span>}
-      {summary.open   > 0 && <span className="text-amber-600 dark:text-amber-400">{summary.open} open</span>}
+      {summary.open   > 0 && <span className="text-[var(--color-warning)]">{summary.open} open</span>}
       <span className={cn("font-semibold",
-        summary.winRate >= 0.5 ? "text-emerald-600 dark:text-emerald-400"
-        : summary.winRate > 0  ? "text-rose-600 dark:text-rose-400"
+        summary.winRate >= 0.5 ? "text-[var(--color-bull)]"
+        : summary.winRate > 0  ? "text-[var(--color-bear)]"
         : "text-[var(--color-fg-muted)]"
       )}>{(summary.winRate * 100).toFixed(0)}% win</span>
     </span>
@@ -177,17 +177,17 @@ function PickRow({ pick, index }: { pick: DailyPick; index: number }) {
         </td>
         <td className="p-2.5">
           <span className={cn("flex items-center gap-1 text-[11px] font-bold",
-            isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+            isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
           )}>
             {isBull ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {isBull ? "LONG" : "SHORT"}
           </span>
         </td>
         <td className="p-2.5 text-right tabular text-sm">₹{fmt(pick.entry)}</td>
-        <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">₹{fmt(pick.stopLoss)}</td>
-        <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">₹{fmt(pick.target)}</td>
+        <td className="p-2.5 text-right tabular text-sm text-[var(--color-bear)]">₹{fmt(pick.stopLoss)}</td>
+        <td className="p-2.5 text-right tabular text-sm text-[var(--color-bull)]">₹{fmt(pick.target)}</td>
         <td className={cn("p-2.5 text-right tabular text-sm font-semibold",
-          pick.pnlPct == null ? "text-[var(--color-fg-muted)]" : pick.pnlPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+          pick.pnlPct == null ? "text-[var(--color-fg-muted)]" : pick.pnlPct >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
         )}>{pick.pnlPct == null ? "—" : fmtPct(pick.pnlPct)}</td>
         <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">{fmtIstTime(pick.generatedAt)}</td>
         <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
@@ -203,9 +203,9 @@ function PickRow({ pick, index }: { pick: DailyPick; index: number }) {
                 <div className="flex flex-wrap gap-x-5 gap-y-1">
                   {[
                     { l: "Entry",      v: `₹${fmt(pick.entry)}`,                           c: "text-[var(--color-fg)]" },
-                    { l: "Stop Loss",  v: `₹${fmt(pick.stopLoss)}`,                        c: "text-rose-600 dark:text-rose-400" },
-                    { l: "Target",     v: `₹${fmt(pick.target)}`,                          c: "text-emerald-600 dark:text-emerald-400" },
-                    { l: "Stretch",    v: `₹${fmt(pick.canMoveUpto)}`,                     c: "text-emerald-500" },
+                    { l: "Stop Loss",  v: `₹${fmt(pick.stopLoss)}`,                        c: "text-[var(--color-bear)]" },
+                    { l: "Target",     v: `₹${fmt(pick.target)}`,                          c: "text-[var(--color-bull)]" },
+                    { l: "Stretch",    v: `₹${fmt(pick.canMoveUpto)}`,                     c: "text-[var(--color-bull)]" },
                     { l: "Can Expect", v: `${pick.canExpectPct.toFixed(1)}%`,              c: "text-[var(--color-fg-muted)]" },
                     { l: "R:R",        v: `${pick.riskReward.toFixed(1)}:1`,               c: "text-[var(--color-fg-muted)]" },
                     { l: "Win Prob",   v: `${Math.round(pick.winProbability * 100)}%`,     c: "text-[var(--color-fg-muted)]" },
@@ -350,8 +350,8 @@ function ScalperAggregateBanner({ trades }: { trades: ScalperTradeRow[] }) {
         <div key={s.label} className="flex flex-col gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">{s.label}</span>
           <span className={cn("text-xl font-semibold tabular-nums",
-            s.tone === "bull" ? "text-emerald-600 dark:text-emerald-400"
-            : s.tone === "bear" ? "text-rose-600 dark:text-rose-400"
+            s.tone === "bull" ? "text-[var(--color-bull)]"
+            : s.tone === "bear" ? "text-[var(--color-bear)]"
             : "text-[var(--color-fg)]"
           )}>{s.value}</span>
           {(s as {sub?: string}).sub && <span className="text-[10px] text-[var(--color-fg-subtle)]">{(s as {sub?: string}).sub}</span>}
@@ -376,7 +376,7 @@ function StrategyHeatStrip({ trades }: { trades: ScalperTradeRow[] }) {
             <span className="font-medium text-[var(--color-fg)]">{meta?.label ?? id}</span>
             <span className="text-[var(--color-fg-subtle)]">{st.length} trades</span>
             {wr != null && (
-              <span className={cn("font-semibold", wr >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+              <span className={cn("font-semibold", wr >= 0.5 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]")}>
                 {(wr * 100).toFixed(0)}% win
               </span>
             )}
@@ -414,18 +414,18 @@ function ScalperTradeRow({ trade, index }: { trade: ScalperTradeRow; index: numb
         </td>
         <td className="p-2.5">
           <span className={cn("flex items-center gap-1 text-[11px] font-bold",
-            isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+            isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
           )}>
             {isBull ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {trade.direction}
           </span>
         </td>
         <td className="p-2.5 text-right tabular text-sm">₹{fmt(trade.entry)}</td>
-        <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">₹{fmt(trade.stopLoss)}</td>
-        <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">₹{fmt(trade.target)}</td>
+        <td className="p-2.5 text-right tabular text-sm text-[var(--color-bear)]">₹{fmt(trade.stopLoss)}</td>
+        <td className="p-2.5 text-right tabular text-sm text-[var(--color-bull)]">₹{fmt(trade.target)}</td>
         <td className="p-2.5 text-right tabular text-sm">{trade.exitPrice != null ? `₹${fmt(trade.exitPrice)}` : "—"}</td>
         <td className={cn("p-2.5 text-right tabular text-sm font-semibold",
-          trade.pnlPct == null ? "text-[var(--color-fg-muted)]" : trade.pnlPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+          trade.pnlPct == null ? "text-[var(--color-fg-muted)]" : trade.pnlPct >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
         )}>{trade.pnlPct == null ? "—" : fmtPct(trade.pnlPct)}</td>
         <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
           {opened.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}
@@ -443,8 +443,8 @@ function ScalperTradeRow({ trade, index }: { trade: ScalperTradeRow; index: numb
                 <div className="flex flex-wrap gap-x-5 gap-y-1">
                   {[
                     { l: "Entry",     v: `₹${fmt(trade.entry)}`,                             c: "text-[var(--color-fg)]" },
-                    { l: "Stop Loss", v: `₹${fmt(trade.stopLoss)}`,                          c: "text-rose-600 dark:text-rose-400" },
-                    { l: "Target",    v: `₹${fmt(trade.target)}`,                            c: "text-emerald-600 dark:text-emerald-400" },
+                    { l: "Stop Loss", v: `₹${fmt(trade.stopLoss)}`,                          c: "text-[var(--color-bear)]" },
+                    { l: "Target",    v: `₹${fmt(trade.target)}`,                            c: "text-[var(--color-bull)]" },
                     { l: "Exit",      v: trade.exitPrice != null ? `₹${fmt(trade.exitPrice)}` : "—", c: "text-[var(--color-fg-muted)]" },
                     { l: "R:R",       v: `${trade.riskReward.toFixed(1)}:1`,                 c: "text-[var(--color-fg-muted)]" },
                     { l: "ATR",       v: `₹${fmt(trade.atr)}`,                               c: "text-[var(--color-fg-muted)]" },
@@ -623,8 +623,8 @@ function FnoTrendAggregateBanner({ days }: { days: FnoTrendHistoryDaySerial[] })
         <div key={s.label} className="flex flex-col gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">{s.label}</span>
           <span className={cn("text-xl font-semibold tabular-nums",
-            s.tone === "bull" ? "text-emerald-600 dark:text-emerald-400"
-            : s.tone === "bear" ? "text-rose-600 dark:text-rose-400"
+            s.tone === "bull" ? "text-[var(--color-bull)]"
+            : s.tone === "bear" ? "text-[var(--color-bear)]"
             : "text-[var(--color-fg)]"
           )}>{s.value}</span>
           {(s as {sub?: string}).sub && <span className="text-[10px] text-[var(--color-fg-subtle)]">{(s as {sub?: string}).sub}</span>}
@@ -656,8 +656,8 @@ function FnoTrendScanRowComp({ scan, index }: { scan: FnoTrendScanSerial; index:
         </td>
         <td className="p-2.5">
           <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
-            isBull ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                   : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
+            isBull ? "bg-[color-mix(in_oklch,var(--bull)_12%,transparent)] text-[var(--color-bull)]"
+                   : "bg-[color-mix(in_oklch,var(--bear)_12%,transparent)] text-[var(--color-bear)]"
           )}>
             {isBull ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
             {scan.scanType}
@@ -667,19 +667,19 @@ function FnoTrendScanRowComp({ scan, index }: { scan: FnoTrendScanSerial; index:
           <span className="text-sm font-semibold text-[var(--color-brand)]">{tvSym}</span>
         </td>
         <td className={cn("p-2.5 text-right tabular text-sm font-semibold",
-          scan.changePct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+          scan.changePct >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
         )}>{fmtPct(scan.changePct)}</td>
         <td className="p-2.5 text-right tabular text-sm">₹{fmt(scan.entry)}</td>
         <td className={cn("p-2.5 text-right tabular text-sm",
-          isBull ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+          isBull ? "text-[var(--color-bear)]" : "text-[var(--color-bull)]"
         )}>₹{fmt(scan.stopLoss)}</td>
         <td className={cn("p-2.5 text-right tabular text-sm",
-          isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+          isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
         )}>₹{fmt(scan.tp1)}</td>
         <td className={cn("p-2.5 text-right tabular text-sm font-semibold",
           scan.pnlPct == null ? "text-[var(--color-fg-muted)]"
-          : scan.pnlPct >= 0  ? "text-emerald-600 dark:text-emerald-400"
-          :                      "text-rose-600 dark:text-rose-400"
+          : scan.pnlPct >= 0  ? "text-[var(--color-bull)]"
+          :                      "text-[var(--color-bear)]"
         )}>{scan.pnlPct == null ? "—" : fmtPct(scan.pnlPct)}</td>
         <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
           {scannedAt.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}
@@ -697,10 +697,10 @@ function FnoTrendScanRowComp({ scan, index }: { scan: FnoTrendScanSerial; index:
                 <div className="flex flex-wrap gap-x-5 gap-y-1">
                   {[
                     { l: "Entry",    v: `₹${fmt(scan.entry)}`,    c: "text-[var(--color-fg)]" },
-                    { l: "SL",       v: `₹${fmt(scan.stopLoss)}`, c: isBull ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400" },
-                    { l: "TP1",      v: `₹${fmt(scan.tp1)}`,      c: isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400" },
-                    { l: "TP2",      v: `₹${fmt(scan.tp2)}`,      c: isBull ? "text-emerald-500" : "text-rose-500" },
-                    { l: "TP3",      v: `₹${fmt(scan.tp3)}`,      c: isBull ? "text-emerald-400" : "text-rose-400" },
+                    { l: "SL",       v: `₹${fmt(scan.stopLoss)}`, c: isBull ? "text-[var(--color-bear)]" : "text-[var(--color-bull)]" },
+                    { l: "TP1",      v: `₹${fmt(scan.tp1)}`,      c: isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]" },
+                    { l: "TP2",      v: `₹${fmt(scan.tp2)}`,      c: isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]" },
+                    { l: "TP3",      v: `₹${fmt(scan.tp3)}`,      c: isBull ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]" },
                     { l: "ATR(14)", v: `₹${fmt(scan.atr)}`,      c: "text-[var(--color-fg-muted)]" },
                     { l: "ADX",      v: scan.adxVal.toFixed(1),   c: "text-[var(--color-fg-muted)]" },
                     { l: "RSI",      v: scan.rsiVal.toFixed(0),   c: "text-[var(--color-fg-muted)]" },
@@ -755,13 +755,13 @@ function FnoTrendDayAccordion({ day, scanTypeFilter, dirFilter }: {
           <span className="text-[11px] text-[var(--color-fg-muted)]">· {scans.length} signal{scans.length !== 1 ? "s" : ""}</span>
         </span>
         <span className="flex items-center gap-3 text-[11px] text-[var(--color-fg-muted)]">
-          <span className="text-emerald-600 dark:text-emerald-400">{day.summary.targetHit} hit</span>
-          <span className="text-rose-600 dark:text-rose-400">{day.summary.stopHit} stop</span>
+          <span className="text-[var(--color-bull)]">{day.summary.targetHit} hit</span>
+          <span className="text-[var(--color-bear)]">{day.summary.stopHit} stop</span>
           {day.summary.closed > 0 && <span>{day.summary.closed} squared</span>}
-          {day.summary.open > 0 && <span className="text-amber-600 dark:text-amber-400">{day.summary.open} open</span>}
+          {day.summary.open > 0 && <span className="text-[var(--color-warning)]">{day.summary.open} open</span>}
           <span className={cn("font-semibold",
-            day.summary.winRate >= 0.5 ? "text-emerald-600 dark:text-emerald-400"
-            : day.summary.winRate > 0  ? "text-rose-600 dark:text-rose-400"
+            day.summary.winRate >= 0.5 ? "text-[var(--color-bull)]"
+            : day.summary.winRate > 0  ? "text-[var(--color-bear)]"
             : "text-[var(--color-fg-muted)]"
           )}>{(day.summary.winRate * 100).toFixed(0)}% win</span>
           <ChevronDown className={cn("h-4 w-4 text-[var(--color-fg-subtle)] transition-transform", open && "rotate-180")} />
@@ -852,8 +852,8 @@ function FnoTrendSection({ daysFilter, dirFilter }: { daysFilter: DaysFilter; di
                 ? "bg-[var(--color-surface-hover)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-border-strong)]"
                 : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
             )}>
-            {f === "BULLISH" ? <TrendingUp className="h-3 w-3 text-emerald-500" /> : null}
-            {f === "BEARISH" ? <TrendingDown className="h-3 w-3 text-rose-500" /> : null}
+            {f === "BULLISH" ? <TrendingUp className="h-3 w-3 text-[var(--color-bull)]" /> : null}
+            {f === "BEARISH" ? <TrendingDown className="h-3 w-3 text-[var(--color-bear)]" /> : null}
             {f === "ALL" ? "All" : f.charAt(0) + f.slice(1).toLowerCase()}
           </button>
         ))}

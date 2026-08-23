@@ -1,18 +1,40 @@
+"use client";
+
+import dynamic from "next/dynamic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BentoGrid, BentoCell } from "@/components/layout/BentoGrid";
+import { NumberMorph } from "@/components/trading/NumberMorph";
 import { getIndiaStrategyMeta } from "@/features/india/scalping/strategies/catalog";
 import type {
   IndiaJournalStats,
   IndiaStrategyStats,
   IndiaSymbolStats,
 } from "@/features/india/scalping/journal";
+import { PnlLineChart } from "@/components/india/paper-trading/pnl-line-chart";
 
 /**
  * India F&O performance panel. Mirror of the crypto `StatsPanel` — same
  * four headline tiles (Total / Win rate / Net P&L / Profit factor),
  * same per-symbol + per-strategy breakdown tables. Net P&L is shown in
  * ₹ instead of $.
+ *
+ * Task 16.3: Refactored to use BentoGrid top stats sub-layout, NumberMorph
+ * for total P&L, IIT color tokens, and dynamically imported RiskSphere.
  */
+
+/* ── Dynamic RiskSphere import — keeps Three.js out of initial bundle ─────── */
+const RiskSphere = dynamic(
+  () => import("@/components/3d/risk-sphere").then((m) => ({ default: m.RiskSphere })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[120px] w-[120px] animate-pulse rounded-full bg-[var(--color-surface)]" />
+    ),
+  },
+);
+
+/* ── Formatting helpers ──────────────────────────────────────────────────── */
 
 function pct(n: number): string {
   if (!Number.isFinite(n)) return "—";
@@ -31,10 +53,15 @@ function pfText(n: number): string {
   return n.toFixed(2);
 }
 
-function pnlClass(n: number): string {
-  if (!Number.isFinite(n) || n === 0) return "text-[var(--color-fg-muted)]";
-  return n > 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
+/** Returns an inline style object using IIT color tokens instead of ad-hoc Tailwind classes. */
+function pnlStyle(n: number): React.CSSProperties {
+  if (!Number.isFinite(n) || n === 0) return { color: "var(--color-fg-muted)" };
+  return n > 0
+    ? { color: "var(--color-data-positive)" }
+    : { color: "var(--color-data-negative)" };
 }
+
+/* ── Main component ──────────────────────────────────────────────────────── */
 
 export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
   const { overall, bySymbol, byStrategy } = stats;
@@ -59,6 +86,9 @@ export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
     );
   }
 
+  /* riskLevel: low win-rate = high risk */
+  const riskLevel = (1 - overall.winRate) * 100;
+
   return (
     <Card>
       <CardHeader>
@@ -67,22 +97,58 @@ export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/* ── BentoGrid top stats sub-layout (4 cols) ── */}
+        <BentoGrid cols={4} gap="gap-3">
+          {/* Total P&L — spans 2 cols, large NumberMorph */}
+          <BentoCell colSpan={2}>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 h-full">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                Net P&L
+              </p>
+              <div className="mt-1" style={pnlStyle(overall.totalPnlUsd)}>
+                <NumberMorph
+                  value={overall.totalPnlUsd}
+                  prefix="₹"
+                  decimals={2}
+                  className="text-2xl font-bold"
+                />
+              </div>
+              <p className="text-[10px] text-[var(--color-fg-subtle)]">
+                {`per ${overall.total > 0 ? "₹1L" : "—"}`}
+              </p>
+            </div>
+          </BentoCell>
+
+          {/* Win Rate — spans 1 col, with small arc gauge */}
+          <BentoCell colSpan={1}>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 h-full flex flex-col items-center justify-center gap-1">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)] self-start">
+                Win Rate
+              </p>
+              <WinRateArc winRate={overall.winRate} />
+              <p className="text-[10px] text-[var(--color-fg-subtle)]">
+                {overall.wins}W / {overall.losses}L
+              </p>
+            </div>
+          </BentoCell>
+
+          {/* RiskSphere — spans 1 col */}
+          <BentoCell colSpan={1}>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 h-full flex flex-col items-center justify-center gap-1">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)] self-start">
+                Risk
+              </p>
+              <RiskSphere riskLevel={riskLevel} size={80} />
+            </div>
+          </BentoCell>
+        </BentoGrid>
+
+        {/* ── Secondary stat row ── */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
           <Stat
             label="Total"
             value={overall.total.toString()}
             hint={`${overall.open} open`}
-          />
-          <Stat
-            label="Win rate"
-            value={pct(overall.winRate)}
-            hint={`${overall.wins}W / ${overall.losses}L`}
-          />
-          <Stat
-            label="Net P&L"
-            value={`₹${pnlText(overall.totalPnlUsd, 2)}`}
-            valueClass={pnlClass(overall.totalPnlUsd)}
-            hint={`per ${overall.total > 0 ? "₹1L" : "—"}`}
           />
           <Stat
             label="Profit factor"
@@ -91,6 +157,7 @@ export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
           />
         </div>
 
+        {/* ── By symbol table ── */}
         <div className="min-w-0">
           <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-[var(--color-fg-muted)]">
             By symbol
@@ -123,6 +190,7 @@ export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
           </div>
         </div>
 
+        {/* ── By strategy table ── */}
         <div className="min-w-0">
           <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-[var(--color-fg-muted)]">
             By strategy
@@ -155,10 +223,97 @@ export function IndiaStatsPanel({ stats }: { stats: IndiaJournalStats }) {
             </table>
           </div>
         </div>
+
+        {/* ── Performance breakdown: cumulative P&L per strategy (lightweight-charts) ── */}
+        <PnlLineChart height={200} autoFetch />
       </CardContent>
     </Card>
   );
 }
+
+/* ── Win Rate Arc gauge (small SVG) ─────────────────────────────────────── */
+
+function WinRateArc({ winRate }: { winRate: number }) {
+  const safeRate = Number.isFinite(winRate) ? winRate : 0;
+  const pctLabel = `${(safeRate * 100).toFixed(1)}%`;
+
+  /* SVG arc parameters */
+  const radius = 28;
+  const cx = 36;
+  const cy = 36;
+  const startAngle = -Math.PI * 0.75;
+  const endAngle = Math.PI * 0.75;
+  const totalArc = endAngle - startAngle;
+
+  function polarToXY(angle: number, r: number) {
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy + r * Math.sin(angle),
+    };
+  }
+
+  const arcStart = polarToXY(startAngle, radius);
+  const arcEnd = polarToXY(endAngle, radius);
+
+  /* Full track */
+  const trackPath = [
+    `M ${arcStart.x} ${arcStart.y}`,
+    `A ${radius} ${radius} 0 1 1 ${arcEnd.x} ${arcEnd.y}`,
+  ].join(" ");
+
+  /* Fill arc proportional to win rate */
+  const fillAngle = startAngle + totalArc * safeRate;
+  const fillEnd = polarToXY(fillAngle, radius);
+  const largeArc = totalArc * safeRate > Math.PI ? 1 : 0;
+  const fillPath = [
+    `M ${arcStart.x} ${arcStart.y}`,
+    `A ${radius} ${radius} 0 ${largeArc} 1 ${fillEnd.x} ${fillEnd.y}`,
+  ].join(" ");
+
+  const fillColor =
+    safeRate >= 0.6
+      ? "var(--color-data-positive)"
+      : safeRate >= 0.4
+      ? "var(--color-fg-muted)"
+      : "var(--color-data-negative)";
+
+  return (
+    <svg width={72} height={72} viewBox="0 0 72 72" aria-label={`Win rate ${pctLabel}`}>
+      {/* Track */}
+      <path
+        d={trackPath}
+        fill="none"
+        stroke="var(--color-border)"
+        strokeWidth={5}
+        strokeLinecap="round"
+      />
+      {/* Fill */}
+      {safeRate > 0 && (
+        <path
+          d={fillPath}
+          fill="none"
+          stroke={fillColor}
+          strokeWidth={5}
+          strokeLinecap="round"
+        />
+      )}
+      {/* Label */}
+      <text
+        x={cx}
+        y={cy + 5}
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="600"
+        fill="var(--color-fg)"
+        fontFamily="var(--font-data)"
+      >
+        {pctLabel}
+      </text>
+    </svg>
+  );
+}
+
+/* ── Sub-components ──────────────────────────────────────────────────────── */
 
 function StrategyRow({ stats }: { stats: IndiaStrategyStats }) {
   const meta = getIndiaStrategyMeta(stats.strategyId);
@@ -175,10 +330,10 @@ function StrategyRow({ stats }: { stats: IndiaStrategyStats }) {
         {stats.wins} / {stats.losses}
       </Td>
       <Td align="right">{pct(stats.winRate)}</Td>
-      <Td align="right" className={pnlClass(stats.avgPnlPct)}>
+      <Td align="right" style={pnlStyle(stats.avgPnlPct)}>
         {pnlText(stats.avgPnlPct, 2)}%
       </Td>
-      <Td align="right" className={pnlClass(stats.totalPnlUsd)}>
+      <Td align="right" style={pnlStyle(stats.totalPnlUsd)}>
         {pnlText(stats.totalPnlUsd, 2)}
       </Td>
       <Td align="right">{stats.open}</Td>
@@ -196,10 +351,10 @@ function SymbolRow({ stats }: { stats: IndiaSymbolStats }) {
         {stats.wins} / {stats.losses}
       </Td>
       <Td align="right">{pct(stats.winRate)}</Td>
-      <Td align="right" className={pnlClass(stats.avgPnlPct)}>
+      <Td align="right" style={pnlStyle(stats.avgPnlPct)}>
         {pnlText(stats.avgPnlPct, 2)}%
       </Td>
-      <Td align="right" className={pnlClass(stats.totalPnlUsd)}>
+      <Td align="right" style={pnlStyle(stats.totalPnlUsd)}>
         {pnlText(stats.totalPnlUsd, 2)}
       </Td>
       <Td align="right">{pfText(stats.profitFactor)}</Td>
@@ -212,12 +367,12 @@ function Stat({
   label,
   value,
   hint,
-  valueClass,
+  valueStyle,
 }: {
   label: string;
   value: string;
   hint?: string;
-  valueClass?: string;
+  valueStyle?: React.CSSProperties;
 }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
@@ -225,7 +380,8 @@ function Stat({
         {label}
       </p>
       <p
-        className={`mt-1 text-lg font-semibold tracking-tight num ${valueClass ?? ""}`}
+        className="mt-1 text-lg font-semibold tracking-tight num"
+        style={valueStyle}
       >
         {value}
       </p>
@@ -258,14 +414,17 @@ function Td({
   children,
   align,
   className,
+  style,
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
   className?: string;
+  style?: React.CSSProperties;
 }) {
   return (
     <td
       className={`px-3 py-2 ${align === "right" ? "text-right num" : "text-left"} ${className ?? ""}`}
+      style={style}
     >
       {children}
     </td>

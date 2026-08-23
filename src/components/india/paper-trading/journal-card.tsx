@@ -13,7 +13,6 @@ import {
   IndiaStrategyChip,
   Td,
   Th,
-  indiaPnlClass,
   indiaStatusBadge,
 } from "@/components/india/paper-trading/journal-shared";
 import { useIndiaStrategyFilter } from "@/components/india/strategies/strategy-context";
@@ -23,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmt } from "@/lib/india/format";
-import { cn } from "@/lib/utils";
+import { cn, fmtDateTime } from "@/lib/utils";
 import type { IndiaPaperTradeStatus } from "@/features/india/scalping/types";
 
 const STATUSES: ReadonlyArray<"ALL" | IndiaPaperTradeStatus> = [
@@ -116,7 +115,7 @@ export function IndiaJournalCard() {
         ) : items.length === 0 && loading ? (
           <Skeleton className="h-[120px] w-full rounded-lg" />
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]" data-density="compact">
             <table className="w-full text-[12px]">
               <thead className="bg-[var(--color-bg-elevated)] text-[var(--color-fg-muted)]">
                 <tr>
@@ -184,21 +183,33 @@ export function IndiaJournalCard() {
                           exitDisplay
                         )}
                       </Td>
-                      <Td align="right" className={indiaPnlClass(pnlPct)}>
+                      <Td align="right" style={{
+                        color: pnlPct == null || pnlPct === 0
+                          ? "var(--color-fg-muted)"
+                          : pnlPct > 0
+                          ? "var(--color-data-positive)"
+                          : "var(--color-data-negative)"
+                      }}>
                         {pnlPct !== null
                           ? `${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(2)}%`
                           : "—"}
                       </Td>
-                      <Td align="right" className={indiaPnlClass(pnlUsd)}>
+                      <Td align="right" style={{
+                        color: pnlUsd == null || pnlUsd === 0
+                          ? "var(--color-fg-muted)"
+                          : pnlUsd > 0
+                          ? "var(--color-data-positive)"
+                          : "var(--color-data-negative)"
+                      }}>
                         {pnlUsd !== null
                           ? `${pnlUsd > 0 ? "+" : ""}₹${pnlUsd.toFixed(2)}`
                           : "—"}
                       </Td>
                       <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {new Date(t.openedAt).toLocaleString()}
+                        {fmtDateTime(t.openedAt)}
                       </Td>
                       <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {t.closedAt ? new Date(t.closedAt).toLocaleString() : "—"}
+                        {t.closedAt ? fmtDateTime(t.closedAt) : "—"}
                       </Td>
                       <Td>
                         {editing === t.id ? (

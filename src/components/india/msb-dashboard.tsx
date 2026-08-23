@@ -40,6 +40,11 @@ import {
 } from "@/components/india/ui/signal-table-row";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { dataSourceLabels } from "@/features/settings/data-sources-shared";
+import { MarketCoreWidget } from "@/components/3d/market-core-widget";
+import { notify } from "@/lib/toast";
+import { SectorStocksTable } from "@/components/india/options/sector-stocks-table";
+import type { StockRow as SectorStockRow } from "@/components/india/options/sector-stocks-table";
+import { fmtTime } from "@/lib/utils";
 
 type IndexQuote = {
   name: string;
@@ -234,7 +239,21 @@ export default function MsbDashboard() {
         snapRes.json(),
       ]);
       if (ctrl.signal.aborted) return;
-      setData(Array.isArray(signalsJson) ? signalsJson : []);
+      const incoming: MsbSignalRow[] = Array.isArray(signalsJson) ? signalsJson : [];
+      setData(incoming);
+      // Toast when new strong signals appear (compare against previous data)
+      setData((prev) => {
+        const prevSymbols = new Set(prev.map((r) => r.Symbol));
+        const fresh = incoming.filter((r) => !prevSymbols.has(r.Symbol));
+        for (const row of fresh.slice(0, 3)) {
+          notify.signal(
+            String(row.Symbol),
+            row.Side?.toUpperCase() === "BUY" ? "BUY" : "SELL",
+            Number(row.Strength) || undefined,
+          );
+        }
+        return incoming;
+      });
       setNifty(biasJson);
       setSnapshot(snapJson);
     } catch (err: unknown) {
@@ -282,30 +301,30 @@ export default function MsbDashboard() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
-      {/* Hero / Indices Row */}
+      {/* ── Hero header ──────────────────────────────────────────────────── */}
       <section>
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
-          className="mb-4 flex items-end justify-between gap-3"
+          className="mb-5 flex items-end justify-between gap-3"
         >
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--color-fg)]">
                 Market Pulse
               </h1>
               {sourceBadge && (
                 <span
-                  className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                  className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
                   title="Live data source(s) actually serving this snapshot"
                 >
                   {sourceBadge}
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Live snapshot of Indian indices and sectoral momentum
+            <p className="mt-1 text-xs sm:text-sm text-[var(--color-fg-subtle)]">
+              Live snapshot · Indian indices &amp; sectoral momentum
             </p>
           </div>
           <Button
@@ -313,16 +332,21 @@ export default function MsbDashboard() {
             disabled={loading}
             size="sm"
             variant="outline"
-            className="rounded-full"
+            className="rounded-xl border-[var(--color-border-strong)] hover:border-[var(--color-brand)] hover:text-[var(--color-brand)] transition-all"
           >
             <RefreshCw
-              className={`mr-1 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+              className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
         </motion.div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 perspective-1000">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4 perspective-1000 items-stretch">
+          {/* Market Intelligence Core — compact 3D regime card, same height as index cards */}
+          <div className="col-span-1 row-span-1 min-h-[180px]">
+            <MarketCoreWidget niftyBias={nifty.bias} height={120} />
+          </div>
+
           <AnimatePresence>
             {snapshot.indices.map((idx, i) => (
               <IndexCard
@@ -350,17 +374,17 @@ export default function MsbDashboard() {
           className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-md bg-gradient-to-br from-amber-400/30 to-rose-500/30">
-                <Flame className="h-4 w-4 text-amber-500" />
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-gradient-to-br from-amber-400/25 to-rose-500/20 ring-1 ring-amber-400/20">
+                <Flame className="h-4 w-4 text-amber-400" />
               </div>
-              <h2 className="text-base sm:text-lg font-semibold">
+              <h2 className="text-base sm:text-lg font-semibold tracking-tight">
                 NIFTY Sectoral Heatmap
               </h2>
             </div>
-            <span className="text-[10px] sm:text-xs text-muted-foreground">
+            <span className="text-[10px] sm:text-xs text-[var(--color-fg-subtle)]">
               {snapshot.fetchedAt
-                ? `Updated ${new Date(snapshot.fetchedAt).toLocaleTimeString()}`
+                ? `Updated ${fmtTime(snapshot.fetchedAt)}`
                 : "—"}
             </span>
           </div>
@@ -420,83 +444,74 @@ function IndexCard({
   delay: number;
   niftyBias: string | null;
 }) {
-  const pct = idx.changePct ?? 0;
-  const up = pct >= 0;
+  const pct      = idx.changePct ?? 0;
+  const up       = pct >= 0;
   const inverted = isVix(idx.name);
+  const positive = inverted ? !up : up;
 
-  // For VIX: rising = bad (red), falling = good (green)
-  const tone = inverted
-    ? up
-      ? "text-rose-500"
-      : "text-emerald-500"
-    : up
-      ? "text-emerald-500"
-      : "text-rose-500";
+  const tone = positive ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
 
-  const accent = inverted
-    ? up
-      ? "from-rose-500/20 to-orange-500/10"
-      : "from-emerald-500/20 to-teal-500/10"
-    : up
-      ? "from-emerald-500/20 to-teal-500/10"
-      : "from-rose-500/20 to-orange-500/10";
+  // Richer gradient: bull = emerald→cyan, bear = rose→orange
+  const accentGrad = positive
+    ? "from-[color-mix(in_oklch,var(--bull)_22%,transparent)] via-[color-mix(in_oklch,var(--info)_8%,transparent)] to-transparent"
+    : "from-[color-mix(in_oklch,var(--bear)_22%,transparent)] via-[color-mix(in_oklch,var(--warning)_6%,transparent)] to-transparent";
+
+  // Neon glow for top border
+  const borderGlow = positive
+    ? "shadow-[inset_0_1px_0_0_color-mix(in_oklch,var(--bull)_30%,transparent)]"
+    : "shadow-[inset_0_1px_0_0_color-mix(in_oklch,var(--bear)_30%,transparent)]";
 
   // 3D tilt
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-  const rotateX = useSpring(useTransform(y, [-50, 50], [6, -6]), {
-    stiffness: 200,
-    damping: 18,
-  });
-  const rotateY = useSpring(useTransform(x, [-50, 50], [-6, 6]), {
-    stiffness: 200,
-    damping: 18,
-  });
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const rotateX = useSpring(useTransform(my, [-50, 50], [7, -7]), { stiffness: 220, damping: 20 });
+  const rotateY = useSpring(useTransform(mx, [-50, 50], [-7, 7]), { stiffness: 220, damping: 20 });
 
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    x.set(e.clientX - rect.left - rect.width / 2);
-    y.set(e.clientY - rect.top - rect.height / 2);
+    mx.set(e.clientX - rect.left - rect.width  / 2);
+    my.set(e.clientY - rect.top  - rect.height / 2);
   };
-  const onMouseLeave = () => {
-    x.set(0);
-    y.set(0);
-  };
+  const onMouseLeave = () => { mx.set(0); my.set(0); };
 
   const chartHref = `/in/chart/${encodeURIComponent(idx.symbol)}`;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.4, delay, ease: "easeOut" }}
+      initial={{ opacity: 0, y: 22, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0,  scale: 1    }}
+      exit={{ opacity: 0, scale: 0.94 }}
+      transition={{ duration: 0.38, delay, ease: [0.22, 1, 0.36, 1] }}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
       style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}
-      className="relative rounded-2xl overflow-hidden glass glow-on-hover"
+      className={`relative rounded-2xl overflow-hidden bento-card holo-card ${borderGlow}`}
     >
+      {/* Gradient wash */}
       <div
         aria-hidden
-        className={`absolute inset-0 bg-gradient-to-br ${accent} opacity-80 pointer-events-none`}
+        className={`absolute inset-0 bg-gradient-to-br ${accentGrad} pointer-events-none`}
       />
+
+      {/* Card body lifted in Z */}
       <Link
         href={chartHref}
-        className="relative block p-4 sm:p-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-2xl"
-        style={{ transform: "translateZ(20px)" }}
+        className="relative block p-4 sm:p-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] rounded-2xl"
+        style={{ transform: "translateZ(18px)" }}
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] sm:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">
+        {/* Label + bias badge */}
+        <div className="flex items-center justify-between gap-1.5 mb-2">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-fg-subtle)] truncate">
             {idx.name}
-          </div>
+          </span>
           {niftyBias && niftyBias !== "-" && (
             <span
-              className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+              className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
                 niftyBias === "BULLISH"
-                  ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400"
+                  ? "bg-[color-mix(in_oklch,var(--bull)_18%,transparent)] text-[var(--color-bull)]"
                   : niftyBias === "BEARISH"
-                    ? "bg-rose-500/20 text-rose-700 dark:text-rose-400"
-                    : "bg-muted text-muted-foreground"
+                    ? "bg-[color-mix(in_oklch,var(--bear)_18%,transparent)] text-[var(--color-bear)]"
+                    : "bg-[var(--color-surface)] text-[var(--color-fg-muted)]"
               }`}
             >
               {niftyBias}
@@ -504,22 +519,18 @@ function IndexCard({
           )}
         </div>
 
-        <div className="mt-1.5 text-2xl sm:text-3xl font-semibold tabular tracking-tight">
+        {/* Price */}
+        <div className="text-xl sm:text-2xl font-bold tabular tracking-tight text-[var(--color-fg)] num">
           {fmt(idx.price)}
         </div>
 
-        <div
-          className={`mt-1 flex items-center gap-1 text-xs sm:text-sm font-medium ${tone}`}
-        >
-          {up ? (
-            <ArrowUpRight className="h-3.5 w-3.5" />
-          ) : (
-            <ArrowDownRight className="h-3.5 w-3.5" />
-          )}
-          <span className="tabular">
-            {up ? "+" : ""}
-            {fmt(idx.change)} ({up ? "+" : ""}
-            {fmt(idx.changePct)}%)
+        {/* Change row */}
+        <div className={`mt-1.5 flex items-center gap-1 text-[11px] sm:text-xs font-semibold ${tone}`}>
+          {positive
+            ? <ArrowUpRight   className="h-3.5 w-3.5 shrink-0" />
+            : <ArrowDownRight className="h-3.5 w-3.5 shrink-0" />}
+          <span className="num">
+            {positive ? "+" : ""}{fmt(idx.change)} ({positive ? "+" : ""}{fmt(idx.changePct)}%)
           </span>
         </div>
       </Link>
@@ -536,52 +547,50 @@ function SectorTile({
   delay: number;
   onClick: () => void;
 }) {
-  const pct = sector.changePct ?? 0;
-  const up = pct >= 0;
+  const pct       = sector.changePct ?? 0;
+  const up        = pct >= 0;
   const intensity = Math.min(Math.abs(pct) / 3, 1);
-  const alpha = 0.18 + intensity * 0.65;
+  const alpha     = 0.15 + intensity * 0.70;
 
+  // Bull: emerald, Bear: rose — richer saturation than before
   const bg = up
-    ? `rgba(16, 185, 129, ${alpha})`
-    : `rgba(244, 63, 94, ${alpha})`;
+    ? `oklch(0.64 0.20 152 / ${alpha})`
+    : `oklch(0.60 0.24 22  / ${alpha})`;
 
-  // High intensity → always white (the tile background is saturated enough).
-  // Low intensity → readable color that adapts to the active theme.
   const textTone =
-    intensity > 0.5
+    intensity > 0.45
       ? "text-white"
       : up
         ? "text-emerald-800 dark:text-emerald-200"
         : "text-rose-800 dark:text-rose-200";
 
+  const glowColor = up
+    ? `oklch(0.64 0.20 152 / ${intensity * 0.35})`
+    : `oklch(0.60 0.24 22  / ${intensity * 0.35})`;
+
   return (
     <motion.button
       type="button"
-      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      initial={{ opacity: 0, y: 10, scale: 0.94 }}
+      animate={{ opacity: 1, y: 0,  scale: 1    }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.3, delay, ease: "easeOut" }}
-      whileHover={{
-        scale: 1.06,
-        rotateX: -4,
-        rotateY: 4,
-        z: 30,
-      }}
-      whileTap={{ scale: 0.96 }}
+      transition={{ duration: 0.28, delay, ease: [0.22, 1, 0.36, 1] }}
+      whileHover={{ scale: 1.07, rotateX: -4, rotateY: 3, z: 28 }}
+      whileTap={{ scale: 0.95 }}
       onClick={onClick}
       style={{
         backgroundColor: bg,
         transformStyle: "preserve-3d",
+        boxShadow: `0 4px 24px -8px ${glowColor}, inset 0 1px 0 rgba(255,255,255,0.08)`,
       }}
-      className={`rounded-xl p-3 text-left cursor-pointer border border-white/5 shadow-sm hover:shadow-xl transition-shadow focus:outline-none focus:ring-2 focus:ring-blue-400 ${textTone}`}
+      className={`rounded-xl p-3 text-left cursor-pointer border border-white/8 transition-shadow focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] ${textTone}`}
       title={`${sector.symbol} — click for F&O stocks`}
     >
-      <div className="text-[11px] font-semibold truncate">{sector.name}</div>
+      <div className="text-[11px] font-semibold truncate leading-tight">{sector.name}</div>
       <div className="mt-1 text-sm font-bold tabular">
-        {up ? "+" : ""}
-        {fmt(pct)}%
+        {up ? "+" : ""}{fmt(pct)}%
       </div>
-      <div className="text-[10px] opacity-80 tabular">{fmt(sector.price)}</div>
+      <div className="text-[10px] opacity-75 tabular mt-0.5">{fmt(sector.price)}</div>
     </motion.button>
   );
 }
@@ -725,11 +734,11 @@ function MsbSignalsSection({
         className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
       >
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-md bg-gradient-to-br from-blue-400/30 to-violet-500/30">
-              <Sparkles className="h-4 w-4 text-blue-500" />
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-400/25 to-violet-500/20 ring-1 ring-blue-400/20">
+              <Sparkles className="h-4 w-4 text-blue-400" />
             </div>
-            <h2 className="text-base sm:text-lg font-semibold">
+            <h2 className="text-base sm:text-lg font-semibold tracking-tight">
               MSB–OB Intraday Signals
             </h2>
           </div>
@@ -1070,13 +1079,13 @@ function SectorStocksModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
             transition={{ type: "spring", damping: 28, stiffness: 320 }}
-            className="bg-card text-card-foreground rounded-2xl shadow-2xl border border-border w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden"
+            className="glass-strong rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border/60 bg-gradient-to-br from-background to-muted/30">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[var(--color-border)] bg-gradient-to-br from-[var(--color-bg-elevated)] to-[var(--color-surface)]">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500/20 to-violet-500/20 shrink-0">
-                  <Layers className="h-4 w-4 text-blue-500" />
+                <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/15 ring-1 ring-blue-500/20 shrink-0">
+                  <Layers className="h-4 w-4 text-blue-400" />
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-base sm:text-lg font-semibold truncate">
@@ -1094,7 +1103,7 @@ function SectorStocksModal({
                         <span>·</span>
                         <span>
                           updated{" "}
-                          {new Date(resp.fetchedAt).toLocaleTimeString()}
+                          {fmtTime(resp.fetchedAt)}
                         </span>
                       </>
                     )}
@@ -1124,250 +1133,22 @@ function SectorStocksModal({
               </Button>
             </div>
 
+            {/* ── TanStack Table replaces hand-rolled table ─── */}
             <div className="overflow-auto flex-1">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card/95 backdrop-blur z-10 border-b border-border/60">
-                  <tr>
-                    <SortHeader
-                      label="Symbol"
-                      k="symbol"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Price"
-                      k="price"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Day %"
-                      k="changePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="vs SMA50"
-                      k="fromSma50Pct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Upside"
-                      k="upsidePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Downside"
-                      k="downsidePct"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Score"
-                      k="score"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Signal"
-                      k="signal"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                    <SortHeader
-                      label="Held for"
-                      k="heldFor"
-                      align="right"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </tr>
-                </thead>
-                <tbody>
-                  <AnimatePresence>
-                    {paginatedRows.map((r, i) => {
-                      const age = ageFor(r);
-                      const ageMs = age?.ms ?? null;
-                      const ageSource = age?.source ?? null;
-                      const isStrong =
-                        r.signal === "STRONG BUY" ||
-                        r.signal === "STRONG SELL";
-                      const ageTone =
-                        r.signal === "STRONG BUY"
-                          ? "text-emerald-500"
-                          : r.signal === "STRONG SELL"
-                            ? "text-rose-500"
-                            : "text-muted-foreground";
-                      const sinceMs =
-                        ageSource === "server"
-                          ? r.signalSince
-                          : signalAges[r.symbol]?.since;
-                      return (
-                        <motion.tr
-                          key={r.symbol}
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0 }}
-                          transition={{
-                            duration: 0.2,
-                            delay: Math.min(i * 0.015, 0.3),
-                          }}
-                          className="border-b border-border/40 hover:bg-muted/30 transition-colors"
-                        >
-                          <td className="p-2.5 font-medium">
-                            <a
-                              href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${r.symbol}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-400 hover:underline"
-                            >
-                              {r.symbol}
-                            </a>
-                            {r.shortName && (
-                              <div className="text-[10px] text-muted-foreground truncate max-w-[180px]">
-                                {r.shortName}
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {fmt(r.price)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {pctCell(r.changePct)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {pctCell(r.fromSma50Pct)}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {r.upsidePct == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span className="text-emerald-500 font-medium">
-                                +{r.upsidePct.toFixed(1)}%
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            {r.downsidePct == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span className="text-rose-500 font-medium">
-                                -{r.downsidePct.toFixed(1)}%
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2.5 text-right tabular">
-                            <ScorePill score={r.score} />
-                          </td>
-                          <td className="p-2.5">
-                            <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                              <span
-                                className={`text-[10px] font-bold px-2 py-1 rounded-full ${signalClass(r.signal)}`}
-                              >
-                                {r.signal}
-                              </span>
-                              {isStrong && ageMs != null && (
-                                <span
-                                  className={`text-[10px] tabular ${ageTone}`}
-                                  title={`${r.signal} since ${new Date(
-                                    sinceMs ?? nowTs,
-                                  ).toLocaleString()} · source: ${
-                                    ageSource === "server"
-                                      ? "server snapshot log"
-                                      : "local observation only"
-                                  }`}
-                                >
-                                  {formatDuration(ageMs)}
-                                  {ageSource === "local" && (
-                                    <span
-                                      aria-label="local-only (server snapshot not yet available)"
-                                      className="ml-0.5 opacity-60"
-                                    >
-                                      *
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-2.5 text-right tabular text-xs">
-                            {ageMs == null ? (
-                              <span className="opacity-40">—</span>
-                            ) : (
-                              <span
-                                className={`font-medium ${ageTone}`}
-                                title={`${r.signal} since ${new Date(
-                                  sinceMs ?? nowTs,
-                                ).toLocaleString()} · source: ${
-                                  ageSource === "server"
-                                    ? "server snapshot log"
-                                    : "local observation only"
-                                }`}
-                              >
-                                {formatDuration(ageMs)}
-                                {ageSource === "local" && (
-                                  <span className="ml-0.5 opacity-60">*</span>
-                                )}
-                              </span>
-                            )}
-                          </td>
-                        </motion.tr>
-                      );
-                    })}
-                  </AnimatePresence>
-
-                  {sortedRows.length === 0 && !loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        No stocks in this sector.
-                      </td>
-                    </tr>
-                  )}
-                  {sortedRows.length > 0 && paginatedRows.length === 0 && !loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        No stocks match the current filter.
-                      </td>
-                    </tr>
-                  )}
-                  {sortedRows.length === 0 && loading && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="p-8 text-center text-muted-foreground text-sm"
-                      >
-                        Loading sector data…
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              <SectorStocksTable
+                rows={sortedRows.map((r) => {
+                  const age = ageFor(r);
+                  return {
+                    ...r,
+                    ageMs:     age?.ms     ?? null,
+                    ageSource: age?.source ?? null,
+                  } as SectorStockRow;
+                })}
+                loading={loading}
+              />
             </div>
 
-            <div className="px-4 sm:px-5 py-2 border-t border-border/60">
+            <div className="px-4 sm:px-5 py-2 border-t border-[var(--color-border)]">
               <PaginationStrip
                 page={sectorPage}
                 totalPages={sectorTotalPages}
@@ -1380,7 +1161,7 @@ function SectorStocksModal({
               />
             </div>
 
-            <div className="p-3 sm:p-4 border-t border-border/60 bg-muted/30 text-[10px] sm:text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+            <div className="p-3 sm:p-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]/40 text-[10px] sm:text-[11px] text-[var(--color-fg-subtle)] flex flex-wrap gap-x-4 gap-y-1">
               <span>
                 <b>Upside</b>: % to max(52w-high, analyst target).
               </span>
@@ -1524,19 +1305,19 @@ function RangeExpansionSection() {
         className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
       >
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-md bg-gradient-to-br from-emerald-400/30 to-teal-500/30">
-              <Expand className="h-4 w-4 text-emerald-500" />
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-400/25 to-teal-500/20 ring-1 ring-emerald-400/20">
+              <Expand className="h-4 w-4 text-emerald-400" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-semibold">
+              <h2 className="text-base sm:text-lg font-semibold tracking-tight">
                 Range Expansion · WR8 + Bullish Trend
               </h2>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[11px] text-[var(--color-fg-subtle)]">
                 F&amp;O longs: today&apos;s H−L is the widest of 8 sessions,
                 bullish D/W/M, SMA 20&gt;50&gt;200, vol ≥ 1.5× avg, close in
                 upper half of range.{" "}
-                <span className="font-medium text-amber-600 dark:text-amber-400">Daily setup — swing / next-session, not intraday.</span>
+                <span className="font-medium text-[var(--color-warning)]">Daily setup — swing / next-session, not intraday.</span>
               </p>
             </div>
           </div>
@@ -1544,7 +1325,7 @@ function RangeExpansionSection() {
             <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
             {data?.fetchedAt && (
               <span className="text-[10px] text-muted-foreground">
-                {new Date(data.fetchedAt).toLocaleTimeString()}
+                {fmtTime(data.fetchedAt)}
               </span>
             )}
             <Link
@@ -1635,26 +1416,28 @@ function RangeExpansionSection() {
 }
 
 function ScorePill({ score }: { score: number }) {
-  const clamped = Math.max(-100, Math.min(100, score));
+  const clamped  = Math.max(-100, Math.min(100, score));
   const positive = clamped >= 0;
   const widthPct = Math.abs(clamped);
   return (
     <div className="inline-flex items-center gap-2 justify-end">
       <span
-        className={`text-xs font-semibold ${positive ? "text-emerald-500" : "text-rose-500"}`}
+        className={`text-xs font-bold num ${positive ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"}`}
       >
-        {clamped > 0 ? "+" : ""}
-        {clamped}
+        {clamped > 0 ? "+" : ""}{clamped}
       </span>
-      <div className="relative h-1.5 w-12 rounded-full bg-muted overflow-hidden">
+      <div className="relative h-1.5 w-12 rounded-full bg-[var(--color-surface)] overflow-hidden">
         <div
-          className={`absolute top-0 bottom-0 ${positive ? "bg-emerald-500" : "bg-rose-500"}`}
+          className={`absolute top-0 bottom-0 rounded-full ${positive ? "bg-[var(--color-bull)]" : "bg-[var(--color-bear)]"}`}
           style={{
-            width: `${widthPct / 2}%`,
-            left: positive ? "50%" : `${50 - widthPct / 2}%`,
+            width:   `${widthPct / 2}%`,
+            left:    positive ? "50%" : `${50 - widthPct / 2}%`,
+            boxShadow: positive
+              ? "0 0 6px var(--glow-bull)"
+              : "0 0 6px var(--glow-bear)",
           }}
         />
-        <div className="absolute top-0 bottom-0 left-1/2 w-px bg-border" />
+        <div className="absolute top-0 bottom-0 left-1/2 w-px bg-[var(--color-border)]" />
       </div>
     </div>
   );
@@ -1723,31 +1506,43 @@ function TopPickCard({ pick, delay }: { pick: TopPickRow; delay: number }) {
       : { ring: "ring-border", badge: "bg-muted text-muted-foreground", icon: "text-muted-foreground" };
 
   const DirIcon = isBull ? ArrowUpRight : isBear ? ArrowDownRight : Activity;
-  const changeTone =
-    (pick.changePct ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500";
+  const changeTone = (pick.changePct ?? 0) >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
+
+  // 3D tilt
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const rotX = useSpring(useTransform(my, [-50, 50], [6, -6]), { stiffness: 220, damping: 20 });
+  const rotY = useSpring(useTransform(mx, [-50, 50], [-6, 6]), { stiffness: 220, damping: 20 });
+  const onMove  = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    mx.set(e.clientX - r.left - r.width  / 2);
+    my.set(e.clientY - r.top  - r.height / 2);
+  };
+  const onLeave = () => { mx.set(0); my.set(0); };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 14, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      animate={{ opacity: 1, y: 0,  scale: 1    }}
       exit={{ opacity: 0, scale: 0.96 }}
-      transition={{ duration: 0.35, delay, ease: "easeOut" }}
-      className={`relative rounded-2xl bg-card/70 backdrop-blur p-4 ring-1 ring-inset ${meta.ring} flex flex-col gap-3`}
+      transition={{ duration: 0.35, delay, ease: [0.22, 1, 0.36, 1] }}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      style={{ rotateX: rotX, rotateY: rotY, transformStyle: "preserve-3d" }}
+      className={`relative bento-card holo-card ring-1 ring-inset ${meta.ring} flex flex-col gap-3 p-4`}
     >
       {/* Rank badge */}
-      <span className="absolute top-3 right-3 grid h-6 w-6 place-items-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground ring-1 ring-border">
+      <span className="absolute top-3 right-3 grid h-6 w-6 place-items-center rounded-full bg-[var(--color-surface)] text-[10px] font-bold text-[var(--color-fg-muted)] ring-1 ring-[var(--color-border)]">
         #{pick.rank}
       </span>
 
       {/* Header */}
-      <div className="flex items-start gap-2 pr-8">
+      <div className="flex items-start gap-2 pr-8" style={{ transform: "translateZ(8px)" }}>
         <div
           className={`mt-0.5 p-1.5 rounded-lg ${
-            isBull
-              ? "bg-emerald-500/15"
-              : isBear
-                ? "bg-rose-500/15"
-                : "bg-muted"
+            isBull ? "bg-[color-mix(in_oklch,var(--bull)_14%,transparent)]"
+            : isBear ? "bg-[color-mix(in_oklch,var(--bear)_14%,transparent)]"
+            : "bg-[var(--color-surface)]"
           }`}
         >
           <DirIcon className={`h-3.5 w-3.5 ${meta.icon}`} />
@@ -1757,16 +1552,14 @@ function TopPickCard({ pick, delay }: { pick: TopPickRow; delay: number }) {
             href={`https://in.tradingview.com/chart/CR5K0NSR/?symbol=NSE%3A${pick.symbol}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm font-semibold text-foreground hover:text-blue-400 hover:underline transition-colors"
+            className="text-sm font-bold text-[var(--color-fg)] hover:text-[var(--color-brand)] hover:underline transition-colors"
           >
             {pick.symbol}
           </a>
           {pick.shortName && (
-            <p className="text-[10px] text-muted-foreground truncate">
-              {pick.shortName}
-            </p>
+            <p className="text-[10px] text-[var(--color-fg-muted)] truncate">{pick.shortName}</p>
           )}
-          <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide">
+          <p className="text-[10px] text-[var(--color-fg-subtle)] uppercase tracking-wide">
             {pick.sector}
           </p>
         </div>
@@ -1774,9 +1567,7 @@ function TopPickCard({ pick, delay }: { pick: TopPickRow; delay: number }) {
 
       {/* Signal badge */}
       {pick.signal !== "N/A" && (
-        <span
-          className={`self-start text-[10px] font-bold px-2.5 py-1 rounded-full ${meta.badge}`}
-        >
+        <span className={`self-start text-[10px] font-bold px-2.5 py-1 rounded-full ${meta.badge}`}>
           {pick.signal}
         </span>
       )}
@@ -1784,53 +1575,37 @@ function TopPickCard({ pick, delay }: { pick: TopPickRow; delay: number }) {
       {/* Key metrics grid */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
         <div>
-          <p className="text-[10px] text-muted-foreground">Price</p>
-          <p className="font-semibold tabular">{fmt(pick.price)}</p>
+          <p className="text-[10px] text-[var(--color-fg-subtle)]">Price</p>
+          <p className="font-semibold tabular text-[var(--color-fg)] num">{fmt(pick.price)}</p>
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground">Day %</p>
-          <p className={`font-semibold tabular ${changeTone}`}>
-            {pick.changePct == null
-              ? "—"
-              : `${pick.changePct >= 0 ? "+" : ""}${pick.changePct.toFixed(2)}%`}
+          <p className="text-[10px] text-[var(--color-fg-subtle)]">Day %</p>
+          <p className={`font-semibold tabular num ${changeTone}`}>
+            {pick.changePct == null ? "—" : `${pick.changePct >= 0 ? "+" : ""}${pick.changePct.toFixed(2)}%`}
           </p>
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground">Upside</p>
-          <p className="font-semibold tabular text-emerald-500">
+          <p className="text-[10px] text-[var(--color-fg-subtle)]">Upside</p>
+          <p className="font-semibold tabular text-[var(--color-bull)] num">
             {pick.upsidePct == null ? "—" : `+${pick.upsidePct.toFixed(1)}%`}
           </p>
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground">vs SMA50</p>
-          <p
-            className={`font-semibold tabular ${
-              (pick.fromSma50Pct ?? 0) >= 0
-                ? "text-emerald-500"
-                : "text-rose-500"
-            }`}
-          >
-            {pick.fromSma50Pct == null
-              ? "—"
-              : `${pick.fromSma50Pct >= 0 ? "+" : ""}${pick.fromSma50Pct.toFixed(1)}%`}
+          <p className="text-[10px] text-[var(--color-fg-subtle)]">vs SMA50</p>
+          <p className={`font-semibold tabular num ${(pick.fromSma50Pct ?? 0) >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"}`}>
+            {pick.fromSma50Pct == null ? "—" : `${pick.fromSma50Pct >= 0 ? "+" : ""}${pick.fromSma50Pct.toFixed(1)}%`}
           </p>
         </div>
         {pick.relativeVolume != null && (
           <div>
-            <p className="text-[10px] text-muted-foreground">Rel. Vol</p>
-            <p
-              className={`font-semibold tabular ${
-                pick.relativeVolume >= 1.5
-                  ? "text-amber-500"
-                  : "text-foreground"
-              }`}
-            >
+            <p className="text-[10px] text-[var(--color-fg-subtle)]">Rel. Vol</p>
+            <p className={`font-semibold tabular num ${pick.relativeVolume >= 1.5 ? "text-[var(--color-warning)]" : "text-[var(--color-fg)]"}`}>
               {pick.relativeVolume.toFixed(2)}×
             </p>
           </div>
         )}
         <div>
-          <p className="text-[10px] text-muted-foreground">Score</p>
+          <p className="text-[10px] text-[var(--color-fg-subtle)]">Score</p>
           <ScorePill score={pick.score} />
         </div>
       </div>
@@ -1896,24 +1671,24 @@ function TopPicksSection() {
         {/* Header */}
         <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
           <div className="flex items-start gap-2.5">
-            <div className="p-1.5 rounded-md bg-gradient-to-br from-violet-400/30 to-fuchsia-500/30 mt-0.5">
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-violet-400/25 to-fuchsia-500/20 ring-1 ring-violet-400/20 mt-0.5">
               <Star className="h-4 w-4 text-violet-400" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-semibold">
+              <h2 className="text-base sm:text-lg font-semibold tracking-tight">
                 Top 5 Stocks for Tomorrow
               </h2>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
+              <p className="text-[11px] text-[var(--color-fg-subtle)] mt-0.5">
                 Highest-conviction NSE F&amp;O picks ranked by quant score across
                 all sectors — review after market close.{" "}
-                <span className="font-medium text-amber-600 dark:text-amber-400">Swing / Next session — not intraday.</span>
+                <span className="font-medium text-[var(--color-warning)]">Swing / Next session — not intraday.</span>
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {data?.fetchedAt && (
               <span className="text-[10px] text-muted-foreground">
-                Updated {new Date(data.fetchedAt).toLocaleTimeString()}
+                Updated {fmtTime(data.fetchedAt)}
               </span>
             )}
             {data?.universe != null && (

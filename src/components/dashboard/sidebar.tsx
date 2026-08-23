@@ -7,6 +7,8 @@ import {
   Brain,
   Briefcase,
   CandlestickChart,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Eye,
   Flame,
@@ -23,6 +25,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { useState, useCallback, useRef } from "react";
 
 import { MarketSwitcher } from "@/components/dashboard/market-switcher";
 import { cn } from "@/lib/utils";
@@ -33,222 +37,323 @@ export interface NavItem {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
-  /**
-   * Item is shown to anonymous visitors as well as signed-in users. Only
-   * the two "showroom" surfaces (Overview + Heatmap, per market) carry
-   * this flag — the rest of the nav requires a session and is hidden from
-   * unauthenticated users so the sidebar matches what they can actually
-   * open. The auth gate in `src/lib/auth.ts` is the source of truth; this
-   * flag just keeps the UI in sync.
-   */
   public?: boolean;
 }
 
-// Both markets expose the same "core" surfaces — Overview, Best Time,
-// Options, Signals, AI Signals, Strategies, Paper Trading, Strategy
-// Backtest, Strategy Lab and Heatmap — so users get the exact same mental
-// map when they flip the market switcher. Each item routes to a
-// market-aware page (`/in/*` for India, root for crypto) so the data is
-// always scoped to the active market.
-//
-// "Strategies" replaces the original "Scalper" surface: it owns the
-// strategy picker, the live signal feed and the strategy reference card
-// (i.e. everything needed to *configure* and *watch* the engine). The
-// new "Paper Trading" surface inherits the open-positions + journal +
-// per-strategy performance breakdown — the read-only outcome of every
-// strategy fire — so users can audit results separately from picking
-// strategies.
-//
-// Items that only make sense on one surface (Crypto Futures, the India
-// F&O Scanner / Watchlist / Chart) are appended underneath. Account-
-// level preferences (settings, data sources, API keys, alerts)
-// intentionally live on the user-avatar dropdown in the topbar
-// (`/profile`) so the sidebar stays focused on market surfaces.
 export const CRYPTO_NAV: NavItem[] = [
-  { href: "/", label: "Overview", icon: LayoutDashboard, public: true },
-  { href: "/best-time", label: "Best Time", icon: Clock3 },
-  { href: "/options", label: "Options", icon: Gauge },
-  { href: "/signals", label: "Signals", icon: Sparkles },
-  { href: "/ai-signals", label: "AI Signals", icon: Brain },
-  { href: "/strategies", label: "Strategies", icon: Layers },
-  { href: "/paper-trading", label: "Paper Trading", icon: Briefcase },
-  { href: "/strategy-backtest", label: "Strategy Backtest", icon: LineChart },
-  { href: "/strategy-lab", label: "Strategy Lab", icon: Beaker },
-  { href: "/heatmap", label: "Heatmap", icon: Flame, public: true },
-  { href: "/futures", label: "Futures", icon: CandlestickChart },
+  { href: "/",                   label: "Overview",          icon: LayoutDashboard, public: true },
+  { href: "/best-time",          label: "Best Time",         icon: Clock3 },
+  { href: "/options",            label: "Options",           icon: Gauge },
+  { href: "/signals",            label: "Signals",           icon: Sparkles },
+  { href: "/ai-signals",         label: "AI Signals",        icon: Brain },
+  { href: "/strategies",         label: "Strategies",        icon: Layers },
+  { href: "/paper-trading",      label: "Paper Trading",     icon: Briefcase },
+  { href: "/strategy-backtest",  label: "Strategy Backtest", icon: LineChart },
+  { href: "/strategy-lab",       label: "Strategy Lab",      icon: Beaker },
+  { href: "/heatmap",            label: "Heatmap",           icon: Flame, public: true },
+  { href: "/futures",            label: "Futures",           icon: CandlestickChart },
 ];
 
 export const INDIA_NAV: NavItem[] = [
-  { href: "/in/dashboard", label: "Overview", icon: LayoutDashboard, public: true },
-  { href: "/in/best-time", label: "Best Time", icon: Clock3 },
-  { href: "/in/options", label: "Options", icon: Gauge },
-  { href: "/in/signals", label: "Signals", icon: Sparkles },
-  { href: "/in/ai-signals", label: "AI Signals", icon: Brain },
-  { href: "/in/strategies", label: "Strategies", icon: Layers },
-  { href: "/in/paper-trading", label: "Paper Trading", icon: Briefcase },
-  { href: "/in/strategy-backtest", label: "Strategy Backtest", icon: LineChart },
-  { href: "/in/strategy-lab", label: "Strategy Lab", icon: Beaker },
-  { href: "/in/heatmap", label: "Heatmap", icon: Flame, public: true },
-  { href: "/in/daily-picks", label: "Daily Picks", icon: Trophy },
-  { href: "/in/history", label: "Trade History", icon: History },
-  { href: "/in/news", label: "News", icon: Newspaper },
-  { href: "/in/scanner", label: "Scanner", icon: Radar },
-  { href: "/in/watchlist", label: "Watchlist", icon: Eye },
-  { href: "/in/chart/RELIANCE", label: "Chart", icon: BarChart3 },
-  { href: "/in/options-workbench", label: "Options Workbench", icon: TrendingUp },
+  { href: "/in/dashboard",           label: "Overview",           icon: LayoutDashboard, public: true },
+  { href: "/in/best-time",           label: "Best Time",          icon: Clock3 },
+  { href: "/in/options",             label: "Options",            icon: Gauge },
+  { href: "/in/signals",             label: "Signals",            icon: Sparkles },
+  { href: "/in/ai-signals",          label: "AI Signals",         icon: Brain },
+  { href: "/in/strategies",          label: "Strategies",         icon: Layers },
+  { href: "/in/paper-trading",       label: "Paper Trading",      icon: Briefcase },
+  { href: "/in/strategy-backtest",   label: "Strategy Backtest",  icon: LineChart },
+  { href: "/in/strategy-lab",        label: "Strategy Lab",       icon: Beaker },
+  { href: "/in/heatmap",             label: "Heatmap",            icon: Flame, public: true },
+  { href: "/in/daily-picks",         label: "Daily Picks",        icon: Trophy },
+  { href: "/in/history",             label: "Trade History",      icon: History },
+  { href: "/in/news",                label: "News",               icon: Newspaper },
+  { href: "/in/scanner",             label: "Scanner",            icon: Radar },
+  { href: "/in/watchlist",           label: "Watchlist",          icon: Eye },
+  { href: "/in/chart/RELIANCE",      label: "Chart",              icon: BarChart3 },
+  { href: "/in/options-workbench",   label: "Options Workbench",  icon: TrendingUp },
 ];
 
 function isItemActive(item: NavItem, pathname: string | null): boolean {
   if (!pathname) return false;
   if (item.href === "/") return pathname === "/";
-  // For the Indian chart link we want to highlight when on ANY /in/chart/*.
-  if (item.href.startsWith("/in/chart/"))
-    return pathname.startsWith("/in/chart");
+  if (item.href.startsWith("/in/chart/")) return pathname.startsWith("/in/chart");
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-function BrandHeader({ market }: { market: Market }) {
-  // Both market headers carry the same Alphaforge brand mark — the subtitle
-  // is the only thing that swaps so the user gets a contextual cue about
-  // which market surface they're inside without ever doubting that they're
-  // still in the same app.
-  if (market === "india") {
-    return (
-      <Link href="/in/dashboard" className="mb-6 flex items-center gap-2 px-2">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-[var(--color-brand)] to-[var(--color-info)] text-[var(--color-brand-foreground)]">
-          <Activity className="h-4 w-4" />
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">Alphaforge</span>
-          <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-fg-subtle)]">
-            NSE · Futures · Options
-          </span>
-        </div>
-      </Link>
-    );
-  }
+/* ── Brand header ─────────────────────────────────────────────────────── */
+function BrandHeader({ market, collapsed }: { market: Market; collapsed: boolean }) {
+  const href = market === "india" ? "/in/dashboard" : "/";
+  const sub  = market === "india"
+    ? "NSE · Futures · Options"
+    : "Crypto · NSE F&O · Signals";
+
   return (
-    <Link href="/" className="mb-6 flex items-center gap-2 px-2">
-      <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-[var(--color-brand)] to-[var(--color-info)] text-[var(--color-brand-foreground)]">
-        <Activity className="h-4 w-4" />
+    <Link href={href} className="mb-5 flex items-center gap-3 px-1">
+      {/* Logo mark — always visible */}
+      <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[var(--color-brand)] via-[oklch(0.70_0.20_200)] to-[var(--color-info)] shadow-lg">
+        <Activity className="h-4 w-4 text-white" />
+        <span className="absolute inset-0 rounded-xl ring-2 ring-white/10" />
       </div>
-      <div className="flex flex-col leading-tight">
-        <span className="text-sm font-semibold tracking-tight">Alphaforge</span>
-        <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-fg-subtle)]">
-          Crypto · NSE F&amp;O · Signals
-        </span>
-      </div>
+
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={{ opacity: 0, width: 0 }}
+            animate={{ opacity: 1, width: "auto" }}
+            exit={{ opacity: 0, width: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-col leading-tight whitespace-nowrap">
+              <span className="text-sm font-bold tracking-tight text-[var(--color-fg)]">
+                Alphaforge
+              </span>
+              <span className="text-[9px] uppercase tracking-[0.20em] text-[var(--color-fg-subtle)]">
+                {sub}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Link>
   );
 }
 
+/* ── Footer card ──────────────────────────────────────────────────────── */
 function FooterCard({
   market,
   indiaSourceLabels = [],
+  collapsed,
 }: {
   market: Market;
   indiaSourceLabels?: string[];
+  collapsed: boolean;
 }) {
+  if (collapsed) return null;
+
+  let title: string;
+  let sub: string;
   if (market === "india") {
-    const { title, sub } = indiaSourceFooter(indiaSourceLabels);
-    return (
-      <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">
-          {title}
-        </p>
-        <p className="mt-1 text-[10px] text-[var(--color-fg-subtle)]">{sub}</p>
-      </div>
-    );
+    const info = indiaSourceFooter(indiaSourceLabels);
+    title = info.title;
+    sub   = info.sub;
+  } else {
+    title = "Markets stream live via Binance WS";
+    sub   = "Public endpoint — no API key required";
   }
+
   return (
-    <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">
-        Markets stream live via Binance WS
-      </p>
-      <p className="mt-1 text-[10px] text-[var(--color-fg-subtle)]">
-        Public endpoint — no API key required
-      </p>
-    </div>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="mt-3 rounded-xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-bg-elevated)] p-3"
+    >
+      <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">{title}</p>
+      <p className="mt-0.5 text-[10px] text-[var(--color-fg-subtle)]">{sub}</p>
+    </motion.div>
   );
 }
 
-interface SidebarProps {
-  /**
-   * Whether the request carries a valid session. Drives nav filtering so
-   * anonymous visitors only see the two "showroom" surfaces (Overview +
-   * Heatmap, per market) — everything else is hidden until they sign in.
-   * The actual route protection lives in `src/lib/auth.ts` (the auth gate
-   * issues the redirect); this flag just keeps the visible nav honest.
-   */
+/* ── Nav item with tooltip fallback when collapsed ────────────────────── */
+function NavLink({
+  item,
+  active,
+  collapsed,
+  animDelay,
+}: {
+  item: NavItem;
+  active: boolean;
+  collapsed: boolean;
+  animDelay: number;
+}) {
+  const Icon = item.icon;
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.22, delay: animDelay, ease: "easeOut" }}
+      className="relative group"
+    >
+      <Link
+        href={item.href}
+        className={cn(
+          "relative flex items-center gap-3 rounded-xl px-2.5 py-2.5 text-sm transition-all duration-200",
+          active
+            ? "bg-gradient-to-r from-[color-mix(in_oklch,var(--color-brand)_12%,transparent)] to-transparent text-[var(--color-fg)]"
+            : "text-[var(--color-fg-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-fg)]",
+          collapsed && "justify-center px-2",
+        )}
+      >
+        {/* Active indicator bar */}
+        {active && (
+          <motion.span
+            layoutId="sidebar-active-bar"
+            className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-brand)]"
+            style={{ boxShadow: "0 0 8px 1px var(--glow-brand)" }}
+            transition={{ type: "spring", stiffness: 500, damping: 32 }}
+          />
+        )}
+
+        {/* Icon */}
+        <Icon
+          className={cn(
+            "h-4 w-4 shrink-0 transition-colors duration-200",
+            active
+              ? "text-[var(--color-brand)]"
+              : "text-[var(--color-fg-subtle)] group-hover:text-[var(--color-fg-muted)]",
+          )}
+          style={active ? { filter: "drop-shadow(0 0 5px var(--glow-brand))" } : undefined}
+        />
+
+        {/* Label */}
+        <AnimatePresence initial={false}>
+          {!collapsed && (
+            <motion.span
+              initial={{ opacity: 0, width: 0 }}
+              animate={{ opacity: 1, width: "auto" }}
+              exit={{ opacity: 0, width: 0 }}
+              transition={{ duration: 0.18, ease: "easeInOut" }}
+              className="overflow-hidden whitespace-nowrap font-medium text-sm"
+            >
+              {item.label}
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </Link>
+
+      {/* Tooltip in collapsed mode */}
+      {collapsed && (
+        <span
+          ref={tooltipRef}
+          className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--color-fg)] shadow-xl opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        >
+          {item.label}
+          {/* arrow */}
+          <span className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-[var(--color-border)]" />
+        </span>
+      )}
+    </motion.div>
+  );
+}
+
+/* ── Sign-in nudge ────────────────────────────────────────────────────── */
+function SignInNudge({ collapsed }: { collapsed: boolean }) {
+  if (collapsed) return null;
+  return (
+    <Link
+      href="/login"
+      className="mt-2 block rounded-xl border border-dashed border-[var(--color-border)] bg-[color-mix(in_oklch,var(--color-brand)_4%,transparent)] px-3 py-3 text-[11px] leading-snug text-[var(--color-fg-muted)] transition-all hover:border-[var(--color-brand)] hover:text-[var(--color-fg)]"
+    >
+      <span className="block font-semibold text-[var(--color-fg)]">Sign in to unlock</span>
+      <span className="mt-0.5 block">
+        Signals · Scalper · Backtest · Strategy Lab · Options · Alerts.
+      </span>
+    </Link>
+  );
+}
+
+/* ── Collapse toggle button ───────────────────────────────────────────── */
+function CollapseToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      className="absolute -right-3.5 top-14 z-30 grid h-7 w-7 place-items-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] text-[var(--color-fg-muted)] shadow-lg transition-all hover:border-[var(--color-brand)] hover:text-[var(--color-brand)] hover:shadow-[0_0_12px_var(--glow-brand)]"
+    >
+      {collapsed
+        ? <ChevronRight className="h-3.5 w-3.5" />
+        : <ChevronLeft  className="h-3.5 w-3.5" />
+      }
+    </button>
+  );
+}
+
+/* ── Main Sidebar ─────────────────────────────────────────────────────── */
+export interface SidebarProps {
   isAuthed: boolean;
-  /**
-   * Display labels for the user's active India quote-source chain (primary
-   * first), computed server-side in the dashboard layout. Drives the footer
-   * card so it reflects the real provenance (e.g. "Live data via Angel One
-   * SmartAPI") instead of a hardcoded string.
-   */
   indiaSourceLabels?: string[];
 }
 
 export function Sidebar({ isAuthed, indiaSourceLabels }: SidebarProps) {
   const pathname = usePathname();
-  const market = marketFromPath(pathname);
-  const fullNav = market === "india" ? INDIA_NAV : CRYPTO_NAV;
-  const nav = isAuthed ? fullNav : fullNav.filter((item) => item.public);
+  const market   = marketFromPath(pathname);
+  const fullNav  = market === "india" ? INDIA_NAV : CRYPTO_NAV;
+  const nav      = isAuthed ? fullNav : fullNav.filter((i) => i.public);
+
+  const [collapsed, setCollapsed] = useState(false);
+  const toggle = useCallback(() => setCollapsed((v) => !v), []);
 
   return (
-    <aside className="flex h-screen w-[240px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-4">
-      <BrandHeader market={market} />
+    <motion.aside
+      animate={{ width: collapsed ? 64 : 240 }}
+      transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
+      className="relative flex h-screen shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-4 overflow-hidden"
+    >
+      {/* Subtle side glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute right-0 top-0 h-full w-px bg-gradient-to-b from-transparent via-[color-mix(in_oklch,var(--color-brand)_18%,transparent)] to-transparent"
+      />
 
-      <MarketSwitcher />
+      <CollapseToggle collapsed={collapsed} onToggle={toggle} />
 
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto pr-1 [scrollbar-width:thin]">
-        {nav.map(({ href, label, icon: Icon }) => {
-          const active = isItemActive({ href, label, icon: Icon }, pathname);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                active
-                  ? "bg-[var(--color-surface)] text-[var(--color-fg)]"
-                  : "text-[var(--color-fg-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-fg)]",
-              )}
-            >
-              <Icon
-                className={cn(
-                  "h-4 w-4 transition-colors",
-                  active
-                    ? "text-[var(--color-brand)]"
-                    : "text-[var(--color-fg-subtle)] group-hover:text-[var(--color-fg-muted)]",
-                )}
-              />
-              <span className="font-medium">{label}</span>
-            </Link>
-          );
-        })}
+      {/* Brand */}
+      <BrandHeader market={market} collapsed={collapsed} />
 
-        {isAuthed ? null : (
-          // Anonymous-state hint at the bottom of the visible nav so users
-          // immediately understand why the sidebar feels "thin" — and how
-          // to unlock the rest of it.
-          <Link
-            href="/login"
-            className="mt-2 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-[11px] leading-snug text-[var(--color-fg-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-fg)]"
+      {/* Market switcher — hide label content in collapsed mode via CSS */}
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
           >
-            <span className="block font-semibold text-[var(--color-fg)]">
-              Sign in to unlock
-            </span>
-            <span className="mt-0.5 block">
-              Signals · Scalper · Backtest · Strategy Lab · Options · Alerts
-              · Profile.
-            </span>
-          </Link>
+            <MarketSwitcher />
+          </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* Divider */}
+      <div className="my-2 separator-gradient" />
+
+      {/* Nav */}
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden pr-0.5 [scrollbar-width:none]">
+        {nav.map((item, i) => (
+          <NavLink
+            key={item.href}
+            item={item}
+            active={isItemActive(item, pathname)}
+            collapsed={collapsed}
+            animDelay={i * 0.03}
+          />
+        ))}
+        {!isAuthed && <SignInNudge collapsed={collapsed} />}
       </nav>
 
-      <FooterCard market={market} indiaSourceLabels={indiaSourceLabels} />
-    </aside>
+      {/* Footer */}
+      <AnimatePresence>
+        {!collapsed && (
+          <FooterCard
+            market={market}
+            indiaSourceLabels={indiaSourceLabels}
+            collapsed={collapsed}
+          />
+        )}
+      </AnimatePresence>
+    </motion.aside>
   );
 }

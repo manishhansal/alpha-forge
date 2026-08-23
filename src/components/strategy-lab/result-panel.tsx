@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EquitySparkline } from "@/components/strategy-lab/equity-sparkline";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn, formatPrice, fmtDateTime } from "@/lib/utils";
 import type {
   BacktestResult,
   ParsedStrategy,
@@ -208,7 +208,7 @@ function TradeTable({ trades }: { trades: BacktestResult["trades"] }) {
                       {t.reason}
                     </Td>
                     <Td align="right" className="text-[var(--color-fg-subtle)]">
-                      {new Date(t.closedAt).toLocaleString()}
+                      {fmtDateTime(t.closedAt)}
                     </Td>
                   </tr>
                 ))}

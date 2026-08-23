@@ -7,6 +7,8 @@ import { IndiaOpenPositionsCard } from "@/components/india/paper-trading/open-po
 import { IndiaStatsPanel } from "@/components/india/paper-trading/stats-panel";
 import { AutoTradingDashboard } from "@/components/india/paper-trading/auto-trading-dashboard";
 import { IndiaStrategyProvider } from "@/components/india/strategies/strategy-context";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageTransition } from "@/components/layout/PageTransition";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { INDIA_JOURNAL_PAGE_SIZE } from "@/features/india/scalping/journal-constants";
@@ -30,31 +32,26 @@ export default function IndiaPaperTradingPage() {
   const bestTimeInitial = getBestTimeStatus();
 
   return (
-    <IndiaStrategyProvider>
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Paper Trading · NSE F&amp;O
-          </h1>
-          <p className="text-sm text-[var(--color-fg-muted)]">
-            Intelligent auto-trader scores every Daily Pick and AI Signal by
-            confidence, win-probability, grade and R:R — then opens only the
-            highest-conviction setups within a fresh ₹1,00,000 budget each
-            session. All positions are intraday; nothing carries overnight.
-          </p>
-        </header>
+    <PageTransition>
+      <IndiaStrategyProvider>
+        <div className="mx-auto flex max-w-7xl flex-col gap-6">
+          <PageHeader
+            title="Paper Trading · NSE F&O"
+            subtitle="Intelligent auto-trader scores every Daily Pick and AI Signal, opening only the highest-conviction setups within a ₹1L daily budget"
+          />
 
-        <IndiaBestTimeBanner initial={bestTimeInitial} />
+          <IndiaBestTimeBanner initial={bestTimeInitial} />
 
-        {/* ── Auto-Trading Analytics Dashboard ─────────────────────────── */}
-        <AutoTradingDashboard />
+          {/* ── Auto-Trading Analytics Dashboard ─────────────────────────── */}
+          <AutoTradingDashboard />
 
-        {/* ── Live positions + manual journal ──────────────────────────── */}
-        <Suspense fallback={<PaperTradingFallback />}>
-          <PaperTradingSection />
-        </Suspense>
-      </div>
-    </IndiaStrategyProvider>
+          {/* ── Live positions + manual journal ──────────────────────────── */}
+          <Suspense fallback={<PaperTradingFallback />}>
+            <PaperTradingSection />
+          </Suspense>
+        </div>
+      </IndiaStrategyProvider>
+    </PageTransition>
   );
 }
 

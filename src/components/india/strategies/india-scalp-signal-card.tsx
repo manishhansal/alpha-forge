@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getIndiaStrategyMeta } from "@/features/india/scalping/strategies/catalog";
 import type { IndiaScalpSignal } from "@/features/india/scalping/types";
 import { fmt, fmtPct } from "@/lib/india/format";
-import { cn } from "@/lib/utils";
+import { cn, fmtTime } from "@/lib/utils";
 
 interface Props {
   signal: IndiaScalpSignal;
@@ -130,7 +130,7 @@ export function IndiaScalpSignalCard({ signal }: Props) {
         ) : null}
 
         <p className="mt-4 text-[10px] text-[var(--color-fg-subtle)]">
-          Triggered {new Date(signal.triggeredAt).toLocaleTimeString()} ·{" "}
+          Triggered {fmtTime(signal.triggeredAt)} ·{" "}
           {metricLabel ?? `ATR ${signal.atr.toFixed(2)}`}
         </p>
       </CardContent>

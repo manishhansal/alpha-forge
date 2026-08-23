@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { Maximize2, X } from "lucide-react";
 import {
   CandlestickSeries,
   HistogramSeries,
@@ -11,6 +13,8 @@ import {
 } from "lightweight-charts";
 
 import { useTheme } from "@/components/theme-provider";
+import { SPRING_FAST } from "@/lib/motion-presets";
+import { useUIStore } from "@/store/uiStore";
 import type { Candle, Interval } from "@/types/india";
 import { AnchoredVwapPlugin, type VwapChartBar } from "./plugins/anchored-vwap";
 import { VolumeProfilePlugin, type ProfileBarWithTime } from "./plugins/volume-profile";
@@ -34,12 +38,18 @@ const INTERVALS: { label: string; value: Interval; range: string }[] = [
 // lightweight-charts is canvas-based so it can't pick up CSS variables on
 // its own — we maintain a small theme map and `applyOptions()` on every
 // theme flip to keep colors in lockstep with the rest of the UI.
+//
+// IIT tokens: upColor/downColor match --data-positive / --data-negative.
+// text/grid/border use resolved fallback values matching the IIT CSS tokens
+// defined in globals.css (canvas API cannot consume CSS vars directly).
 const CHART_THEMES = {
   dark: {
-    bg: "rgba(0,0,0,0)",
-    text: "#cbd5e1",
+    bg: "rgba(0,0,0,0)",                        // transparent — inherits panel bg
+    text: "#94a3b8",
     grid: "rgba(148,163,184,0.06)",
     border: "rgba(148,163,184,0.20)",
+    upColor:   "#10d079",                         // matches --data-positive dark
+    downColor: "#f43f5e",                         // matches --data-negative dark
     // VWAP palette for dark mode
     vwap: {
       sessionColor: "#fbbf24",  // amber-400
@@ -58,6 +68,8 @@ const CHART_THEMES = {
     text: "#475569",
     grid: "rgba(15,23,42,0.06)",
     border: "rgba(15,23,42,0.18)",
+    upColor:   "#059669",                         // matches --data-positive light
+    downColor: "#e11d48",                         // matches --data-negative light
     vwap: {
       sessionColor: "#d97706",  // amber-600
       dailyColor:   "#4f46e5",  // indigo-600
@@ -109,12 +121,17 @@ export function PriceChart({
   const [scActive,      setScActive]      = React.useState(false);
 
   const { resolvedTheme } = useTheme();
+  const reducedMotion      = useReducedMotion();
+
+  // UIStore for fullscreen state
+  const chartFullscreen    = useUIStore((s) => s.chartFullscreen);
+  const setChartFullscreen = useUIStore((s) => s.setChartFullscreen);
 
   // ── chart initialisation ─────────────────────────────────────────────────
 
   React.useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
-    const palette = CHART_THEMES[resolvedTheme];
+    const palette = CHART_THEMES[resolvedTheme as keyof typeof CHART_THEMES] ?? CHART_THEMES.dark;
     const chart = createChart(containerRef.current, {
       layout: {
         background: { color: palette.bg },
@@ -138,11 +155,12 @@ export function PriceChart({
     });
     chartRef.current = chart;
 
+    // Use IIT color tokens (upColor/downColor from CHART_THEMES)
     candleRef.current = chart.addSeries(CandlestickSeries, {
-      upColor:      "#10b981",
-      downColor:    "#f43f5e",
-      wickUpColor:  "#10b981",
-      wickDownColor: "#f43f5e",
+      upColor:       palette.upColor,
+      downColor:     palette.downColor,
+      wickUpColor:   palette.upColor,
+      wickDownColor: palette.downColor,
       borderVisible: false,
     });
 
@@ -193,7 +211,7 @@ export function PriceChart({
   // tearing down the chart instance or re-fetching data.
   React.useEffect(() => {
     if (!chartRef.current) return;
-    const palette = CHART_THEMES[resolvedTheme];
+    const palette = CHART_THEMES[resolvedTheme as keyof typeof CHART_THEMES] ?? CHART_THEMES.dark;
     chartRef.current.applyOptions({
       layout: {
         background: { color: palette.bg },
@@ -206,6 +224,16 @@ export function PriceChart({
       timeScale:       { borderColor: palette.border },
       rightPriceScale: { borderColor: palette.border },
     });
+
+    // Update candle colors to match new theme tokens
+    if (candleRef.current) {
+      candleRef.current.applyOptions({
+        upColor:       palette.upColor,
+        downColor:     palette.downColor,
+        wickUpColor:   palette.upColor,
+        wickDownColor: palette.downColor,
+      });
+    }
 
     // Propagate theme change to active plugins (Requirement 2.6)
     vwapPluginRef.current?.setTheme(palette.vwap);
@@ -240,6 +268,7 @@ export function PriceChart({
 
   React.useEffect(() => {
     if (!candleRef.current || !volumeRef.current || !candles) return;
+    const palette = CHART_THEMES[resolvedTheme as keyof typeof CHART_THEMES] ?? CHART_THEMES.dark;
 
     const candleData = candles.map((c) => ({
       time:  c.time as Time,
@@ -254,7 +283,10 @@ export function PriceChart({
       candles.map((c) => ({
         time:  c.time as Time,
         value: c.volume ?? 0,
-        color: c.close >= c.open ? "rgba(16,185,129,0.4)" : "rgba(244,63,94,0.4)",
+        // Use IIT up/down colors at ~40% opacity for volume bars
+        color: c.close >= c.open
+          ? `${palette.upColor}66`
+          : `${palette.downColor}66`,
       })),
     );
     chartRef.current?.timeScale().fitContent();
@@ -289,7 +321,8 @@ export function PriceChart({
     if (scActive && scPluginRef.current) {
       scPluginRef.current.updateData(candles);
     }
-  }, [candles, vwapActive, profileActive, scActive, symbol]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles, vwapActive, profileActive, scActive, symbol, resolvedTheme]);
 
   // ── VWAP toggle handler ──────────────────────────────────────────────────
 
@@ -310,7 +343,7 @@ export function PriceChart({
       }));
       vwapPluginRef.current.attach(chartRef.current, bars);
       // Apply current theme colours
-      const palette = CHART_THEMES[resolvedTheme];
+      const palette = CHART_THEMES[resolvedTheme as keyof typeof CHART_THEMES] ?? CHART_THEMES.dark;
       vwapPluginRef.current.setTheme(palette.vwap);
     } else {
       vwapPluginRef.current.detach();
@@ -341,7 +374,7 @@ export function PriceChart({
         bars,
         { tickSize: tickSizeForSymbol(symbol) },
       );
-      const palette = CHART_THEMES[resolvedTheme];
+      const palette = CHART_THEMES[resolvedTheme as keyof typeof CHART_THEMES] ?? CHART_THEMES.dark;
       profilePluginRef.current.setTheme(palette.profile);
     } else {
       profilePluginRef.current.detach();
@@ -370,85 +403,150 @@ export function PriceChart({
     }
   }, [scActive, candles]);
 
+  // ── Fullscreen close on Escape ────────────────────────────────────────────
+
+  React.useEffect(() => {
+    if (!chartFullscreen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChartFullscreen(false);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [chartFullscreen, setChartFullscreen]);
+
   // ── render ────────────────────────────────────────────────────────────────
 
+  const springTransition = reducedMotion
+    ? { duration: 0 }
+    : SPRING_FAST;
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Interval buttons */}
-        {INTERVALS.map((i) => {
-          const active = i.value === interval;
-          return (
-            <button
-              key={i.value}
-              onClick={() => {
-                setInterval(i.value);
-                setRange(i.range);
-              }}
-              className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
-                active
-                  ? "bg-foreground text-background"
-                  : "bg-muted text-muted-foreground hover:bg-muted/70"
-              }`}
-            >
-              {i.label}
-            </button>
-          );
-        })}
-
-        {/* Divider */}
-        <span className="h-4 w-px bg-border/60 mx-0.5" aria-hidden />
-
-        {/* VWAP toggle (Requirement 2.3) */}
-        <button
-          onClick={handleVwapToggle}
-          aria-pressed={vwapActive}
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
-            vwapActive
-              ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
+    <AnimatePresence>
+      <motion.div
+        layoutId="price-chart"
+        className={[
+          "space-y-3",
+          chartFullscreen
+            ? "fixed inset-0 z-50 bg-[var(--color-bg)] p-4 flex flex-col"
+            : "",
+        ].join(" ")}
+        transition={reducedMotion
+          ? { duration: 0 }
+          : { type: "spring", stiffness: 240, damping: 24 }}
+      >
+        {/* ── Toolbar ──────────────────────────────────────────────────── */}
+        <div
+          className="flex items-center gap-1.5 flex-wrap"
+          data-density="compact"
         >
-          VWAP
-        </button>
+          {/* Interval pills with Framer Motion layoutId for sliding active indicator */}
+          {INTERVALS.map((i) => {
+            const active = i.value === interval;
+            return (
+              <button
+                key={i.value}
+                onClick={() => {
+                  setInterval(i.value);
+                  setRange(i.range);
+                }}
+                aria-pressed={active}
+                className={[
+                  "relative text-xs px-3 py-1 rounded-full font-semibold transition-colors duration-150 overflow-hidden",
+                  active
+                    ? "text-[var(--color-bg)]"
+                    : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+                ].join(" ")}
+              >
+                {/* Sliding active background indicator */}
+                {active && (
+                  <motion.span
+                    layoutId="chart-tf-pill"
+                    className="absolute inset-0 rounded-full bg-[var(--color-fg)]"
+                    transition={springTransition}
+                    aria-hidden
+                  />
+                )}
+                <span className="relative z-10">{i.label}</span>
+              </button>
+            );
+          })}
 
-        {/* Volume Profile toggle (Requirement 2.4) */}
-        <button
-          onClick={handleProfileToggle}
-          aria-pressed={profileActive}
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
-            profileActive
-              ? "bg-orange-500/20 text-orange-600 dark:text-orange-400 ring-1 ring-orange-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
-        >
-          Profile
-        </button>
+          {/* Divider */}
+          <span className="h-4 w-px bg-[var(--color-border)] mx-0.5" aria-hidden />
 
-        {/* Super Confluence toggle */}
-        <button
-          onClick={handleScToggle}
-          aria-pressed={scActive}
-          title="Super Confluence Engine — UT Bot + AI Neural Trend + SMC Structure. Highlights high-confidence entries (entry, stop, targets) and eliminates fake signals by requiring all three systems to agree."
-          className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
-            scActive
-              ? "bg-lime-500/20 text-lime-600 dark:text-lime-400 ring-1 ring-lime-500/40"
-              : "bg-muted text-muted-foreground hover:bg-muted/70"
-          }`}
-        >
-          🔥 SC
-        </button>
+          {/* VWAP toggle */}
+          <button
+            onClick={handleVwapToggle}
+            aria-pressed={vwapActive}
+            className={[
+              "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
+              vwapActive
+                ? "bg-[color-mix(in_oklch,var(--warning)_18%,transparent)] text-[var(--warning)] ring-1 ring-[color-mix(in_oklch,var(--warning)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--warning)_20%,transparent)]"
+                : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+            ].join(" ")}
+          >
+            VWAP
+          </button>
 
-        {error && (
-          <span className="text-xs text-rose-500 ml-2">Error: {error}</span>
-        )}
-      </div>
+          {/* Volume Profile toggle */}
+          <button
+            onClick={handleProfileToggle}
+            aria-pressed={profileActive}
+            className={[
+              "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
+              profileActive
+                ? "bg-[color-mix(in_oklch,var(--btc)_18%,transparent)] text-[var(--btc)] ring-1 ring-[color-mix(in_oklch,var(--btc)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--btc)_20%,transparent)]"
+                : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+            ].join(" ")}
+          >
+            Profile
+          </button>
 
-      <div
-        ref={containerRef}
-        className="rounded-xl border border-border/60 bg-card/50 overflow-hidden"
-        style={{ height }}
-      />
-    </div>
+          {/* Super Confluence toggle */}
+          <button
+            onClick={handleScToggle}
+            aria-pressed={scActive}
+            title="Super Confluence Engine — UT Bot + AI Neural Trend + SMC Structure. Highlights high-confidence entries (entry, stop, targets) and eliminates fake signals by requiring all three systems to agree."
+            className={[
+              "text-xs px-3 py-1 rounded-full font-semibold transition-all duration-200",
+              scActive
+                ? "bg-[color-mix(in_oklch,var(--bull)_18%,transparent)] text-[var(--bull)] ring-1 ring-[color-mix(in_oklch,var(--bull)_40%,transparent)] shadow-[0_0_10px_color-mix(in_oklch,var(--bull)_20%,transparent)]"
+                : "bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
+            ].join(" ")}
+          >
+            🔥 SC
+          </button>
+
+          {/* Spacer pushes fullscreen button to the right */}
+          <span className="flex-1" aria-hidden />
+
+          {/* Fullscreen toggle */}
+          <button
+            onClick={() => setChartFullscreen(!chartFullscreen)}
+            aria-label={chartFullscreen ? "Exit fullscreen chart" : "Enter fullscreen chart"}
+            aria-pressed={chartFullscreen}
+            className="text-xs px-2 py-1 rounded-full font-semibold transition-all duration-200 bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]"
+          >
+            {chartFullscreen
+              ? <X className="h-3.5 w-3.5" />
+              : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+
+          {error && (
+            <span className="text-xs text-[var(--color-bear)] ml-2">Error: {error}</span>
+          )}
+        </div>
+
+        {/* ── Chart canvas ──────────────────────────────────────────── */}
+        <div
+          ref={containerRef}
+          className={[
+            "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 overflow-hidden",
+            chartFullscreen ? "flex-1" : "",
+          ].join(" ")}
+          style={chartFullscreen ? undefined : { height }}
+        />
+      </motion.div>
+    </AnimatePresence>
   );
 }

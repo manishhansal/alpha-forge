@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ResultPanel } from "@/components/strategy-lab/result-panel";
-import { cn } from "@/lib/utils";
+import { cn, fmtDateTime } from "@/lib/utils";
 import type {
   BacktestResult,
   ParsedStrategy,
@@ -525,7 +525,7 @@ function LiveTrades({ strategyId }: { strategyId: string }) {
                         : "—"}
                     </Td>
                     <Td align="right" className="text-[var(--color-fg-subtle)]">
-                      {new Date(t.openedAt).toLocaleString()}
+                      {fmtDateTime(t.openedAt)}
                     </Td>
                   </tr>
                 ))}

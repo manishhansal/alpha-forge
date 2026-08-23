@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { getIndiaStrategyMeta } from "@/features/india/scalping/strategies/catalog";
@@ -84,14 +84,17 @@ export function Td({
   children,
   align,
   className,
+  style,
 }: {
   children: ReactNode;
   align?: "left" | "right";
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <td
       className={`px-3 py-2 ${align === "right" ? "text-right num" : "text-left"} ${className ?? ""}`}
+      style={style}
     >
       {children}
     </td>

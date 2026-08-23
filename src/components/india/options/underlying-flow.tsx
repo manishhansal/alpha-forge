@@ -32,16 +32,16 @@ export function UnderlyingFlow({
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
       {imb != null && <ImbalanceTile imb={imb} />}
       {(hi != null || lo != null) && (
-        <FlowTile label="52W High" value={fmt(hi)} accent="text-rose-500" />
+        <FlowTile label="52W High" value={fmt(hi)} accent="text-[var(--color-bear)]" />
       )}
       {(hi != null || lo != null) && (
-        <FlowTile label="52W Low" value={fmt(lo)} accent="text-emerald-500" />
+        <FlowTile label="52W Low" value={fmt(lo)} accent="text-[var(--color-bull)]" />
       )}
       {(uc != null || lc != null) && (
         <FlowTile
           label="Circuit"
           value={`${fmt(lc)} – ${fmt(uc)}`}
-          accent="text-foreground"
+          accent="text-[var(--color-fg)]"
         />
       )}
     </div>
@@ -55,31 +55,33 @@ function ImbalanceTile({ imb }: { imb: number }) {
     imb > 0.05 ? "Buy pressure" : imb < -0.05 ? "Sell pressure" : "Balanced";
   const accent =
     imb > 0.05
-      ? "text-emerald-500"
+      ? "text-[var(--color-bull)]"
       : imb < -0.05
-        ? "text-rose-500"
-        : "text-foreground";
-  // Center-origin gauge: bar grows right for buy pressure, left for sell.
+        ? "text-[var(--color-bear)]"
+        : "text-[var(--color-fg)]";
   const widthPct = Math.min(50, Math.abs(imb) * 50);
 
   return (
     <div className="glass rounded-xl p-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
         Order-book Δ
       </div>
       <div className={`mt-1 text-lg font-semibold tabular ${accent}`}>
         {pctLabel}
       </div>
-      <div className="relative mt-1.5 h-1 rounded-full bg-muted/50">
-        <span className="absolute inset-y-0 left-1/2 w-px bg-border" />
+      <div className="relative mt-1.5 h-1 rounded-full bg-[var(--color-surface)] overflow-hidden">
+        <span className="absolute inset-y-0 left-1/2 w-px bg-[var(--color-border)]" />
         <span
           className={`absolute inset-y-0 rounded-full ${
-            imb >= 0 ? "bg-emerald-500 left-1/2" : "bg-rose-500 right-1/2"
+            imb >= 0 ? "left-1/2" : "right-1/2"
           }`}
-          style={{ width: `${widthPct}%` }}
+          style={{
+            width: `${widthPct}%`,
+            background: imb >= 0 ? "var(--bull)" : "var(--bear)",
+          }}
         />
       </div>
-      <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+      <div className="text-[10px] text-[var(--color-fg-muted)] mt-0.5 truncate">
         {sentiment}
       </div>
     </div>
@@ -89,7 +91,7 @@ function ImbalanceTile({ imb }: { imb: number }) {
 function FlowTile({
   label,
   value,
-  accent = "text-foreground",
+  accent = "text-[var(--color-fg)]",
 }: {
   label: string;
   value: string;
@@ -97,7 +99,7 @@ function FlowTile({
 }) {
   return (
     <div className="glass rounded-xl p-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
         {label}
       </div>
       <div className={`mt-1 text-lg font-semibold tabular ${accent}`}>

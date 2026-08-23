@@ -17,7 +17,7 @@ import { useStrategyFilter } from "@/components/scalper/strategy-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatPrice } from "@/lib/utils";
+import { formatPrice, fmtDateTime } from "@/lib/utils";
 
 export function OpenPositionsCard() {
   const { open, prices, cancelTrade } = useJournalData();
@@ -104,7 +104,7 @@ export function OpenPositionsCard() {
                         {live ? `${live.usd > 0 ? "+" : ""}$${live.usd.toFixed(2)}` : "—"}
                       </Td>
                       <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {new Date(t.openedAt).toLocaleString()}
+                        {fmtDateTime(t.openedAt)}
                       </Td>
                       <Td align="right">
                         <Button size="sm" variant="ghost" onClick={() => void cancelTrade(t.id)}>

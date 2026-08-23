@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { cn } from "@/lib/utils";
+import { cn, fmtTime } from "@/lib/utils";
 import { AiMarketContextBanner } from "./ai-market-context-banner";
 import type { AiSignal, AiSignalsResponse, AiGrade } from "@/types/ai-signals";
 import { PaperTradeButton } from "@/components/india/paper-trading/paper-trade-button";
@@ -474,7 +474,7 @@ export function AiSignalsBoard({
       });
   }, [data.signals, directionFilter]);
 
-  const generatedLabel = new Date(data.generatedAt).toLocaleTimeString();
+  const generatedLabel = fmtTime(data.generatedAt);
   const nextSessionLabel   = data.context.nextSessionLabel   ?? null;
   const nextSessionOpensAt = data.context.nextSessionOpensAt ?? null;
 

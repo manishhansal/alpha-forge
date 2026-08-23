@@ -1,63 +1,54 @@
 @import "tailwindcss";
 
-/* Tailwind v4 needs an explicit custom variant to opt into class-based dark
-   mode. The `<html>` element gets a `.dark` class toggled by
-   `<ThemeProvider>` — this directive lets every `dark:` utility in the
-   codebase (e.g. `dark:text-emerald-200`) resolve against that class. */
+/* ─── Tailwind v4: class-based dark mode ────────────────────────────────── */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Bind Tailwind utilities to the runtime CSS variables defined further down
-   in `:root` (light) and `.dark` (dark). This means every theme-aware token
-   (`bg-background`, `text-fg`, `border-border`, etc.) resolves through one
-   `var()` indirection, so swapping the `.dark` class on <html> instantly
-   re-themes the whole UI without a single component re-render. */
+/* ─── Theme tokens ──────────────────────────────────────────────────────── */
 @theme inline {
-  --color-bg: var(--bg);
-  --color-bg-elevated: var(--bg-elevated);
-  --color-surface: var(--surface);
+  --color-bg:            var(--bg);
+  --color-bg-elevated:   var(--bg-elevated);
+  --color-surface:       var(--surface);
   --color-surface-hover: var(--surface-hover);
-  --color-border: var(--border);
+  --color-border:        var(--border);
   --color-border-strong: var(--border-strong);
 
-  --color-fg: var(--fg);
-  --color-fg-muted: var(--fg-muted);
-  --color-fg-subtle: var(--fg-subtle);
+  --color-fg:            var(--fg);
+  --color-fg-muted:      var(--fg-muted);
+  --color-fg-subtle:     var(--fg-subtle);
 
-  --color-brand: var(--brand);
+  --color-brand:            var(--brand);
   --color-brand-foreground: var(--brand-foreground);
 
-  --color-bull: var(--bull);
-  --color-bear: var(--bear);
+  --color-bull:    var(--bull);
+  --color-bear:    var(--bear);
   --color-neutral: var(--neutral);
 
   --color-warning: var(--warning);
-  --color-info: var(--info);
+  --color-info:    var(--info);
 
   --color-btc: var(--btc);
   --color-eth: var(--eth);
   --color-sol: var(--sol);
 
-  /* shadcn-style aliases — every UI primitive ported from the Indian-market
-     surface (and any future shadcn add) reads these. We point them at the
-     theme-aware vars above so both markets get a single consistent palette. */
-  --color-background: var(--bg);
-  --color-foreground: var(--fg);
-  --color-card: var(--surface);
-  --color-card-foreground: var(--fg);
-  --color-popover: var(--bg-elevated);
+  /* shadcn aliases */
+  --color-background:         var(--bg);
+  --color-foreground:         var(--fg);
+  --color-card:               var(--surface);
+  --color-card-foreground:    var(--fg);
+  --color-popover:            var(--bg-elevated);
   --color-popover-foreground: var(--fg);
-  --color-primary: var(--fg);
+  --color-primary:            var(--fg);
   --color-primary-foreground: var(--bg);
-  --color-secondary: var(--surface);
+  --color-secondary:          var(--surface);
   --color-secondary-foreground: var(--fg);
-  --color-muted: var(--surface);
-  --color-muted-foreground: var(--fg-muted);
-  --color-accent: var(--surface-hover);
-  --color-accent-foreground: var(--fg);
-  --color-destructive: var(--bear);
+  --color-muted:              var(--surface);
+  --color-muted-foreground:   var(--fg-muted);
+  --color-accent:             var(--surface-hover);
+  --color-accent-foreground:  var(--fg);
+  --color-destructive:        var(--bear);
   --color-destructive-foreground: var(--fg);
-  --color-input: var(--border);
-  --color-ring: var(--border-strong);
+  --color-input:              var(--border);
+  --color-ring:               var(--border-strong);
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
@@ -67,69 +58,92 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
 }
 
-/* Light theme — used when <html> has neither `.dark` nor the inline
-   `color-scheme:dark` set by the pre-hydration theme script. */
+/* ─── Light theme ───────────────────────────────────────────────────────── */
 :root {
-  --bg: oklch(0.99 0 0);
-  --bg-elevated: oklch(0.985 0 0);
-  --surface: oklch(0.97 0 0);
-  --surface-hover: oklch(0.945 0 0);
-  --border: oklch(0.9 0 0);
-  --border-strong: oklch(0.82 0 0);
+  --bg:           oklch(0.98 0 0);
+  --bg-elevated:  oklch(0.975 0 0);
+  --surface:      oklch(0.955 0.002 240);
+  --surface-hover: oklch(0.935 0.003 240);
+  --border:       oklch(0.88 0.004 240);
+  --border-strong: oklch(0.78 0.006 240);
 
-  --fg: oklch(0.185 0 0);
-  --fg-muted: oklch(0.42 0 0);
-  --fg-subtle: oklch(0.58 0 0);
+  --fg:           oklch(0.16 0.01 250);
+  --fg-muted:     oklch(0.40 0.01 250);
+  --fg-subtle:    oklch(0.58 0.008 250);
 
-  --brand: oklch(0.62 0.18 145);
+  --brand:            oklch(0.60 0.20 145);
   --brand-foreground: oklch(0.99 0 0);
 
-  --bull: oklch(0.56 0.18 152);
-  --bear: oklch(0.58 0.23 25);
-  --neutral: oklch(0.62 0.02 250);
+  --bull:    oklch(0.55 0.18 152);
+  --bear:    oklch(0.56 0.23 25);
+  --neutral: oklch(0.60 0.02 250);
 
-  --warning: oklch(0.7 0.17 75);
-  --info: oklch(0.6 0.16 240);
+  --warning: oklch(0.68 0.17 75);
+  --info:    oklch(0.58 0.16 240);
 
-  --btc: oklch(0.7 0.17 60);
-  --eth: oklch(0.6 0.16 250);
-  --sol: oklch(0.6 0.2 300);
+  --btc: oklch(0.68 0.17 60);
+  --eth: oklch(0.58 0.16 250);
+  --sol: oklch(0.58 0.20 300);
+
+  /* Glow: off in light mode */
+  --glow-brand: transparent;
+  --glow-bull:  transparent;
+  --glow-bear:  transparent;
+  --glow-info:  transparent;
+
+  /* aurora layers: hidden in light */
+  --aurora-a: oklch(0.93 0.04 200 / 0%);
+  --aurora-b: oklch(0.91 0.06 280 / 0%);
+  --aurora-c: oklch(0.95 0.03 140 / 0%);
 }
 
-/* Dark theme — applied by `<ThemeProvider>` by toggling `.dark` on <html>.
-   Matches the original crypto-dashboard palette so existing components stay
-   pixel-identical when dark is active. */
+/* ─── Dark theme ────────────────────────────────────────────────────────── */
 .dark {
-  --bg: oklch(0.145 0 0);
-  --bg-elevated: oklch(0.18 0 0);
-  --surface: oklch(0.205 0 0);
-  --surface-hover: oklch(0.235 0 0);
-  --border: oklch(0.27 0 0);
-  --border-strong: oklch(0.34 0 0);
+  /* Background — true near-black with a faint cool tint */
+  --bg:           oklch(0.10 0.012 260);
+  --bg-elevated:  oklch(0.135 0.013 260);
+  --surface:      oklch(0.165 0.014 260);
+  --surface-hover: oklch(0.195 0.015 260);
+  --border:       oklch(0.245 0.016 260);
+  --border-strong: oklch(0.320 0.020 260);
 
-  --fg: oklch(0.985 0 0);
-  --fg-muted: oklch(0.708 0 0);
-  --fg-subtle: oklch(0.556 0 0);
+  --fg:           oklch(0.96 0.005 240);
+  --fg-muted:     oklch(0.68 0.010 240);
+  --fg-subtle:    oklch(0.50 0.008 240);
 
-  --brand: oklch(0.72 0.18 145);
-  --brand-foreground: oklch(0.145 0 0);
+  /* Brand: electric cyan-green */
+  --brand:            oklch(0.76 0.22 168);
+  --brand-foreground: oklch(0.10 0.012 260);
 
-  --bull: oklch(0.74 0.17 152);
-  --bear: oklch(0.65 0.22 25);
-  --neutral: oklch(0.7 0.02 250);
+  /* Trading colors — vivid on dark */
+  --bull:    oklch(0.76 0.20 155);
+  --bear:    oklch(0.68 0.24 22);
+  --neutral: oklch(0.68 0.04 250);
 
-  --warning: oklch(0.78 0.16 75);
-  --info: oklch(0.7 0.14 240);
+  --warning: oklch(0.80 0.18 78);
+  --info:    oklch(0.72 0.16 240);
 
-  --btc: oklch(0.78 0.16 60);
-  --eth: oklch(0.7 0.14 250);
-  --sol: oklch(0.7 0.18 300);
+  --btc: oklch(0.80 0.18 62);
+  --eth: oklch(0.72 0.16 252);
+  --sol: oklch(0.72 0.20 302);
+
+  /* Neon glow layers used by .glow-* utilities */
+  --glow-brand: oklch(0.76 0.22 168 / 28%);
+  --glow-bull:  oklch(0.76 0.20 155 / 24%);
+  --glow-bear:  oklch(0.68 0.24 22  / 24%);
+  --glow-info:  oklch(0.72 0.16 240 / 20%);
+
+  /* Aurora mesh gradient nodes */
+  --aurora-a: oklch(0.50 0.18 200 / 18%);
+  --aurora-b: oklch(0.45 0.22 280 / 14%);
+  --aurora-c: oklch(0.55 0.18 145 / 10%);
 }
 
-html,
-body {
+/* ─── Base resets ───────────────────────────────────────────────────────── */
+html, body {
   background-color: var(--bg);
   color: var(--fg);
 }
@@ -141,25 +155,16 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Soft cross-fade when the theme flips. Scoped to colors only so transforms,
-   layout, and animations aren't slowed down. */
-html,
-body {
+/* Theme cross-fade — scoped to colors & box-shadow only */
+html, body {
   transition:
-    background-color 240ms ease,
-    color 240ms ease;
+    background-color 280ms ease,
+    color 280ms ease;
 }
 
 @layer base {
-  * {
-    border-color: var(--border);
-  }
-  /* Clickable button-like affordances get an explicit pointer cursor across
-     the whole UI — covers the shared <Button> + <Tab> primitives, every raw
-     <button> (including role="radio"/"switch" toggles), role="button" divs,
-     and anchor links. The `:disabled` / `aria-disabled="true"` guards keep
-     the existing `disabled:cursor-not-allowed` behaviour intact, so nothing
-     regresses on disabled states. */
+  * { border-color: var(--border); }
+
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
   [role="tab"]:not([aria-disabled="true"]),
@@ -173,88 +178,138 @@ body {
   select:not(:disabled) {
     cursor: pointer;
   }
+
   ::selection {
-    background-color: color-mix(in oklch, var(--brand) 35%, transparent);
+    background-color: color-mix(in oklch, var(--brand) 32%, transparent);
     color: var(--fg);
   }
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar        { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track  { background: transparent; }
+  ::-webkit-scrollbar-thumb  {
     background: var(--border);
     border-radius: 9999px;
   }
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--border-strong);
-  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 }
 
+/* ─── Animations / keyframes ────────────────────────────────────────────── */
 @keyframes shimmer {
-  100% {
-    transform: translateX(100%);
-  }
+  100% { transform: translateX(100%); }
 }
 
 @keyframes pulse-bull {
-  0%,
-  100% {
-    background-color: color-mix(in oklch, var(--bull) 0%, transparent);
-  }
-  50% {
-    background-color: color-mix(in oklch, var(--bull) 14%, transparent);
-  }
+  0%, 100% { background-color: color-mix(in oklch, var(--bull)  0%, transparent); }
+  50%       { background-color: color-mix(in oklch, var(--bull) 14%, transparent); }
 }
-
 @keyframes pulse-bear {
-  0%,
-  100% {
-    background-color: color-mix(in oklch, var(--bear) 0%, transparent);
-  }
-  50% {
-    background-color: color-mix(in oklch, var(--bear) 14%, transparent);
-  }
+  0%, 100% { background-color: color-mix(in oklch, var(--bear)  0%, transparent); }
+  50%       { background-color: color-mix(in oklch, var(--bear) 14%, transparent); }
 }
 
+/* Aurora mesh drift — two slow offset blobs */
+@keyframes aurora-drift-a {
+  0%, 100% { transform: translate(0%, 0%) scale(1); }
+  33%       { transform: translate(4%, -3%) scale(1.06); }
+  66%       { transform: translate(-3%, 5%) scale(0.97); }
+}
+@keyframes aurora-drift-b {
+  0%, 100% { transform: translate(0%, 0%) scale(1); }
+  40%       { transform: translate(-5%, 3%) scale(1.04); }
+  70%       { transform: translate(3%, -4%) scale(0.98); }
+}
+
+/* Subtle horizontal scroll for ticker */
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Neon pulse ring for live status dots */
+@keyframes neon-ping {
+  0%    { transform: scale(1); opacity: 0.8; }
+  70%   { transform: scale(2.2); opacity: 0; }
+  100%  { transform: scale(2.2); opacity: 0; }
+}
+
+/* Sidebar item glide-in */
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Float for 3D card hover boost */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-4px); }
+}
+
+/* ─── Utility layer ─────────────────────────────────────────────────────── */
 @layer utilities {
-  .num {
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum", "zero";
-  }
-  /* Glassy card surface — opacity tuned to look correct on both light and
-     dark backgrounds via the surface var. */
+  /* ── Numeric / tabular ── */
+  .num     { font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "zero"; }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* ── Trading color shorthands ── */
+  .text-bull { color: var(--bull); }
+  .text-bear { color: var(--bear); }
+  .bg-bull\/10 { background-color: color-mix(in oklch, var(--bull) 10%, transparent); }
+  .bg-bear\/10 { background-color: color-mix(in oklch, var(--bear) 10%, transparent); }
+
+  /* ── 3D / perspective ── */
+  .perspective-400  { perspective: 400px; }
+  .perspective-600  { perspective: 600px; }
+  .perspective-1000 { perspective: 1000px; }
+  .perspective-1600 { perspective: 1600px; }
+  .preserve-3d      { transform-style: preserve-3d; }
+
+  /* ── Glass morphism ──
+     Three tiers: subtle (cards), standard (panels), strong (modals/overlays).
+     All use backdrop-filter so they look great on the aurora background. */
   .glass {
-    background: color-mix(in oklch, var(--surface) 78%, transparent);
-    backdrop-filter: blur(12px) saturate(140%);
-    -webkit-backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--border);
+    background: color-mix(in oklch, var(--surface) 72%, transparent);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
   }
-  .text-bull {
-    color: var(--bull);
+  .glass-subtle {
+    background: color-mix(in oklch, var(--surface) 55%, transparent);
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
   }
-  .text-bear {
-    color: var(--bear);
+  .glass-strong {
+    background: color-mix(in oklch, var(--bg-elevated) 88%, transparent);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid color-mix(in oklch, var(--border-strong) 70%, transparent);
   }
-  .bg-bull\/10 {
-    background-color: color-mix(in oklch, var(--bull) 10%, transparent);
+
+  /* ── Neon glow rings ── */
+  .glow-brand {
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--brand) 35%, transparent),
+      0 0 18px -4px var(--glow-brand),
+      0 8px 32px -8px var(--glow-brand);
   }
-  .bg-bear\/10 {
-    background-color: color-mix(in oklch, var(--bear) 10%, transparent);
+  .glow-bull {
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--bull) 30%, transparent),
+      0 0 16px -4px var(--glow-bull);
   }
-  .tabular {
-    font-variant-numeric: tabular-nums;
+  .glow-bear {
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--bear) 30%, transparent),
+      0 0 16px -4px var(--glow-bear);
   }
-  /* 3D perspective helpers used by the Indian market hero cards. */
-  .perspective-1000 {
-    perspective: 1000px;
+  .glow-info {
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--info) 30%, transparent),
+      0 0 16px -4px var(--glow-info);
   }
-  .preserve-3d {
-    transform-style: preserve-3d;
-  }
-  /* Soft glow ring on hover — adapts to either palette via the fg var. */
+
+  /* ── Hover lift + glow ── */
   .glow-on-hover {
     transition:
       box-shadow 240ms ease,
@@ -262,7 +317,163 @@ body {
   }
   .glow-on-hover:hover {
     box-shadow:
-      0 12px 32px -12px color-mix(in oklch, var(--fg) 18%, transparent),
-      0 0 0 1px var(--border-strong);
+      0 16px 40px -12px color-mix(in oklch, var(--brand) 22%, transparent),
+      0 0 0 1px var(--border-strong),
+      0 0 24px -8px var(--glow-brand);
+    transform: translateY(-1px);
+  }
+
+  /* ── Aurora animated background ── */
+  .aurora-bg {
+    position: relative;
+    overflow: hidden;
+  }
+  .aurora-bg::before,
+  .aurora-bg::after {
+    content: "";
+    position: absolute;
+    inset: -60%;
+    width: 220%;
+    height: 220%;
+    pointer-events: none;
+    z-index: 0;
+    border-radius: 50%;
+    filter: blur(80px);
+  }
+  .aurora-bg::before {
+    background: radial-gradient(ellipse 60% 50% at 30% 40%, var(--aurora-a), transparent 70%),
+                radial-gradient(ellipse 50% 40% at 70% 60%, var(--aurora-b), transparent 70%);
+    animation: aurora-drift-a 22s ease-in-out infinite;
+  }
+  .aurora-bg::after {
+    background: radial-gradient(ellipse 55% 45% at 65% 30%, var(--aurora-c), transparent 70%);
+    animation: aurora-drift-b 28s ease-in-out infinite;
+  }
+
+  /* ── Neon ping dot ── */
+  .neon-ping::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: inherit;
+    animation: neon-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  /* ── Ticker scroll ── */
+  .ticker-scroll {
+    animation: ticker-scroll 35s linear infinite;
+  }
+  .ticker-scroll:hover { animation-play-state: paused; }
+
+  /* ── Sidebar item animation ── */
+  .nav-item {
+    animation: slide-in-left 0.25s ease both;
+  }
+
+  /* ── Gradient text ── */
+  .gradient-text-brand {
+    background: linear-gradient(
+      135deg,
+      var(--brand) 0%,
+      oklch(0.72 0.18 200) 50%,
+      oklch(0.68 0.20 240) 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .gradient-text-bull {
+    background: linear-gradient(135deg, var(--bull) 0%, oklch(0.78 0.16 168) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .gradient-text-bear {
+    background: linear-gradient(135deg, oklch(0.72 0.20 35) 0%, var(--bear) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Bento grid card surface ── */
+  .bento-card {
+    background: color-mix(in oklch, var(--surface) 80%, transparent);
+    border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+    border-radius: var(--radius-2xl);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: box-shadow 240ms ease, transform 200ms ease, border-color 200ms ease;
+  }
+  .bento-card:hover {
+    border-color: color-mix(in oklch, var(--border-strong) 90%, var(--brand) 10%);
+    box-shadow:
+      0 20px 48px -16px color-mix(in oklch, var(--brand) 14%, transparent),
+      0 0 0 1px color-mix(in oklch, var(--border-strong) 60%, transparent);
+  }
+
+  /* ── Neon border badge ── */
+  .neon-badge {
+    border: 1px solid color-mix(in oklch, var(--brand) 40%, transparent);
+    background: color-mix(in oklch, var(--brand) 10%, transparent);
+    color: var(--brand);
+    box-shadow: 0 0 10px -2px var(--glow-brand);
+  }
+
+  /* ── Signal kind badges ── */
+  .badge-bullish {
+    background: color-mix(in oklch, var(--bull) 12%, transparent);
+    color: var(--bull);
+    border: 1px solid color-mix(in oklch, var(--bull) 30%, transparent);
+  }
+  .badge-bearish {
+    background: color-mix(in oklch, var(--bear) 12%, transparent);
+    color: var(--bear);
+    border: 1px solid color-mix(in oklch, var(--bear) 30%, transparent);
+  }
+
+  /* ── Sidebar icon-only collapse width helpers ── */
+  .sidebar-expanded { width: 240px; }
+  .sidebar-collapsed { width: 64px; }
+
+  /* ── Holographic card shimmer ── */
+  .holo-card {
+    position: relative;
+    overflow: hidden;
+  }
+  .holo-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 30%,
+      color-mix(in oklch, var(--brand) 8%, transparent) 50%,
+      transparent 70%
+    );
+    transform: translateX(-100%);
+    transition: transform 600ms ease;
+  }
+  .holo-card:hover::after {
+    transform: translateX(100%);
+  }
+
+  /* ── Separator with gradient ── */
+  .separator-gradient {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--border-strong),
+      transparent
+    );
+  }
+
+  /* ── Paper trading P&L row borders ── */
+  .row-positive-border {
+    border-left: 2px solid var(--color-data-positive);
+  }
+  .row-negative-border {
+    border-left: 2px solid var(--color-data-negative);
   }
 }

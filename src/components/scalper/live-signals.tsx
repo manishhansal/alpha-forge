@@ -10,7 +10,7 @@ import {
 import type { ScalpStrategyId } from "@/features/scalping/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { cn, fmtTime } from "@/lib/utils";
 import type {
   ScalpSignal,
   ScalpSignalsResponse,
@@ -158,7 +158,7 @@ export function LiveSignals({ initial }: Props) {
           <p className="mt-1 text-[11px] text-[var(--color-fg-subtle)]">
             {visible.length} fresh · {activeForAnyTf.size} of {selected.size}{" "}
             strategies on {tfLabel} ·{" "}
-            {loading ? "Refreshing…" : `Updated ${new Date(generatedAt).toLocaleTimeString()}`}
+            {loading ? "Refreshing…" : `Updated ${fmtTime(generatedAt)}`}
           </p>
         </div>
         <div

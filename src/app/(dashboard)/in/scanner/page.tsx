@@ -24,6 +24,7 @@ import {
 import { useIndiaScannerStore } from "@/store/india/scannerStore";
 import { useScanner } from "@/hooks/india/useScanner";
 import { fmtPct } from "@/lib/india/format";
+import { fmtTime } from "@/lib/utils";
 import type { ScannerHit, ScannerType } from "@/types/india/scanner";
 
 // Total columns: chevron + Symbol + Price + Chg% + Metric + Tag + Note = 7
@@ -107,14 +108,14 @@ export default function ScannerPage() {
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">F&amp;O Scanner</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
+            <p className="text-xs sm:text-sm text-[var(--color-fg-muted)]">
               Momentum · Volume · OI build-up · PCR · IV — auto-refreshing
             </p>
           </div>
         </div>
         {result?.fetchedAt && (
-          <span className="text-[10px] text-muted-foreground">
-            updated {new Date(result.fetchedAt).toLocaleTimeString()}
+          <span className="text-[10px] text-[var(--color-fg-muted)]">
+            updated {fmtTime(result.fetchedAt)}
           </span>
         )}
       </motion.div>
@@ -129,12 +130,12 @@ export default function ScannerPage() {
               key={t.id}
               onClick={() => setActive(t.id)}
               className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                isActive ? "text-[var(--color-fg)]" : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
               {t.label}
-              <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">· {t.hint}</span>
+              <span className="text-[10px] text-[var(--color-fg-muted)]/70 hidden sm:inline">· {t.hint}</span>
               {isActive && (
                 <motion.span
                   layoutId="india-scanner-tab-indicator"
@@ -148,7 +149,7 @@ export default function ScannerPage() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-500">
+        <div className="rounded-xl border border-[color-mix(in_oklch,var(--bear)_30%,transparent)] bg-[color-mix(in_oklch,var(--bear)_5%,transparent)] p-3 text-sm text-[var(--color-bear)]">
           {error}
         </div>
       )}
@@ -158,12 +159,12 @@ export default function ScannerPage() {
         animate={{ opacity: 1, y: 0 }}
         className="glass rounded-2xl overflow-hidden"
       >
-        <div className="p-4 sm:p-5 border-b border-border/60 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base sm:text-lg font-semibold">
               {result?.title ?? TABS.find((t) => t.id === active)?.label}
             </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
               {result?.description ?? "Loading…"}
               {result && filteredTotal !== hits.length && (
                 <span className="ml-1">· showing {filteredTotal} of {hits.length}</span>
@@ -221,21 +222,21 @@ export default function ScannerPage() {
 
               {!result && loading && (
                 <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-[var(--color-fg-muted)] text-sm">
                     Running scanner…
                   </td>
                 </tr>
               )}
               {result && hits.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-[var(--color-fg-muted)] text-sm">
                     No hits.
                   </td>
                 </tr>
               )}
               {result && hits.length > 0 && pageItems.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={COL_SPAN} className="p-8 text-center text-[var(--color-fg-muted)] text-sm">
                     No hits match the current filter.
                   </td>
                 </tr>

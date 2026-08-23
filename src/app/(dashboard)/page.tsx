@@ -5,6 +5,8 @@ import { GlobalStats } from "@/components/dashboard/global-stats";
 import { OverviewCard } from "@/components/dashboard/overview-card";
 import { SentimentCard } from "@/components/dashboard/sentiment-card";
 import { QuickSignals } from "@/components/signals/quick-signals";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageTransition } from "@/components/layout/PageTransition";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/best-time/engine";
 import { getMarketOverview } from "@/features/overview/fetch-overview";
@@ -82,28 +84,28 @@ export default async function HomePage() {
   const bestTimeInitial = isAuthed ? getBestTimeStatus() : null;
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Market Overview</h1>
-        <p className="text-sm text-[var(--color-fg-muted)]">
-          Realtime BTC, ETH, and SOL prices via Binance WebSocket — aggregated with global market cap and dominance.
-        </p>
-      </header>
+    <PageTransition>
+      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+        <PageHeader
+          title="Market Overview"
+          subtitle="Realtime BTC, ETH, and SOL prices via Binance WebSocket — aggregated with global market cap and dominance."
+        />
 
-      {bestTimeInitial ? <BestTimeBanner initial={bestTimeInitial} /> : null}
+        {bestTimeInitial ? <BestTimeBanner initial={bestTimeInitial} /> : null}
 
-      <Suspense fallback={<OverviewSkeleton />}>
-        <MarketOverviewSection />
-      </Suspense>
-
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Suspense fallback={<Skeleton className="h-[260px] w-full rounded-xl" />}>
-          <SentimentSection />
+        <Suspense fallback={<OverviewSkeleton />}>
+          <MarketOverviewSection />
         </Suspense>
-        <Suspense fallback={<Skeleton className="h-[210px] w-full rounded-xl" />}>
-          <QuickSignalsSection />
-        </Suspense>
-      </section>
-    </div>
+
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Suspense fallback={<Skeleton className="h-[260px] w-full rounded-xl" />}>
+            <SentimentSection />
+          </Suspense>
+          <Suspense fallback={<Skeleton className="h-[210px] w-full rounded-xl" />}>
+            <QuickSignalsSection />
+          </Suspense>
+        </section>
+      </div>
+    </PageTransition>
   );
 }

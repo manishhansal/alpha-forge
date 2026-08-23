@@ -3,7 +3,7 @@ import { ArrowDownRight, ArrowUpRight, ShieldAlert, Sparkles, Target } from "luc
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TRACKED_SYMBOLS } from "@/lib/constants";
-import { cn, formatPercent, formatPrice } from "@/lib/utils";
+import { cn, formatPercent, formatPrice, fmtTime } from "@/lib/utils";
 import { getBrokerPair } from "@/services/brokers/shared";
 import { getStrategyMeta } from "@/features/scalping/strategies/catalog";
 import type { ScalpSignal } from "@/features/scalping/types";
@@ -119,7 +119,7 @@ export function ScalpSignalCard({ signal }: Props) {
         ) : null}
 
         <p className="mt-4 text-[10px] text-[var(--color-fg-subtle)]">
-          Triggered {new Date(signal.triggeredAt).toLocaleTimeString()} · ATR {signal.atr.toFixed(4)} · trail $
+          Triggered {fmtTime(signal.triggeredAt)} · ATR {signal.atr.toFixed(4)} · trail $
           {formatPrice(signal.trail)}
         </p>
       </CardContent>

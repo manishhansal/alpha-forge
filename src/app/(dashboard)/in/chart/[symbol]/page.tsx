@@ -19,7 +19,7 @@ const PriceChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[460px] rounded-xl border border-border/60 bg-card/50 flex items-center justify-center text-sm text-muted-foreground">
+      <div className="h-[460px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/50 flex items-center justify-center text-sm text-[var(--color-fg-muted)]">
         Loading chart…
       </div>
     ),
@@ -73,7 +73,7 @@ export default function ChartPage({ params }: { params: Promise<Params> }) {
                 className="rounded-full"
               >
                 <Star
-                  className={`h-4 w-4 ${isWatched ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`}
+                  className={`h-4 w-4 ${isWatched ? "fill-[var(--color-warning)] text-[var(--color-warning)]" : "text-[var(--color-fg-muted)]"}`}
                 />
               </Button>
             </div>
@@ -83,7 +83,7 @@ export default function ChartPage({ params }: { params: Promise<Params> }) {
               </span>
               <span
                 className={`inline-flex items-center gap-1 text-sm font-medium ${
-                  up ? "text-emerald-500" : "text-rose-500"
+                  up ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
                 }`}
               >
                 {up ? (
@@ -139,7 +139,7 @@ export default function ChartPage({ params }: { params: Promise<Params> }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="glass rounded-xl p-3">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">
         {label}
       </div>
       <div className="mt-1 text-lg font-semibold tabular">{value}</div>

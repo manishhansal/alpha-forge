@@ -36,6 +36,7 @@ import type {
 import type { DailyPicksResponse } from "@/features/india/daily-picks/builder";
 import { MarketContextPanel } from "./market-context-panel";
 import { PaperTradeButton } from "@/components/india/paper-trading/paper-trade-button";
+import { PanelHeader } from "@/components/trading/PanelHeader";
 
 interface Props {
   initialData: DailyPicksResponse;
@@ -54,10 +55,10 @@ const BUCKET_ICON: Record<DailyPickBucket, typeof Flame> = {
 
 const STATUS_CLASS: Record<DailyPickStatus, string> = {
   OPEN:       "bg-[var(--color-surface-hover)] text-[var(--color-fg-muted)]",
-  TARGET_HIT: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  STOP_HIT:   "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  TARGET_HIT: "bg-[color-mix(in_oklch,var(--color-data-positive)_15%,transparent)] text-[var(--color-data-positive)]",
+  STOP_HIT:   "bg-[color-mix(in_oklch,var(--color-data-negative)_15%,transparent)] text-[var(--color-data-negative)]",
   CLOSED:     "bg-[var(--color-surface-hover)] text-[var(--color-fg-muted)]",
-  EXPIRED:    "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  EXPIRED:    "bg-[color-mix(in_oklch,var(--color-warning)_15%,transparent)] text-[var(--color-warning)]",
 };
 
 const STATUS_LABEL: Record<DailyPickStatus, string> = {
@@ -117,11 +118,18 @@ function PickDetail({ pick, colSpan }: { pick: DailyPick; colSpan: number }) {
             <div className="flex flex-wrap items-center gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px]">
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">Confluence</span>
-                <span className={cn("text-sm font-semibold",
-                  pick.confluenceScore >= 8 ? "text-emerald-600 dark:text-emerald-400"
-                  : pick.confluenceScore <= 4 ? "text-rose-600 dark:text-rose-400"
-                  : "text-[var(--color-fg)]"
-                )}>
+                <span
+                  className={cn("text-sm font-semibold",
+                    pick.confluenceScore < 5 && pick.confluenceScore > 4 ? "text-[var(--color-fg)]" : ""
+                  )}
+                  style={
+                    pick.confluenceScore >= 8
+                      ? { color: "var(--color-data-positive)" }
+                      : pick.confluenceScore <= 4
+                      ? { color: "var(--color-data-negative)" }
+                      : { color: "var(--color-fg)" }
+                  }
+                >
                   {pick.confluenceScore}<span className="text-[var(--color-fg-subtle)]">/10</span>
                 </span>
               </div>
@@ -154,11 +162,21 @@ function PickDetail({ pick, colSpan }: { pick: DailyPick; colSpan: number }) {
                 <span
                   key={w.kind}
                   title={w.note}
-                  className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                    w.severity === "danger"  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
-                    : w.severity === "warn"  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    : "bg-[var(--color-surface-hover)] text-[var(--color-fg-muted)]"
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                    w.severity === "danger"
+                      ? "bg-[color-mix(in_oklch,var(--color-data-negative)_15%,transparent)]"
+                      : w.severity === "warn"
+                      ? "bg-[color-mix(in_oklch,var(--color-warning)_15%,transparent)]"
+                      : "bg-[var(--color-surface-hover)] text-[var(--color-fg-muted)]",
                   )}
+                  style={
+                    w.severity === "danger"
+                      ? { color: "var(--color-data-negative)" }
+                      : w.severity === "warn"
+                      ? { color: "var(--color-warning)" }
+                      : undefined
+                  }
                 >
                   <AlertTriangle className="h-3 w-3" />
                   {w.label}
@@ -177,10 +195,13 @@ function PickDetail({ pick, colSpan }: { pick: DailyPick; colSpan: number }) {
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface)]">
               <div
-                className={cn("h-full rounded-full transition-all",
-                  pick.status === "STOP_HIT" ? "bg-rose-500" : "bg-emerald-500"
-                )}
-                style={{ width: `${progressWidth}%` }}
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${progressWidth}%`,
+                  backgroundColor: pick.status === "STOP_HIT"
+                    ? "var(--color-data-negative)"
+                    : "var(--color-data-positive)",
+                }}
               />
             </div>
           </div>
@@ -286,11 +307,18 @@ function DetailCell({ label, value, sub, subTone, icon }: {
       </span>
       <span className="text-sm font-semibold tabular-nums text-[var(--color-fg)]">{value}</span>
       {sub && (
-        <span className={cn("text-[10px] tabular-nums",
-          subTone === "bull" ? "text-emerald-600 dark:text-emerald-400"
-          : subTone === "bear" ? "text-rose-600 dark:text-rose-400"
-          : "text-[var(--color-fg-muted)]"
-        )}>{sub}</span>
+        <span
+          className="text-[10px] tabular-nums"
+          style={
+            subTone === "bull"
+              ? { color: "var(--color-data-positive)" }
+              : subTone === "bear"
+              ? { color: "var(--color-data-negative)" }
+              : { color: "var(--color-fg-muted)" }
+          }
+        >
+          {sub}
+        </span>
       )}
     </div>
   );
@@ -298,8 +326,7 @@ function DetailCell({ label, value, sub, subTone, icon }: {
 
 // ─── Single pick row ──────────────────────────────────────────────────────────
 
-// chevron + symbol + direction + grade + status + P&L + conf + winprob + rr = 9
-// chevron + symbol + dir + grade + status + pnl + entry + sl + target + conf + winprob + rr = 12
+// chevron + symbol + direction + grade + status + P&L + entry + sl + target + conf + winprob + rr = 12
 const COL_SPAN = 12;
 
 function PickRow({
@@ -353,22 +380,41 @@ function PickRow({
 
         {/* Direction */}
         <td className="p-2.5">
-          <span className={cn("text-[11px] font-bold uppercase",
-            isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
-          )}>
+          <span
+            className="text-[11px] font-bold uppercase"
+            style={{ color: isBull ? "var(--color-data-positive)" : "var(--color-data-negative)" }}
+          >
             {isBull ? "LONG" : "SHORT"}
           </span>
         </td>
 
         {/* Grade */}
         <td className="p-2.5">
-          <span className={cn("inline-grid h-5 w-5 place-items-center rounded-full text-[10px] font-bold",
-            pick.grade === "S" ? "bg-[color-mix(in_oklch,var(--color-brand)_20%,transparent)] text-[var(--color-brand)]"
-            : pick.grade === "A" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-            : pick.grade === "B" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-            : pick.grade === "C" ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-            : "bg-muted text-muted-foreground"
-          )}>
+          <span
+            className={cn(
+              "inline-grid h-5 w-5 place-items-center rounded-full text-[10px] font-bold",
+              pick.grade === "S"
+                ? "bg-[color-mix(in_oklch,var(--color-brand)_20%,transparent)] text-[var(--color-brand)]"
+                : pick.grade === "B"
+                ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                : pick.grade === "A" || pick.grade === "C"
+                ? ""
+                : "bg-muted text-muted-foreground",
+            )}
+            style={
+              pick.grade === "A"
+                ? {
+                    backgroundColor: "color-mix(in oklch, var(--color-data-positive) 15%, transparent)",
+                    color: "var(--color-data-positive)",
+                  }
+                : pick.grade === "C"
+                ? {
+                    backgroundColor: "color-mix(in oklch, var(--color-warning) 15%, transparent)",
+                    color: "var(--color-warning)",
+                  }
+                : undefined
+            }
+          >
             {pick.grade}
           </span>
         </td>
@@ -381,11 +427,17 @@ function PickRow({
         </td>
 
         {/* P&L */}
-        <td className={cn("p-2.5 text-right tabular text-sm font-semibold",
-          pnl == null ? "text-[var(--color-fg-muted)]"
-          : pnl >= 0  ? "text-emerald-600 dark:text-emerald-400"
-          :              "text-rose-600 dark:text-rose-400"
-        )}>
+        <td
+          className={cn(
+            "p-2.5 text-right tabular text-sm font-semibold",
+            pnl == null && "text-[var(--color-fg-muted)]",
+          )}
+          style={
+            pnl != null
+              ? { color: pnl >= 0 ? "var(--color-data-positive)" : "var(--color-data-negative)" }
+              : undefined
+          }
+        >
           {pnl == null ? "—" : fmtPct(pnl)}
         </td>
 
@@ -395,12 +447,18 @@ function PickRow({
         </td>
 
         {/* Stop Loss */}
-        <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
+        <td
+          className="p-2.5 text-right tabular text-sm"
+          style={{ color: "var(--color-data-negative)" }}
+        >
           ₹{fmt(pick.stopLoss)}
         </td>
 
         {/* Target (TP1) */}
-        <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
+        <td
+          className="p-2.5 text-right tabular text-sm"
+          style={{ color: "var(--color-data-positive)" }}
+        >
           ₹{fmt(pick.target)}
         </td>
 
@@ -410,9 +468,10 @@ function PickRow({
         </td>
 
         {/* Win Prob */}
-        <td className={cn("hidden p-2.5 text-right tabular text-sm font-medium md:table-cell",
-          isBull ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
-        )}>
+        <td
+          className="hidden p-2.5 text-right tabular text-sm font-medium md:table-cell"
+          style={{ color: isBull ? "var(--color-data-positive)" : "var(--color-data-negative)" }}
+        >
           {Math.round(pick.winProbability * 100)}%
         </td>
 
@@ -445,20 +504,15 @@ function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--color-bg-elevated)] text-[var(--color-brand)] ring-1 ring-inset ring-[var(--color-border)]">
-          <Icon className="h-4 w-4" />
-        </span>
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-[var(--color-fg)]">{group.label}</h2>
-            <span className="rounded-full bg-[color-mix(in_oklch,var(--color-bull)_12%,transparent)] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-bull)_25%,transparent)]">
-              Intraday
-            </span>
-          </div>
-          <p className="text-[11px] text-[var(--color-fg-subtle)]">{group.description}</p>
-        </div>
-      </div>
+      <PanelHeader
+        title={group.label}
+        icon={<Icon size={14} />}
+        badge={
+          <span className="rounded-full bg-[color-mix(in_oklch,var(--color-bull)_12%,transparent)] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-inset ring-[color-mix(in_oklch,var(--color-bull)_25%,transparent)]">
+            Intraday
+          </span>
+        }
+      />
 
       {group.picks.length === 0 ? (
         <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">

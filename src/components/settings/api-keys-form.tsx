@@ -19,6 +19,7 @@ import {
   type Exchange,
   type StoredKeySummary,
 } from "@/features/settings/api-keys-shared";
+import { fmtDateTime } from "@/lib/utils";
 
 interface ApiKeysFormProps {
   encryptionAvailable: boolean;
@@ -252,7 +253,7 @@ export function ApiKeysForm({ encryptionAvailable, stored }: ApiKeysFormProps) {
                     <Badge variant="warning">Trading</Badge>
                   )}
                   <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
-                    Updated {new Date(s.updatedAt).toLocaleString()}
+                    Updated {fmtDateTime(s.updatedAt)}
                   </span>
                 </div>
                 <form action={delAction}>

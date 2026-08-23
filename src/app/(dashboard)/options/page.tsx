@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getOptionsOverview } from "@/features/options/fetch-options";
 import type { OptionsCurrency } from "@/types/market";
+import { fmtTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,7 +47,7 @@ async function OptionsContent({ currency }: { currency: OptionsCurrency }) {
               ${data.underlyingPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}
             </div>
             <p className="mt-2 text-[11px] text-[var(--color-fg-muted)]">
-              Deribit {currency}-USD index · updated {new Date(data.generatedAt).toLocaleTimeString()}
+              Deribit {currency}-USD index · updated {fmtTime(data.generatedAt)}
             </p>
           </CardContent>
         </Card>
