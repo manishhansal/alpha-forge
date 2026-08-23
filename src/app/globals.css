@@ -468,4 +468,12 @@ html, body {
       transparent
     );
   }
+
+  /* ── Paper trading P&L row borders ── */
+  .row-positive-border {
+    border-left: 2px solid var(--color-data-positive);
+  }
+  .row-negative-border {
+    border-left: 2px solid var(--color-data-negative);
+  }
 }
