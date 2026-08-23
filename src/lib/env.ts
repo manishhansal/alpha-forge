@@ -61,6 +61,13 @@ const serverSchema = z.object({
   // unset so the same env line can drive both layers. Default: delta.
   ACTIVE_BROKER: z.enum(["binance", "delta"]).optional(),
 
+  // WhatsApp notifications via Evolution-Go self-hosted gateway.
+  // All three vars are optional — when unset, the WhatsApp_Notifier skips
+  // dispatch gracefully without throwing.
+  WHATSAPP_EVOLUTION_API_URL: z.string().url().optional(),
+  WHATSAPP_INSTANCE: z.string().optional(),
+  WHATSAPP_API_KEY: z.string().optional(),
+
   // Delta Exchange India REST base. Override for testnet
   // (`https://cdn-ind.testnet.deltaex.org`).
   DELTA_REST_BASE_URL: z.string().url().default("https://api.india.delta.exchange"),
@@ -114,6 +121,9 @@ const processEnv = {
   SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
   ACTIVE_BROKER: process.env.ACTIVE_BROKER,
   DELTA_REST_BASE_URL: process.env.DELTA_REST_BASE_URL,
+  WHATSAPP_EVOLUTION_API_URL: process.env.WHATSAPP_EVOLUTION_API_URL,
+  WHATSAPP_INSTANCE: process.env.WHATSAPP_INSTANCE,
+  WHATSAPP_API_KEY: process.env.WHATSAPP_API_KEY,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   NEXT_PUBLIC_BINANCE_WS: process.env.NEXT_PUBLIC_BINANCE_WS,
   NEXT_PUBLIC_BINANCE_FUTURES_WS: process.env.NEXT_PUBLIC_BINANCE_FUTURES_WS,

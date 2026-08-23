@@ -120,6 +120,28 @@ export const workerConfig = {
   strategyLab: {
     intervalMs: Number(process.env.WORKER_STRATEGY_LAB_INTERVAL_MS ?? 60_000),
   },
+
+  indiaScanner: {
+    // India F&O Scanner WhatsApp notification polling.
+    // 5-minute cadence is fast enough to catch intraday breakouts while
+    // staying well within Yahoo / NSE rate limits. Each tick runs all six
+    // scanner types in parallel and emits SCANNER_HIT_NEW events for any
+    // new symbols that weren't present in the previous scan.
+    intervalMs: Number(
+      process.env.WORKER_INDIA_SCANNER_INTERVAL_MS ?? 5 * 60_000,
+    ),
+  },
+
+  /**
+   * WhatsApp notification channel (Evolution-Go gateway).
+   * `enabled` is derived cheaply at boot so the worker can gate WhatsApp
+   * logic without reading raw env vars in the hot path.
+   */
+  whatsapp: {
+    enabled: Boolean(
+      process.env.WHATSAPP_EVOLUTION_API_URL && process.env.WHATSAPP_INSTANCE,
+    ),
+  },
 } as const;
 
 export type WorkerConfig = typeof workerConfig;
