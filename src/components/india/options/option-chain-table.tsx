@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Activity } from "lucide-react";
 import type { OptionChain, OptionLeg } from "@/types/india";
 import { fmt, fmtCompact } from "@/lib/india/format";
+import { fmtTime } from "@/lib/utils";
 import { useIndiaOptionChainStore } from "@/store/india/optionChainStore";
 
 type Props = {
@@ -94,7 +95,7 @@ export function OptionChainTable({ data, loading, spread = 10 }: Props) {
             </span>
           )}
           {data.fetchedAt && (
-            <span>updated {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+            <span>updated {fmtTime(data.fetchedAt)}</span>
           )}
         </div>
       </div>
