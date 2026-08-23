@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 
 import {
   computeIndiaLivePnl,
@@ -11,7 +11,6 @@ import {
   IndiaStrategyChip,
   Td,
   Th,
-  indiaPnlClass,
 } from "@/components/india/paper-trading/journal-shared";
 import { useIndiaStrategyFilter } from "@/components/india/strategies/strategy-context";
 import {
@@ -19,10 +18,12 @@ import {
   PaginationStrip,
   usePaginationFilter,
 } from "@/components/india/ui/pagination-filter";
+import { NumberMorph } from "@/components/trading/NumberMorph";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fmt } from "@/lib/india/format";
+import { cn, fmtDateTime } from "@/lib/utils";
 
 /**
  * Live MTM table for India F&O paper trades. Visual mirror of the
@@ -34,8 +35,23 @@ export function IndiaOpenPositionsCard() {
   const { open, prices, cancelTrade, refresh } = useIndiaJournalData();
   const { selected, timeframesFor } = useIndiaStrategyFilter();
   const [closingAll, setClosingAll] = useState(false);
+  const [closeAllState, setCloseAllState] = React.useState<"idle" | "confirming">("idle");
+  const confirmTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCloseAll = useCallback(async () => {
+    if (closeAllState === "idle") {
+      // First click — enter confirming state
+      setCloseAllState("confirming");
+      confirmTimeoutRef.current = setTimeout(() => {
+        setCloseAllState("idle");
+      }, 3000);
+      return;
+    }
+
+    // Second click within 3s — execute
+    if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+    setCloseAllState("idle");
+
     if (closingAll) return;
     setClosingAll(true);
     try {
@@ -44,7 +60,14 @@ export function IndiaOpenPositionsCard() {
     } finally {
       setClosingAll(false);
     }
-  }, [closingAll, refresh]);
+  }, [closeAllState, closingAll, refresh]);
+
+  // Cleanup timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+    };
+  }, []);
 
   const isRowSelected = useCallback(
     (t: ApiIndiaPaperTrade) =>
@@ -111,10 +134,29 @@ export function IndiaOpenPositionsCard() {
               type="button"
               onClick={handleCloseAll}
               disabled={closingAll}
-              className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-600 transition-colors hover:bg-rose-500/20 disabled:opacity-60 dark:text-rose-400"
-              title="Close all open India paper trades at current market price"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-all",
+                closeAllState === "confirming"
+                  ? "border-rose-500/60 bg-rose-500/20 text-rose-600 animate-pulse dark:text-rose-400"
+                  : "border-rose-500/30 bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400",
+                closingAll && "disabled:opacity-60"
+              )}
+              title={
+                closeAllState === "confirming"
+                  ? "Click again to confirm closing all positions"
+                  : "Close all open India paper trades at current market price"
+              }
+              aria-label={
+                closeAllState === "confirming"
+                  ? "Confirm close all positions"
+                  : "Close all positions"
+              }
             >
-              {closingAll ? "Closing…" : `Close All (${open.length})`}
+              {closingAll
+                ? "Closing…"
+                : closeAllState === "confirming"
+                ? `Confirm? (${open.length})`
+                : `Close All (${open.length})`}
             </button>
           )}
           <Badge variant={visibleOpen.length > 0 ? "info" : "outline"}>
@@ -135,7 +177,7 @@ export function IndiaOpenPositionsCard() {
           </p>
         ) : (
           <>
-            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]" data-density="compact">
               <table className="w-full text-[12px]">
                 <thead className="bg-[var(--color-bg-elevated)] text-[var(--color-fg-muted)]">
                   <tr>
@@ -160,7 +202,22 @@ export function IndiaOpenPositionsCard() {
                     return (
                       <tr
                         key={t.id}
-                        className="border-t border-[var(--color-border)]"
+                        className={cn(
+                          "border-t border-[var(--color-border)]",
+                          live && live.pct >= 5 && "row-positive-border",
+                          live && live.pct <= -3 && "row-negative-border",
+                        )}
+                        style={
+                          live
+                            ? {
+                                borderLeft: live.pct >= 5
+                                  ? "2px solid var(--color-data-positive)"
+                                  : live.pct <= -3
+                                  ? "2px solid var(--color-data-negative)"
+                                  : undefined,
+                              }
+                            : undefined
+                        }
                       >
                         <Td>
                           <span className="font-semibold">{t.symbol}</span>
@@ -180,23 +237,25 @@ export function IndiaOpenPositionsCard() {
                         </Td>
                         <Td align="right">₹{fmt(t.entry, 2)}</Td>
                         <Td align="right">
-                          {mark !== undefined ? `₹${fmt(mark, 2)}` : "—"}
+                          {mark !== undefined ? (
+                            <NumberMorph value={mark} prefix="₹" decimals={2} />
+                          ) : "—"}
                         </Td>
                         <Td align="right">₹{fmt(t.stopLoss, 2)}</Td>
                         <Td align="right">₹{fmt(t.target, 2)}</Td>
                         <Td align="right">{t.riskReward.toFixed(2)}</Td>
-                        <Td align="right" className={indiaPnlClass(live?.pct ?? null)}>
+                        <Td align="right" style={{ color: (live?.pct ?? 0) >= 0 ? "var(--color-data-positive)" : "var(--color-data-negative)" }}>
                           {live
                             ? `${live.pct > 0 ? "+" : ""}${live.pct.toFixed(2)}%`
                             : "—"}
                         </Td>
-                        <Td align="right" className={indiaPnlClass(live?.usd ?? null)}>
+                        <Td align="right" style={{ color: (live?.usd ?? 0) >= 0 ? "var(--color-data-positive)" : "var(--color-data-negative)" }}>
                           {live
                             ? `${live.usd > 0 ? "+" : ""}₹${live.usd.toFixed(2)}`
                             : "—"}
                         </Td>
                         <Td align="right" className="text-[var(--color-fg-subtle)]">
-                          {new Date(t.openedAt).toLocaleString()}
+                          {fmtDateTime(t.openedAt)}
                         </Td>
                         <Td align="right">
                           <Button
