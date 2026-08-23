@@ -22,6 +22,19 @@ top-of-sidebar switcher:
   and an **Intelligent Auto Paper-Trading Engine** (daily ₹1L budget,
   signal scoring, 5-position max, EOD close-out).
 
+## What's New — Institutional Intelligence Terminal (IIT) UI Overhaul
+
+- **Design System**: Full OKLCH color token system (`--color-panel-bg/border`, `--color-data-positive/negative/neutral`, `--color-ai-accent`, `--color-regime-{bull,bear,sideways,highvol}`) + 4 Spring motion presets + 6 CSS keyframes + `data-density` attribute pattern
+- **UIStore**: New `useUIStore` (Zustand v5, persist) for high-frequency UI state — regime, sidebar collapse, density, radar visibility, chart fullscreen; `RegimeProvider` drives regime-reactive aurora background (1200ms CSS transition)
+- **Shell**: Sidebar spring rail (56/248px), regime indicator strip, `FooterDataStrip`, shimmer `SignInNudge`, keyboard nav; Topbar 52px frosted, `TopbarBreadcrumb`, `VixWarningChip`, 3-segment `ThemeToggle` with `layoutId`; `MarketTickerBar` with `NumberMorph` prices + `price-flash-up/down` CSS animation on tick
+- **Trading Component Library**: `SignalBadge`, `ConfidenceBar`, `RegimeBadge`, `NumberMorph`, `StatGrid`, `PanelHeader`, `RiskMeter`, `AiRadar` (TanStack Table v9, hover detail panels, sort, filter, keyboard nav)
+- **Layout Primitives**: `PageHeader`, `EmptyState`, `ErrorState`, `BentoGrid` + `BentoCell`, `PageTransition` — all exported from `src/components/layout/`
+- **3D Suite**: `MarketIntelligenceCore` quality prop (low/medium/high), `RiskSphere` on Paper Trading, `PortfolioGalaxy` particle system with Fibonacci sphere distribution
+- **Page Redesigns**: All major pages overhauled — Crypto & India Overview (BentoGrid), AI Signals (animated confidence ring, hover SHAP expansion, stale overlay), Options Chain (IvHeatDot, max-pain encoding), Daily Picks (NumberMorph P&L, celebration/warning pulses, collapsible FnO Trend sections), Paper Trading (BentoGrid stats, RiskSphere, double-confirm Close All)
+- **Bug Fixes**: Hydration fix via `fmtTime()`/`fmtDateTime()` in `src/lib/utils.ts` (21 files updated); server/client boundary fix for `signalToRadarRow`; canvas color fix for lightweight-charts CSS variable incompatibility
+
+---
+
 ## What's New (FnO Intelligence Branch)
 
 ### Intelligent Auto Paper-Trading Engine
@@ -196,7 +209,8 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Client state     | **Zustand 5**                                                          |
 | Server state     | **TanStack Query 5**                                                   |
 | Charts           | **lightweight-charts** v5 (with Anchored VWAP + Volume Profile plugins), Recharts |
-| Animation        | **framer-motion**                                                      |
+| Animation        | **framer-motion** (Spring presets: SPRING_MICRO/FAST/DEFAULT/GENTLE for all interactive transitions) |
+| Tables           | **TanStack Table v9** (AI Radar, Options Chain, Daily Picks History, Paper Trading Journal) |
 | Backend          | Next.js Route Handlers (Node runtime)                                  |
 | Validation       | **zod 4** for every external API I/O and env vars                      |
 | Cache            | **Redis** via `ioredis` (with in-memory fallback for dev)              |
@@ -1523,6 +1537,7 @@ ML_SERVICE_URL=http://localhost:8100
   - [x] **Options Strategy Workbench** — pure TypeScript payoff engine (`src/features/india/options-workbench/payoff.ts`): `computePayoff` + `aggregateGreeks` with exact formulas; linear-interpolation break-evens. New `/in/options-workbench` page: 13-strategy picker, ATM auto-populate from live chain, SVG payoff diagram, break-evens, net greeks, GEX-guided "Scan for best strikes".
   - [x] **OpenAlgo broker adapter** — `OpenAlgoAdapter` implementing `BrokerAdapter`; normalised OpenAlgo REST API contract covering 33+ Indian brokers. `placeOrder`/`modifyOrder`/`cancelOrder` gated behind `LIVE_TRADING_ENABLED=true`. Registered under `INDIA_BROKER=openalgo`. `LiveOrderModal` with double-confirm UX + win-rate warning badge.
   - [x] **Graceful degradation** — all new API routes return `{ available: false, reason }` with HTTP 200 when ML service is unreachable; never 5xx.
+- [x] **IIT UI Overhaul** — Institutional Intelligence Terminal design language applied across every page and shell component: OKLCH design tokens, Spring motion system, UIStore + RegimeContext, Sidebar/Topbar/MarketTickerBar shell refactor, full Trading Component Library (`SignalBadge`, `ConfidenceBar`, `RegimeBadge`, `NumberMorph`, `StatGrid`, `PanelHeader`, `RiskMeter`, `AiRadar`), Layout Primitives (`BentoGrid`, `PageHeader`, `EmptyState`, `ErrorState`, `PageTransition`), 3D Suite upgrades (`RiskSphere`, `PortfolioGalaxy`), and all page redesigns. 1238 tests passing, 0 TypeScript errors.
 
 ## Troubleshooting
 
