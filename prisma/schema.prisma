@@ -6,6 +6,410 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String?
+  name          String?
+  image         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  alerts        Alert[]
+  notifications Notification[]
+  strategies    Strategy[]
+  setting       UserSetting?
+}
+
+model SignalHistory {
+  id          String            @id @default(cuid())
+  symbol      SymbolEnum
+  type        SignalTypeEnum
+  confidence  Float
+  risk        RiskLevelEnum
+  entry       Float
+  stopLoss    Float
+  target      Float
+  riskReward  Float
+  rationale   String[]
+  features    Json
+  outcome     SignalOutcomeEnum @default(OPEN)
+  pnlPct      Float?
+  closedAt    DateTime?
+  generatedAt DateTime          @default(now())
+
+  @@index([symbol, generatedAt])
+  @@index([type, generatedAt])
+  @@index([outcome, generatedAt])
+}
+
+model Alert {
+  id            String             @id @default(cuid())
+  userId        String
+  symbol        SymbolEnum
+  type          AlertTypeEnum
+  threshold     Float
+  comparator    String
+  channels      AlertChannelEnum[]
+  webhookUrl    String?
+  cooldownSec   Int                @default(900)
+  active        Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  triggeredAt   DateTime?
+  triggerCount  Int                @default(0)
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([userId, active])
+  @@index([symbol, type, active])
+}
+
+model UserSetting {
+  id               String     @id @default(cuid())
+  userId           String     @unique
+  theme            String     @default("dark")
+  defaultPair      SymbolEnum @default(BTC)
+  apiKeysEncrypted Json?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  dataSourcesJson  Json?
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String               @id @default(cuid())
+  userId    String
+  kind      NotificationKindEnum @default(ALERT)
+  alertId   String?
+  symbol    SymbolEnum?
+  title     String
+  body      String
+  payload   Json?
+  readAt    DateTime?
+  createdAt DateTime             @default(now())
+  alert     Alert?               @relation(fields: [alertId], references: [id])
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+/// One paper trade emitted by the scalper engine. Trades are global (no
+/// userId) so the public journal renders the same backtest for every viewer
+/// — keeping the scalper a transparent, shared track record.
+///
+/// `symbol` is intentionally a free-form `String` rather than the
+/// `SymbolEnum` used elsewhere in this schema: this single table is
+/// shared by the crypto scalper (BTC / ETH / SOL) and the India F&O
+/// scalper (NIFTY, BANKNIFTY, RELIANCE, …), and the latter cannot fit
+/// inside the enum. The two markets stay in their own lanes via the
+/// `source` column — crypto rows use `<id>:<tf>` while India rows use
+/// the `in:<id>:<tf>` prefix (see `src/features/india/scalping/types.ts`
+/// and the journal helpers in `src/features/{,india/}scalping/journal.ts`).
+model PaperTrade {
+  id         String               @id @default(cuid())
+  symbol     String
+  direction  ScalpDirectionEnum
+  status     PaperTradeStatusEnum @default(OPEN)
+  /// Engine + timeframe that fired the signal, e.g. "SMC_UTBOT:5m".
+  source     String
+  /// Compact rationale strings shown in the journal UI.
+  rationale  String[]
+  /// Engine-level signal payload (ATR, sensitivity, trend bias, last close).
+  meta       Json
+  /// Sizing is purely notional — no fills, no slippage.
+  notional   Float                @default(1000)
+  entry      Float
+  stopLoss   Float
+  target     Float
+  riskReward Float
+  /// Trail level from the UT Bot ATR stop at trade open. Captured for replay.
+  atr        Float
+  exitPrice  Float?
+  pnlPct     Float?
+  pnlUsd     Float?
+  /// Free-form note set by the user (POST/PATCH).
+  note       String?
+  openedAt   DateTime             @default(now())
+  closedAt   DateTime?
+
+  @@index([symbol, openedAt])
+  @@index([status, openedAt])
+  @@index([source, openedAt])
+}
+
+/// User-saved trading strategy described in plain English. The natural-
+/// language `prompt` is parsed into a structured rule set (`parsed`) by
+/// `src/features/strategy-lab/parser.ts`. Backtests + live paper trades fan
+/// out from this row.
+model Strategy {
+  id            String               @id @default(cuid())
+  userId        String
+  name          String
+  /// The free-form English description the user typed. Source of truth.
+  prompt        String
+  /// `ParsedStrategy` JSON — the deterministic compiled rule set executed by
+  /// the backtest + paper-trader. Re-parsed from `prompt` on edit.
+  parsed        Json
+  /// Symbols the strategy applies to (subset of BTC/ETH/SOL).
+  symbols       SymbolEnum[]
+  /// Whether the worker should evaluate this strategy on every tick to open
+  /// live paper trades.
+  liveEnabled   Boolean              @default(false)
+  liveStartedAt DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backtests     StrategyBacktest[]
+  paperTrades   StrategyPaperTrade[]
+
+  @@index([userId, updatedAt])
+  @@index([liveEnabled])
+}
+
+/// Result snapshot of running a strategy over a fixed historical window. We
+/// store the latest snapshot per (strategy, symbol, period) plus ad-hoc
+/// pre-save runs (where `strategyId` is null).
+model StrategyBacktest {
+  id          String                     @id @default(cuid())
+  strategyId  String?
+  /// Snapshot of the prompt at runtime — useful for ad-hoc runs that aren't
+  /// linked to a saved strategy.
+  prompt      String
+  symbol      SymbolEnum
+  period      StrategyBacktestPeriodEnum
+  /// Kline interval used (e.g. "1h", "4h", "1d"). Selected per-period to
+  /// keep total candle count manageable.
+  interval    String
+  /// `BacktestStats` JSON — winRate, totalReturn, maxDrawdown, sharpe, etc.
+  stats       Json
+  /// Compact equity curve (array of {ts, equity}) for the UI sparkline.
+  equityCurve Json
+  /// Trade log — array of {entry, exit, side, pnlPct, openedAt, closedAt}.
+  trades      Json
+  generatedAt DateTime                   @default(now())
+  strategy    Strategy?                  @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([strategyId, generatedAt])
+  @@index([symbol, period, generatedAt])
+}
+
+/// Live paper-trade emitted by the worker for an active Strategy. Mirrors
+/// `PaperTrade` shape but scoped to a user's saved strategy so the journal
+/// can render per-strategy P&L and win-rate.
+model StrategyPaperTrade {
+  id          String               @id @default(cuid())
+  strategyId  String
+  symbol      SymbolEnum
+  direction   ScalpDirectionEnum
+  status      PaperTradeStatusEnum @default(OPEN)
+  notional    Float                @default(1000)
+  entry       Float
+  stopLoss    Float
+  target      Float
+  riskReward  Float
+  /// Free-form bullets describing which rules fired.
+  rationale   String[]
+  exitPrice   Float?
+  pnlPct      Float?
+  pnlUsd      Float?
+  /// Reason the trade closed: TARGET / STOP / EXIT_RULE / EXPIRED / CANCELLED.
+  closeReason String?
+  openedAt    DateTime             @default(now())
+  closedAt    DateTime?
+  strategy    Strategy             @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([strategyId, openedAt])
+  @@index([strategyId, status])
+}
+
+/// One frozen "Daily Pick" — the day's top signal for a bucket
+/// (MOMENTUM / SCALPING / POTENTIAL) on the Indian F&O surface. The
+/// entry / stop / target levels are frozen at selection time so the pick
+/// stays an honest, immutable track record for the trading day; the
+/// live-tracking columns (`status`, `lastPrice`, `pnlPct`, `achievedPct`)
+/// are refreshed as the underlying moves. One row per (tradeDate, bucket,
+/// rank) so re-running the builder mid-day updates tracking in place
+/// rather than duplicating picks. History accrues automatically — every
+/// past `tradeDate` is queryable so users can review old picks + outcomes.
+model IndiaDailyPick {
+  id              String    @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
+  tradeDate       String
+  /// INDICES_SCALP | MOMENTUM | SCALPING | POTENTIAL.
+  bucket          String
+  /// 1..3 within the bucket.
+  rank            Int
+  symbol          String
+  displayName     String
+  /// BULLISH | BEARISH | NEUTRAL.
+  direction       String
+  /// LONG | SHORT | BUY | SELL | WAIT.
+  action          String
+  /// scalp | intraday | swing | positional.
+  horizon         String
+  grade           String
+  confidence      Float
+  confidenceScore Int
+  winProbability  Float
+  /// Mark price of the underlying when the pick was frozen.
+  underlyingPrice Float
+  entry           Float
+  stopLoss        Float
+  /// Realistic first target (TP1).
+  target          Float
+  /// Stretch target (TP3) — "can move upto".
+  canMoveUpto     Float
+  /// Expected % move from entry to the stretch target ("can expect").
+  canExpectPct    Float
+  riskReward      Float
+  bucketScore     Float
+  rationale       String[]
+  /// Why the pick sits in its bucket — human readable.
+  logic           String
+  /// Live-tracking. OPEN | TARGET_HIT | STOP_HIT | CLOSED | EXPIRED.
+  status          String    @default("OPEN")
+  lastPrice       Float?
+  pnlPct          Float?
+  /// Best progress toward target so far, in % (100 = target hit).
+  achievedPct     Float?
+  generatedAt     DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  /// When the pick first resolved (target / stop / square-off). The
+  /// time-to-outcome shown on the board is `resolvedAt - generatedAt`.
+  resolvedAt      DateTime?
+  /// Present only for INDICES_SCALP picks: the ATM/near-ATM option contract
+  /// the trade is actually expressed in. Entry / stopLoss / target /
+  /// canMoveUpto / lastPrice for these picks are *option premiums* (₹/lot),
+  /// not the index level. JSON shape:
+  /// { strike, side: "CE" | "PE", expiry, contractSymbol, lotSize,
+  /// spotAtFreeze, delta, ivPct }
+  optionContract  Json?
+
+  @@unique([tradeDate, bucket, rank])
+  @@index([tradeDate])
+  @@index([symbol, tradeDate])
+}
+
+/// Periodic capture of an NSE option-chain's aggregated analytics for one
+/// underlying. NSE only serves the *live* chain (no history endpoint), so
+/// the `india-oc-capture` worker snapshots it on a cadence during market
+/// hours. Over time this builds the history that lets the option-chain
+/// strategies (PCR / IV / OI build-up / Liquidity Edge / Max-Pain Gravity)
+/// become backtestable — the only feed that's missing today. The full
+/// `analytics` blob is retained for forward-compatible replay needs.
+model OptionChainSnapshot {
+  id              String   @id @default(cuid())
+  /// NSE underlying name (e.g. "NIFTY", "BANKNIFTY").
+  underlying      String
+  /// Expiry the analytics were computed against (NSE display string).
+  expiry          String
+  /// Underlying spot at capture.
+  spot            Float?
+  /// Underlying day change % — needed to replay OI build-up (price × OI).
+  changePct       Float?
+  pcrOi           Float?
+  pcrVolume       Float?
+  maxPain         Float?
+  atmIv           Float?
+  maxCeOiStrike   Float?
+  maxPeOiStrike   Float?
+  totalCeOi       Float    @default(0)
+  totalPeOi       Float    @default(0)
+  totalCeOiChange Float    @default(0)
+  totalPeOiChange Float    @default(0)
+  /// Full `OptionChainAnalytics` blob for forward-compatible replay.
+  analytics       Json
+  capturedAt      DateTime @default(now())
+
+  @@index([underlying, capturedAt])
+  @@index([capturedAt])
+}
+
+/// One daily scan result from the FnO Bullish or Bearish Trend Scanner
+/// (14-condition Chartink screener, MA + ADX + MACD). Persisted once per
+/// IST trading day per symbol so the board builds an auditable track record.
+/// Live-tracking (lastPrice / pnlPct / status) is refreshed intraday by the
+/// worker and finalised at the 15:30 IST session close.
+model FnoTrendScan {
+  id         String    @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
+  tradeDate  String
+  /// "BULLISH" | "BEARISH"
+  scanType   String
+  symbol     String
+  /// Last close when the scan ran — the suggested entry price.
+  entry      Float
+  stopLoss   Float
+  tp1        Float
+  tp2        Float
+  tp3        Float
+  /// ATR(14) used to compute the levels.
+  atr        Float
+  /// ADX(14) at scan time.
+  adxVal     Float
+  /// RSI(14) at scan time.
+  rsiVal     Float
+  /// Day % change when scan ran.
+  changePct  Float
+  /// "OPEN" | "TARGET_HIT" | "STOP_HIT" | "CLOSED" | "EXPIRED"
+  status     String    @default("OPEN")
+  lastPrice  Float?
+  pnlPct     Float?
+  resolvedAt DateTime?
+  scannedAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tradeDate, scanType, symbol])
+  @@index([tradeDate, scanType])
+  @@index([symbol, tradeDate])
+  @@index([status, tradeDate])
+}
+
+/// One trading-day session for the India auto paper-trader. Tracks the
+/// ₹1L daily budget, how much was deployed, and the end-of-day result.
+/// Created at the first trade of each IST session; finalised at 15:30 IST.
+model IndiaDaySession {
+  id              String    @id @default(cuid())
+  /// IST calendar date as `YYYY-MM-DD`.
+  tradeDate       String    @unique
+  /// Starting capital for the day (always ₹1,00,000).
+  startingCapital Float     @default(100000)
+  /// Capital deployed across all trades opened today.
+  deployed        Float     @default(0)
+  /// Realised P&L in ₹ across all closed trades.
+  realisedPnl     Float     @default(0)
+  /// Realised P&L as % of starting capital.
+  realisedPnlPct  Float     @default(0)
+  /// Total number of trades opened today.
+  totalTrades     Int       @default(0)
+  /// Trades that hit TP1.
+  wins            Int       @default(0)
+  /// Trades that hit SL.
+  losses          Int       @default(0)
+  /// Trades squared off at session close (EXPIRED).
+  expired         Int       @default(0)
+  /// Win rate = wins / (wins + losses). Null until at least one resolved trade.
+  winRate         Float?
+  /// Best trade P&L % today.
+  bestTradePct    Float?
+  /// Worst trade P&L % today.
+  worstTradePct   Float?
+  /// Average P&L % per trade.
+  avgTradePct     Float?
+  /// Maximum intraday drawdown % (from peak to trough during the session).
+  maxDrawdownPct  Float?
+  /// Whether the session has been finalised (post 15:30 IST).
+  finalised       Boolean   @default(false)
+  /// Compact trade IDs opened today (for fast cross-reference).
+  tradeIds        String[]  @default([])
+  openedAt        DateTime  @default(now())
+  finalisedAt     DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tradeDate])
+  @@index([finalised, tradeDate])
+}
+
 enum SymbolEnum {
   BTC
   ETH
@@ -71,429 +475,4 @@ enum StrategyBacktestPeriodEnum {
   MONTH_6
   YEAR_1
   YEAR_5
-}
-
-model User {
-  id            String        @id @default(cuid())
-  email         String        @unique
-  // bcrypt hash; null for OAuth-only accounts (forward-compat).
-  passwordHash  String?
-  name          String?
-  image         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  setting       UserSetting?
-  alerts        Alert[]
-  notifications Notification[]
-  strategies    Strategy[]
-}
-
-model SignalHistory {
-  id           String            @id @default(cuid())
-  symbol       SymbolEnum
-  type         SignalTypeEnum
-  confidence   Float
-  risk         RiskLevelEnum
-  entry        Float
-  stopLoss     Float
-  target       Float
-  riskReward   Float
-  rationale    String[]
-  features     Json
-  outcome      SignalOutcomeEnum @default(OPEN)
-  pnlPct       Float?
-  closedAt     DateTime?
-  generatedAt  DateTime          @default(now())
-
-  @@index([symbol, generatedAt])
-  @@index([type, generatedAt])
-  @@index([outcome, generatedAt])
-}
-
-model Alert {
-  id           String             @id @default(cuid())
-  userId       String
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  symbol       SymbolEnum
-  type         AlertTypeEnum
-  threshold    Float
-  comparator   String
-  channels     AlertChannelEnum[]
-  webhookUrl   String?
-  // Minimum gap between consecutive triggers of this alert (cooldown).
-  cooldownSec  Int                @default(900)
-  active       Boolean            @default(true)
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  triggeredAt  DateTime?
-  triggerCount Int                @default(0)
-  notifications Notification[]
-
-  @@index([userId, active])
-  @@index([symbol, type, active])
-}
-
-model UserSetting {
-  id              String     @id @default(cuid())
-  userId          String     @unique
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  theme           String     @default("dark")
-  defaultPair    SymbolEnum @default(BTC)
-  // AES-256-GCM ciphertext payload for exchange API keys.
-  // Shape: { [exchange]: { iv, tag, ciphertext } } — see src/lib/crypto.ts
-  apiKeysEncrypted Json?
-  // Per-user data-source selection for the dashboard's two market surfaces.
-  // Shape: { india: { selected: string[], optionChain: string },
-  //          crypto: { selected: string[], primary: string } }
-  // See src/features/settings/data-sources-shared.ts for the canonical type.
-  dataSourcesJson Json?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-}
-
-model Notification {
-  id        String                @id @default(cuid())
-  userId    String
-  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind      NotificationKindEnum  @default(ALERT)
-  alertId   String?
-  alert     Alert?                @relation(fields: [alertId], references: [id], onDelete: SetNull)
-  symbol    SymbolEnum?
-  title     String
-  body      String
-  // Snapshot of the data that triggered the notification (price, threshold, etc.).
-  payload   Json?
-  readAt    DateTime?
-  createdAt DateTime              @default(now())
-
-  @@index([userId, readAt, createdAt])
-}
-
-/// One paper trade emitted by the scalper engine. Trades are global (no
-/// userId) so the public journal renders the same backtest for every viewer
-/// — keeping the scalper a transparent, shared track record.
-///
-/// `symbol` is intentionally a free-form `String` rather than the
-/// `SymbolEnum` used elsewhere in this schema: this single table is
-/// shared by the crypto scalper (BTC / ETH / SOL) and the India F&O
-/// scalper (NIFTY, BANKNIFTY, RELIANCE, …), and the latter cannot fit
-/// inside the enum. The two markets stay in their own lanes via the
-/// `source` column — crypto rows use `<id>:<tf>` while India rows use
-/// the `in:<id>:<tf>` prefix (see `src/features/india/scalping/types.ts`
-/// and the journal helpers in `src/features/{,india/}scalping/journal.ts`).
-model PaperTrade {
-  id           String                @id @default(cuid())
-  symbol       String
-  direction    ScalpDirectionEnum
-  status       PaperTradeStatusEnum  @default(OPEN)
-  /// Engine + timeframe that fired the signal, e.g. "SMC_UTBOT:5m".
-  source       String
-  /// Compact rationale strings shown in the journal UI.
-  rationale    String[]
-  /// Engine-level signal payload (ATR, sensitivity, trend bias, last close).
-  meta         Json
-
-  /// Sizing is purely notional — no fills, no slippage.
-  notional     Float                 @default(1000)
-  entry        Float
-  stopLoss     Float
-  target       Float
-  riskReward   Float
-  /// Trail level from the UT Bot ATR stop at trade open. Captured for replay.
-  atr          Float
-
-  exitPrice    Float?
-  pnlPct       Float?
-  pnlUsd       Float?
-  /// Free-form note set by the user (POST/PATCH).
-  note         String?
-
-  openedAt     DateTime              @default(now())
-  closedAt     DateTime?
-
-  @@index([symbol, openedAt])
-  @@index([status, openedAt])
-  @@index([source, openedAt])
-}
-
-/// User-saved trading strategy described in plain English. The natural-
-/// language `prompt` is parsed into a structured rule set (`parsed`) by
-/// `src/features/strategy-lab/parser.ts`. Backtests + live paper trades fan
-/// out from this row.
-model Strategy {
-  id          String                @id @default(cuid())
-  userId      String
-  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
-  /// The free-form English description the user typed. Source of truth.
-  prompt      String
-  /// `ParsedStrategy` JSON — the deterministic compiled rule set executed by
-  /// the backtest + paper-trader. Re-parsed from `prompt` on edit.
-  parsed      Json
-  /// Symbols the strategy applies to (subset of BTC/ETH/SOL).
-  symbols     SymbolEnum[]
-  /// Whether the worker should evaluate this strategy on every tick to open
-  /// live paper trades.
-  liveEnabled Boolean               @default(false)
-  liveStartedAt DateTime?
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-
-  backtests   StrategyBacktest[]
-  paperTrades StrategyPaperTrade[]
-
-  @@index([userId, updatedAt])
-  @@index([liveEnabled])
-}
-
-/// Result snapshot of running a strategy over a fixed historical window. We
-/// store the latest snapshot per (strategy, symbol, period) plus ad-hoc
-/// pre-save runs (where `strategyId` is null).
-model StrategyBacktest {
-  id            String                    @id @default(cuid())
-  strategyId    String?
-  strategy      Strategy?                 @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-  /// Snapshot of the prompt at runtime — useful for ad-hoc runs that aren't
-  /// linked to a saved strategy.
-  prompt        String
-  symbol        SymbolEnum
-  period        StrategyBacktestPeriodEnum
-  /// Kline interval used (e.g. "1h", "4h", "1d"). Selected per-period to
-  /// keep total candle count manageable.
-  interval      String
-  /// `BacktestStats` JSON — winRate, totalReturn, maxDrawdown, sharpe, etc.
-  stats         Json
-  /// Compact equity curve (array of {ts, equity}) for the UI sparkline.
-  equityCurve   Json
-  /// Trade log — array of {entry, exit, side, pnlPct, openedAt, closedAt}.
-  trades        Json
-  generatedAt   DateTime                  @default(now())
-
-  @@index([strategyId, generatedAt])
-  @@index([symbol, period, generatedAt])
-}
-
-/// Live paper-trade emitted by the worker for an active Strategy. Mirrors
-/// `PaperTrade` shape but scoped to a user's saved strategy so the journal
-/// can render per-strategy P&L and win-rate.
-model StrategyPaperTrade {
-  id           String                @id @default(cuid())
-  strategyId   String
-  strategy     Strategy              @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-  symbol       SymbolEnum
-  direction    ScalpDirectionEnum
-  status       PaperTradeStatusEnum  @default(OPEN)
-
-  notional     Float                 @default(1000)
-  entry        Float
-  stopLoss     Float
-  target       Float
-  riskReward   Float
-  /// Free-form bullets describing which rules fired.
-  rationale    String[]
-
-  exitPrice    Float?
-  pnlPct       Float?
-  pnlUsd       Float?
-  /// Reason the trade closed: TARGET / STOP / EXIT_RULE / EXPIRED / CANCELLED.
-  closeReason  String?
-
-  openedAt     DateTime              @default(now())
-  closedAt     DateTime?
-
-  @@index([strategyId, openedAt])
-  @@index([strategyId, status])
-}
-
-/// One frozen "Daily Pick" — the day's top signal for a bucket
-/// (MOMENTUM / SCALPING / POTENTIAL) on the Indian F&O surface. The
-/// entry / stop / target levels are frozen at selection time so the pick
-/// stays an honest, immutable track record for the trading day; the
-/// live-tracking columns (`status`, `lastPrice`, `pnlPct`, `achievedPct`)
-/// are refreshed as the underlying moves. One row per (tradeDate, bucket,
-/// rank) so re-running the builder mid-day updates tracking in place
-/// rather than duplicating picks. History accrues automatically — every
-/// past `tradeDate` is queryable so users can review old picks + outcomes.
-model IndiaDailyPick {
-  id            String   @id @default(cuid())
-  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
-  tradeDate     String
-  /// INDICES_SCALP | MOMENTUM | SCALPING | POTENTIAL.
-  bucket        String
-  /// 1..3 within the bucket.
-  rank          Int
-  symbol        String
-  displayName   String
-  /// BULLISH | BEARISH | NEUTRAL.
-  direction     String
-  /// LONG | SHORT | BUY | SELL | WAIT.
-  action        String
-  /// scalp | intraday | swing | positional.
-  horizon       String
-  grade         String
-  confidence    Float
-  confidenceScore Int
-  winProbability Float
-
-  /// Mark price of the underlying when the pick was frozen.
-  underlyingPrice Float
-  entry         Float
-  stopLoss      Float
-  /// Realistic first target (TP1).
-  target        Float
-  /// Stretch target (TP3) — "can move upto".
-  canMoveUpto   Float
-  /// Expected % move from entry to the stretch target ("can expect").
-  canExpectPct  Float
-  riskReward    Float
-  bucketScore   Float
-
-  rationale     String[]
-  /// Why the pick sits in its bucket — human readable.
-  logic         String
-
-  /// Live-tracking. OPEN | TARGET_HIT | STOP_HIT | CLOSED | EXPIRED.
-  status        String   @default("OPEN")
-  lastPrice     Float?
-  pnlPct        Float?
-  /// Best progress toward target so far, in % (100 = target hit).
-  achievedPct   Float?
-  /// When the pick first resolved (target / stop / square-off). The
-  /// time-to-outcome shown on the board is `resolvedAt - generatedAt`.
-  resolvedAt    DateTime?
-
-  /// Present only for INDICES_SCALP picks: the ATM/near-ATM option contract
-  /// the trade is actually expressed in. Entry / stopLoss / target /
-  /// canMoveUpto / lastPrice for these picks are *option premiums* (₹/lot),
-  /// not the index level. JSON shape:
-  ///   { strike, side: "CE" | "PE", expiry, contractSymbol, lotSize,
-  ///     spotAtFreeze, delta, ivPct }
-  optionContract Json?
-
-  generatedAt   DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@unique([tradeDate, bucket, rank])
-  @@index([tradeDate])
-  @@index([symbol, tradeDate])
-}
-
-/// Periodic capture of an NSE option-chain's aggregated analytics for one
-/// underlying. NSE only serves the *live* chain (no history endpoint), so
-/// the `india-oc-capture` worker snapshots it on a cadence during market
-/// hours. Over time this builds the history that lets the option-chain
-/// strategies (PCR / IV / OI build-up / Liquidity Edge / Max-Pain Gravity)
-/// become backtestable — the only feed that's missing today. The full
-/// `analytics` blob is retained for forward-compatible replay needs.
-model OptionChainSnapshot {
-  id              String   @id @default(cuid())
-  /// NSE underlying name (e.g. "NIFTY", "BANKNIFTY").
-  underlying      String
-  /// Expiry the analytics were computed against (NSE display string).
-  expiry          String
-  /// Underlying spot at capture.
-  spot            Float?
-  /// Underlying day change % — needed to replay OI build-up (price × OI).
-  changePct       Float?
-  pcrOi           Float?
-  pcrVolume       Float?
-  maxPain         Float?
-  atmIv           Float?
-  maxCeOiStrike   Float?
-  maxPeOiStrike   Float?
-  totalCeOi       Float    @default(0)
-  totalPeOi       Float    @default(0)
-  totalCeOiChange Float    @default(0)
-  totalPeOiChange Float    @default(0)
-  /// Full `OptionChainAnalytics` blob for forward-compatible replay.
-  analytics       Json
-  capturedAt      DateTime @default(now())
-
-  @@index([underlying, capturedAt])
-  @@index([capturedAt])
-}
-
-/// One daily scan result from the FnO Bullish or Bearish Trend Scanner
-/// (14-condition Chartink screener, MA + ADX + MACD). Persisted once per
-/// IST trading day per symbol so the board builds an auditable track record.
-/// Live-tracking (lastPrice / pnlPct / status) is refreshed intraday by the
-/// worker and finalised at the 15:30 IST session close.
-model FnoTrendScan {
-  id          String   @id @default(cuid())
-  /// IST calendar date as `YYYY-MM-DD` — the trading-day key.
-  tradeDate   String
-  /// "BULLISH" | "BEARISH"
-  scanType    String
-  symbol      String
-  /// Last close when the scan ran — the suggested entry price.
-  entry       Float
-  stopLoss    Float
-  tp1         Float
-  tp2         Float
-  tp3         Float
-  /// ATR(14) used to compute the levels.
-  atr         Float
-  /// ADX(14) at scan time.
-  adxVal      Float
-  /// RSI(14) at scan time.
-  rsiVal      Float
-  /// Day % change when scan ran.
-  changePct   Float
-  /// "OPEN" | "TARGET_HIT" | "STOP_HIT" | "CLOSED" | "EXPIRED"
-  status      String   @default("OPEN")
-  lastPrice   Float?
-  pnlPct      Float?
-  resolvedAt  DateTime?
-  scannedAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([tradeDate, scanType, symbol])
-  @@index([tradeDate, scanType])
-  @@index([symbol, tradeDate])
-  @@index([status, tradeDate])
-}
-
-/// One trading-day session for the India auto paper-trader. Tracks the
-/// ₹1L daily budget, how much was deployed, and the end-of-day result.
-/// Created at the first trade of each IST session; finalised at 15:30 IST.
-model IndiaDaySession {
-  id              String   @id @default(cuid())
-  /// IST calendar date as `YYYY-MM-DD`.
-  tradeDate       String   @unique
-  /// Starting capital for the day (always ₹1,00,000).
-  startingCapital Float    @default(100000)
-  /// Capital deployed across all trades opened today.
-  deployed        Float    @default(0)
-  /// Realised P&L in ₹ across all closed trades.
-  realisedPnl     Float    @default(0)
-  /// Realised P&L as % of starting capital.
-  realisedPnlPct  Float    @default(0)
-  /// Total number of trades opened today.
-  totalTrades     Int      @default(0)
-  /// Trades that hit TP1.
-  wins            Int      @default(0)
-  /// Trades that hit SL.
-  losses          Int      @default(0)
-  /// Trades squared off at session close (EXPIRED).
-  expired         Int      @default(0)
-  /// Win rate = wins / (wins + losses). Null until at least one resolved trade.
-  winRate         Float?
-  /// Best trade P&L % today.
-  bestTradePct    Float?
-  /// Worst trade P&L % today.
-  worstTradePct   Float?
-  /// Average P&L % per trade.
-  avgTradePct     Float?
-  /// Maximum intraday drawdown % (from peak to trough during the session).
-  maxDrawdownPct  Float?
-  /// Whether the session has been finalised (post 15:30 IST).
-  finalised       Boolean  @default(false)
-  /// Compact trade IDs opened today (for fast cross-reference).
-  tradeIds        String[]
-  openedAt        DateTime @default(now())
-  finalisedAt     DateTime?
-  updatedAt       DateTime @updatedAt
-
-  @@index([tradeDate])
-  @@index([finalised, tradeDate])
 }
