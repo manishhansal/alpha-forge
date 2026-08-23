@@ -181,7 +181,7 @@ export function FilterTabs({ tabs, active, onChange, className }: FilterTabsProp
   return (
     <div
       className={cn(
-        "flex items-center gap-1 rounded-lg border border-[var(--color-border,theme(colors.border))] bg-muted/40 p-0.5",
+        "flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-0.5",
         className,
       )}
       role="tablist"
@@ -199,8 +199,8 @@ export function FilterTabs({ tabs, active, onChange, className }: FilterTabsProp
             className={cn(
               "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap",
               on
-                ? "bg-background text-foreground shadow-sm ring-1 ring-inset ring-border"
-                : "text-muted-foreground hover:text-foreground",
+                ? "bg-[var(--color-bg-elevated)] text-[var(--color-fg)] shadow-sm ring-1 ring-inset ring-[var(--color-border-strong)]"
+                : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
             )}
           >
             {tab.label}
@@ -248,12 +248,12 @@ export function PaginationStrip({
 
   return (
     <div className={cn("mt-3 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center", className)}>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-[11px] text-[var(--color-fg-muted)]">
         Showing{" "}
-        <span className="font-medium text-foreground/80 tabular-nums">
+        <span className="font-medium text-[var(--color-fg)] tabular-nums">
           {filteredTotal === 0 ? 0 : pageStart + 1}–{pageEnd}
         </span>{" "}
-        of <span className="font-medium text-foreground/80 tabular-nums">{filteredTotal}</span>
+        of <span className="font-medium text-[var(--color-fg)] tabular-nums">{filteredTotal}</span>
       </p>
       <nav aria-label="Pagination" className="flex items-center gap-1">
         <button
@@ -262,10 +262,10 @@ export function PaginationStrip({
           disabled={prevDisabled}
           aria-label="Previous page"
           className={cn(
-            "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors",
+            "inline-flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11px] font-medium text-[var(--color-fg-muted)] transition-colors",
             prevDisabled
               ? "cursor-not-allowed opacity-40"
-              : "hover:bg-muted hover:text-foreground",
+              : "hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
           )}
         >
           <ChevronLeft className="h-3 w-3" />
@@ -276,7 +276,7 @@ export function PaginationStrip({
             p === "…" ? (
               <span
                 key={`ellipsis-${i}`}
-                className="px-1.5 text-[11px] text-muted-foreground/60"
+                className="px-1.5 text-[11px] text-[var(--color-fg-subtle)]"
                 aria-hidden="true"
               >
                 …
@@ -292,8 +292,8 @@ export function PaginationStrip({
                 className={cn(
                   "h-7 min-w-7 rounded-md px-2 text-[11px] font-medium tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                   p === page
-                    ? "bg-muted text-foreground ring-1 ring-inset ring-border"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "bg-[var(--color-surface)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-border-strong)]"
+                    : "text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
                 )}
               >
                 {p}
@@ -307,10 +307,10 @@ export function PaginationStrip({
           disabled={nextDisabled}
           aria-label="Next page"
           className={cn(
-            "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors",
+            "inline-flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11px] font-medium text-[var(--color-fg-muted)] transition-colors",
             nextDisabled
               ? "cursor-not-allowed opacity-40"
-              : "hover:bg-muted hover:text-foreground",
+              : "hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-fg)]",
           )}
         >
           Next

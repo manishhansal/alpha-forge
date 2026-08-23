@@ -272,13 +272,13 @@ function TermStructureChart({ termStructure }: TermStructureChartProps) {
       className="w-full overflow-visible"
     >
       {/* Filled area */}
-      <path d={areaPath} fill="#3b82f620" />
+      <path d={areaPath} fill="color-mix(in oklch, var(--color-info) 12%, transparent)" />
 
       {/* Line */}
       <polyline
         points={linePoints}
         fill="none"
-        stroke="#3b82f6"
+        stroke="var(--color-info)"
         strokeWidth="1.5"
         strokeLinejoin="round"
         strokeLinecap="round"
@@ -490,8 +490,8 @@ export function VolSurface({
               onClick={() => setShow3D((v) => !v)}
               className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
                 show3D
-                  ? "border-blue-500 text-blue-500 bg-blue-500/10"
-                  : "border-[var(--color-border,#334155)] text-[var(--color-fg-subtle,#94a3b8)] hover:border-blue-400"
+                  ? "border-[var(--color-brand)] text-[var(--color-brand)] bg-[color-mix(in_oklch,var(--color-brand)_10%,transparent)]"
+                  : "border-[var(--color-border)] text-[var(--color-fg-subtle)] hover:border-[var(--color-border-strong)]"
               }`}
               aria-pressed={show3D}
             >

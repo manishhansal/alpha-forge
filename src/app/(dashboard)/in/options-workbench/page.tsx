@@ -300,7 +300,7 @@ function PayoffChart({ data, breakEvens, maxProfit, maxLoss }: PayoffChartProps)
             strokeOpacity={v === 0 ? 0.3 : 0.1}
             strokeWidth={v === 0 ? 1.5 : 1}
             strokeDasharray={v === 0 ? undefined : "4 3"}
-            className="text-muted-foreground"
+            className="text-[var(--color-fg-muted)]"
           />
         ))}
 
@@ -309,7 +309,7 @@ function PayoffChart({ data, breakEvens, maxProfit, maxLoss }: PayoffChartProps)
           <polygon
             key={`pos-${idx}`}
             points={pts}
-            fill="rgb(34 197 94 / 0.15)"
+            fill="color-mix(in oklch, var(--bull) 15%, transparent)"
           />
         ))}
 
@@ -318,7 +318,7 @@ function PayoffChart({ data, breakEvens, maxProfit, maxLoss }: PayoffChartProps)
           <polygon
             key={`neg-${idx}`}
             points={pts}
-            fill="rgb(239 68 68 / 0.15)"
+            fill="color-mix(in oklch, var(--bear) 15%, transparent)"
           />
         ))}
 
@@ -329,8 +329,8 @@ function PayoffChart({ data, breakEvens, maxProfit, maxLoss }: PayoffChartProps)
           stroke="hsl(var(--primary, 221 83% 53%))"
           strokeWidth={2}
           strokeLinejoin="round"
-          className="text-blue-500"
-          style={{ stroke: "rgb(59 130 246)" }}
+          className="text-[var(--color-info)]"
+          style={{ stroke: "var(--color-info)" }}
         />
 
         {/* Break-even vertical lines */}
@@ -734,13 +734,13 @@ export default function OptionsWorkbenchPage() {
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="p-2 rounded-lg bg-gradient-to-br from-violet-500/20 to-blue-500/20 shrink-0">
-            <TrendingUp className="h-5 w-5 text-violet-500" />
+            <TrendingUp className="h-5 w-5 text-[var(--color-brand)]" />
           </div>
           <div className="min-w-0">
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
               Options Workbench
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
+            <p className="text-xs sm:text-sm text-[var(--color-fg-muted)]">
               Multi-leg strategy builder — payoff diagram, greeks & break-evens
             </p>
           </div>
@@ -761,7 +761,7 @@ export default function OptionsWorkbenchPage() {
             value={symbolInput}
             onChange={(e) => setSymbolInput(e.target.value)}
             placeholder="Symbol (e.g. NIFTY)"
-            className="text-sm px-3 py-1.5 rounded-md bg-card/80 border border-border/60 outline-none focus:border-violet-400 transition-colors w-40"
+            className="text-sm px-3 py-1.5 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] outline-none focus:border-[var(--color-brand)] transition-colors w-40"
           />
           <Button type="submit" size="sm" disabled={chainLoading}>
             {chainLoading ? (
@@ -775,11 +775,11 @@ export default function OptionsWorkbenchPage() {
 
       {/* ── Chain error ── */}
       {chainError && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 flex items-start gap-3">
-          <AlertTriangle className="h-4 w-4 text-rose-500 mt-0.5 shrink-0" />
-          <div className="text-sm text-rose-500 flex-1">
+        <div className="rounded-xl border border-[color-mix(in_oklch,var(--bear)_30%,transparent)] bg-[color-mix(in_oklch,var(--bear)_5%,transparent)] p-3 flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 text-[var(--color-bear)] mt-0.5 shrink-0" />
+          <div className="text-sm text-[var(--color-bear)] flex-1">
             <span className="font-medium">Could not load option chain</span>
-            <span className="ml-2 text-xs text-rose-500/70">{chainError}</span>
+            <span className="ml-2 text-xs text-[var(--color-bear)]/70">{chainError}</span>
           </div>
           <Button
             size="sm"
@@ -795,21 +795,21 @@ export default function OptionsWorkbenchPage() {
 
       {/* ── Chain info badge ── */}
       {chain && (
-        <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-fg-muted)]">
           <span>
-            <span className="font-medium text-foreground">{chain.symbol}</span>{" "}
+            <span className="font-medium text-[var(--color-fg)]">{chain.symbol}</span>{" "}
             spot{" "}
-            <span className="font-medium text-foreground">
+            <span className="font-medium text-[var(--color-fg)]">
               {chain.spot?.toLocaleString("en-IN") ?? "—"}
             </span>
           </span>
           <span>
             Expiry{" "}
-            <span className="font-medium text-foreground">{chain.expiry}</span>
+            <span className="font-medium text-[var(--color-fg)]">{chain.expiry}</span>
           </span>
           <span>
             ATM Strike{" "}
-            <span className="font-medium text-violet-500">
+            <span className="font-medium text-[var(--color-brand)]">
               {atmStrike || "—"}
             </span>
           </span>
@@ -830,14 +830,14 @@ export default function OptionsWorkbenchPage() {
                   className={`text-xs px-2.5 py-1.5 rounded-md font-medium transition-colors ${
                     strategyId === s.id
                       ? "bg-violet-500 text-white"
-                      : "bg-muted text-muted-foreground hover:bg-muted/70"
+                      : "bg-muted text-[var(--color-fg-muted)] hover:bg-muted/70"
                   }`}
                 >
                   {s.label}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-[var(--color-fg-muted)]">
               {selectedStrategy.description}
             </p>
           </div>
@@ -854,7 +854,7 @@ export default function OptionsWorkbenchPage() {
             </div>
 
             {legs.length === 0 && (
-              <p className="text-xs text-muted-foreground py-2">
+              <p className="text-xs text-[var(--color-fg-muted)] py-2">
                 Select a strategy to populate legs.
               </p>
             )}
@@ -869,8 +869,8 @@ export default function OptionsWorkbenchPage() {
                   <span
                     className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
                       leg.quantity > 0
-                        ? "bg-emerald-500/20 text-emerald-500"
-                        : "bg-rose-500/20 text-rose-500"
+                        ? "bg-[color-mix(in_oklch,var(--bull)_18%,transparent)] text-[var(--color-bull)]"
+                        : "bg-[color-mix(in_oklch,var(--bear)_18%,transparent)] text-[var(--color-bear)]"
                     }`}
                   >
                     {leg.quantity > 0 ? "BUY" : "SELL"}
@@ -882,7 +882,7 @@ export default function OptionsWorkbenchPage() {
                     onChange={(e) =>
                       updateLeg(leg.id, "flag", e.target.value as "CE" | "PE")
                     }
-                    className="text-xs px-2 py-1 rounded bg-muted border border-border/40 outline-none"
+                    className="text-xs px-2 py-1 rounded bg-muted border border-[var(--color-border)] outline-none"
                     aria-label={`Leg ${idx + 1} option type`}
                   >
                     <option value="CE">CE</option>
@@ -891,7 +891,7 @@ export default function OptionsWorkbenchPage() {
 
                   {/* Strike */}
                   <div className="flex flex-col">
-                    <label className="text-[9px] text-muted-foreground mb-0.5">
+                    <label className="text-[9px] text-[var(--color-fg-muted)] mb-0.5">
                       Strike
                     </label>
                     <input
@@ -900,14 +900,14 @@ export default function OptionsWorkbenchPage() {
                       onChange={(e) =>
                         updateLeg(leg.id, "strike", parseFloat(e.target.value) || 0)
                       }
-                      className="text-xs px-2 py-1 rounded bg-muted border border-border/40 outline-none w-full"
+                      className="text-xs px-2 py-1 rounded bg-muted border border-[var(--color-border)] outline-none w-full"
                       aria-label={`Leg ${idx + 1} strike`}
                     />
                   </div>
 
                   {/* Premium */}
                   <div className="flex flex-col">
-                    <label className="text-[9px] text-muted-foreground mb-0.5">
+                    <label className="text-[9px] text-[var(--color-fg-muted)] mb-0.5">
                       Premium
                     </label>
                     <input
@@ -916,7 +916,7 @@ export default function OptionsWorkbenchPage() {
                       onChange={(e) =>
                         updateLeg(leg.id, "premium", parseFloat(e.target.value) || 0)
                       }
-                      className="text-xs px-2 py-1 rounded bg-muted border border-border/40 outline-none w-full"
+                      className="text-xs px-2 py-1 rounded bg-muted border border-[var(--color-border)] outline-none w-full"
                       step="0.05"
                       min="0"
                       aria-label={`Leg ${idx + 1} premium`}
@@ -925,7 +925,7 @@ export default function OptionsWorkbenchPage() {
 
                   {/* Qty */}
                   <div className="flex flex-col">
-                    <label className="text-[9px] text-muted-foreground mb-0.5">
+                    <label className="text-[9px] text-[var(--color-fg-muted)] mb-0.5">
                       Qty
                     </label>
                     <input
@@ -934,7 +934,7 @@ export default function OptionsWorkbenchPage() {
                       onChange={(e) =>
                         updateLeg(leg.id, "quantity", parseInt(e.target.value, 10) || 1)
                       }
-                      className="text-xs px-2 py-1 rounded bg-muted border border-border/40 outline-none w-full"
+                      className="text-xs px-2 py-1 rounded bg-muted border border-[var(--color-border)] outline-none w-full"
                       aria-label={`Leg ${idx + 1} quantity`}
                     />
                   </div>
@@ -943,7 +943,7 @@ export default function OptionsWorkbenchPage() {
                   {strategyId === "custom" ? (
                     <button
                       onClick={() => removeLeg(leg.id)}
-                      className="text-muted-foreground hover:text-rose-500 transition-colors text-xs px-1"
+                      className="text-[var(--color-fg-muted)] hover:text-[var(--color-bear)] transition-colors text-xs px-1"
                       aria-label={`Remove leg ${idx + 1}`}
                     >
                       ✕
@@ -979,7 +979,7 @@ export default function OptionsWorkbenchPage() {
             </div>
 
             {scanMessage && (
-              <p className="text-xs text-muted-foreground bg-muted/50 rounded px-3 py-2">
+              <p className="text-xs text-[var(--color-fg-muted)] bg-[var(--color-surface)]/50 rounded px-3 py-2">
                 {scanMessage}
               </p>
             )}
@@ -994,13 +994,13 @@ export default function OptionsWorkbenchPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold">Payoff at Expiry</h2>
                 <div className="flex gap-4 text-xs">
-                  <span className="text-emerald-500">
+                  <span className="text-[var(--color-bull)]">
                     Max profit:{" "}
                     {result.maxProfit === Infinity
                       ? "Unlimited"
                       : `₹${result.maxProfit.toFixed(0)}`}
                   </span>
-                  <span className="text-rose-500">
+                  <span className="text-[var(--color-bear)]">
                     Max loss:{" "}
                     {result.maxLoss === -Infinity
                       ? "Unlimited"
@@ -1017,7 +1017,7 @@ export default function OptionsWorkbenchPage() {
               />
             </div>
           ) : (
-            <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">
+            <div className="glass rounded-2xl p-8 text-center text-sm text-[var(--color-fg-muted)]">
               Enter leg details and click <strong>Calculate</strong> to see the
               payoff diagram.
             </div>
@@ -1031,7 +1031,7 @@ export default function OptionsWorkbenchPage() {
                 {result.breakEvens.map((be, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2"
+                    className="flex items-center gap-2 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] border border-[color-mix(in_oklch,var(--warning)_30%,transparent)] rounded-lg px-3 py-2"
                   >
                     <div className="w-2 h-2 rounded-full bg-yellow-500 shrink-0" />
                     <span className="text-sm font-medium">
@@ -1043,7 +1043,7 @@ export default function OptionsWorkbenchPage() {
                 ))}
               </div>
               {chain?.spot && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   Spot is currently{" "}
                   <span className="font-medium">
                     {chain.spot.toLocaleString("en-IN")}
@@ -1052,7 +1052,7 @@ export default function OptionsWorkbenchPage() {
                     <>
                       {" "}
                       — profit zone:{" "}
-                      <span className="text-emerald-500 font-medium">
+                      <span className="text-[var(--color-bull)] font-medium">
                         below {result.breakEvens[0].toFixed(0)} or above{" "}
                         {result.breakEvens[1].toFixed(0)}
                       </span>
@@ -1066,7 +1066,7 @@ export default function OptionsWorkbenchPage() {
           {result && result.breakEvens.length === 0 && (
             <div className="glass rounded-2xl p-4 space-y-2">
               <h2 className="text-sm font-semibold">Break-even Points</h2>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-[var(--color-fg-muted)]">
                 No break-even in the current spot range (±20%). The strategy
                 may be entirely profitable or entirely losing at expiry within
                 this range.
@@ -1105,29 +1105,29 @@ export default function OptionsWorkbenchPage() {
                 ).map(({ label, value, hint }) => (
                   <div
                     key={label}
-                    className="bg-muted/40 rounded-lg p-3 space-y-1"
+                    className="bg-[var(--color-surface)]/40 rounded-lg p-3 space-y-1"
                   >
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                    <div className="text-[10px] text-[var(--color-fg-muted)] uppercase tracking-wide">
                       {label}
                     </div>
                     <div
                       className={`text-lg font-semibold tabular-nums ${
                         value > 0
-                          ? "text-emerald-500"
+                          ? "text-[var(--color-bull)]"
                           : value < 0
-                            ? "text-rose-500"
-                            : "text-foreground"
+                            ? "text-[var(--color-bear)]"
+                            : "text-[var(--color-fg)]"
                       }`}
                     >
                       {value.toFixed(4)}
                     </div>
-                    <div className="text-[9px] text-muted-foreground">{hint}</div>
+                    <div className="text-[9px] text-[var(--color-fg-muted)]">{hint}</div>
                   </div>
                 ))}
               </div>
 
               {Math.abs(netGreeks.delta) < 0.05 && (
-                <p className="text-xs text-emerald-500/80">
+                <p className="text-xs text-[var(--color-bull)]/80">
                   ✓ Near delta-neutral (Δ ≈ 0)
                 </p>
               )}

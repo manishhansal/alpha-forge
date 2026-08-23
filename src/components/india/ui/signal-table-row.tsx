@@ -58,19 +58,19 @@ export function kindClass(kind?: string): string {
     case "BULL_VOLUME":
     case "SHORT_COVERING":
     case "RANGE_EXPANSION":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400";
+      return "bg-[color-mix(in_oklch,var(--bull)_12%,transparent)] text-[var(--bull)]";
     case "SHORT_BUILDUP":
     case "BEARISH":
     case "LOSER":
     case "BEAR_VOLUME":
     case "LONG_UNWINDING":
-      return "bg-rose-500/15 text-rose-700 dark:text-rose-400";
+      return "bg-[color-mix(in_oklch,var(--bear)_12%,transparent)] text-[var(--bear)]";
     case "ELEVATED":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+      return "bg-[color-mix(in_oklch,var(--warning)_12%,transparent)] text-[var(--warning)]";
     case "LOW":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-400";
+      return "bg-[color-mix(in_oklch,var(--info)_12%,transparent)] text-[var(--info)]";
     default:
-      return "bg-muted text-muted-foreground";
+      return "bg-[var(--color-surface)] text-[var(--color-fg-muted)]";
   }
 }
 
@@ -118,8 +118,8 @@ function DetailPanel({
                 className={cn(
                   "font-semibold tabular",
                   (hit.changePct ?? 0) >= 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-600 dark:text-rose-400",
+                    ? "text-[var(--color-bull)]"
+                    : "text-[var(--color-bear)]",
                 )}
               >
                 {hit.changePct != null ? fmtPct(hit.changePct) : "—"}
@@ -171,9 +171,9 @@ function DetailPanel({
                 {hit.stopLoss != null && (
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">Stop Loss</span>
-                    <span className="font-semibold tabular text-rose-600 dark:text-rose-400">₹{fmt(hit.stopLoss)}</span>
+                    <span className="font-semibold tabular text-[var(--color-bear)]">₹{fmt(hit.stopLoss)}</span>
                     {hit.entry != null && (
-                      <span className="text-[10px] tabular text-rose-500">
+                      <span className="text-[10px] tabular text-[var(--color-bear)]">
                         {(((hit.stopLoss - hit.entry) / hit.entry) * 100).toFixed(2)}%
                       </span>
                     )}
@@ -182,9 +182,9 @@ function DetailPanel({
                 {hit.tp1 != null && (
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP1</span>
-                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp1)}</span>
+                    <span className="font-semibold tabular text-[var(--color-bull)]">₹{fmt(hit.tp1)}</span>
                     {hit.entry != null && (
-                      <span className="text-[10px] tabular text-emerald-500">
+                      <span className="text-[10px] tabular text-[var(--color-bull)]">
                         +{(((hit.tp1 - hit.entry) / hit.entry) * 100).toFixed(2)}%
                       </span>
                     )}
@@ -193,9 +193,9 @@ function DetailPanel({
                 {hit.tp2 != null && (
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP2</span>
-                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp2)}</span>
+                    <span className="font-semibold tabular text-[var(--color-bull)]">₹{fmt(hit.tp2)}</span>
                     {hit.entry != null && (
-                      <span className="text-[10px] tabular text-emerald-500">
+                      <span className="text-[10px] tabular text-[var(--color-bull)]">
                         +{(((hit.tp2 - hit.entry) / hit.entry) * 100).toFixed(2)}%
                       </span>
                     )}
@@ -204,9 +204,9 @@ function DetailPanel({
                 {hit.tp3 != null && (
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] uppercase tracking-wide text-[var(--color-fg-subtle)]">TP3 (Stretch)</span>
-                    <span className="font-semibold tabular text-emerald-600 dark:text-emerald-400">₹{fmt(hit.tp3)}</span>
+                    <span className="font-semibold tabular text-[var(--color-bull)]">₹{fmt(hit.tp3)}</span>
                     {hit.entry != null && (
-                      <span className="text-[10px] tabular text-emerald-500">
+                      <span className="text-[10px] tabular text-[var(--color-bull)]">
                         +{(((hit.tp3 - hit.entry) / hit.entry) * 100).toFixed(2)}%
                       </span>
                     )}
@@ -359,8 +359,8 @@ export function SignalTableRow({
           className={cn(
             "p-2.5 text-right tabular text-sm font-semibold",
             up
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-rose-600 dark:text-rose-400",
+              ? "text-[var(--color-bull)]"
+              : "text-[var(--color-bear)]",
           )}
         >
           {hit.changePct != null ? fmtPct(hit.changePct) : "—"}
