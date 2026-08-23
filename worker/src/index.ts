@@ -6,6 +6,7 @@ import { startIndiaFnoTrendTrackJob } from "./jobs/india-fno-trend-track";
 import { startIndiaEodSquareOffJob } from "./jobs/india-eod-squareoff";
 import { startIndiaAutoTraderJob } from "./jobs/india-auto-trader";
 import { startIndiaOptionChainCaptureJob } from "./jobs/india-oc-capture";
+import { startIndiaScannerJob } from "./jobs/india-scanner";
 import { startIndiaScalperJob } from "./jobs/india-scalper";
 import { startScalperJob } from "./jobs/scalper";
 import { startSignalIngestJob } from "./jobs/signal-ingest";
@@ -101,6 +102,9 @@ async function bootstrap(): Promise<void> {
 
   const strategyLab = startStrategyLabJob();
   jobs.push({ name: strategyLab.name, stop: strategyLab.stop });
+
+  const indiaScanner = startIndiaScannerJob();
+  jobs.push({ name: indiaScanner.name, stop: indiaScanner.stop });
 
   log.info("worker ready", { jobs: jobs.map((j) => j.name) });
 }
