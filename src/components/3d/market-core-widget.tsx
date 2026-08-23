@@ -90,8 +90,8 @@ export function MarketCoreWidget({ niftyBias, height = 220 }: MarketCoreWidgetPr
   const volatility = normaliseVix(vixValue);
   const breadth    = computeBreadth(indices, sectors);
 
-  // Build bottom stat row
-  const stats = [
+  // Only show stats row when there's enough vertical space (height > 140)
+  const stats = height > 140 ? [
     {
       label: "VIX",
       value: vixValue.toFixed(1),
@@ -107,7 +107,7 @@ export function MarketCoreWidget({ niftyBias, height = 220 }: MarketCoreWidgetPr
       value: `${Math.round(volatility * 100)}%`,
       positive: volatility < 0.4,
     },
-  ];
+  ] : [];
 
   return (
     <MarketCoreCard

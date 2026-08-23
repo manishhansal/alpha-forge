@@ -340,10 +340,10 @@ export default function MsbDashboard() {
           </Button>
         </motion.div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4 perspective-1000">
-          {/* Market Intelligence Core — 3D regime visualizer */}
-          <div className="col-span-2 sm:col-span-3 lg:col-span-1 row-span-1">
-            <MarketCoreWidget niftyBias={nifty.bias} height={200} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4 perspective-1000 items-stretch">
+          {/* Market Intelligence Core — compact 3D regime card, same height as index cards */}
+          <div className="col-span-1 row-span-1 min-h-[180px]">
+            <MarketCoreWidget niftyBias={nifty.bias} height={120} />
           </div>
 
           <AnimatePresence>

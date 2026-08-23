@@ -282,53 +282,60 @@ export function MarketCoreCard({
   stats      = [],
 }: CoreCardProps) {
   const label = REGIME_LABEL[regime];
+  // At compact heights (≤140px) only show the orb + regime label inline,
+  // skip the separator and stats row so nothing overflows.
+  const compact = height <= 140;
 
   return (
-    <div className="relative flex flex-col items-center glass rounded-2xl overflow-hidden p-4">
-      {/* 3D canvas */}
-      <MarketIntelligenceCore
-        regime={regime}
-        volatility={volatility}
-        breadth={breadth}
-        vix={vix}
-        height={height}
-      />
-
-      {/* Regime badge */}
-      <div className="mt-2 flex flex-col items-center gap-0.5">
-        <span className={`text-[11px] font-bold uppercase tracking-[0.22em] ${label.cls}`}>
-          {label.text}
-        </span>
-        <span className="text-[9px] uppercase tracking-[0.18em] text-[var(--color-fg-subtle)]">
-          Market Regime
-        </span>
+    <div className="relative flex flex-col items-center justify-between glass rounded-2xl overflow-hidden p-3 h-full min-h-0">
+      {/* 3D canvas — fills available width */}
+      <div className="w-full flex-1 min-h-0">
+        <MarketIntelligenceCore
+          regime={regime}
+          volatility={volatility}
+          breadth={breadth}
+          vix={vix}
+          height={height}
+        />
       </div>
 
-      {/* Stats row */}
-      {stats.length > 0 && (
-        <div className="mt-3 w-full separator-gradient mb-3" />
-      )}
-      {stats.length > 0 && (
-        <div className="flex w-full justify-around">
-          {stats.map((s) => (
-            <div key={s.label} className="flex flex-col items-center gap-0.5">
-              <span
-                className={`text-sm font-bold num ${
-                  s.positive === true
-                    ? "text-[var(--color-bull)]"
-                    : s.positive === false
-                      ? "text-[var(--color-bear)]"
-                      : "text-[var(--color-fg)]"
-                }`}
-              >
-                {s.value}
-              </span>
-              <span className="text-[9px] uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
-                {s.label}
-              </span>
-            </div>
-          ))}
-        </div>
+      {/* Regime label */}
+      <div className="mt-1 flex flex-col items-center gap-0.5">
+        <span className={`text-[10px] font-bold uppercase tracking-[0.20em] ${label.cls}`}>
+          {label.text}
+        </span>
+        {!compact && (
+          <span className="text-[8px] uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
+            Market Regime
+          </span>
+        )}
+      </div>
+
+      {/* Stats row — only when not compact */}
+      {!compact && stats.length > 0 && (
+        <>
+          <div className="mt-2 w-full separator-gradient mb-2" />
+          <div className="flex w-full justify-around">
+            {stats.map((s) => (
+              <div key={s.label} className="flex flex-col items-center gap-0.5">
+                <span
+                  className={`text-xs font-bold num ${
+                    s.positive === true
+                      ? "text-[var(--color-bull)]"
+                      : s.positive === false
+                        ? "text-[var(--color-bear)]"
+                        : "text-[var(--color-fg)]"
+                  }`}
+                >
+                  {s.value}
+                </span>
+                <span className="text-[8px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
+                  {s.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
