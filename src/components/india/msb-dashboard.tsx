@@ -44,6 +44,7 @@ import { MarketCoreWidget } from "@/components/3d/market-core-widget";
 import { notify } from "@/lib/toast";
 import { SectorStocksTable } from "@/components/india/options/sector-stocks-table";
 import type { StockRow as SectorStockRow } from "@/components/india/options/sector-stocks-table";
+import { fmtTime } from "@/lib/utils";
 
 type IndexQuote = {
   name: string;
@@ -383,7 +384,7 @@ export default function MsbDashboard() {
             </div>
             <span className="text-[10px] sm:text-xs text-[var(--color-fg-subtle)]">
               {snapshot.fetchedAt
-                ? `Updated ${new Date(snapshot.fetchedAt).toLocaleTimeString()}`
+                ? `Updated ${fmtTime(snapshot.fetchedAt)}`
                 : "—"}
             </span>
           </div>
@@ -1102,7 +1103,7 @@ function SectorStocksModal({
                         <span>·</span>
                         <span>
                           updated{" "}
-                          {new Date(resp.fetchedAt).toLocaleTimeString()}
+                          {fmtTime(resp.fetchedAt)}
                         </span>
                       </>
                     )}
@@ -1324,7 +1325,7 @@ function RangeExpansionSection() {
             <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
             {data?.fetchedAt && (
               <span className="text-[10px] text-muted-foreground">
-                {new Date(data.fetchedAt).toLocaleTimeString()}
+                {fmtTime(data.fetchedAt)}
               </span>
             )}
             <Link
@@ -1687,7 +1688,7 @@ function TopPicksSection() {
           <div className="flex items-center gap-3 shrink-0">
             {data?.fetchedAt && (
               <span className="text-[10px] text-muted-foreground">
-                Updated {new Date(data.fetchedAt).toLocaleTimeString()}
+                Updated {fmtTime(data.fetchedAt)}
               </span>
             )}
             {data?.universe != null && (

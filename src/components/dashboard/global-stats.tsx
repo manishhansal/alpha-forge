@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { formatCompact } from "@/lib/utils";
+import { formatCompact, fmtTime } from "@/lib/utils";
 
 interface GlobalStatsProps {
   totalMarketCap: number;
@@ -48,7 +48,7 @@ export function GlobalStats({
           <Stat
             label="ETH Dominance"
             value={`${ethDominance.toFixed(2)}%`}
-            hint={`Updated ${new Date(generatedAt).toLocaleTimeString()}`}
+            hint={`Updated ${fmtTime(generatedAt)}`}
           />
         </div>
       </CardContent>

@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AccuracySummary } from "@/features/backtesting/history";
+import { fmtDateTime } from "@/lib/utils";
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
@@ -127,7 +128,7 @@ export function AccuracyPanel({ summary }: { summary: AccuracySummary }) {
                   <div className="flex items-center gap-3 text-[var(--color-fg-muted)]">
                     <span className={`num ${pnlClass(row.pnlPct)}`}>{pnlText(row.pnlPct)}</span>
                     <span className="text-[11px] text-[var(--color-fg-subtle)]">
-                      {row.closedAt ? new Date(row.closedAt).toLocaleString() : "—"}
+                      {row.closedAt ? fmtDateTime(row.closedAt) : "—"}
                     </span>
                   </div>
                 </li>

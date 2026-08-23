@@ -24,6 +24,7 @@ import {
 import { useIndiaScannerStore } from "@/store/india/scannerStore";
 import { useScanner } from "@/hooks/india/useScanner";
 import { fmtPct } from "@/lib/india/format";
+import { fmtTime } from "@/lib/utils";
 import type { ScannerHit, ScannerType } from "@/types/india/scanner";
 
 // Total columns: chevron + Symbol + Price + Chg% + Metric + Tag + Note = 7
@@ -114,7 +115,7 @@ export default function ScannerPage() {
         </div>
         {result?.fetchedAt && (
           <span className="text-[10px] text-[var(--color-fg-muted)]">
-            updated {new Date(result.fetchedAt).toLocaleTimeString()}
+            updated {fmtTime(result.fetchedAt)}
           </span>
         )}
       </motion.div>

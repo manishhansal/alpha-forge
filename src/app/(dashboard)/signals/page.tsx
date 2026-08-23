@@ -10,6 +10,7 @@ import { getAccuracySummary } from "@/features/backtesting/history";
 import { getBestTimeStatus } from "@/features/best-time/engine";
 import { getSentiment } from "@/features/sentiment/fetch-sentiment";
 import { getSignals } from "@/features/signals/fetch-signals";
+import { fmtDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -20,7 +21,7 @@ async function SignalsList() {
   return (
     <>
       <p className="text-[11px] text-[var(--color-fg-subtle)]">
-        Generated {new Date(data.generatedAt).toLocaleString()} · refreshes every 30s
+        Generated {fmtDateTime(data.generatedAt)} · refreshes every 30s
       </p>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {data.signals.map((s) => (

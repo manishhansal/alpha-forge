@@ -4,6 +4,7 @@ import { Bell, CheckCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { fmtDateTime } from "@/lib/utils";
 
 interface NotificationApiItem {
   id: string;
@@ -168,7 +169,7 @@ export function NotificationsBell() {
                         <p className="truncate font-medium text-[var(--color-fg)]">{n.title}</p>
                         <p className="mt-0.5 text-[var(--color-fg-muted)]">{n.body}</p>
                         <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
-                          {new Date(n.createdAt).toLocaleString()}
+                          {fmtDateTime(n.createdAt)}
                           {n.symbol ? ` · ${n.symbol}` : ""}
                         </p>
                       </div>

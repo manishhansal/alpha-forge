@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn, formatPrice, fmtDateTime } from "@/lib/utils";
 import type { PaperTradeStatus } from "@/features/scalping/types";
 import type { SymbolId } from "@/types/market";
 
@@ -190,10 +190,10 @@ export function JournalCard() {
                           : "—"}
                       </Td>
                       <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {new Date(t.openedAt).toLocaleString()}
+                        {fmtDateTime(t.openedAt)}
                       </Td>
                       <Td align="right" className="text-[var(--color-fg-subtle)]">
-                        {t.closedAt ? new Date(t.closedAt).toLocaleString() : "—"}
+                        {t.closedAt ? fmtDateTime(t.closedAt) : "—"}
                       </Td>
                       <Td>
                         {editing === t.id ? (

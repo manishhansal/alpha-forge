@@ -41,3 +41,31 @@ export function classifyChange(change: number): "bull" | "bear" | "neutral" {
   if (change < -0.05) return "bear";
   return "neutral";
 }
+
+/**
+ * Format an epoch-ms timestamp as a wall-clock time string.
+ * Uses the viewer's LOCAL timezone but pins en-GB locale (24h, no AM/PM)
+ * so the output is identical on Node.js server and browser.
+ * Safe to call in both SSR and client contexts.
+ *
+ * Output: "HH:MM:SS"  e.g. "13:28:06"
+ */
+export function fmtTime(ts: number | string | Date | null | undefined): string {
+  if (ts == null) return "—";
+  const d = ts instanceof Date ? ts : new Date(ts);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("en-GB"); // en-GB always 24h: "13:28:06"
+}
+
+/**
+ * Format an epoch-ms timestamp as a compact date+time string.
+ * Pins en-GB locale so output matches between server and browser.
+ *
+ * Output: "DD/MM/YYYY, HH:MM:SS"  e.g. "15/08/2025, 13:28:06"
+ */
+export function fmtDateTime(ts: number | string | Date | null | undefined): string {
+  if (ts == null) return "—";
+  const d = ts instanceof Date ? ts : new Date(ts);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-GB"); // en-GB: always 24h, DD/MM/YYYY
+}

@@ -26,7 +26,7 @@ import type {
   IndiaScalpSignalsResponse,
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
-import { cn } from "@/lib/utils";
+import { cn, fmtTime } from "@/lib/utils";
 
 const TIMEFRAMES: IndiaScalpTimeframe[] = ["1m", "5m", "15m"];
 const POLL_MS = 30_000;
@@ -213,7 +213,7 @@ export function IndiaLiveSignals({ initial }: Props) {
             {activeForAnyTf.size} of {selected.size} strategies on {tfLabel} ·{" "}
             {loading
               ? "Refreshing…"
-              : `Updated ${new Date(generatedAt).toLocaleTimeString()}`}
+              : `Updated ${fmtTime(generatedAt)}`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
