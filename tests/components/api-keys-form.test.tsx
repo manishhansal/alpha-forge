@@ -3,16 +3,23 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiKeysForm } from "@/components/settings/api-keys-form";
+import { WHATSAPP_EVENT_TYPES } from "@/features/whatsapp/shared";
+
+const defaultWhatsAppProps = {
+  evolutionConfigured: false,
+  maskedPhone: null,
+  initialPrefs: { enabledEvents: Array.from(WHATSAPP_EVENT_TYPES) },
+};
 
 describe("components/settings/ApiKeysForm", () => {
   it("shows the API secret field for a crypto exchange (default)", () => {
-    render(<ApiKeysForm encryptionAvailable stored={[]} />);
+    render(<ApiKeysForm encryptionAvailable stored={[]} {...defaultWhatsAppProps} />);
     expect(screen.getByLabelText("API secret")).toBeInTheDocument();
     expect(screen.queryByLabelText("Client code")).not.toBeInTheDocument();
   });
 
   it("lists Angel One in the exchange dropdown", () => {
-    render(<ApiKeysForm encryptionAvailable stored={[]} />);
+    render(<ApiKeysForm encryptionAvailable stored={[]} {...defaultWhatsAppProps} />);
     const select = screen.getByLabelText("Exchange") as HTMLSelectElement;
     const options = Array.from(select.options).map((o) => o.textContent ?? "");
     expect(options.some((o) => /angel one/i.test(o))).toBe(true);
@@ -20,7 +27,7 @@ describe("components/settings/ApiKeysForm", () => {
 
   it("swaps to Angel One credential fields when Angel One is selected", async () => {
     const user = userEvent.setup();
-    render(<ApiKeysForm encryptionAvailable stored={[]} />);
+    render(<ApiKeysForm encryptionAvailable stored={[]} {...defaultWhatsAppProps} />);
 
     await user.selectOptions(screen.getByLabelText("Exchange"), "angel");
 

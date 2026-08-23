@@ -19,14 +19,28 @@ import {
   type Exchange,
   type StoredKeySummary,
 } from "@/features/settings/api-keys-shared";
+import { type WhatsAppPreferences } from "@/features/whatsapp/shared";
+import { WhatsAppSection } from "@/components/settings/whatsapp-section";
 import { fmtDateTime } from "@/lib/utils";
 
 interface ApiKeysFormProps {
   encryptionAvailable: boolean;
   stored: StoredKeySummary[];
+  /** Whether WHATSAPP_EVOLUTION_API_URL is configured server-side. */
+  evolutionConfigured: boolean;
+  /** Masked phone number if one is stored, otherwise null. */
+  maskedPhone: string | null;
+  /** Initial WhatsApp notification preferences loaded server-side. */
+  initialPrefs: WhatsAppPreferences;
 }
 
-export function ApiKeysForm({ encryptionAvailable, stored }: ApiKeysFormProps) {
+export function ApiKeysForm({
+  encryptionAvailable,
+  stored,
+  evolutionConfigured,
+  maskedPhone,
+  initialPrefs,
+}: ApiKeysFormProps) {
   const [exchange, setExchange] = useState<Exchange>(SUPPORTED_EXCHANGES[0]);
   const [showSecret, setShowSecret] = useState(false);
 
@@ -282,6 +296,13 @@ export function ApiKeysForm({ encryptionAvailable, stored }: ApiKeysFormProps) {
           </p>
         ) : null}
       </div>
+
+      {/* WhatsApp Notifications — Requirements 11.1, 11.2 */}
+      <WhatsAppSection
+        evolutionConfigured={evolutionConfigured}
+        maskedPhone={maskedPhone}
+        initialPrefs={initialPrefs}
+      />
     </div>
   );
 }
