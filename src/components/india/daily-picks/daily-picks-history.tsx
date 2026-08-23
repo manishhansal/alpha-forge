@@ -117,8 +117,8 @@ function HistoryDay({ day }: { day: DailyPicksHistoryDay }) {
           </span>
         </span>
         <span className="flex items-center gap-3 text-[11px] text-[var(--color-fg-muted)]">
-          <span className="text-[var(--color-bull)]">{day.summary.targetHit} hit</span>
-          <span className="text-[var(--color-bear)]">{day.summary.stopHit} stop</span>
+          <span style={{ color: "var(--color-data-positive)" }}>{day.summary.targetHit} hit</span>
+          <span style={{ color: "var(--color-data-negative)" }}>{day.summary.stopHit} stop</span>
           {day.summary.closed > 0 ? (
             <span>{day.summary.closed} squared off</span>
           ) : null}
@@ -155,7 +155,7 @@ function HistoryDayTable({ picks }: { picks: DailyPick[] }) {
 
   return (
     <div className="border-t border-[var(--color-border)]">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" data-density="compact">
         <table className="w-full text-left text-[11px]">
           <thead className="text-[10px] uppercase tracking-wider text-[var(--color-fg-subtle)]">
             <tr className="border-b border-[var(--color-border)]">
@@ -187,10 +187,8 @@ function HistoryDayTable({ picks }: { picks: DailyPick[] }) {
                   {p.displayName}
                 </td>
                 <td
-                  className={cn(
-                    "px-3 py-2 font-medium",
-                    p.direction === "BEARISH" ? "text-bear" : "text-bull",
-                  )}
+                  className="px-3 py-2 font-medium"
+                  style={{ color: p.direction === "BEARISH" ? "var(--color-data-negative)" : "var(--color-data-positive)" }}
                 >
                   {p.direction === "BEARISH" ? "SHORT" : "LONG"}
                 </td>
@@ -198,14 +196,14 @@ function HistoryDayTable({ picks }: { picks: DailyPick[] }) {
                 <td className="num px-3 py-2 text-right">₹{fmt(p.stopLoss)}</td>
                 <td className="num px-3 py-2 text-right">₹{fmt(p.target)}</td>
                 <td
-                  className={cn(
-                    "num px-3 py-2 text-right font-medium",
-                    p.pnlPct == null
-                      ? "text-[var(--color-fg-muted)]"
+                  className="num px-3 py-2 text-right font-medium"
+                  style={{
+                    color: p.pnlPct == null
+                      ? "var(--color-fg-muted)"
                       : p.pnlPct >= 0
-                        ? "text-bull"
-                        : "text-bear",
-                  )}
+                        ? "var(--color-data-positive)"
+                        : "var(--color-data-negative)",
+                  }}
                 >
                   {p.pnlPct == null ? "—" : fmtPct(p.pnlPct)}
                 </td>
@@ -241,13 +239,13 @@ function HistoryDayTable({ picks }: { picks: DailyPick[] }) {
 }
 
 function OutcomeTag({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    TARGET_HIT: { label: "Target", cls: "text-bull" },
-    STOP_HIT: { label: "Stop", cls: "text-bear" },
-    OPEN: { label: "Open", cls: "text-[var(--color-fg-muted)]" },
-    CLOSED: { label: "Squared off", cls: "text-[var(--color-fg-muted)]" },
-    EXPIRED: { label: "Expired", cls: "text-[var(--color-warning)]" },
+  const map: Record<string, { label: string; color: string }> = {
+    TARGET_HIT: { label: "Target", color: "var(--color-data-positive)" },
+    STOP_HIT: { label: "Stop", color: "var(--color-data-negative)" },
+    OPEN: { label: "Open", color: "var(--color-fg-muted)" },
+    CLOSED: { label: "Squared off", color: "var(--color-fg-muted)" },
+    EXPIRED: { label: "Expired", color: "var(--color-warning)" },
   };
-  const m = map[status] ?? map.OPEN;
-  return <span className={cn("font-medium", m.cls)}>{m.label}</span>;
+  const m = map[status] ?? { label: status, color: "var(--color-fg-muted)" };
+  return <span className="font-medium" style={{ color: m.color }}>{m.label}</span>;
 }

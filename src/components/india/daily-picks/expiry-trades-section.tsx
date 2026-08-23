@@ -11,6 +11,7 @@ import type {
 } from "@/features/india/expiry-trades/engine";
 import type { ExpiryTradesResponse } from "@/features/india/expiry-trades/builder";
 import { fmt } from "@/lib/india/format";
+import { useRegime } from "@/lib/regime-context";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -31,6 +32,32 @@ export function ExpiryTradesSection({
 }: Props) {
   const [data, setData] = React.useState<ExpiryTradesResponse>(initialData);
   const [refreshing, setRefreshing] = React.useState(false);
+  const { regime } = useRegime();
+
+  // Live countdown to 15:30 IST (10:00 UTC)
+  const [secondsLeft, setSecondsLeft] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    const computeSecondsLeft = () => {
+      const now = new Date();
+      const close = new Date(now);
+      close.setUTCHours(10, 0, 0, 0); // 15:30 IST = 10:00 UTC
+      // If already past close today, target tomorrow's close
+      if (now.getTime() > close.getTime()) {
+        close.setUTCDate(close.getUTCDate() + 1);
+      }
+      const diff = Math.max(0, Math.floor((close.getTime() - now.getTime()) / 1000));
+      setSecondsLeft(diff);
+    };
+    computeSecondsLeft();
+    const id = setInterval(computeSecondsLeft, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const h = Math.floor(secondsLeft / 3600);
+  const m = Math.floor((secondsLeft % 3600) / 60);
+  const s = secondsLeft % 60;
+  const countdownLabel = `${h}h ${m}m ${String(s).padStart(2, "0")}s`;
 
   const refresh = React.useCallback(
     async (signal?: AbortSignal) => {
@@ -60,16 +87,29 @@ export function ExpiryTradesSection({
   if (!data.isExpiryDay || data.indexes.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-[color-mix(in_oklch,var(--color-warning)_40%,transparent)] bg-[color-mix(in_oklch,var(--color-warning)_6%,transparent)] p-4">
+    <section
+      className="flex flex-col gap-4 rounded-2xl border bg-[color-mix(in_oklch,var(--color-warning)_6%,transparent)] p-4"
+      style={{
+        borderColor: `var(--color-regime-${regime.toLowerCase().replace("_", "")}, var(--color-warning))`,
+      }}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-[color-mix(in_oklch,var(--color-warning)_18%,transparent)] text-[var(--color-warning)]">
             <Bomb className="h-4 w-4" />
           </span>
           <div className="flex flex-col">
-            <h2 className="text-sm font-semibold text-[var(--color-fg)]">
-              Expiry Day · Gamma Blast &amp; Hero Zero
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-[var(--color-fg)]">
+                Expiry Day · Gamma Blast &amp; Hero Zero
+              </h2>
+              <span
+                className="text-[11px] tabular-nums"
+                style={{ color: "var(--color-warning)" }}
+              >
+                Expires in {countdownLabel}
+              </span>
+            </div>
             <p className="text-[11px] text-[var(--color-fg-subtle)]">
               Index option-buying plays — only shown on{" "}
               {data.indexes.map((b) => b.index).join(" & ")} expiry.
@@ -200,14 +240,15 @@ function Field({
       </span>
       {sub ? (
         <span
-          className={cn(
-            "num text-[10px]",
-            tone === "bull"
-              ? "text-bull"
-              : tone === "bear"
-                ? "text-bear"
-                : "text-[var(--color-fg-muted)]",
-          )}
+          className="num text-[10px]"
+          style={{
+            color:
+              tone === "bull"
+                ? "var(--color-data-positive)"
+                : tone === "bear"
+                  ? "var(--color-data-negative)"
+                  : "var(--color-fg-muted)",
+          }}
         >
           {sub}
         </span>

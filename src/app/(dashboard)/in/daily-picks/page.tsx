@@ -5,6 +5,8 @@ import { DailyPicksBoard } from "@/components/india/daily-picks/daily-picks-boar
 import { ExpiryTradesSection } from "@/components/india/daily-picks/expiry-trades-section";
 import { FnoBullishTrendSection } from "@/components/india/daily-picks/fno-bullish-trend-section";
 import { FnoBearishTrendSection } from "@/components/india/daily-picks/fno-bearish-trend-section";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageTransition } from "@/components/layout/PageTransition";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
@@ -52,99 +54,88 @@ export default function IndiaDailyPicksPage() {
   const bestTimeInitial = getBestTimeStatus();
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">
-          Daily Picks · NSE F&amp;O
-        </h1>
-        <p className="text-sm text-[var(--color-fg-muted)]">
-          The day&apos;s standout signals, distilled to the top three in each
-          bucket — <span className="font-medium text-[var(--color-fg)]">Indices
-          Scalping</span>, <span className="font-medium text-[var(--color-fg)]">Opening
-          Breakout</span>, <span className="font-medium text-[var(--color-fg)]">Highly
-          Momentum</span>, <span className="font-medium text-[var(--color-fg)]">Highly
-          Scalping</span> and <span className="font-medium text-[var(--color-fg)]">Highly
-          Potential</span>. Every pick carries entry, stop, target, how far it
-          can move and what to expect, the time it appeared on the board and how
-          long it took to take profit or loss, with the logic behind it —
-          tracked live as price moves and archived to a daily history.
-        </p>
-      </header>
+    <PageTransition>
+      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+        <PageHeader
+          title="Daily Picks · NSE F&O"
+          subtitle="Top F&O signals across six buckets — Indices Scalping, Opening Breakout, Highly Momentum, Highly Scalping and Highly Potential"
+        />
 
-      <IndiaBestTimeBanner initial={bestTimeInitial} />
+        <IndiaBestTimeBanner initial={bestTimeInitial} />
 
-      <Suspense fallback={null}>
-        <ExpiryTrades />
-      </Suspense>
+        <Suspense fallback={null}>
+          <ExpiryTrades />
+        </Suspense>
 
-      <Suspense fallback={<DailyPicksSkeleton />}>
-        <DailyPicksSection />
-      </Suspense>
+        <Suspense fallback={<DailyPicksSkeleton />}>
+          <DailyPicksSection />
+        </Suspense>
 
-      <FnoBullishTrendSection />
+        <FnoBullishTrendSection />
 
-      <FnoBearishTrendSection />
+        <FnoBearishTrendSection />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>How the Daily Picks are chosen</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="grid grid-cols-1 gap-2 text-[12px] leading-relaxed text-[var(--color-fg-muted)] sm:grid-cols-2">
-            <li>
-              <span className="font-semibold text-[var(--color-fg)]">
-                Indices Scalping
-              </span>{" "}
-              — institutional index plays on NIFTY / BANKNIFTY / FINNIFTY /
-              MIDCPNIFTY: heavy option-chain OI build-up, PCR and max-pain
-              positioning confirming intraday demand and the broad tape.
-            </li>
-            <li>
-              <span className="font-semibold text-[var(--color-fg)]">
-                Opening Breakout
-              </span>{" "}
-              — the first 5-min candle (9:15–9:19:59 IST) range break, entered
-              on the retest of the broken level (resistance→support flip): stop
-              below the breakout candle, 2R target, PCR / OI / max-pain
-              confirmed. Appears once the opening range breaks and retests.
-            </li>
-            <li>
-              <span className="font-semibold text-[var(--color-fg)]">
-                Highly Momentum
-              </span>{" "}
-              — the strongest directional names: SMA trend stack, 5-day
-              momentum and volume thrust all pushing the same way.
-            </li>
-            <li>
-              <span className="font-semibold text-[var(--color-fg)]">
-                Highly Scalping
-              </span>{" "}
-              — the cleanest intraday setups: enough expected range, sharp
-              risk:reward, live scanner agreement and a short horizon.
-            </li>
-            <li>
-              <span className="font-semibold text-[var(--color-fg)]">
-                Highly Potential
-              </span>{" "}
-              — the highest-conviction, biggest-payoff trades by confidence,
-              win-probability and blended reward.
-            </li>
-          </ul>
-          <p className="mt-3 text-[11px] text-[var(--color-fg-subtle)]">
-            Picks are frozen once per trading day so entry / stop / target never
-            move under you, then tracked live — current P&amp;L, progress to
-            target and the elapsed time-to-outcome update every refresh. Every
-            card shows when the signal appeared on the board and, once resolved,
-            how long it took to hit its target or stop. Indices feed the
-            Indices-Scalping bucket and stocks feed Momentum / Scalping /
-            Potential — a symbol only ever appears once across those, so the
-            picks stay distinct. Opening Breakout is sourced from its own
-            strategy (indices or stocks) and freezes once the opening range
-            breaks and retests. As an intraday product, anything still open is
-            squared off at the 15:30 close.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>How the Daily Picks are chosen</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="grid grid-cols-1 gap-2 text-[12px] leading-relaxed text-[var(--color-fg-muted)] sm:grid-cols-2">
+              <li>
+                <span className="font-semibold text-[var(--color-fg)]">
+                  Indices Scalping
+                </span>{" "}
+                — institutional index plays on NIFTY / BANKNIFTY / FINNIFTY /
+                MIDCPNIFTY: heavy option-chain OI build-up, PCR and max-pain
+                positioning confirming intraday demand and the broad tape.
+              </li>
+              <li>
+                <span className="font-semibold text-[var(--color-fg)]">
+                  Opening Breakout
+                </span>{" "}
+                — the first 5-min candle (9:15–9:19:59 IST) range break, entered
+                on the retest of the broken level (resistance→support flip): stop
+                below the breakout candle, 2R target, PCR / OI / max-pain
+                confirmed. Appears once the opening range breaks and retests.
+              </li>
+              <li>
+                <span className="font-semibold text-[var(--color-fg)]">
+                  Highly Momentum
+                </span>{" "}
+                — the strongest directional names: SMA trend stack, 5-day
+                momentum and volume thrust all pushing the same way.
+              </li>
+              <li>
+                <span className="font-semibold text-[var(--color-fg)]">
+                  Highly Scalping
+                </span>{" "}
+                — the cleanest intraday setups: enough expected range, sharp
+                risk:reward, live scanner agreement and a short horizon.
+              </li>
+              <li>
+                <span className="font-semibold text-[var(--color-fg)]">
+                  Highly Potential
+                </span>{" "}
+                — the highest-conviction, biggest-payoff trades by confidence,
+                win-probability and blended reward.
+              </li>
+            </ul>
+            <p className="mt-3 text-[11px] text-[var(--color-fg-subtle)]">
+              Picks are frozen once per trading day so entry / stop / target never
+              move under you, then tracked live — current P&amp;L, progress to
+              target and the elapsed time-to-outcome update every refresh. Every
+              card shows when the signal appeared on the board and, once resolved,
+              how long it took to hit its target or stop. Indices feed the
+              Indices-Scalping bucket and stocks feed Momentum / Scalping /
+              Potential — a symbol only ever appears once across those, so the
+              picks stay distinct. Opening Breakout is sourced from its own
+              strategy (indices or stocks) and freezes once the opening range
+              breaks and retests. As an intraday product, anything still open is
+              squared off at the 15:30 close.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    </PageTransition>
   );
 }

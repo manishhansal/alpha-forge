@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Activity,
+  ChevronDown,
   ExternalLink,
   RefreshCw,
   TrendingDown,
@@ -61,8 +62,10 @@ const COL_SPAN = 8;
  * Displays NSE F&O stocks passing all 14 bearish trend conditions
  * (Moving Average + ADX + MACD) — the exact mirror of the bullish scanner.
  * Polls /api/in/fno-bearish-trend every 5 minutes.
+ * Wrapped in a collapsible outer panel — collapsed by default.
  */
 export function FnoBearishTrendSection() {
+  const [collapsed, setCollapsed] = React.useState(true);
   const [result, setResult]         = React.useState<ScannerResult | null>(null);
   const [loading, setLoading]       = React.useState(true);
   const [error, setError]           = React.useState<string | null>(null);
@@ -89,6 +92,7 @@ export function FnoBearishTrendSection() {
     }
   }, []);
 
+  // Initial fetch + polling — always active regardless of collapsed state.
   React.useEffect(() => {
     const ac = new AbortController();
     void load(ac.signal);
@@ -102,9 +106,14 @@ export function FnoBearishTrendSection() {
     usePaginationFilter({ items: hits, pageSize: 15 });
 
   return (
-    <section className="flex flex-col gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      {/* ── Collapsible header ──────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        aria-expanded={!collapsed}
+        className="flex items-center justify-between gap-3 px-4 py-3 text-left w-full hover:bg-[var(--color-bg-elevated)] transition-colors"
+      >
         <div className="flex items-center gap-2.5">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/20 dark:text-rose-400">
             <TrendingDown className="h-4 w-4" />
@@ -121,160 +130,192 @@ export function FnoBearishTrendSection() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Conditions toggle */}
-          <button
-            type="button"
-            onClick={() => setShowConditions((v) => !v)}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]"
-          >
-            <Activity className="h-3 w-3" />
-            {showConditions ? "Hide" : "Conditions"}
-          </button>
-
-          {/* Manual refresh */}
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={refreshing}
+          {/* Hit count badge — visible even when collapsed */}
+          {!loading && !error && (
+            <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-400">
+              {hits.length} stock{hits.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          <ChevronDown
             className={cn(
-              "inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]",
-              refreshing && "opacity-60",
+              "h-4 w-4 shrink-0 text-[var(--color-fg-muted)] transition-transform duration-200",
+              !collapsed && "rotate-180",
             )}
-          >
-            <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
-            Refresh
-          </button>
+          />
         </div>
-      </div>
+      </button>
 
-      {/* ── Conditions legend ────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {showConditions && (
+      {/* ── Collapsible content ─────────────────────────────────────────── */}
+      <AnimatePresence initial={false}>
+        {!collapsed && (
           <motion.div
-            key="conditions"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
+            key="bearish-content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden border-t border-[var(--color-border)]"
           >
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
-              <p className="mb-2 text-[11px] font-medium text-[var(--color-fg-muted)]">
-                Stock passes{" "}
-                <span className="font-bold text-[var(--color-fg)]">all 14</span> of the
-                below filters in the{" "}
-                <span className="font-bold text-[var(--color-fg)]">futures segment</span>,
-                daily timeframe:
-              </p>
-              <ul className="flex flex-wrap gap-1.5">
-                {CONDITIONS.map((c) => (
-                  <ConditionBadge key={c.label} label={c.label} detail={c.detail} />
-                ))}
-              </ul>
+            <div className="p-4 sm:p-5 flex flex-col gap-4">
+              {/* ── Inner header row (condition toggle + refresh) ──────────────── */}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {/* Conditions toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowConditions((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]"
+                >
+                  <Activity className="h-3 w-3" />
+                  {showConditions ? "Hide" : "Conditions"}
+                </button>
+
+                {/* Manual refresh */}
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={refreshing}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]",
+                    refreshing && "opacity-60",
+                  )}
+                >
+                  <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                  Refresh
+                </button>
+              </div>
+
+              {/* ── Conditions legend ──────────────────────────────────────────── */}
+              <AnimatePresence>
+                {showConditions && (
+                  <motion.div
+                    key="conditions"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+                      <p className="mb-2 text-[11px] font-medium text-[var(--color-fg-muted)]">
+                        Stock passes{" "}
+                        <span className="font-bold text-[var(--color-fg)]">all 14</span> of the
+                        below filters in the{" "}
+                        <span className="font-bold text-[var(--color-fg)]">futures segment</span>,
+                        daily timeframe:
+                      </p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {CONDITIONS.map((c) => (
+                          <ConditionBadge key={c.label} label={c.label} detail={c.detail} />
+                        ))}
+                      </ul>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* ── Status / meta row ──────────────────────────────────────────── */}
+              <div className="flex items-center justify-between text-[11px] text-[var(--color-fg-subtle)]">
+                <span>
+                  {loading
+                    ? "Scanning F&O universe…"
+                    : error
+                      ? `Error — ${error}`
+                      : `${hits.length} stock${hits.length !== 1 ? "s" : ""} matched · refreshes every 5 min`}
+                </span>
+                {result?.fetchedAt && (
+                  <span className="tabular">
+                    {new Date(result.fetchedAt).toLocaleTimeString("en-IN", {
+                      timeZone: "Asia/Kolkata",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}{" "}
+                    IST
+                  </span>
+                )}
+              </div>
+
+              {/* ── Table ──────────────────────────────────────────────────────── */}
+              {loading && hits.length === 0 ? (
+                <div className="flex items-center justify-center py-10 text-[12px] text-[var(--color-fg-muted)]">
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Running screener across F&amp;O universe…
+                </div>
+              ) : error && hits.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--color-border)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
+                  Could not load results — check back shortly.
+                </div>
+              ) : hits.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--color-border)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
+                  No F&amp;O stocks currently pass all 14 bearish conditions — check back at next refresh.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+                    <table className="w-full text-left">
+                      <thead>
+                        <SignalTableHead
+                          extraTrailHeaders={
+                            <>
+                              <th className="p-2.5 text-right font-medium">Entry</th>
+                              <th className="p-2.5 text-right font-medium">SL</th>
+                              <th className="p-2.5 text-right font-medium">TP1</th>
+                              <th className="p-2.5 text-right font-medium">ADX · RSI</th>
+                            </>
+                          }
+                        />
+                      </thead>
+                      <tbody>
+                        <AnimatePresence>
+                          {pageItems.map((hit, i) => (
+                            <SignalTableRow
+                              key={hit.symbol}
+                              hit={hit}
+                              colSpan={COL_SPAN}
+                              index={i}
+                              expanded={expandedSymbol === hit.symbol}
+                              onToggle={() =>
+                                setExpandedSymbol((prev) =>
+                                  prev === hit.symbol ? null : hit.symbol,
+                                )
+                              }
+                              extraTrailCells={
+                                <>
+                                  <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
+                                    {hit.entry != null ? `₹${hit.entry.toFixed(2)}` : "—"}
+                                  </td>
+                                  <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
+                                    {hit.stopLoss != null ? `₹${hit.stopLoss.toFixed(2)}` : "—"}
+                                  </td>
+                                  <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
+                                    {hit.tp1 != null ? `₹${hit.tp1.toFixed(2)}` : "—"}
+                                  </td>
+                                  <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
+                                    {hit.metricLabel}
+                                  </td>
+                                </>
+                              }
+                            />
+                          ))}
+                        </AnimatePresence>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <PaginationStrip
+                    page={page}
+                    totalPages={totalPages}
+                    filteredTotal={filteredTotal}
+                    pageSize={pageSize}
+                    onPrev={() => setPage(page - 1)}
+                    onNext={() => setPage(page + 1)}
+                    onJump={setPage}
+                  />
+                </>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* ── Status / meta row ────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-fg-subtle)]">
-        <span>
-          {loading
-            ? "Scanning F&O universe…"
-            : error
-              ? `Error — ${error}`
-              : `${hits.length} stock${hits.length !== 1 ? "s" : ""} matched · refreshes every 5 min`}
-        </span>
-        {result?.fetchedAt && (
-          <span className="tabular">
-            {new Date(result.fetchedAt).toLocaleTimeString("en-IN", {
-              timeZone: "Asia/Kolkata",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}{" "}
-            IST
-          </span>
-        )}
-      </div>
-
-      {/* ── Table ───────────────────────────────────────────────────────── */}
-      {loading && hits.length === 0 ? (
-        <div className="flex items-center justify-center py-10 text-[12px] text-[var(--color-fg-muted)]">
-          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-          Running screener across F&amp;O universe…
-        </div>
-      ) : error && hits.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-[var(--color-border)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
-          Could not load results — check back shortly.
-        </div>
-      ) : hits.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-[var(--color-border)] py-8 text-center text-[12px] text-[var(--color-fg-muted)]">
-          No F&amp;O stocks currently pass all 14 bearish conditions — check back at next refresh.
-        </div>
-      ) : (
-        <>
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-            <table className="w-full text-left">
-              <thead>
-                <SignalTableHead
-                  extraTrailHeaders={
-                    <>
-                      <th className="p-2.5 text-right font-medium">Entry</th>
-                      <th className="p-2.5 text-right font-medium">SL</th>
-                      <th className="p-2.5 text-right font-medium">TP1</th>
-                      <th className="p-2.5 text-right font-medium">ADX · RSI</th>
-                    </>
-                  }
-                />
-              </thead>
-              <tbody>
-                <AnimatePresence>
-                  {pageItems.map((hit, i) => (
-                    <SignalTableRow
-                      key={hit.symbol}
-                      hit={hit}
-                      colSpan={COL_SPAN}
-                      index={i}
-                      expanded={expandedSymbol === hit.symbol}
-                      onToggle={() =>
-                        setExpandedSymbol((prev) =>
-                          prev === hit.symbol ? null : hit.symbol,
-                        )
-                      }
-                      extraTrailCells={
-                        <>
-                          <td className="p-2.5 text-right tabular text-sm text-[var(--color-fg)]">
-                            {hit.entry != null ? `₹${hit.entry.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="p-2.5 text-right tabular text-sm text-emerald-600 dark:text-emerald-400">
-                            {hit.stopLoss != null ? `₹${hit.stopLoss.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="p-2.5 text-right tabular text-sm text-rose-600 dark:text-rose-400">
-                            {hit.tp1 != null ? `₹${hit.tp1.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="p-2.5 text-right tabular text-[11px] text-[var(--color-fg-muted)]">
-                            {hit.metricLabel}
-                          </td>
-                        </>
-                      }
-                    />
-                  ))}
-                </AnimatePresence>
-              </tbody>
-            </table>
-          </div>
-
-          <PaginationStrip
-            page={page}
-            totalPages={totalPages}
-            filteredTotal={filteredTotal}
-            pageSize={pageSize}
-            onPrev={() => setPage(page - 1)}
-            onNext={() => setPage(page + 1)}
-            onJump={setPage}
-          />
-        </>
-      )}
     </section>
   );
 }
