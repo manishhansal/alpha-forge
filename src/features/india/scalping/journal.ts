@@ -413,6 +413,83 @@ export async function getIndiaClosedTradesByStrategy(
   return out;
 }
 
+/**
+ * One point in a per-strategy cumulative P&L time series.
+ * `date` is an ISO date string (YYYY-MM-DD), `cumulativePnl` is ₹ running
+ * total based on ₹20,000 notional per trade.
+ */
+export interface IndiaStrategyPnlPoint {
+  date: string;
+  cumulativePnl: number;
+}
+
+/**
+ * Returns a per-strategy cumulative P&L time series for use in the
+ * performance breakdown chart. Each entry represents a closed trade
+ * (WIN / LOSS / EXPIRED) accumulated chronologically.
+ *
+ * The notional per trade is assumed to be ₹20,000 (the auto-trader
+ * default), so pnlUsd (stored in ₹) is used directly. When pnlUsd is
+ * unavailable, pnlPct × 20000 / 100 is used as a fallback.
+ *
+ * Returns a plain object (not a Map) so it serialises cleanly via
+ * `NextResponse.json()`.
+ */
+export async function getIndiaStrategyPnlSeries(
+  prisma?: PrismaClient,
+): Promise<Record<string, IndiaStrategyPnlPoint[]>> {
+  const db = prisma ?? getPrisma();
+  const rows = await db.paperTrade.findMany({
+    where: {
+      source: { in: [...ALL_INDIA_SOURCES] },
+      status: { in: ["WIN", "LOSS", "EXPIRED"] },
+      closedAt: { not: null },
+    },
+    orderBy: { closedAt: "asc" },
+    take: 5000,
+    select: {
+      source: true,
+      pnlUsd: true,
+      pnlPct: true,
+      closedAt: true,
+    },
+  });
+
+  const acc = new Map<string, { running: number; points: IndiaStrategyPnlPoint[] }>();
+
+  for (const r of rows) {
+    if (!r.closedAt) continue;
+    const parsed = parseIndiaTradeSource(r.source);
+    const id =
+      parsed && isIndiaScalpStrategyId(parsed.strategyId)
+        ? parsed.strategyId
+        : "MOMENTUM";
+
+    const pnlRs =
+      r.pnlUsd !== null
+        ? r.pnlUsd
+        : r.pnlPct !== null
+          ? (r.pnlPct * 20_000) / 100
+          : 0;
+
+    const dateStr = r.closedAt.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    let bucket = acc.get(id);
+    if (!bucket) {
+      bucket = { running: 0, points: [] };
+      acc.set(id, bucket);
+    }
+    bucket.running += pnlRs;
+    bucket.points.push({ date: dateStr, cumulativePnl: bucket.running });
+  }
+
+  const result: Record<string, IndiaStrategyPnlPoint[]> = {};
+  for (const [id, bucket] of acc.entries()) {
+    result[id] = bucket.points;
+  }
+  return result;
+}
+
 export async function setIndiaTradeNote(
   id: string,
   note: string | null,
