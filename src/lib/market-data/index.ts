@@ -133,13 +133,33 @@ export type {
   LiveFeedOptions,
 } from "./services/live-feed.service";
 
+// ── Candle builder — production real-time (IST-aware, Redis + DB) ─────────────
 export {
+  RealTimeCandleBuilder,
+  MultiInstrumentCandleBuilder,
+  snapToNseInterval,
+  isNseSessionTick,
+  sessionOpenSecondsForMs,
+  sessionCloseSecondsForMs,
+  istDateForMs,
+  LIVE_INTERVALS,
+  // Legacy in-memory shims (backward-compatible)
   CandleBuilder,
   MultiCandleBuilder,
   snapToInterval,
 } from "./services/candle-builder.service";
 
 export type {
+  // Production types
+  CandleEvent,
+  CandleEventType,
+  CandleEventHandler,
+  CandleBuilderConfig,
+  LateTick,
+  LateTickHandler,
+  BackfillRequest,
+  BackfillLoader,
+  // Legacy shim types
   CandleTick,
   CandleBuilderOptions,
 } from "./services/candle-builder.service";
