@@ -290,6 +290,45 @@ model IndiaDailyPick {
   @@index([symbol, tradeDate])
 }
 
+/// One confirmed OHLCV candle bar produced by the real-time candle builder.
+/// Schema is deliberately compatible with TimescaleDB hypertables — the
+/// primary key is (instrument_id, interval, time) so the hypertable can be
+/// partitioned on `time`.  When running plain PostgreSQL the unique index
+/// provides deduplication; when promoted to TimescaleDB call
+///   SELECT create_hypertable('candle_bar', 'time', chunk_time_interval => INTERVAL '1 day');
+/// after running the migration.
+///
+/// `time`         — UTC epoch seconds for candle OPEN time (NOT close time).
+/// `intervalStr`  — candle width: "1m"|"3m"|"5m"|"10m"|"15m"|"30m"|"1h"|"1d"
+/// `oi`           — open interest at candle close; null for equity instruments.
+/// `oiChange`     — OI delta vs previous session close; null for equity.
+model CandleBar {
+  id           String   @id @default(cuid())
+  /// NSE trading symbol (e.g. "NIFTY", "RELIANCE", "NIFTY28MAY2624000CE").
+  instrumentId String
+  exchange     String
+  /// Candle width as a string key matching the `Interval` union type.
+  intervalStr  String
+  /// UTC epoch seconds — candle open time (start of the interval window).
+  time         Int
+  open         Float
+  high         Float
+  low          Float
+  close        Float
+  volume       Float    @default(0)
+  /// Open interest at candle close. Null for equity instruments.
+  oi           Float?
+  /// OI change vs previous confirmed candle's OI. Null for equity instruments.
+  oiChange     Float?
+  confirmedAt  DateTime @default(now())
+
+  /// Composite unique constraint prevents duplicate candle records.
+  @@unique([instrumentId, exchange, intervalStr, time])
+  @@index([instrumentId, exchange, intervalStr, time])
+  @@index([confirmedAt])
+  @@map("candle_bar")
+}
+
 /// Periodic capture of an NSE option-chain's aggregated analytics for one
 /// underlying. NSE only serves the *live* chain (no history endpoint), so
 /// the `india-oc-capture` worker snapshots it on a cadence during market

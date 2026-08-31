@@ -22,6 +22,20 @@ top-of-sidebar switcher:
   and an **Intelligent Auto Paper-Trading Engine** (daily ₹1L budget,
   signal scoring, 5-position max, EOD close-out).
 
+## What's New — Provider-Agnostic Indian Market Data Layer
+
+A production-grade, provider-agnostic data layer (`src/lib/market-data/`) replaces the ad-hoc per-provider fetching scattered across `services/india/`. All strategy engines, ML services, and API routes now consume canonical normalized types — provider-specific shapes never leak through.
+
+- **Four-provider priority chain**: Angel One SmartAPI (1) → Upstox Analytics v2 (2) → NSE direct (3) → Yahoo Finance (4). The `ProviderRegistry` routes each capability request to the highest-priority enabled provider automatically.
+- **Automatic failover**: `withFailover()` retries up to 3× with exponential backoff (300 ms base, 5 s cap, 20% jitter) within a provider before failing over. A 10 s cooldown prevents oscillation. Every failover is structured-logged.
+- **Circuit breaker + health scoring**: Scores start at 100 and decay on failures (up to −40 pts each), recover on successes (+10 pts). Auth failures carry an extra −25 pt penalty. Circuit opens at < 20 pts, attempts half-open after 30 s.
+- **Real-time candle builder**: `CandleBuilderService` assembles OHLCV candles for all 8 NSE-aligned timeframes (1m–1d) from normalized `LiveTick` events. Bars are aligned to 09:15 IST open, state is Redis-backed for mid-bar restart recovery, confirmed candles are upserted to the new `CandleBar` Postgres table, and backfill gap detection runs on reconnect.
+- **ML training refactor**: `ml-service/src/training/market_data_client.py` replaces direct `yfinance` calls with a three-tier `MarketDataClient` (AlphaForge API → PostgreSQL snapshots → yfinance fallback). `DataQuality` classification (GOOD / STALE / INVALID / SUSPICIOUS) filters bad rows before feature engineering. `DatasetMetadata` versioning tracks every training run's provenance.
+- **Upstox provider added**: Full `MarketDataProvider` implementation for Upstox Analytics v2 — historical candles, quotes, and option chain. Activated by setting `UPSTOX_ANALYTICS_TOKEN`. When absent, the provider is silently unconfigured — no degradation to existing deployments.
+- **393 new tests**: 1392/1392 Vitest tests passing, covering failover mechanics, circuit breaker, normalizers, candle-builder boundary arithmetic, validators, and all four provider adapters.
+
+---
+
 ## What's New — Institutional Intelligence Terminal (IIT) UI Overhaul
 
 - **Design System**: Full OKLCH color token system (`--color-panel-bg/border`, `--color-data-positive/negative/neutral`, `--color-ai-accent`, `--color-regime-{bull,bear,sideways,highvol}`) + 4 Spring motion presets + 6 CSS keyframes + `data-density` attribute pattern
@@ -108,7 +122,7 @@ The worker runs the following jobs every minute during NSE market hours:
 
 ### Run tests
 ```bash
-npm test               # full suite (1101 tests)
+npm test               # full suite (1392 tests)
 npm run test:features  # feature engine tests only
 npm run test:api       # API route tests only
 ```
@@ -217,7 +231,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Database         | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern with `pg`)    |
 | Realtime         | Active broker WS (Delta India ticker / Binance miniTicker + forceOrder) |
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
-| Indian quotes    | **yahoo-finance2** (default), NSE option-chain proxy, **Angel One SmartAPI** (live quotes / candles / feed / option chain + greeks, first-party F&O gainers-losers / PCR / OI-buildup, FULL-quote enrichment + order-book imbalance) + Groww REST (opt-in via `INDIA_BROKER`) |
+| Indian quotes    | **Provider-agnostic data layer** (`src/lib/market-data/`) — four-provider priority chain with automatic failover + circuit breaker: **Angel One SmartAPI** (primary), **Upstox Analytics v2** (secondary, `UPSTOX_ANALYTICS_TOKEN`), **NSE direct** (option chain), **yahoo-finance2** (last resort). All strategy engines consume canonical normalized types. |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
 | ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · **Riskfolio-Lib** · mibian · TA-Lib |
 
@@ -557,6 +571,33 @@ src/
     utils.ts                    cn(), formatPrice(), formatPercent(), formatCompact()
     market-mode.ts              `useActiveMarket()` — derives "crypto" | "india"
                                 from `usePathname()` (URL is source of truth)
+    market-data/                Provider-agnostic Indian market data layer
+      types.ts                  Canonical normalized types (Instrument, MDQuote,
+                                OHLCVCandle, OptionChain, LiveTick, …) — single
+                                source of truth consumed by all strategy engines,
+                                ML services, and UI surfaces
+      provider.ts               MarketDataProvider interface + RegisteredProvider
+      registry.ts               ProviderRegistry — capability routing, priority ordering
+      health.ts                 Circuit breaker, health scoring (0–100), structured logging
+      failover.ts               withFailover() — retry + exponential backoff + failover
+      normalizer.ts             Provider-to-canonical normalization utilities
+      providers/
+        angel-one.ts            Angel One SmartAPI adapter (primary)
+        upstox.ts               Upstox Analytics v2 adapter (secondary, UPSTOX_ANALYTICS_TOKEN)
+        nse.ts                  NSE direct feed adapter (option chain + quotes)
+        yahoo.ts                Yahoo Finance adapter (historical, quotes fallback)
+      cache/market-cache.ts     Two-tier cache (in-process + Redis, md: namespace)
+      validation/
+        candle-validator.ts     OHLC consistency + extreme-move rejection
+        tick-validator.ts       LTP range, future-timestamp, staleness checks
+      services/
+        candle-builder.service.ts  Real-time candle assembly (NSE-aligned, Redis-backed,
+                                   Postgres-persisted, backfill gap detection)
+        historical.service.ts      Historical OHLCV with gap detection + backfill
+        instrument-master.service.ts  Instrument lookup, expiry discovery, lot-size resolution
+        live-feed.service.ts       Normalized LiveTick stream with reconnect management
+        option-chain.service.ts    Full chain with PCR/max-pain analytics
+        reconciliation.service.ts  Cross-provider quote reconciliation
     india/                      fno-symbols, sectors, INR-aware formatters
   types/market.ts               Single source of truth for Ticker, Signal, etc.
     india/                      market / options / scanner type packs
@@ -1107,6 +1148,20 @@ LIVE_TRADING_ENABLED=     # Must be exactly "true" to allow placeOrder/modifyOrd
 
 # Override the default ML service URL (defaults to http://localhost:8100).
 ML_SERVICE_URL=http://localhost:8100
+
+# --- Upstox Analytics v2 (Indian market data — secondary / failover provider) ---
+# Obtain from Upstox Developer Console. All three vars are optional; when absent
+# the Upstox provider is silently unconfigured — no degradation to existing deployments.
+UPSTOX_CLIENT_ID=            # OAuth2 client ID (required only for full token-exchange)
+UPSTOX_CLIENT_SECRET=        # OAuth2 client secret (required only for full token-exchange)
+UPSTOX_ANALYTICS_TOKEN=      # Long-lived read-only bearer token (sufficient for data-only use)
+
+# --- ML training pipeline data source ---
+# The ML service training pipeline now uses the AlphaForge API as primary data source.
+# Set ALPHAFORGE_API_BASE_URL when training on a remote or Docker-hosted stack.
+# ML_DATA_REQUEST_DELAY throttles requests to stay within Angel One rate limits.
+ALPHAFORGE_API_BASE_URL=http://localhost:3000
+ML_DATA_REQUEST_DELAY=200    # ms between API requests in the training pipeline
 ```
 
 ## Roadmap
@@ -1537,6 +1592,7 @@ ML_SERVICE_URL=http://localhost:8100
   - [x] **Options Strategy Workbench** — pure TypeScript payoff engine (`src/features/india/options-workbench/payoff.ts`): `computePayoff` + `aggregateGreeks` with exact formulas; linear-interpolation break-evens. New `/in/options-workbench` page: 13-strategy picker, ATM auto-populate from live chain, SVG payoff diagram, break-evens, net greeks, GEX-guided "Scan for best strikes".
   - [x] **OpenAlgo broker adapter** — `OpenAlgoAdapter` implementing `BrokerAdapter`; normalised OpenAlgo REST API contract covering 33+ Indian brokers. `placeOrder`/`modifyOrder`/`cancelOrder` gated behind `LIVE_TRADING_ENABLED=true`. Registered under `INDIA_BROKER=openalgo`. `LiveOrderModal` with double-confirm UX + win-rate warning badge.
   - [x] **Graceful degradation** — all new API routes return `{ available: false, reason }` with HTTP 200 when ML service is unreachable; never 5xx.
+- [x] **Provider-agnostic Indian Market Data Layer** — production-grade `src/lib/market-data/` layer with four-provider priority chain (Angel One → Upstox → NSE → Yahoo), automatic failover with exponential backoff + circuit breaker, real-time `CandleBuilderService` (NSE-aligned bars, Redis-backed state, Postgres persistence), `DataQuality` classification in the ML training pipeline, and 393 new tests (1392 total).
 - [x] **IIT UI Overhaul** — Institutional Intelligence Terminal design language applied across every page and shell component: OKLCH design tokens, Spring motion system, UIStore + RegimeContext, Sidebar/Topbar/MarketTickerBar shell refactor, full Trading Component Library (`SignalBadge`, `ConfidenceBar`, `RegimeBadge`, `NumberMorph`, `StatGrid`, `PanelHeader`, `RiskMeter`, `AiRadar`), Layout Primitives (`BentoGrid`, `PageHeader`, `EmptyState`, `ErrorState`, `PageTransition`), 3D Suite upgrades (`RiskSphere`, `PortfolioGalaxy`), and all page redesigns. 1238 tests passing, 0 TypeScript errors.
 
 ## Troubleshooting

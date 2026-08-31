@@ -253,12 +253,21 @@ The dashboard's visual language is the **Institutional Intelligence Terminal (II
 - Alternative.me Fear & Greed API
 
 ## Indian-market data sources
-- **yahoo-finance2** (default) — quotes, historical OHLCV, fundamentals
-- **NSE direct** (`/api/option-chain-indices`, `/option-chain-equities`)
-  — cookie-warmed, rate-limited proxy for full option chains
-- **Groww REST** (optional, opt-in via `INDIA_BROKER=groww`)
-- Selectable per-deployment via `INDIA_BROKER=yahoo|nse|groww` (falls
-  back to `ACTIVE_BROKER`, then `yahoo`).
+
+All Indian market data now flows through the **provider-agnostic data layer** (`src/lib/market-data/`). Strategy engines, ML services, and API routes consume canonical normalized types — provider-specific shapes never leak through.
+
+**Provider priority chain (automatic failover):**
+
+| Priority | Provider | Capabilities | Activation |
+|---|---|---|---|
+| 1 | **Angel One SmartAPI** | quotes, historical, option chain, live stream, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
+| 2 | **Upstox Analytics v2** | quotes, historical, option chain | `UPSTOX_ANALYTICS_TOKEN` (read-only); or full OAuth2 via `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` |
+| 3 | **NSE direct** | option chain, quotes (cookie-warmed scraper) | None — always available |
+| 4 | **Yahoo Finance** | historical OHLCV, quotes (no derivatives) | None — last-resort fallback |
+
+The `ProviderRegistry` routes each capability request to the highest-priority enabled provider. When a provider fails, `withFailover()` retries up to 3× with exponential backoff then fails over to the next provider in the chain. A circuit breaker (0–100 health score) prevents routing to persistently failing providers.
+
+The legacy `INDIA_BROKER=yahoo|nse|groww|angel|openalgo` env var continues to work for the existing `services/india/` adapters; the new data layer is additive and does not break existing deployments.
 
 ---
 
@@ -1575,6 +1584,21 @@ src/
  ├── store/
  │    └── india/           useIndia{Market,OptionChain,Scanner,Watchlist}Store
  ├── lib/
+ │    ├── market-data/     Provider-agnostic Indian market data layer
+ │    │   ├── types.ts     Canonical normalized types — Instrument, MDQuote,
+ │    │   │                OHLCVCandle, OptionChain, LiveTick, ProviderHealth
+ │    │   ├── provider.ts  MarketDataProvider interface + RegisteredProvider
+ │    │   ├── registry.ts  ProviderRegistry — capability routing, priority ordering
+ │    │   ├── health.ts    Circuit breaker + health scoring (0–100) + structured logging
+ │    │   ├── failover.ts  withFailover() — retry + exponential backoff + failover
+ │    │   ├── normalizer.ts Provider-to-canonical normalization utilities
+ │    │   ├── providers/   angel-one.ts · upstox.ts · nse.ts · yahoo.ts
+ │    │   ├── cache/       market-cache.ts — two-tier (in-process + Redis, md: ns)
+ │    │   ├── validation/  candle-validator.ts · tick-validator.ts
+ │    │   └── services/    candle-builder.service.ts (NSE-aligned, Redis-backed,
+ │    │                    Postgres CandleBar) · historical.service.ts ·
+ │    │                    instrument-master.service.ts · live-feed.service.ts ·
+ │    │                    option-chain.service.ts · reconciliation.service.ts
  │    └── india/           fno-symbols, sectors, INR-aware formatters
  ├── utils/
  ├── prisma/
@@ -2166,7 +2190,10 @@ cd ml-service
 pip install -r requirements.txt
 uvicorn src.server:app --port 8100 --reload
 
-# Generate training data:
+# Generate training data (uses AlphaForge API → PostgreSQL → yfinance priority chain):
+# Ensure ALPHAFORGE_API_BASE_URL points to a running Next.js instance with
+# Angel One / Upstox configured for best data quality. Falls back to yfinance
+# automatically when the API is unreachable.
 python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
 
 # Train all models:
@@ -2199,6 +2226,16 @@ python -m src.training.train_all --quick
 | POST   | /explain/{model}        | SHAP explanation for a prediction    |
 | GET    | /health                 | Service health check                 |
 | GET    | /models/status          | Model load status                    |
+
+### Training pipeline env vars
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ALPHAFORGE_API_BASE_URL` | `http://localhost:3000` | Next.js API base URL for the three-tier data client (Tier 1) |
+| `DATABASE_URL` | — | PostgreSQL connection string for the secondary snapshot source (Tier 2) |
+| `ML_DATA_REQUEST_DELAY` | `200` | Delay (ms) between AlphaForge API requests — respects Angel One rate limits |
+
+The training pipeline uses a three-tier data priority chain: **AlphaForge API** (backed by Angel One + Upstox) → **PostgreSQL snapshots** → **yfinance** fallback. Every training run produces `DatasetMetadata` (`datasetVersion`, `providerSources`, `featureVersion`) alongside the `.npz` files for full reproducibility. `DataQuality` classification (GOOD / STALE / INVALID / SUSPICIOUS) filters bad rows before feature engineering.
 
 ---
 

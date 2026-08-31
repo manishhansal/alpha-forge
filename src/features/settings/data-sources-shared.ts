@@ -18,6 +18,7 @@ export type DataSourceId =
   | "zerodha"
   | "bse"
   | "angel"
+  | "upstox"
   | "openalgo"
   // Crypto
   | "binance"
@@ -110,6 +111,17 @@ export const DATA_SOURCES: readonly DataSourceMeta[] = [
     homeUrl: "https://smartapi.angelone.in",
   },
   {
+    id: "upstox",
+    market: "india",
+    label: "Upstox Analytics API",
+    blurb:
+      "Upstox v2 REST — historical candles, live quotes, WebSocket feed, and option chain with greeks. Requires UPSTOX_ACCESS_TOKEN.",
+    capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
+    requiresApiKey: true,
+    implemented: true,
+    homeUrl: "https://upstox.com/developer/api-documentation",
+  },
+  {
     id: "openalgo",
     market: "india",
     label: "OpenAlgo",
@@ -193,6 +205,7 @@ export function dataSourceLabels(ids: readonly DataSourceId[]): string[] {
  */
 export const INDIA_OI_SOURCES: readonly DataSourceId[] = [
   "angel",
+  "upstox",
   "nse",
   "groww",
   "bse",

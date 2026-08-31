@@ -39,10 +39,29 @@ structlog==24.4.0
 # Options greeks (Black-Scholes / Black-76)
 mibian==0.1.3
 
-# Data Pipeline (training only)
+# ─── AlphaForge Indian Market Data Layer ─────────────────────────────────────
+#
+# These packages support the normalized data client (market_data_client.py).
+#
+# sqlalchemy: ORM / SQL layer for the PostgreSQL secondary data source.
+#   Used by PostgreSQLDataClient to query option_chain_snapshots and
+#   price_history tables directly when the AlphaForge API is unreachable.
+sqlalchemy==2.0.36
+#
+# asyncpg: High-performance async PostgreSQL driver.
+#   Required by SQLAlchemy's async engine for non-blocking DB access.
+#   Included here so the Docker image has both sync and async paths available.
+asyncpg==0.30.0
+
+# ─── Fallback data source (training only) ────────────────────────────────────
+#
+# yfinance is used as the LAST-RESORT fallback for OHLCV data only.
+# It provides NO open interest, derivatives, PCR, or IV data.
+# The AlphaForge API layer (Angel One + Upstox) is always preferred.
+# Do NOT use yfinance as a primary source for F&O model training.
 yfinance==0.2.48
 
-# Deep-learning forecasters (optional — install for full model support)
+# ─── Deep-learning forecasters (optional — install for full model support) ───
 # Uncomment the lines below and rebuild the Docker image to enable:
 # darts==0.32.*      # TFT / N-BEATS probabilistic forecasting (Task 10.2)
 # tsai==1.0.*        # PatchTST IV regime classifier (Task 11.2)
