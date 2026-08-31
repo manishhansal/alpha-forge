@@ -68,6 +68,19 @@ const serverSchema = z.object({
   WHATSAPP_INSTANCE: z.string().optional(),
   WHATSAPP_API_KEY: z.string().optional(),
 
+  // Upstox API v2 — secondary Indian market data provider.
+  // Register an app at https://developer.upstox.com/ to obtain client credentials.
+  // UPSTOX_CLIENT_ID / UPSTOX_CLIENT_SECRET are used for OAuth2 token exchange
+  // (server-side only — never sent to the browser).
+  // UPSTOX_ANALYTICS_TOKEN is a long-lived read-only market data token suitable
+  // for historical candles and option chain requests; it avoids the full OAuth
+  // flow for non-trading read paths.
+  // When none of the three are set, the Upstox provider silently degrades and
+  // the failover engine routes to NSE / Yahoo.
+  UPSTOX_CLIENT_ID: z.string().optional(),
+  UPSTOX_CLIENT_SECRET: z.string().optional(),
+  UPSTOX_ANALYTICS_TOKEN: z.string().optional(),
+
   // Delta Exchange India REST base. Override for testnet
   // (`https://cdn-ind.testnet.deltaex.org`).
   DELTA_REST_BASE_URL: z.string().url().default("https://api.india.delta.exchange"),
@@ -124,6 +137,9 @@ const processEnv = {
   WHATSAPP_EVOLUTION_API_URL: process.env.WHATSAPP_EVOLUTION_API_URL,
   WHATSAPP_INSTANCE: process.env.WHATSAPP_INSTANCE,
   WHATSAPP_API_KEY: process.env.WHATSAPP_API_KEY,
+  UPSTOX_CLIENT_ID: process.env.UPSTOX_CLIENT_ID,
+  UPSTOX_CLIENT_SECRET: process.env.UPSTOX_CLIENT_SECRET,
+  UPSTOX_ANALYTICS_TOKEN: process.env.UPSTOX_ANALYTICS_TOKEN,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   NEXT_PUBLIC_BINANCE_WS: process.env.NEXT_PUBLIC_BINANCE_WS,
   NEXT_PUBLIC_BINANCE_FUTURES_WS: process.env.NEXT_PUBLIC_BINANCE_FUTURES_WS,
