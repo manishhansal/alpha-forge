@@ -1,0 +1,541 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Bootstrap: branch, environment variables, and project scaffolding": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478800
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489488889
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489625361
+      }
+    ],
+    "2.1 Create `src/features/whatsapp/types.ts` with the full `NotificationEvent` union type": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478847
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489628880
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489902909
+      }
+    ],
+    "2.2 Create `src/features/whatsapp/formatters/shared.ts` with all shared helpers": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478873
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489629726
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489903613
+      }
+    ],
+    "3.1 Create `src/features/whatsapp/phone.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478894
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489910754
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490026724
+      }
+    ],
+    "4.1 Create `src/features/whatsapp/preferences.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478917
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489911469
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490027396
+      }
+    ],
+    "5.1 Create `src/features/whatsapp/formatters/daily-picks.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478938
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490040083
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490288972
+      }
+    ],
+    "5.3 Create `src/features/whatsapp/formatters/ai-signal.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478957
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490040826
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490290437
+      }
+    ],
+    "5.5 Create `src/features/whatsapp/formatters/scanner.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489478999
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490041595
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490289506
+      }
+    ],
+    "5.7 Create `src/features/whatsapp/formatters/signals-board.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479025
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490042277
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490291201
+      }
+    ],
+    "5.9 Create `src/features/whatsapp/formatters/paper-trade.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479048
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490043042
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490288217
+      }
+    ],
+    "6. Checkpoint — ensure formatter suite passes": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479069
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490295653
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490428914
+      }
+    ],
+    "7.1 Create `src/features/whatsapp/notifier.ts` with `dispatchWhatsApp` and `sendEvolutionMessage`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479089
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490434056
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490661641
+      }
+    ],
+    "8.1 Create `src/features/whatsapp/formatter.ts`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479107
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490670847
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490675750
+      }
+    ],
+    "8.2 Create `src/features/whatsapp/index.ts` public barrel": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479127
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490682279
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490816236
+      }
+    ],
+    "9. Alert channel registration": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479147
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490682864
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490816895
+      }
+    ],
+    "10.1 Create `src/app/api/in/whatsapp/status/route.ts` — `GET /api/in/whatsapp/status`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479167
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490830187
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491151202
+      }
+    ],
+    "10.2 Create `src/app/api/in/whatsapp/test/route.ts` — `POST /api/in/whatsapp/test`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479187
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490830872
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491151983
+      }
+    ],
+    "11.1 Create `src/components/settings/whatsapp-section.tsx`": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479205
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490831802
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491152716
+      }
+    ],
+    "11.2 Modify `src/components/settings/api-keys-form.tsx` to render `<WhatsAppSection />` within the API Keys tab": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479224
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490832524
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491412338
+      }
+    ],
+    "11.3 Modify `src/components/settings/alerts-manager.tsx` to add `WHATSAPP` to the channel chips": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479245
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490833288
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491153841
+      }
+    ],
+    "12. Checkpoint — ensure UI and API route tests pass": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479264
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491416935
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491486914
+      }
+    ],
+    "13.1 Modify `worker/src/jobs/india-daily-picks.ts` to emit `DAILY_PICKS_NEW` events": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479286
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491493656
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491835688
+      }
+    ],
+    "13.2 Modify `worker/src/jobs/india-scalper.ts` to emit `PAPER_TRADE_*` events": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479309
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491492695
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491834799
+      }
+    ],
+    "14.1 Modify the `GET /api/in/ai-signals` route handler to emit `AI_SIGNAL_NEW` events": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479338
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491495929
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491831685
+      }
+    ],
+    "14.2 Modify the `GET /api/in/signals` route handler (Signals Board) to emit `SIGNALS_BOARD_NEW` events": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479370
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491494962
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491832660
+      }
+    ],
+    "15.1 Integrate `SCANNER_HIT_NEW` emission into the scanner worker / polling path": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479388
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491496976
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491833881
+      }
+    ],
+    "16. Final checkpoint — full suite green": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489479407
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491841246
+      },
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787492371991
+      }
+    ],
+    "2. Core types and shared formatter utilities": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787489903641
+      }
+    ],
+    "3. Phone number helpers": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490026762
+      }
+    ],
+    "4. User preferences module": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490027417
+      }
+    ],
+    "5. Per-event message formatters": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490291222
+      }
+    ],
+    "7. Notifier core — dispatch, cooldown gate, and preferences filter": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490661694
+      }
+    ],
+    "8. Public barrel and formatter.ts dispatcher": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787490816274
+      }
+    ],
+    "10. API routes: status and test": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491152003
+      }
+    ],
+    "11. UI: WhatsAppSection component and profile page integration": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491412391
+      }
+    ],
+    "14. API route integrations: AI Signals and Signals Board": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491832680
+      }
+    ],
+    "15. Scanner worker integration and delta detection": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491833904
+      }
+    ],
+    "13. Worker integrations: Daily Picks and Scalper": [
+      {
+        "executionId": "d708c543-7af7-44cb-866c-fbc92ab8202c",
+        "chatSessionId": "sess_94545cfb-f305-42e5-9157-2a6253532974",
+        "timestamp": 1787491835725
+      }
+    ]
+  }
+}

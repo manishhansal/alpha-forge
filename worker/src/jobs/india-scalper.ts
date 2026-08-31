@@ -7,8 +7,11 @@ import {
 } from "@/features/india/scalping/paper-trader";
 import type {
   IndiaScalpStrategyId,
+  IndiaScalpSignal,
   IndiaScalpTimeframe,
 } from "@/features/india/scalping/types";
+import { dispatchWhatsApp } from "@/features/whatsapp/notifier";
+import type { PaperTradeEvent, IndiaPaperTradeSnapshot } from "@/features/whatsapp/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { yahoo } from "@/services/india/yahoo";
@@ -22,9 +25,57 @@ import {
   saveIndicatorState,
 } from "../indicator-state";
 import { createLogger } from "../log";
+import { getRedis } from "../redis";
 import { scheduleJob, type JobHandle } from "../scheduler";
 
 const log = createLogger("worker:india-scalper");
+
+/**
+ * Build an `IndiaPaperTradeSnapshot` from an `IndiaScalpSignal` plus the
+ * trade id returned by `openIndiaPaperTrade`. All India scalper trades are
+ * NSE instruments — the exchange is hard-coded accordingly.
+ *
+ * Requirements: 8.1
+ */
+function buildOpenedSnapshot(
+  sig: IndiaScalpSignal,
+  tradeId: string,
+): IndiaPaperTradeSnapshot {
+  return {
+    id: tradeId,
+    symbol: sig.symbol,
+    exchange: "NSE",
+    direction: sig.direction,
+    source: `in:${sig.strategyId}:${sig.timeframe}`,
+    entry: sig.entry,
+    stopLoss: sig.stopLoss,
+    target: sig.target,
+    riskReward: sig.riskReward,
+    openedAt: sig.triggeredAt,
+  };
+}
+
+/**
+ * Fire-and-forget helper: emit a single `PaperTradeEvent` via the WhatsApp
+ * notifier. Uses the `"system"` userId sentinel — the same convention as
+ * the india-daily-picks job — because `PaperTrade` rows are system-generated
+ * and not scoped to a specific user.
+ *
+ * Requirements: 8.1–8.4, 10.3
+ */
+function emitPaperTradeEvent(
+  event: PaperTradeEvent,
+  deps: { redis?: ReturnType<typeof getRedis>; prisma?: ReturnType<typeof getPrisma> },
+): void {
+  void dispatchWhatsApp(event, "system", deps).catch((err: unknown) =>
+    log.warn("whatsapp paper-trade dispatch error", {
+      err: (err as Error).message,
+      tradeId: event.trade.id,
+      symbol: event.trade.symbol,
+      type: event.type,
+    }),
+  );
+}
 
 /**
  * Timeframes the India F&O paper-trader fans out across each tick. Same
@@ -137,6 +188,18 @@ export function startIndiaScalperJob(): JobHandle {
 
         const prisma = getPrisma();
 
+        // Resolve Redis + Prisma clients once for the whole tick.  Both are
+        // shared across all fire-and-forget WhatsApp dispatches so we only
+        // pay the connection cost once.
+        let redis: ReturnType<typeof getRedis> | undefined;
+        try {
+          redis = getRedis();
+        } catch {
+          // Redis unavailable — dispatchWhatsApp will bypass the cooldown
+          // gate (best-effort) and continue without crashing the tick.
+        }
+        const whatsappDeps = { redis, prisma };
+
         let opened = 0;
         let dupSignal = 0;
         let alreadyOpen = 0;
@@ -170,6 +233,20 @@ export function startIndiaScalperJob(): JobHandle {
                 opened += 1;
                 openedByStrategy[sig.strategyId] =
                   (openedByStrategy[sig.strategyId] ?? 0) + 1;
+
+                // ── PAPER_TRADE_OPENED notification ──────────────────────
+                // Only fire for `in:`-prefixed trades (all India scalper
+                // trades use this prefix) when WhatsApp is configured.
+                // Requirements: 8.1, 10.3
+                if (workerConfig.whatsapp.enabled && result.tradeId) {
+                  emitPaperTradeEvent(
+                    {
+                      type: "PAPER_TRADE_OPENED",
+                      trade: buildOpenedSnapshot(sig, result.tradeId),
+                    },
+                    whatsappDeps,
+                  );
+                }
               } else if (result.reason === "duplicate-signal") {
                 dupSignal += 1;
               } else if (result.reason === "already-open") {
@@ -188,7 +265,43 @@ export function startIndiaScalperJob(): JobHandle {
 
         let resolveStats;
         try {
-          resolveStats = await resolveIndiaOpenTrades(prisma);
+          const resolveResult = await resolveIndiaOpenTrades(prisma);
+          resolveStats = resolveResult.stats;
+
+          // ── WIN / LOSS / EXPIRED notifications ──────────────────────────
+          // Emit one event per resolved trade when WhatsApp is configured.
+          // Requirements: 8.2, 8.3, 8.4, 10.3
+          if (workerConfig.whatsapp.enabled && resolveResult.resolved.length > 0) {
+            for (const t of resolveResult.resolved) {
+              const eventType =
+                t.outcome === "WIN"
+                  ? "PAPER_TRADE_WIN"
+                  : t.outcome === "LOSS"
+                    ? "PAPER_TRADE_LOSS"
+                    : "PAPER_TRADE_EXPIRED";
+
+              const snapshot: IndiaPaperTradeSnapshot = {
+                id: t.id,
+                symbol: t.symbol,
+                exchange: t.exchange,
+                direction: t.direction,
+                source: t.source,
+                entry: t.entry,
+                stopLoss: t.stopLoss,
+                target: t.target,
+                riskReward: t.riskReward,
+                openedAt: t.openedAt,
+                exitPrice: t.exitPrice,
+                pnlPct: t.pnlPct,
+                resolvedAt: t.resolvedAt,
+              };
+
+              emitPaperTradeEvent(
+                { type: eventType, trade: snapshot },
+                whatsappDeps,
+              );
+            }
+          }
         } catch (err) {
           child.warn("resolve failed", { err: (err as Error).message });
         }

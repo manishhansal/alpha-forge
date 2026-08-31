@@ -143,6 +143,7 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
           entry: 22000,
           stopLoss: 21950,
           target: 22100,
+          riskReward: 2.5,
           notional: 100000,
           openedAt,
           source: "in:LIQUIDITY_EDGE:5m",
@@ -153,8 +154,8 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
       { time: Math.floor(openedAt.getTime() / 1000) + 300, open: 22010, high: 22120, low: 22000, close: 22090 },
     ]);
 
-    const stats = await resolveIndiaOpenTrades(prisma);
-    expect(stats.wins).toBe(1);
+    const result = await resolveIndiaOpenTrades(prisma);
+    expect(result.stats.wins).toBe(1);
     expect(pt.update).toHaveBeenCalledTimes(1);
     const data = pt.update.mock.calls[0][0].data;
     expect(data.status).toBe("WIN");
@@ -173,6 +174,7 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
           entry: 22000,
           stopLoss: 21950,
           target: 22100,
+          riskReward: 2.5,
           notional: 100000,
           openedAt,
           source: "in:LIQUIDITY_EDGE:5m",
@@ -183,9 +185,9 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
       { time: Math.floor(openedAt.getTime() / 1000) + 60, open: 22010, high: 22030, low: 21990, close: 22020 },
     ]);
 
-    const stats = await resolveIndiaOpenTrades(prisma);
-    expect(stats.wins).toBe(0);
-    expect(stats.losses).toBe(0);
+    const result = await resolveIndiaOpenTrades(prisma);
+    expect(result.stats.wins).toBe(0);
+    expect(result.stats.losses).toBe(0);
     expect(pt.update).not.toHaveBeenCalled();
   });
 });

@@ -156,20 +156,54 @@ export interface IndiaResolveStats {
   errors: number;
 }
 
+/**
+ * Minimal resolved-trade record returned by `resolveIndiaOpenTrades` so
+ * callers (e.g. the india-scalper worker job) can build notification
+ * snapshots without a second DB read.
+ */
+export interface IndiaResolvedTrade {
+  id: string;
+  symbol: string;
+  /** Always "NSE" for India scalper trades — kept in the record for the
+   *  `IndiaPaperTradeSnapshot.exchange` field the notifier expects. */
+  exchange: "NSE";
+  direction: "LONG" | "SHORT";
+  source: string;
+  entry: number;
+  stopLoss: number;
+  target: number;
+  riskReward: number;
+  openedAt: number;  // Unix ms
+  exitPrice: number;
+  pnlPct: number;
+  resolvedAt: number; // Unix ms
+  outcome: "WIN" | "LOSS" | "EXPIRED";
+}
+
 interface OpenRow {
   id: string;
   symbol: string;
   direction: string;
+  source: string;
   entry: number;
   stopLoss: number;
   target: number;
+  riskReward: number;
   notional: number;
   openedAt: Date;
 }
 
+export interface IndiaResolveResult {
+  stats: IndiaResolveStats;
+  /** Every trade that transitioned out of OPEN this tick, with full snapshot
+   *  data the caller can use to build `IndiaPaperTradeSnapshot` without a
+   *  second DB read. */
+  resolved: IndiaResolvedTrade[];
+}
+
 export async function resolveIndiaOpenTrades(
   prisma?: PrismaClient,
-): Promise<IndiaResolveStats> {
+): Promise<IndiaResolveResult> {
   const db = prisma ?? getPrisma();
   const stats: IndiaResolveStats = {
     scanned: 0,
@@ -178,6 +212,7 @@ export async function resolveIndiaOpenTrades(
     expired: 0,
     errors: 0,
   };
+  const resolved: IndiaResolvedTrade[] = [];
 
   const open = (await db.paperTrade.findMany({
     where: { status: "OPEN", source: { startsWith: "in:" } },
@@ -187,9 +222,11 @@ export async function resolveIndiaOpenTrades(
       id: true,
       symbol: true,
       direction: true,
+      source: true,
       entry: true,
       stopLoss: true,
       target: true,
+      riskReward: true,
       notional: true,
       openedAt: true,
     },
@@ -201,10 +238,14 @@ export async function resolveIndiaOpenTrades(
   for (const t of open) {
     let candles;
     try {
+      // Use "1d" range for the resolver — it's sufficient for intraday trades
+      // and uses a distinct cache key from the ATR fetch ("5d"), preventing
+      // the resolver from re-using a pre-open candle snapshot cached by
+      // getIndiaIntradayAtr earlier in the same tick.
       candles = await yahoo.getHistorical({
         symbol: t.symbol,
         interval: "5m",
-        range: "5d",
+        range: "1d",
       });
     } catch (err) {
       console.warn(
@@ -216,29 +257,50 @@ export async function resolveIndiaOpenTrades(
     }
 
     const openedAtSec = Math.floor(t.openedAt.getTime() / 1000);
-    const relevant = candles.filter((c) => c.time >= openedAtSec);
+    // A 5m candle's `time` is the bar's *open* time. Include any bar whose
+    // close overlaps with the trade's open (bar_open + 5min > openedAt) so
+    // a target/SL hit within the opening partial bar is never missed.
+    const BAR_SEC = 5 * 60;
+    const relevant = candles.filter((c) => c.time + BAR_SEC > openedAtSec);
     const isLong = t.direction === "LONG";
 
-    const resolved = resolveAgainstCandles(relevant, {
+    const resolvedOutcome = resolveAgainstCandles(relevant, {
       direction: isLong ? "LONG" : "SHORT",
       stopLoss: t.stopLoss,
       target: t.target,
     });
 
-    if (resolved) {
-      const pnlPct = indiaPnlPercent(t.entry, resolved.exitPrice, isLong);
+    if (resolvedOutcome) {
+      const pnlPct = indiaPnlPercent(t.entry, resolvedOutcome.exitPrice, isLong);
+      const closedAtMs = resolvedOutcome.closedAtSec * 1000;
       await db.paperTrade.update({
         where: { id: t.id },
         data: {
-          status: resolved.outcome,
-          exitPrice: resolved.exitPrice,
+          status: resolvedOutcome.outcome,
+          exitPrice: resolvedOutcome.exitPrice,
           pnlPct,
           pnlUsd: (pnlPct / 100) * t.notional,
-          closedAt: new Date(resolved.closedAtSec * 1000),
+          closedAt: new Date(closedAtMs),
         },
       });
-      if (resolved.outcome === "WIN") stats.wins += 1;
+      if (resolvedOutcome.outcome === "WIN") stats.wins += 1;
       else stats.losses += 1;
+      resolved.push({
+        id: t.id,
+        symbol: t.symbol,
+        exchange: "NSE",
+        direction: t.direction as "LONG" | "SHORT",
+        source: t.source,
+        entry: t.entry,
+        stopLoss: t.stopLoss,
+        target: t.target,
+        riskReward: t.riskReward,
+        openedAt: t.openedAt.getTime(),
+        exitPrice: resolvedOutcome.exitPrice,
+        pnlPct,
+        resolvedAt: closedAtMs,
+        outcome: resolvedOutcome.outcome,
+      });
       continue;
     }
 
@@ -257,10 +319,26 @@ export async function resolveIndiaOpenTrades(
         },
       });
       stats.expired += 1;
+      resolved.push({
+        id: t.id,
+        symbol: t.symbol,
+        exchange: "NSE",
+        direction: t.direction as "LONG" | "SHORT",
+        source: t.source,
+        entry: t.entry,
+        stopLoss: t.stopLoss,
+        target: t.target,
+        riskReward: t.riskReward,
+        openedAt: t.openedAt.getTime(),
+        exitPrice: exit,
+        pnlPct,
+        resolvedAt: now,
+        outcome: "EXPIRED",
+      });
     }
   }
 
-  return stats;
+  return { stats, resolved };
 }
 
 /**

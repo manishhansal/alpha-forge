@@ -15,7 +15,7 @@ export interface ChannelDispatchInput {
 }
 
 export interface DispatchOutcome {
-  channel: "IN_APP" | "EMAIL" | "WEBHOOK";
+  channel: "IN_APP" | "EMAIL" | "WEBHOOK" | "WHATSAPP";
   ok: boolean;
   error?: string;
   status?: number;

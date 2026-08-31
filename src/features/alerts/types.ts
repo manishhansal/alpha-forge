@@ -12,7 +12,7 @@ export const ALERT_TYPES = [
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
-export const ALERT_CHANNELS = ["IN_APP", "EMAIL", "WEBHOOK"] as const;
+export const ALERT_CHANNELS = ["IN_APP", "EMAIL", "WEBHOOK", "WHATSAPP"] as const;
 export type AlertChannel = (typeof ALERT_CHANNELS)[number];
 
 export const SYMBOLS = ["BTC", "ETH", "SOL"] as const;
@@ -34,7 +34,7 @@ const alertBaseSchema = z.object({
    */
   threshold: z.number().finite(),
   comparator: z.enum(COMPARATORS).default("gt"),
-  channels: z.array(z.enum(ALERT_CHANNELS)).min(1).max(3),
+  channels: z.array(z.enum(ALERT_CHANNELS)).min(1).max(4),
   webhookUrl: z.string().url().optional().nullable(),
   cooldownSec: z.number().int().min(30).max(86_400).default(900),
   active: z.boolean().default(true),

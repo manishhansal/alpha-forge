@@ -15,6 +15,8 @@ import { SettingsForm } from "@/components/settings/settings-form";
 import { getCurrentUser } from "@/features/auth/session";
 import { listStoredKeys } from "@/features/settings/api-keys";
 import { getDataSourceSelections } from "@/features/settings/data-sources";
+import { maskPhone, readPhone } from "@/features/whatsapp/phone";
+import { getWhatsAppPreferences } from "@/features/whatsapp/preferences";
 import { encryptionAvailable } from "@/lib/crypto";
 import { getPrisma } from "@/lib/prisma";
 
@@ -42,6 +44,15 @@ export default async function IndiaProfilePage() {
   ]);
   const credentialedIds = storedKeys.map((k) => k.exchange);
   const createdAtIso = (meta?.createdAt ?? new Date()).toISOString();
+
+  // WhatsApp integration data — loaded independently so a DB failure doesn't
+  // block the rest of the profile page (both resolve to null/defaults on error).
+  const [rawPhone, whatsAppPrefs] = await Promise.all([
+    readPhone(user.id, prisma),
+    getWhatsAppPreferences(user.id, prisma),
+  ]);
+  const maskedPhone = rawPhone ? maskPhone(rawPhone) : null;
+  const evolutionConfigured = Boolean(process.env.WHATSAPP_EVOLUTION_API_URL);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -126,7 +137,13 @@ export default async function IndiaProfilePage() {
               </Badge>
             </CardHeader>
             <CardContent>
-              <ApiKeysForm encryptionAvailable={encOk} stored={storedKeys} />
+              <ApiKeysForm
+                encryptionAvailable={encOk}
+                stored={storedKeys}
+                evolutionConfigured={evolutionConfigured}
+                maskedPhone={maskedPhone}
+                initialPrefs={whatsAppPrefs}
+              />
             </CardContent>
           </Card>
         }
