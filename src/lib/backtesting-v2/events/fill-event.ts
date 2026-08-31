@@ -47,6 +47,12 @@ export interface FillEvent extends BaseEvent {
   readonly executionTimestampMs: number;
   /** Bar index on which the fill occurred. */
   readonly executionBarIndex: number;
+  /**
+   * Optional execution-layer metadata (e.g. IndiaFillExtras).
+   * Typed as a loose record so the events layer stays decoupled from
+   * the execution layer's specific extras types.
+   */
+  readonly extras?: Record<string, number | string | boolean | null | undefined>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,6 +73,7 @@ export function buildFillEvent(opts: {
   signalTimestampMs: number;
   executionTimestampMs: number;
   executionBarIndex: number;
+  extras?: Record<string, number | string | boolean | null | undefined>;
 }): FillEvent {
   const netCost =
     opts.qty * opts.fillPrice * opts.instrument.lotSize + opts.commission;
@@ -89,5 +96,6 @@ export function buildFillEvent(opts: {
     signalTimestampMs: opts.signalTimestampMs,
     executionTimestampMs: opts.executionTimestampMs,
     executionBarIndex: opts.executionBarIndex,
+    extras: opts.extras,
   };
 }
