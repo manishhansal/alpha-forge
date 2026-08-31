@@ -238,10 +238,14 @@ export async function resolveIndiaOpenTrades(
   for (const t of open) {
     let candles;
     try {
+      // Use "1d" range for the resolver — it's sufficient for intraday trades
+      // and uses a distinct cache key from the ATR fetch ("5d"), preventing
+      // the resolver from re-using a pre-open candle snapshot cached by
+      // getIndiaIntradayAtr earlier in the same tick.
       candles = await yahoo.getHistorical({
         symbol: t.symbol,
         interval: "5m",
-        range: "5d",
+        range: "1d",
       });
     } catch (err) {
       console.warn(
@@ -253,7 +257,11 @@ export async function resolveIndiaOpenTrades(
     }
 
     const openedAtSec = Math.floor(t.openedAt.getTime() / 1000);
-    const relevant = candles.filter((c) => c.time >= openedAtSec);
+    // A 5m candle's `time` is the bar's *open* time. Include any bar whose
+    // close overlaps with the trade's open (bar_open + 5min > openedAt) so
+    // a target/SL hit within the opening partial bar is never missed.
+    const BAR_SEC = 5 * 60;
+    const relevant = candles.filter((c) => c.time + BAR_SEC > openedAtSec);
     const isLong = t.direction === "LONG";
 
     const resolvedOutcome = resolveAgainstCandles(relevant, {
