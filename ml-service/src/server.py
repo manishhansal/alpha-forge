@@ -25,6 +25,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .explainability import ModelExplainer
 from .models.market_regime import MarketRegimeClassifier
+from .monitoring.alerts import AlertSystem
+from .monitoring.feature_monitor import FeatureMonitor
+from .monitoring.model_registry import build_default_registry
+from .monitoring.performance_monitor import PerformanceMonitor
+from .monitoring.router import init_monitoring, router as monitoring_router
 from .models.portfolio_optimizer import PortfolioOptimizer
 from .models.risk_predictor import RiskPredictor
 from .models.stock_ranker import StockRanker
@@ -50,6 +55,12 @@ from .schemas import (
 logger = structlog.get_logger()
 
 # ─── Global model instances ──────────────────────────────────────────────────
+
+# Monitoring singletons (initialised in lifespan)
+_alert_system:        AlertSystem        | None = None
+_model_registry                                 = None
+_feature_monitor:     FeatureMonitor     | None = None
+_performance_monitor: PerformanceMonitor | None = None
 
 regime_classifier: MarketRegimeClassifier | None = None
 stock_ranker: StockRanker | None = None
@@ -130,6 +141,25 @@ def _load_models() -> None:
         risk=risk_predictor.stop_model is not None,
     )
 
+    # ── Bootstrap monitoring layer ────────────────────────────────────────
+    global _alert_system, _model_registry, _feature_monitor, _performance_monitor
+
+    _alert_system        = AlertSystem()
+    _model_registry      = build_default_registry(alert_system=_alert_system)
+    _feature_monitor     = FeatureMonitor(
+        alert_system=_alert_system,
+        model_registry=_model_registry,
+        window_size=200,
+    )
+    _performance_monitor = PerformanceMonitor(
+        alert_system=_alert_system,
+        model_registry=_model_registry,
+        window_size=100,
+        min_samples=20,
+    )
+    init_monitoring(_model_registry, _alert_system, _feature_monitor, _performance_monitor)
+    logger.info("monitoring_layer_initialised")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -156,6 +186,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Monitoring router ────────────────────────────────────────────────────────
+app.include_router(monitoring_router)
 
 
 # ─── Health / Status ──────────────────────────────────────────────────────────

@@ -2,6 +2,522 @@
 
 ---
 
+## [Unreleased] — Market Microstructure Intelligence Engine
+
+**Commit:** `08ef581`
+**Files added:** `src/lib/microstructure/` (7 modules) · `tests/lib/microstructure/microstructure.test.ts`
+**New tests:** 974 (microstructure suite)
+
+Adds a stateful, TypeScript-native market microstructure engine (`src/lib/microstructure/`) that turns raw order-book snapshots and tick stream data into execution-quality signals and institutional-grade feature vectors. Designed as a library consumed by strategies, the risk engine, and the ML feature pipeline.
+
+### Modules
+
+#### `src/lib/microstructure/order-book.ts`
+- `OrderBookSnapshot` builder — normalises multi-level bid/ask arrays into a canonical depth shape
+- Depth helpers: `midPrice()`, `weightedMidPrice()` (volume-weighted), `spread()`, `bestBid/Ask`
+
+#### `src/lib/microstructure/imbalance.ts`
+- **L1 imbalance** — `(bidQty − askQty) / (bidQty + askQty)` at the top of book
+- **L5 imbalance** — same formula summed across the five best levels
+- **Weighted-depth imbalance** — price-distance-weighted to give inner levels higher weight
+- **Regime classification** — `DEMAND_HEAVY` / `SUPPLY_HEAVY` / `BALANCED` thresholds with hysteresis
+
+#### `src/lib/microstructure/spread.ts`
+- Absolute spread + percentage spread computation
+- `SpreadTracker` — rolling percentile tracker (configurable window); emits `spreadPercentile` ∈ [0,1]
+- `SpreadRegime` — `TIGHT` / `NORMAL` / `WIDE` / `EXTREME` based on live percentile rank
+
+#### `src/lib/microstructure/liquidity.ts`
+- 5-dimension composite liquidity score (0–100):
+  1. Volume (current vs 20-bar average)
+  2. Order-book depth (total bid + ask qty at L5)
+  3. Spread (percentile rank, inverted — tighter = more liquid)
+  4. Open interest (absolute OI for derivatives instruments)
+  5. Trade frequency (ticks per minute)
+- Weights configurable; NSE-calibrated defaults provided
+
+#### `src/lib/microstructure/toxicity.ts`
+- **TypeScript VPIN port** — tick-rule bucket accumulation matching the Python `compute_vpin()` in `volume.py`; all values guaranteed ∈ [0,1]
+- `VPIN` running estimate across the last N buckets
+- **Composite toxicity score** — blends VPIN + imbalance regime + spread regime into a single `[0,1]` toxicity number
+- Confidence and sizing adjustments: returns recommended confidence multiplier (0.6–1.0) and max position-size fraction based on toxicity level
+
+#### `src/lib/microstructure/pressure.ts`
+- `PressureFrame` — captures per-bar bid/ask replenishment rates and depth-change velocity
+- `PressureTracker` — rolling ring buffer of `PressureFrame`s; emits `bidPressure`, `askPressure`, and `netPressure` ∈ [−1, 1]
+- Price-response pressure — cross-correlates depth changes with subsequent price moves to detect informed vs. noise pressure
+
+#### `src/lib/microstructure/index.ts` — `MicrostructureEngine` facade
+- `ExecQuality` enum: `EXCELLENT` / `GOOD` / `FAIR` / `POOR` — computed from spread percentile + liquidity score + toxicity level
+- **Feature store** — maintains 1-minute and 5-minute ring-buffer aggregations of all microstructure metrics; compatible with the ML feature pipeline shape expected by `engineer.py`
+- Integration points: `addTick(tick, depth)`, `getFeatures(interval)`, `getExecQuality()`
+- VPIN invariants: flat vs trending candle handling, correct bucket boundary math
+- Toxicity composite: `EXTREME` (> 0.85) and `BENIGN` (< 0.25) bands enforce hard multiplier bounds
+
+### Tests (`tests/lib/microstructure/microstructure.test.ts` — 974 tests)
+- Order-book snapshot construction and depth arithmetic
+- L1 / L5 / weighted-depth imbalance values against hand-computed fixtures
+- Spread percentile tracking — correct rank at 10th / 50th / 90th bucket
+- Liquidity score decomposition per dimension
+- VPIN consistency with the Python `compute_vpin` reference (flat series → 0, all-buy series → 1)
+- Composite toxicity and sizing multiplier bounds
+- `PressureTracker` ring-buffer lifecycle (fill, overwrite, reset)
+- `ExecQuality` transitions across spread/liquidity/toxicity combinations
+- Feature-store 1m/5m aggregation boundary arithmetic
+
+---
+
+## [Unreleased] — Shadow Trading & Strategy Experiment Framework
+
+**Commit:** `7ec9221`
+**Files added:** `src/lib/experiments/` (6 modules) · `src/app/api/experiments/[id]/route.ts` · `src/app/api/experiments/route.ts` · 5 test files
+**New tests:** 1,643 (experiments suite)
+
+Adds a complete A/B testing and shadow-trading infrastructure for strategies and ML models (`src/lib/experiments/`). Enables safe promotion of new strategies from paper → live with statistical rigour and cryptographic approval gates.
+
+### Modules
+
+#### `src/lib/experiments/strategy-version.ts`
+- `StrategyVersionRegistry` — per-type registration for `strategy` / `model` / `feature` variants; alias resolution (e.g. `"champion"` → specific version ID)
+- `VersionStamp` builder (semver + timestamp + hash) and validator
+- Stage (`DEVELOPMENT` → `SHADOW` → `PAPER` → `LIVE` → `RETIRED`) and status (`ACTIVE` / `PAUSED` / `DEPRECATED`) state machines with transition guards
+- JSON serialisation/deserialisation for persistence
+- `globalVersionRegistry` singleton
+
+#### `src/lib/experiments/experiment-manager.ts`
+- `ExperimentManager` — manages multi-arm experiments (challenger vs. champion, or N-way):
+  - `createExperiment()` / `startExperiment()` / `pauseExperiment()` / `closeAll()` lifecycle
+  - Per-arm traffic allocation (sum must equal 1.0)
+  - `recordSignal()` — routes incoming signals to the correct arm's shadow trader
+  - `updateBenchmark()` — production / paper / index comparison baseline
+  - Immutable audit log: `SIGNAL_RECEIVED`, `FILL_SIMULATED`, `POSITION_OPENED`, `POSITION_CLOSED`, `BENCHMARK_UPDATED`
+  - `summary()` — returns Sharpe, profit factor, win rate, max drawdown, total return per arm
+
+#### `src/lib/experiments/shadow-trader.ts`
+- `ShadowTrader` — one instance per experiment arm; simulates fills without touching the live broker
+- Handles partial fills, slippage model integration, and commission drag tracking
+- Supports PAPER mode (live paper-trade DB writes) and SHADOW mode (in-memory only)
+- `openPosition()` / `closePosition()` / `squareOffAll()` (EOD sweep)
+- `updateBenchmark()` for arm vs. production / paper / index comparison
+
+#### `src/lib/experiments/comparison.ts`
+- `ComparisonEngine` — computes per-arm performance metrics:
+  - Sharpe, Sortino, max/avg drawdown, win rate, profit factor, SQN, expectancy, payoff ratio, fill rate, commission drag
+  - **Pairwise Welch t-test** with Satterthwaite degrees of freedom and p-value via regularised incomplete beta (no scipy dependency)
+  - **95% CI on mean return difference** between any two arms
+  - **Minimum recommended sample size** via Cohen's d effect-size estimator
+  - Benchmark comparison: total return, alpha vs. index, information ratio
+
+#### `src/lib/experiments/promotion.ts`
+- `PromotionEngine` — gated promotion pipeline:
+  - SHADOW → PAPER: requires minimum trade count + win-rate floor
+  - PAPER → LIVE: **always requires human approval** (`REQUIRES_APPROVAL` — no auto-promotion to live)
+  - Each promotion step issues a **single-use, time-limited cryptographic token** (32 bytes random, default 10-minute expiry)
+  - `approvePromotion(token)` — consumes the token (single-use enforced); rejects expired, wrong-arm, or wrong-experiment tokens
+  - `rejectAutoLive()` throws on any attempt to skip the approval step
+  - Readiness progress fraction per gate (what % of conditions are met)
+  - Immutable promotion audit log
+  - `globalPromotionEngine` singleton
+
+#### `src/lib/experiments/index.ts`
+- Barrel re-exports all public types and singletons
+
+### API Routes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/experiments` | Snapshot of all experiments + per-arm metrics (Sharpe, drawdown, fill rate, t-test, p-value, CI, bestArmId, IR, alpha) |
+| `GET` | `/api/experiments/[id]` | Single experiment detail + comparison report |
+| `POST` | `/api/experiments/[id]` | Lifecycle actions: `start` / `pause` / `close` / `requestPromotion` / `approvePromotion` |
+
+### Tests
+- `strategy-version.test.ts` — version stamp construction, alias resolution, stage/status transitions, serialisation round-trip
+- `experiment-manager.test.ts` — lifecycle (start/pause/close), traffic allocation validation, signal routing, audit log immutability, summary stats
+- `shadow-trader.test.ts` — fill simulation, partial fills, EOD sweep, benchmark comparison, mode switching
+- `comparison.test.ts` — Sharpe/Sortino formulas, Welch t-test, p-value, CI, Cohen's d sample size, drawdown, fill rate, commission drag
+- `promotion.test.ts` — each gate individually, PAPER→LIVE always `REQUIRES_APPROVAL`, `rejectAutoLive` throws, token issuance/consumption, single-use enforcement, expiry, wrong-arm/experiment rejection, readiness progress fractions
+
+---
+
+## [Unreleased] — Portfolio Risk Engine v2
+
+**Commit:** `89f3a41`
+**Files added:** `src/lib/risk/` (7 modules) · `tests/lib/risk/portfolio-risk.test.ts`
+**New tests:** 64 (portfolio-risk suite, all passing)
+
+Adds a production-grade, TypeScript-native Portfolio Risk Engine (`src/lib/risk/`) with 7 independent modules and an orchestrating facade. Plugs into the position-sizing path of every strategy and the India auto-trader.
+
+### Modules
+
+#### `src/lib/risk/exposure.ts`
+- Gross / net / long / short exposure computation across a portfolio of open trades
+- Per-symbol, per-sector, per-strategy, and per-underlying concentration checks
+- **Correlated-long cluster guard** — e.g. rejects a 4th Bank sector long when the limit is 3; configurable per sector
+
+#### `src/lib/risk/correlation.ts`
+- Rolling Pearson correlation matrix (configurable lookback, updated on every new return observation)
+- Single-linkage clustering of correlated positions into groups
+- **Pre-trade cluster-breach check** — returns `BREACH` when adding a new position would push any cluster's net exposure beyond the per-cluster limit
+
+#### `src/lib/risk/var.ts`
+- **Historical VaR** — empirical quantile of the return distribution over a rolling lookback window
+- **Parametric (Gaussian) VaR** — `μ − z × σ` with configurable confidence (default 99%)
+- **CVaR / Expected Shortfall** — mean of returns below the VaR threshold
+- Portfolio daily volatility helper for position sizing
+
+#### `src/lib/risk/drawdown.ts`
+- 4-tier drawdown control ladder: `NORMAL` → `CAUTION` → `WARNING` → `DANGER` → `HALT`
+- `DrawdownTracker` — maintains high-water mark and current drawdown continuously
+- Per-tier size multipliers (e.g. 0.5× at `WARNING`, 0.0× at `HALT`)
+- Configurable tier thresholds (default: `CAUTION` at −3%, `WARNING` at −6%, `DANGER` at −10%, `HALT` at −15%)
+
+#### `src/lib/risk/position-sizing.ts`
+- Dynamic quantity formula: `base × confidence × vol_factor × correlation_factor × drawdown_factor`
+- ATR-based cap: position size cannot risk more than N× ATR on the stop distance
+- Notional cap: hard maximum notional per trade
+- All factors produce values in `[0, 1]` so the formula is composable without special-casing
+
+#### `src/lib/risk/risk-limits.ts`
+- Risk budgets with configurable limits: per-trade, per-strategy, per-sector, and portfolio-level daily loss
+- `SOFT_KILL` — reduces sizing to minimum when any budget is within 20% of its limit
+- `HARD_KILL` — blocks all new entries when any limit is breached
+- Auto-escalation: daily loss exceeding 50% of the daily budget triggers `SOFT_KILL`; exceeding 100% triggers `HARD_KILL`
+
+#### `src/lib/risk/portfolio-risk.ts` — `PortfolioRiskEngine`
+- 8-step pre-trade evaluation pipeline (runs in < 1 ms):
+  1. Exposure concentration checks
+  2. Correlated cluster check
+  3. VaR breach check (position + portfolio)
+  4. Drawdown tier assessment
+  5. Risk-limit budget check
+  6. Dynamic position sizing
+  7. Soft/hard kill switch
+  8. Final approval with sizing recommendation
+- Stateful price history and daily P&L rolling windows (configurable retention)
+- Full audit snapshot: every evaluation decision + reason string, serialisable to JSON
+
+### Tests (`tests/lib/risk/portfolio-risk.test.ts` — 64/64 passing)
+- Correlated long cluster rejection (Bank sector, 4th position blocked)
+- Sector concentration breach → position blocked
+- VaR breach → position blocked
+- Drawdown tier classification across all 5 tiers
+- `SOFT_KILL` sizing reduction, `HARD_KILL` full block
+- Risk-budget breach at trade / strategy / sector / portfolio levels
+- Correlation matrix construction, clustering, and cluster-breach detection
+- Dynamic sizing formula composability
+
+---
+
+## [Unreleased] — ML Model Monitoring & Drift Detection
+
+**Commit:** `47d50d2`
+**Files added:** `ml-service/src/monitoring/` (7 modules) · `ml-service/tests/test_monitoring.py`
+**New tests:** 930 (Python monitoring suite)
+
+Adds a complete model health and data-drift monitoring layer to the ML service (`ml-service/src/monitoring/`). All monitoring endpoints are behind `/monitoring/*` on the FastAPI app.
+
+### Modules
+
+#### `ml-service/src/monitoring/drift_detector.py`
+- **PSI (Population Stability Index)** — percentile-based bins; PSI < 0.1 = stable, 0.1–0.2 = minor drift, > 0.2 = major drift
+- **KS two-sample statistic** — with p-value significance testing (α = 0.05 default)
+- **Jensen-Shannon divergence** — bounded [0,1], symmetric
+- Stateful `DriftDetector` with thread-safe reference distribution store
+- Prediction distribution summary: BUY/SELL/WAIT/NO_TRADE class-ratio tracking
+
+#### `ml-service/src/monitoring/feature_monitor.py`
+- Per-(model, feature) rolling `deque` buffers (configurable window, default 200 observations)
+- Auto-triggers drift check when window fills; `force_check()` for immediate evaluation
+- `observe()` / `observe_batch()` hot-path ingestion (no lock contention on fast paths)
+- Forwards `MINOR` drift → `WARNING` status, `MAJOR` drift → `DEGRADED` status in model registry
+
+#### `ml-service/src/monitoring/performance_monitor.py`
+- `TradeOutcome` records: `(predicted_prob, actual_outcome, pnl_pct)`
+- `PerformanceSnapshot`: Brier score, ECE (expected calibration error), accuracy, log-loss
+- **Trading expectancy**: `win_rate × avg_win + loss_rate × avg_loss`
+- Rolling performance windows (configurable); exponential decay weighting for recency
+- Threshold-based alerts: Brier > 0.3 → `DEGRADED`; calibration error > 0.15 → `WARNING`
+
+#### `ml-service/src/monitoring/alerts.py`
+- Structured alert emission via `structlog`; `dispatch_external()` hook for webhook/Slack integration
+- Alert severity: `INFO` / `WARNING` / `CRITICAL`
+- Alert categories: `DRIFT` / `PERFORMANCE` / `CALIBRATION` / `AVAILABILITY`
+- Filtering by severity / model / category
+- Alert history with configurable retention
+
+#### `ml-service/src/monitoring/model_registry.py`
+- Central registry for all model health states: `HEALTHY` → `WARNING` → `DEGRADED` → `DISABLED`
+- Ensemble weight multipliers updated per model health state (degraded models get reduced weight)
+- Manual recovery (`/monitoring/models/:name/recover`) and operator disable (`/monitoring/models/:name/disable`) overrides
+
+#### `ml-service/src/monitoring/router.py` — FastAPI `APIRouter` (prefix `/monitoring`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/monitoring/health` | Overall system status |
+| `GET` | `/monitoring/weights` | Ensemble weight multipliers per model |
+| `GET` | `/monitoring/models` | Full registry dump |
+| `GET` | `/monitoring/models/:name` | Single model detail |
+| `POST` | `/monitoring/models/:name/recover` | Manual recovery to HEALTHY |
+| `POST` | `/monitoring/models/:name/disable` | Operator disable override |
+| `GET` | `/monitoring/alerts` | Alert history (filterable by severity / model / category) |
+| `GET` | `/monitoring/alerts/summary` | Counts by severity |
+| `GET` | `/monitoring/drift` | All feature drift reports |
+| `GET` | `/monitoring/drift/:model` | Single model drift report |
+| `POST` | `/monitoring/drift/check/:model` | Force immediate drift check |
+| `GET` | `/monitoring/performance` | All performance snapshots |
+| `GET` | `/monitoring/performance/:model` | Snapshot + strategy decay analysis |
+| `POST` | `/monitoring/outcomes` | Ingest trade outcomes |
+
+#### `ml-service/src/server.py` (modified)
+- Registers the `/monitoring` router on the main FastAPI app
+- Wires feature monitor and performance monitor into the prediction endpoints so every prediction automatically feeds the drift/performance pipelines
+
+### Tests (`ml-service/tests/test_monitoring.py` — 930 tests)
+- Stable distribution: PSI/KS/JS all below thresholds
+- Slow drift: minor PSI range, correct `WARNING` severity
+- Sudden drift: PSI > 0.2, `MAJOR` → `DEGRADED` model status
+- Performance lifecycle: `HEALTHY` → `DEGRADED` → `DISABLED` → `HEALTHY`
+- ECE and Brier score computation correctness
+- Alert emission, filtering, and `dispatch_external` hook
+
+---
+
+## [Unreleased] — Meta Decision Engine
+
+**Commit:** `5fe0408`
+**Files added:** `ml-service/src/meta/` (6 modules) · `ml-service/tests/test_meta_engine.py`
+**New tests:** 1,058 (Python meta-engine suite)
+
+Adds a `MetaModel` layer to the ML service (`ml-service/src/meta/`) that combines predictions from all 7 base models into a single calibrated, explainable trading decision.
+
+### Modules
+
+#### `ml-service/src/meta/calibration.py`
+- **Platt scaling** + **isotonic regression** per model; calibration is fit out-of-sample
+- `CalibrationStore` — tracks ECE, MCE, and Brier score per model; persists calibration artifacts as JSON (isotonic regressors pickled + base64 encoded for portability)
+
+#### `ml-service/src/meta/ensemble.py`
+- `REGIME_WEIGHTS` table — 6 market regimes × 7 models; weights determined by each model's historical edge in that regime
+  - Example: in `VOLATILE` regime the Risk Predictor gets a higher weight; in `STRONG_BULL` regime the Stock Ranker gets higher weight
+- **Disagreement metrics**: variance across model predictions, direction disagreement count, prediction spread
+- Contextual weighting: volatile → risk-heavy, bull → ranker-heavy, sideways → strategy-heavy
+
+#### `ml-service/src/meta/abstention.py`
+- `AbstentionPolicy` with 7 independent trigger conditions (e.g. high prediction variance, low liquidity score, model disagreement > threshold, monitoring `DEGRADED` status)
+- `WAIT` vs `NO_TRADE` distinction: `WAIT` means "skip this bar, retry next"; `NO_TRADE` means "system conditions not met"
+
+#### `ml-service/src/meta/decision_policy.py`
+- 5-component `ConfidenceDecomposition`: base confidence, regime alignment, calibration quality, ensemble agreement, monitoring health
+- `ReasonCode` enum for every decision path — structured audit trail
+- `DecisionPolicy` orchestrator: takes raw model outputs + monitoring state → produces a final `MetaDecision` with action, confidence, reason codes, and SHAP-style attribution
+
+#### `ml-service/src/meta/meta_model.py`
+- `MetaModel` end-to-end: calls all base models in parallel, feeds outputs through calibration → ensemble weighting → abstention check → decision policy
+- OOS (out-of-sample) training mode: fits calibration models on a held-out period using walk-forward splits
+- `save()` / `load()` persistence (calibration store + regime weights)
+
+#### `ml-service/src/meta/__init__.py`
+- Public API surface: exports `MetaModel`, `MetaDecision`, `MetaModelConfig`
+
+### Tests (`ml-service/tests/test_meta_engine.py` — 1,058 tests)
+- Calibration round-trip (fit → transform → fit loaded)
+- Ensemble regime weights sum to 1.0 per regime
+- Confidence decomposition arithmetic
+- OOS training split ordering (no future data leakage)
+- Save/load persistence (file round-trip)
+- Abstention policy: each of the 7 conditions triggers correctly in isolation
+
+---
+
+## [Unreleased] — Indian Market Execution Simulation Engine
+
+**Commit:** `4ddcee1`
+**Files added:** `src/lib/backtesting-v2/execution/` (7 modules) · `tests/lib/backtesting-v2/india-execution.test.ts`
+**New tests:** 24 (execution simulation scenarios)
+
+Adds realistic NSE/NFO execution simulation to the `backtesting-v2` engine. All new modules are additive — existing strategies and the existing execution models are untouched.
+
+### New Execution Modules
+
+#### `src/lib/backtesting-v2/execution/market-depth.ts`
+- Synthetic 5-level bid/ask order book per instrument, parameterised by spread, depth profile, and tick size
+- `buildSyntheticDepth(snapshot)` — constructs a realistic depth ladder from a single price + spread input
+- Used by the slippage model to compute market-impact cost for large orders
+
+#### `src/lib/backtesting-v2/execution/india-slippage-model.ts`
+- Instrument-aware slippage with 3 additive components:
+  1. **Half-spread** — bid/ask spread cost
+  2. **Market impact** — square-root model: `k × σ × √(qty / ADV)`
+  3. **ATR penalty** — fraction of ATR(14) for illiquid bars
+- Extra **OTM penalty** for option legs far from ATM (OTM options have wide percentage spreads)
+- NSE tick-size rounding applied after slippage (0.05 equities, 1 NIFTY, 5 BANKNIFTY)
+- Instrument presets: `EQUITY`, `INDEX_OPTION`, `STOCK_OPTION`, `INDEX_FUTURE`, `STOCK_FUTURE`
+
+#### `src/lib/backtesting-v2/execution/india-brokerage-model.ts`
+- Full NSE regulatory cost model for all instrument types:
+  - STT (Securities Transaction Tax) — rate varies by equity/F&O/delivery
+  - NSE exchange transaction fee
+  - BSE exchange transaction fee (for BSE-listed instruments)
+  - GST on brokerage + exchange fees (18%)
+  - SEBI turnover fee (₹10 per crore)
+  - Stamp duty (state-dependent, approximated at 0.015%)
+  - DP (Depository Participant) charges for equity delivery
+- Returns `CommissionBreakdown` with every component itemised
+
+#### `src/lib/backtesting-v2/execution/latency-model.ts`
+- 3 latency profiles: `LOW` (co-location, ~0.5ms), `MEDIUM` (retail DMA, ~15ms), `HIGH` (API/algo, ~80ms)
+- Each profile samples from a realistic distribution (lognormal signal latency + network jitter + order processing)
+- `LatencyModel.sample(profile)` — returns total round-trip latency in ms
+
+#### `src/lib/backtesting-v2/execution/india-fill-model.ts`
+- Order type support: `MARKET`, `LIMIT`, `STOP_MARKET`, `STOP_LIMIT`
+- **Partial fills** — when order size > available depth at price, the remainder is queued or cancelled based on `timeInForce`
+- Gap-through detection: if a stop is triggered by a gap opening, fill at the gap-open price (not the stop price)
+- Limit order rejection if market moves away before fill
+- Anti-lookahead: fill price is resolved from the next bar's OHLC, never the signal bar
+
+#### `src/lib/backtesting-v2/execution/execution-quality-report.ts`
+- `ExecutionQualityReport` — per-fill metrics: slippage vs. mid-price, commission as % of trade, fill rate, partial-fill rate
+- Aggregate quality report across a backtest run: avg slippage, avg brokerage, total cost drag, implementation shortfall
+
+#### `src/lib/backtesting-v2/execution/india-execution-engine.ts`
+- `IndiaExecutionEngine` — drop-in `FillModel` facade that wires slippage + brokerage + latency + fill model together
+- Factory presets: `createRetailEngine()`, `createProEngine()`, `createHFTEngine()` (matching the 3 latency profiles)
+
+### Tests (`tests/lib/backtesting-v2/india-execution.test.ts` — 24 tests, 9 scenarios)
+- Liquid ATM option fill (zero partial, tight spread)
+- Illiquid OTM option fill (wide spread, OTM penalty)
+- Gap-through-stop (fill at gap-open, not stop price)
+- Partial fill (qty > depth)
+- Unfilled limit (price moves away)
+- `STOP_LIMIT` (stop triggered but limit not filled)
+- Anti-lookahead (signal bar index < fill bar index)
+- NSE brokerage breakdown (STT + exchange + GST + SEBI + stamp)
+- Commission drag in `ExecutionQualityReport`
+
+---
+
+## [Unreleased] — Financial ML Validation Framework
+
+**Commit:** `9713d5c`
+**Files added:** `ml-service/src/validation/` (6 modules) · `ml-service/tests/test_validation.py`
+**New tests:** 1,480 (Python validation suite)
+
+Adds an institutional-grade ML validation framework to the Python service, replacing random train/test splitting for all financial models. Implements the López de Prado methodology throughout.
+
+### Modules
+
+#### `ml-service/src/validation/walk_forward.py`
+- `WalkForwardValidator` with configurable **rolling** and **expanding** window modes
+- `WalkForwardConfig`: `train_bars`, `val_bars`, `test_bars`, `step_bars`, `expanding` flag
+- Strict temporal ordering invariants enforced via `_validate_fold_integrity()` — raises if any test bar precedes its training window
+- `DatetimeIndex` labelling for fold manifests
+- Fold manifest persistence (JSON, never overwrites existing manifests — immutable audit trail)
+
+#### `ml-service/src/validation/embargo.py`
+- `EmbargoConfig` supporting `bars` / `minutes` / `days` units
+- `EmbargoApplier` — removes contaminated observations at train/val/test boundaries
+- `compute_embargo_times()` — López de Prado percentage-based embargo
+- `purge_train_indices_by_t1()` — label-end-time-based purging: removes training samples whose label horizon extends into the validation window
+
+#### `ml-service/src/validation/purged_kfold.py`
+- `PurgedKFold(BaseCrossValidator)` — sklearn-compatible drop-in cross-validator
+- Purges training observations whose label spans overlap the validation window
+- `build_t1_series()` for fixed-horizon labels; `detect_label_span()` for event-driven labels
+- Compatible with `GridSearchCV` and `cross_val_score`
+
+#### `ml-service/src/validation/combinatorial_cv.py`
+- **CPCV (Combinatorial Purged Cross-Validation)** — generates all C(N, k) train/test splits without replacement, each purged and embargoed
+- Prevents backtest overfitting by exhausting all valid non-overlapping test folds
+- Returns a fold iterator compatible with sklearn scoring functions
+
+#### `ml-service/src/validation/metrics.py`
+- Financial-specific scoring functions beyond standard sklearn metrics:
+  - Sharpe ratio (annualised), Sortino ratio, Calmar ratio
+  - Maximum drawdown and average drawdown
+  - Strategy Quality Number (SQN)
+  - Probabilistic Sharpe Ratio (PSR) — tests whether observed Sharpe is statistically significant given the number of trades
+  - **Deflated Sharpe Ratio (DSR)** — adjusts for multiple-testing bias across strategy variants
+  - Feature importance stability analysis (coefficient of variation across folds)
+
+#### `ml-service/src/validation/__init__.py`
+- Public API surface; exports all validators, configs, and financial metrics
+
+### Tests (`ml-service/tests/test_validation.py` — 1,480 tests)
+- Walk-forward fold ordering (no data leakage, train always precedes test)
+- Expanding vs. rolling window count correctness
+- Embargo correctness (no contaminated observations in test set)
+- CPCV structure (all C(N,k) folds generated without overlap)
+- Acceptance gate dual-pass rejection (strategy must pass in > 50% of folds)
+- PSR and DSR statistical significance
+- Result persistence immutability (fold manifest cannot be overwritten)
+
+---
+
+## [Unreleased] — Event-Driven Backtesting Engine for NSE F&O (backtesting-v2)
+
+**Commit:** `123a19a`
+**Files added:** `src/lib/backtesting-v2/` (full engine) · `tests/lib/backtesting-v2/` (initial suite)
+**New tests:** 116 (core engine suite)
+
+Adds a new institutional-grade, event-driven backtesting engine (`src/lib/backtesting-v2/`) alongside the existing strategy backtesting infrastructure. All existing strategies and their tests are untouched — this is a parallel, additive implementation.
+
+### Architecture
+
+The engine is organised into five layers:
+
+#### `events/` — Typed Discriminated-Union Event Bus
+- `MarketEvent` — OHLCV bar with instrument metadata
+- `SignalEvent` — strategy signal (direction, confidence, model version, feature version, regime)
+- `RiskCheckEvent` — pre-trade risk evaluation request/response
+- `OrderEvent` — order submission (type, qty, limit/stop price, time-in-force)
+- `FillEvent` — execution confirmation (fill price, qty, commission, slippage, `signalTimestampMs`, `executionTimestampMs` for lookahead detection)
+- `PositionEvent` — position open/close/update
+
+#### `models/` — Pure Domain Models
+- `Portfolio` — tracks cash, open positions, closed trades, equity curve; no I/O
+- `Position` — per-instrument position with unrealised P&L mark
+- `OrderBook` — pending orders with expiry and cancellation semantics
+- `Trade` — completed round-trip with full attribution metadata (see below)
+
+#### `engine/` — Simulation Runtime
+- `SimulationClock` — NSE-aware virtual clock: Thursday weekly expiry (shifts to Wednesday on holiday), monthly last-Thursday expiry, 09:15–15:30 IST session gating, weekend + public holiday filtering
+- `EventQueue` — priority queue ordered by event timestamp; strict FIFO within same-timestamp events
+- `EventEngine` — main loop: dequeues events, dispatches to registered handlers, ensures lookahead invariant (`signal.signalBarIndex ≤ barIndex`)
+- `DefaultRiskManager` — pre-trade checks before each order event (position limits, daily loss limits)
+
+#### `execution/` — Fill Models
+- `SlippageModel` — base NSE slippage (half-spread + ATR fraction)
+- `CommissionModel` — full NSE cost breakdown (STT, exchange fee, GST, SEBI, stamp duty) per instrument segment
+- `NextBarOpenFillModel` — fills at the next bar's open (prevents lookahead on same-bar signals)
+- `MarketFillModel` — immediate fill with slippage at current bar (for intrabar simulation)
+- `LimitFillModel` — fills only if the bar's range crosses the limit price
+- `ExecutionModel` factory — creates the correct fill model from config
+
+#### `analytics/` — Post-Run Analysis
+- `metrics.ts` — CAGR, Sharpe, Sortino, Calmar, MaxDD, AvgDD, WinRate, Profit Factor
+- `performance.ts` — equity curve with daily/weekly/monthly P&L buckets; per-symbol and per-strategy breakdowns
+- `attribution.ts` — `AttributionReport`: every trade stamped with `strategyId`, `signalId`, `modelVersion`, `featureVersion`, `marketRegime`, `dataQualityScore` for attribution analysis without re-running the backtest
+
+#### `adapter/` — Integration Shims
+- `india-price-adapter.ts` — connects `backtesting-v2` to the existing `HistoricalService` from `src/lib/market-data/`
+- `strategy-adapter.ts` — wraps existing India strategy modules (`fetch-signals`) as `EventEngine` compatible signal handlers
+
+### Conservative Tie-Break
+A bar that touches both stop and target in the same candle is recorded as a stop (LOSS), never a target hit — consistent with all other paper-trading resolution throughout the codebase.
+
+### Tests (`tests/lib/backtesting-v2/` — 116 tests)
+- Event ordering and priority queue semantics
+- `SimulationClock` NSE calendar: Thursday expiry, holiday shift, session gating
+- Lookahead invariant enforcement
+- Portfolio P&L arithmetic and equity curve
+- Commission model: STT rate by segment, GST compounding
+- Fill model selection (market / limit / next-bar-open)
+- Attribution metadata round-trip
+
+---
+
 ## [Unreleased] — Provider-Agnostic Indian Market Data Layer
 
 **Branch:** `refactor/indian-market-data-layer`
