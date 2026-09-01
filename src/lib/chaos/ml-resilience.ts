@@ -165,22 +165,19 @@ export function validateMLRegimeResponse(
   }
 
   if (typeof r.probabilities !== "object" || r.probabilities === null) {
-    return {
-      valid: false,
-      data: null,
-      reason: "missing probabilities map",
-    };
-  }
-
-  // All probability values must be finite and in [0,1]
-  for (const [k, v] of Object.entries(r.probabilities as Record<string, unknown>)) {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < 0 || n > 1) {
-      return {
-        valid: false,
-        data: null,
-        reason: `invalid probability for regime "${k}": ${v}`,
-      };
+    // Probabilities are optional — some model versions omit them.
+    // Accept the response but treat probabilities as empty.
+  } else {
+    // All probability values must be finite and in [0,1]
+    for (const [k, v] of Object.entries(r.probabilities as Record<string, unknown>)) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        return {
+          valid: false,
+          data: null,
+          reason: `invalid probability for regime "${k}": ${v}`,
+        };
+      }
     }
   }
 
