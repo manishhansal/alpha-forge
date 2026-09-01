@@ -22,6 +22,21 @@ top-of-sidebar switcher:
   and an **Intelligent Auto Paper-Trading Engine** (daily ₹1L budget,
   signal scoring, 5-position max, EOD close-out).
 
+## What's New — Institutional Infrastructure Layer (Sep 2026)
+
+Eight new modules that bring the codebase to institutional / prop-desk level across backtesting, risk, ML, and market microstructure:
+
+- **Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)** — typed event bus (Market → Signal → Risk → Order → Fill → Position), NSE-aware `SimulationClock` (weekly/monthly expiry, IST session gating, holiday calendar), pure domain models (Portfolio, Position, OrderBook, Trade), full NSE cost model (STT + exchange fee + GST + SEBI + stamp duty), and a trade attribution system (`strategyId`, `modelVersion`, `featureVersion`, `marketRegime`, `dataQualityScore`). 116 tests.
+- **Financial ML Validation Framework (`ml-service/src/validation/`)** — López de Prado methodology throughout: Walk-Forward Validator (rolling + expanding), Embargo applier (bars/minutes/days), Purged K-Fold (sklearn-compatible drop-in), Combinatorial Purged Cross-Validation (CPCV), and financial metrics (Probabilistic Sharpe Ratio, Deflated Sharpe Ratio, SQN). Replaces random train/test splits for all models. 1,480 tests.
+- **Indian Market Execution Simulation (`src/lib/backtesting-v2/execution/`)** — instrument-aware slippage (spread + square-root market impact + ATR + OTM penalty), full NSE brokerage breakdown, three latency profiles (co-location / retail DMA / API), four order types with partial-fill and gap-through-stop logic, and `ExecutionQualityReport`. 24 tests.
+- **Meta Decision Engine (`ml-service/src/meta/`)** — combines all 7 base models via Platt scaling + isotonic calibration, regime-aware ensemble weighting (6 regimes × 7 models), `AbstentionPolicy` (7 trigger conditions, WAIT vs NO_TRADE distinction), 5-component `ConfidenceDecomposition`, and full save/load persistence. 1,058 tests.
+- **ML Model Monitoring & Drift Detection (`ml-service/src/monitoring/`)** — PSI, KS statistic, and Jensen-Shannon divergence for feature drift; Brier score + ECE for prediction calibration; trading expectancy tracking; ensemble weight auto-adjustment on degraded models; 16 FastAPI endpoints under `/monitoring/*`. 930 tests.
+- **Portfolio Risk Engine v2 (`src/lib/risk/`)** — 8-step pre-trade evaluation pipeline (exposure concentration, correlated-cluster guard, Historical/Parametric VaR + CVaR, 4-tier drawdown ladder, per-trade/strategy/sector/portfolio risk budgets, SOFT_KILL/HARD_KILL), dynamic position sizing (`base × confidence × vol × correlation × drawdown`), full audit snapshot. 64 tests.
+- **Shadow Trading & Strategy Experiment Framework (`src/lib/experiments/`)** — A/B test any strategy or model with multi-arm `ExperimentManager`, `ShadowTrader` (in-memory or paper-trade DB), `ComparisonEngine` (Welch t-test, Cohen's d, 95% CI), and cryptographic promotion gates (SHADOW → PAPER → LIVE, LIVE always requires human approval with single-use token). API: `GET/POST /api/experiments/[id]`. 1,643 tests.
+- **Market Microstructure Intelligence Engine (`src/lib/microstructure/`)** — order-book snapshot builder, L1/L5/weighted-depth imbalance + regime classification, `SpreadTracker` (rolling percentile), 5-dimension liquidity score, TypeScript VPIN port, `PressureTracker` (bid/ask replenishment + price-response), `MicrostructureEngine` facade with `ExecQuality` (EXCELLENT/GOOD/FAIR/POOR) and 1m/5m ring-buffer feature store. 974 tests.
+
+---
+
 ## What's New — Provider-Agnostic Indian Market Data Layer
 
 A production-grade, provider-agnostic data layer (`src/lib/market-data/`) replaces the ad-hoc per-provider fetching scattered across `services/india/`. All strategy engines, ML services, and API routes now consume canonical normalized types — provider-specific shapes never leak through.
@@ -233,7 +248,7 @@ Overview page + a dedicated tab, and runs two paper-trading engines:
 | Brokers          | **Delta Exchange India** (default), **Binance** — flip via env         |
 | Indian quotes    | **Provider-agnostic data layer** (`src/lib/market-data/`) — four-provider priority chain with automatic failover + circuit breaker: **Angel One SmartAPI** (primary), **Upstox Analytics v2** (secondary, `UPSTOX_ANALYTICS_TOKEN`), **NSE direct** (option chain), **yahoo-finance2** (last resort). All strategy engines consume canonical normalized types. |
 | Sentiment input  | Alternative.me Fear & Greed                                            |
-| ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · **Riskfolio-Lib** · mibian · TA-Lib |
+| ML Engine        | **Python 3.11** + FastAPI · XGBoost · LightGBM · CatBoost · Stable-Baselines3 (PPO) · SHAP · **Riskfolio-Lib** · mibian · TA-Lib · Meta Decision Engine · ML Validation Framework (walk-forward / purged K-fold / CPCV) · Model Monitoring (drift + performance) |
 
 ## ML Decision Engine (Indian Market)
 
@@ -251,6 +266,9 @@ NSE Data → Feature Engineering (150+ features)
     ├── RL Executor (PPO) → trade execution timing
     ├── Price Forecaster (TFT heuristic) → priceForecast
     ├── IV Regime Classifier (PatchTST heuristic) → iv_regime
+    ├── Meta Decision Engine (calibration + ensemble + abstention) → final decision
+    ├── ML Validation Framework (walk-forward + purged K-fold + CPCV) → robust evaluation
+    ├── Model Monitoring (drift detection + performance tracking) → health + weights
     └── SHAP Explainability → transparent factor contributions
 ```
 
@@ -272,6 +290,11 @@ All models include **rule-based heuristic fallbacks** — when the ML
 service is down or models are untrained, the existing rule-based engine
 continues to drive signals with zero degradation.
 
+**New ML service layers (Sep 2026):**
+- **Meta Decision Engine** (`ml-service/src/meta/`) — combines all 7 base models via Platt scaling + isotonic calibration and regime-aware ensemble weighting (6 regimes × 7 models). `AbstentionPolicy` distinguishes `WAIT` from `NO_TRADE`. 5-component `ConfidenceDecomposition` with `ReasonCode` audit trail.
+- **Financial ML Validation Framework** (`ml-service/src/validation/`) — replaces random train/test splits with walk-forward validation (rolling + expanding), López de Prado embargo, Purged K-Fold (sklearn drop-in), CPCV, and financial scoring metrics (PSR, DSR, SQN).
+- **Model Monitoring & Drift Detection** (`ml-service/src/monitoring/`) — PSI + KS + Jensen-Shannon divergence for feature drift; Brier score + ECE for calibration; auto-adjusts ensemble weights when models degrade. 16 FastAPI endpoints under `/monitoring/*`.
+
 ```bash
 # Start everything (Postgres + Redis + ML service):
 docker compose up -d
@@ -284,6 +307,26 @@ python -m src.training.train_all
 ```
 
 See the [ML Architecture section in ALPHAFORGE.md](./ALPHAFORGE.md#multi-model-ai-decision-engine-ml-service) for full details.
+
+## New TypeScript Library Modules (`src/lib/`)
+
+Three institutional-grade libraries added alongside the existing `market-data/` layer:
+
+| Module | Path | Purpose |
+|---|---|---|
+| **Portfolio Risk Engine v2** | `src/lib/risk/` | 8-step pre-trade evaluation: exposure, correlation, VaR/CVaR, drawdown tiers, risk budgets, SOFT/HARD kill. Dynamic position sizing. |
+| **Microstructure Engine** | `src/lib/microstructure/` | Order-book imbalance, spread percentile, 5-dim liquidity score, TypeScript VPIN, pressure tracking, `ExecQuality` (EXCELLENT/GOOD/FAIR/POOR), 1m/5m feature store. |
+| **Experiment Framework** | `src/lib/experiments/` | Multi-arm shadow trading, `ComparisonEngine` (Welch t-test, Cohen's d, 95% CI), cryptographic promotion gates (SHADOW→PAPER→LIVE). API: `/api/experiments/[id]`. |
+
+## Backtesting v2 (`src/lib/backtesting-v2/`)
+
+A new event-driven backtesting engine alongside the existing strategy backtester — parallel, additive, existing strategies untouched.
+
+- **Event bus** — typed discriminated union: `MarketEvent` → `SignalEvent` → `RiskCheckEvent` → `OrderEvent` → `FillEvent` → `PositionEvent`
+- **NSE `SimulationClock`** — Thursday weekly expiry (shifts to Wednesday on holiday), monthly last-Thursday, 09:15–15:30 IST session gating, public holiday filtering
+- **India execution simulation** — instrument-aware slippage (spread + √impact + ATR + OTM penalty), full NSE brokerage (STT + exchange fee + GST + SEBI + stamp duty), 3 latency profiles, 4 order types with partial fills and gap-through-stop
+- **Trade attribution** — every trade stamped with `strategyId`, `modelVersion`, `featureVersion`, `marketRegime`, `dataQualityScore`
+- **Conservative tie-break** — a bar touching both stop and target is always a stop (consistent with all paper-trading resolvers)
 
 ## Quick start
 
@@ -571,6 +614,38 @@ src/
     utils.ts                    cn(), formatPrice(), formatPercent(), formatCompact()
     market-mode.ts              `useActiveMarket()` — derives "crypto" | "india"
                                 from `usePathname()` (URL is source of truth)
+    backtesting-v2/             Event-driven backtesting engine for NSE F&O
+      events/                   Typed discriminated-union event bus (Market/Signal/Risk/Order/Fill/Position)
+      models/                   Pure domain models (Portfolio, Position, OrderBook, Trade)
+      engine/                   SimulationClock (NSE calendar), EventQueue, EventEngine, DefaultRiskManager
+      execution/                SlippageModel, CommissionModel, fill models (NextBarOpen/Market/Limit)
+                                india-slippage-model, india-brokerage-model, latency-model
+                                india-fill-model, india-execution-engine, execution-quality-report
+      analytics/                metrics (CAGR/Sharpe/Sortino/Calmar/MaxDD), performance, attribution
+      adapter/                  india-price-adapter (→ HistoricalService), strategy-adapter
+    experiments/                Shadow Trading & Strategy Experiment Framework
+      strategy-version.ts       StrategyVersionRegistry, VersionStamp, stage/status state machines
+      experiment-manager.ts     Multi-arm experiments, traffic allocation, audit log, summary stats
+      shadow-trader.ts          Per-arm fill simulation (SHADOW/PAPER mode), EOD sweep
+      comparison.ts             ComparisonEngine — Welch t-test, Cohen's d, 95% CI, benchmark alpha
+      promotion.ts              Gated promotion pipeline (SHADOW→PAPER→LIVE), cryptographic tokens
+      index.ts                  Barrel re-exports
+    microstructure/             Market Microstructure Intelligence Engine
+      order-book.ts             OrderBookSnapshot builder, depth helpers (mid/weighted-mid/spread)
+      imbalance.ts              L1/L5/weighted-depth imbalance, DEMAND_HEAVY/SUPPLY_HEAVY regime
+      spread.ts                 Absolute + pct spread, SpreadTracker (rolling percentile)
+      liquidity.ts              5-dimension composite liquidity score (volume/depth/spread/OI/freq)
+      toxicity.ts               TypeScript VPIN port, composite toxicity score, sizing adjustments
+      pressure.ts               Bid/ask replenishment, PressureTracker, price-response pressure
+      index.ts                  MicrostructureEngine facade — ExecQuality, 1m/5m feature store
+    risk/                       Portfolio Risk Engine v2
+      exposure.ts               Gross/net/long/short exposure, concentration checks, cluster guard
+      correlation.ts            Rolling Pearson matrix, single-linkage clustering, pre-trade check
+      var.ts                    Historical VaR, Parametric VaR, CVaR/Expected Shortfall
+      drawdown.ts               4-tier DrawdownTracker (NORMAL→CAUTION→WARNING→DANGER→HALT)
+      position-sizing.ts        Dynamic qty = base × confidence × vol × correlation × drawdown
+      risk-limits.ts            Risk budgets, SOFT_KILL/HARD_KILL, auto-escalation
+      portfolio-risk.ts         PortfolioRiskEngine — 8-step pre-trade evaluation pipeline
     market-data/                Provider-agnostic Indian market data layer
       types.ts                  Canonical normalized types (Instrument, MDQuote,
                                 OHLCVCandle, OptionChain, LiveTick, …) — single
@@ -624,7 +699,7 @@ prisma.config.ts                Prisma 7 datasource config (no url in schema)
 docker-compose.yml              Postgres 17 + Redis 7 + ML service with healthchecks
 ml-service/                     Python ML microservice (multi-model AI engine)
   src/
-    server.py                   FastAPI app — /predict/regime, /rankings, /strategy, /risk, /portfolio, /execution, /explain
+    server.py                   FastAPI app — /predict/regime, /rankings, /strategy, /risk, /portfolio, /execution, /explain, /monitoring/*
     config.py                   Environment-driven settings
     schemas.py                  Pydantic request/response models
     features/                   Feature engineering layer (150+ features)
@@ -640,8 +715,27 @@ ml-service/                     Python ML microservice (multi-model AI engine)
       stock_ranker.py           LightGBM stock ranking (regression + LambdaRank)
       strategy_selector.py      CatBoost 8-strategy multiclass classifier
       risk_predictor.py         XGBoost ×3 (stop/target/drawdown)
-      portfolio_optimizer.py    Hierarchical Risk Parity (HRP)
+      portfolio_optimizer.py    Hierarchical Risk Parity (HRP) + CVaR (Riskfolio-Lib)
       rl_executor.py            PPO agent (Gymnasium env + Stable-Baselines3)
+    meta/                       Meta Decision Engine
+      calibration.py            Platt scaling + isotonic regression; CalibrationStore (ECE/MCE/Brier)
+      ensemble.py               Regime-aware contextual weighting (REGIME_WEIGHTS 6×7); disagreement metrics
+      abstention.py             AbstentionPolicy (7 trigger conditions); WAIT vs NO_TRADE distinction
+      decision_policy.py        5-component ConfidenceDecomposition; ReasonCode audit trail; DecisionPolicy
+      meta_model.py             End-to-end MetaModel — parallel model calls → calibration → ensemble → abstention → decision
+    monitoring/                 ML Model Monitoring & Drift Detection
+      drift_detector.py         PSI, KS statistic, Jensen-Shannon divergence; DriftDetector (thread-safe)
+      feature_monitor.py        Per-(model,feature) rolling buffers; auto-trigger drift check
+      performance_monitor.py    Brier score, ECE, accuracy, log-loss, trading expectancy
+      model_registry.py         HEALTHY→WARNING→DEGRADED→DISABLED; ensemble weight multipliers
+      alerts.py                 Structured alert emission (structlog); dispatch_external() hook
+      router.py                 FastAPI APIRouter — 16 endpoints under /monitoring/*
+    validation/                 Financial ML Validation Framework (López de Prado)
+      walk_forward.py           WalkForwardValidator — rolling + expanding windows, fold manifest persistence
+      embargo.py                EmbargoApplier (bars/minutes/days); compute_embargo_times(); purge_train_indices_by_t1()
+      purged_kfold.py           PurgedKFold(BaseCrossValidator) — sklearn-compatible, label-span purging
+      combinatorial_cv.py       CPCV — all C(N,k) purged+embargoed folds
+      metrics.py                Sharpe, Sortino, Calmar, SQN, PSR, DSR (Deflated Sharpe Ratio)
     explainability/
       shap_explainer.py         Unified SHAP/heuristic explanations for all models
     training/
@@ -653,6 +747,11 @@ ml-service/                     Python ML microservice (multi-model AI engine)
 tests/                          Vitest suite — see "Testing & TDD policy"
   setup/                        Shared test fixtures, jest-dom setup, Next mocks
   lib/                          Pure-utility tests (cn, formatPrice, market-mode, …)
+    market-data/                Provider data layer tests (failover, health, normalizer, …)
+    risk/                       Portfolio Risk Engine v2 tests (64 tests)
+    experiments/                Shadow Trading & Experiment Framework tests (1,643 tests)
+    microstructure/             Market Microstructure Intelligence Engine tests (974 tests)
+    backtesting-v2/             Event-driven backtesting engine tests (116+ tests)
   features/                     Engine tests (best-time, sentiment, scalping, …)
   components/                   UI / component render tests
   api/                          Next 16 Route Handler tests (POST/GET handlers)
@@ -1594,6 +1693,14 @@ ML_DATA_REQUEST_DELAY=200    # ms between API requests in the training pipeline
   - [x] **Graceful degradation** — all new API routes return `{ available: false, reason }` with HTTP 200 when ML service is unreachable; never 5xx.
 - [x] **Provider-agnostic Indian Market Data Layer** — production-grade `src/lib/market-data/` layer with four-provider priority chain (Angel One → Upstox → NSE → Yahoo), automatic failover with exponential backoff + circuit breaker, real-time `CandleBuilderService` (NSE-aligned bars, Redis-backed state, Postgres persistence), `DataQuality` classification in the ML training pipeline, and 393 new tests (1392 total).
 - [x] **IIT UI Overhaul** — Institutional Intelligence Terminal design language applied across every page and shell component: OKLCH design tokens, Spring motion system, UIStore + RegimeContext, Sidebar/Topbar/MarketTickerBar shell refactor, full Trading Component Library (`SignalBadge`, `ConfidenceBar`, `RegimeBadge`, `NumberMorph`, `StatGrid`, `PanelHeader`, `RiskMeter`, `AiRadar`), Layout Primitives (`BentoGrid`, `PageHeader`, `EmptyState`, `ErrorState`, `PageTransition`), 3D Suite upgrades (`RiskSphere`, `PortfolioGalaxy`), and all page redesigns. 1238 tests passing, 0 TypeScript errors.
+- [x] **Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)** — typed event bus (Market/Signal/Risk/Order/Fill/Position), NSE-aware `SimulationClock`, pure domain models (Portfolio/Position/OrderBook/Trade), NSE cost model, trade attribution (`strategyId`, `modelVersion`, `featureVersion`, `marketRegime`, `dataQualityScore`). 116 tests.
+- [x] **Financial ML Validation Framework (`ml-service/src/validation/`)** — López de Prado walk-forward, embargo, Purged K-Fold, CPCV, Probabilistic Sharpe Ratio, Deflated Sharpe Ratio. Replaces random train/test splits. 1,480 tests.
+- [x] **Indian Market Execution Simulation (`src/lib/backtesting-v2/execution/`)** — instrument-aware slippage, full NSE brokerage breakdown, 3 latency profiles, 4 order types with partial fills + gap-through-stop. 24 tests.
+- [x] **Meta Decision Engine (`ml-service/src/meta/`)** — calibration (Platt + isotonic), regime-aware ensemble weighting (6 regimes × 7 models), 7-condition abstention policy, 5-component confidence decomposition. 1,058 tests.
+- [x] **ML Model Monitoring & Drift Detection (`ml-service/src/monitoring/`)** — PSI/KS/JS drift, Brier/ECE performance, ensemble weight auto-adjustment, 16 FastAPI endpoints under `/monitoring/*`. 930 tests.
+- [x] **Portfolio Risk Engine v2 (`src/lib/risk/`)** — 8-step pre-trade pipeline, correlated-cluster guard, Historical/Parametric VaR + CVaR, 4-tier drawdown ladder, SOFT_KILL/HARD_KILL, dynamic position sizing. 64 tests.
+- [x] **Shadow Trading & Strategy Experiment Framework (`src/lib/experiments/`)** — multi-arm A/B testing, `ComparisonEngine` (Welch t-test, Cohen's d, 95% CI), cryptographic promotion gates (SHADOW→PAPER→LIVE). API: `GET/POST /api/experiments/[id]`. 1,643 tests.
+- [x] **Market Microstructure Intelligence Engine (`src/lib/microstructure/`)** — L1/L5/weighted-depth imbalance, `SpreadTracker`, 5-dim liquidity score, TypeScript VPIN, `PressureTracker`, `ExecQuality`, 1m/5m ring-buffer feature store. 974 tests.
 
 ## Troubleshooting
 
