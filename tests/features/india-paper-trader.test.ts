@@ -1,18 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 
-vi.mock("@/services/india/yahoo", () => ({
-  yahoo: { getHistorical: vi.fn() },
+const getHistoricalMock = vi.fn();
+
+// Mock the canonical historical service — paper-trader.ts now calls
+// getHistoricalCandlesByRange() instead of yahoo.getHistorical().
+vi.mock("@/lib/market-data/services/historical.service", () => ({
+  getHistoricalCandlesByRange: (...args: unknown[]) => getHistoricalMock(...args),
+}));
+vi.mock("@/lib/market-data/registry", () => ({
+  bootstrapRegistry: () => Promise.resolve(),
+  registry: {},
+}));
+// Stub getRedis so the atomic guard falls through to DB dedup silently.
+vi.mock("@/lib/redis", () => ({
+  getRedis: () => { throw new Error("no redis in test"); },
+  redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), setNX: vi.fn() },
 }));
 
-import { yahoo } from "@/services/india/yahoo";
 import {
   openIndiaPaperTrade,
   resolveIndiaOpenTrades,
 } from "@/features/india/scalping/paper-trader";
 import type { IndiaScalpSignal } from "@/features/india/scalping/types";
-
-const mockedHistorical = yahoo.getHistorical as unknown as ReturnType<typeof vi.fn>;
 
 function signal(over: Partial<IndiaScalpSignal> = {}): IndiaScalpSignal {
   return {
@@ -57,7 +67,7 @@ function fakePrisma(over: Partial<FakePaperTrade> = {}): {
   return { prisma: { paperTrade: pt } as unknown as PrismaClient, pt };
 }
 
-beforeEach(() => mockedHistorical.mockReset());
+beforeEach(() => getHistoricalMock.mockReset());
 afterEach(() => vi.clearAllMocks());
 
 describe("india/scalping/paper-trader — openIndiaPaperTrade", () => {
@@ -150,7 +160,7 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
         },
       ]),
     });
-    mockedHistorical.mockResolvedValue([
+    getHistoricalMock.mockResolvedValue([
       { time: Math.floor(openedAt.getTime() / 1000) + 300, open: 22010, high: 22120, low: 22000, close: 22090 },
     ]);
 
@@ -181,7 +191,7 @@ describe("india/scalping/paper-trader — resolveIndiaOpenTrades", () => {
         },
       ]),
     });
-    mockedHistorical.mockResolvedValue([
+    getHistoricalMock.mockResolvedValue([
       { time: Math.floor(openedAt.getTime() / 1000) + 60, open: 22010, high: 22030, low: 21990, close: 22020 },
     ]);
 

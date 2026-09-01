@@ -47,8 +47,8 @@
 | `canonical-import-guard` (lint rule) | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A | CERTIFIED |
 | **`top-picks` route (migrated)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
 | **`sector-stocks` route (migrated)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
-| `india-builder.ts` (bypass — unmigrated) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
-| `scanner/engine.ts` (bypass — unmigrated) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
+| **`india-builder.ts` (migrated to registry)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
+| `scanner/engine.ts` (remaining exception) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
 
 ---
 
@@ -86,8 +86,8 @@
 
 | COMPONENT | IMPLEMENTED | UNIT_TESTED | INTEGRATION_TESTED | E2E_TESTED | RUNTIME_TESTED | SOAK_TESTED | LIVE_PROVIDER_TESTED | STATUS |
 |-----------|-------------|-------------|-------------------|------------|----------------|-------------|---------------------|--------|
-| **`atomicClaim()` — SET NX EX** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
-| **`executeExactlyOnce()`** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
+| **`atomicClaim()` — SET NX EX (wired into openIndiaPaperTrade)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
+| **`executeExactlyOnce()` (wired into openIndiaPaperTrade)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
 | **`TradingStateMachine`** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
 | Portfolio Risk Engine | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | N/A | PARTIALLY_CERTIFIED |
 | Paper trader (`openIndiaPaperTrade`) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | N/A | PARTIALLY_CERTIFIED |

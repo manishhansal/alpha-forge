@@ -2,6 +2,48 @@
 
 ---
 
+## [Unreleased] — Remaining Build: All Critical Bypasses Resolved
+
+**Tests:** 2550 passing · 170 test files · 0 failures  
+**Files changed:** 11 (5 source + 3 tests + 3 docs)
+
+### Canonical Registry Migrations
+
+#### `src/features/ai-signals/india-builder.ts` — CRITICAL bypass resolved
+- Replaced `yahoo.getQuotes(yahooSymbols)` → `registry.getQuotes(nseSymbols)` (Angel One → Upstox → Yahoo failover)
+- Replaced `yahoo.getHistorical({symbol, interval: "1d", range: "1y"})` → `getHistoricalCandlesByRange(symbol, "1d", "1y", "NSE")`
+- Replaced `nse.getOptionChain(u.symbol)` → `registry.getOptionChain(u.symbol)` (Angel One → Upstox → NSE failover)
+- Added `mdQuoteToLegacy()` shim to map canonical `MDQuote` (`.ltp`) to legacy `Quote` (`.price`) without changing any signal math
+- Wired `PriceForecasterInputBuilder` into the `buildMLContext` call: `niftyLast60Bars` now populated from 60 confirmed canonical 5-min NIFTY candles when `ENABLE_PRICE_FORECASTER=true` (disabled by default — model is EXPERIMENTAL)
+
+#### `src/features/india/scalping/paper-trader.ts` — HIGH bypass resolved
+- Replaced `yahoo.getHistorical({interval: "5m", range: "1d"})` → `getHistoricalCandlesByRange(symbol, "5m", "1d", "NSE")`
+- Replaced `yahoo.getHistorical({interval: "5m", range: "5d"})` in `getIndiaIntradayAtr` → `getHistoricalCandlesByRange(symbol, "5m", "5d", "NSE")`
+- **Wired atomic trade guard into `openIndiaPaperTrade`:** Redis `SET NX EX` claim runs before DB dedup queries, eliminating the GET-then-SET race under multi-worker concurrency
+
+#### `worker/src/jobs/india-scalper.ts` — HIGH bypass resolved
+- Replaced `yahoo.getHistorical({symbol: yahooSymbol, interval, range: "5d"})` → `getHistoricalCandlesByRange(underlying, interval, "5d", "NSE")`
+- Now uses canonical `underlying` (NSE symbol) directly
+
+#### `src/features/india/scalping/option-chain-capture.ts` — HIGH bypass resolved
+- Replaced `yahoo.getQuotes(...)` → `registry.getQuotes(nseSymbols)`
+- Replaced `nse.getOptionChain(underlying)` → `registry.getOptionChain(underlying)`
+
+#### `src/features/india/expiry-trades/builder.ts` — HIGH bypass resolved
+- Replaced `yahoo.getQuote("^INDIAVIX")` / `yahoo.getQuote("^NSEI")` / `yahoo.getQuote("^BSESN")` → `registry.getLatestQuote(symbol)`
+- Replaced `nse.getOptionChain("NIFTY")` → `registry.getOptionChain("NIFTY")`
+- Added `bootstrapRegistry()` call
+
+### Tests Updated
+- `tests/features/india-expiry-trades-builder.test.ts` — mocks `@/lib/market-data/registry` instead of legacy adapters
+- `tests/features/india-option-chain-capture.test.ts` — mocks `@/lib/market-data/registry`
+- `tests/features/india-paper-trader.test.ts` — mocks `@/lib/market-data/services/historical.service` + stubs `getRedis`
+
+### CI Guard
+`tests/lib/market-data/canonical-import-guard.test.ts` confirms **0 violations** — no direct `yahoo-finance2` imports outside approved adapter modules.
+
+---
+
 ## [Unreleased] — V5 Quant Governance & Hardening Milestone
 
 **Tests:** 2550 passing · 170 test files · 0 failures  

@@ -4,8 +4,8 @@ import type { PrismaClient } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
-import { nse } from "@/services/india/nse";
-import { yahoo } from "@/services/india/yahoo";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
+import type { OHLCVCandle } from "@/lib/market-data/types";
 import type { OptionChain } from "@/types/india";
 import type { OptionChainAnalytics } from "@/types/india/options";
 
@@ -42,13 +42,16 @@ export async function captureOptionChainSnapshots(
     ? FNO_INDICES.filter((i) => opts.underlyings!.includes(i.underlying))
     : FNO_INDICES;
 
+  await bootstrapRegistry();
+
   // Underlying day change% (for replaying OI build-up = price × OI). Best
   // effort — a failed quote lookup just leaves changePct null.
   const changeByUnderlying = new Map<string, number | null>();
   try {
-    const quotes = await yahoo.getQuotes(indices.map((i) => i.symbol));
+    const nseSymbols = indices.map((i) => i.underlying);
+    const mdQuotes = await registry.getQuotes(nseSymbols);
     indices.forEach((i, idx) => {
-      changeByUnderlying.set(i.underlying, quotes[idx]?.changePct ?? null);
+      changeByUnderlying.set(i.underlying, mdQuotes[idx]?.changePct ?? null);
     });
   } catch (err) {
     console.warn(
@@ -60,7 +63,11 @@ export async function captureOptionChainSnapshots(
   const stats: CaptureStats = { captured: 0, errors: 0 };
   const results = await Promise.allSettled(
     indices.map(async (i) => {
-      const chain = await nse.getOptionChain(i.underlying);
+      // registry.getOptionChain routes: Angel One → Upstox → NSE.
+      const mdChain = await registry.getOptionChain(i.underlying);
+      // Cast to legacy OptionChain shape — the canonical MDOptionChain is a
+      // structural superset; the analytics fields we persist are the same.
+      const chain = mdChain as unknown as OptionChain;
       await prisma.optionChainSnapshot.create({
         data: snapshotData(
           i.underlying,

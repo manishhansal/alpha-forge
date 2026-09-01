@@ -14,8 +14,9 @@ import { dispatchWhatsApp } from "@/features/whatsapp/notifier";
 import type { PaperTradeEvent, IndiaPaperTradeSnapshot } from "@/features/whatsapp/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
-import { yahoo } from "@/services/india/yahoo";
-import type { Candle } from "@/types/india/market";
+import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+import { bootstrapRegistry } from "@/lib/market-data/registry";
+import type { OHLCVCandle } from "@/lib/market-data/types";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
@@ -103,11 +104,11 @@ const TF_TO_INTERVAL: Record<IndiaScalpTimeframe, "1m" | "5m" | "15m"> = {
 };
 
 /**
- * Convert an India `Candle` (time in seconds) to the `OHLCVBar` shape
+ * Convert a canonical `OHLCVCandle` (time in seconds) to the `OHLCVBar` shape
  * expected by `feedBar`. openTime and closeTime are derived from `time`
  * (seconds, IST-aligned Unix timestamp).
  */
-function candleToBar(candle: Candle, intervalSec: number): Parameters<typeof feedBar>[1] {
+function candleToBar(candle: OHLCVCandle, intervalSec: number): Parameters<typeof feedBar>[1] {
   const openTimeMs = candle.time * 1000;
   return {
     openTime: openTimeMs,
@@ -130,19 +131,22 @@ function candleToBar(candle: Candle, intervalSec: number): Parameters<typeof fee
  * logic is never blocked.
  */
 async function refreshIndiaIndicatorState(
-  yahooSymbol: string,
+  _yahooSymbol: string,
   underlying: string,
   timeframe: IndiaScalpTimeframe,
 ): Promise<void> {
   try {
+    await bootstrapRegistry();
     const interval = TF_TO_INTERVAL[timeframe];
     const intervalSec = interval === "1m" ? 60 : interval === "5m" ? 300 : 900;
 
-    const candles = await yahoo.getHistorical({
-      symbol: yahooSymbol,
+    const candles = await getHistoricalCandlesByRange(
+      underlying,
       interval,
-      range: "5d",
-    });
+      "5d",
+      "NSE",
+      { tolerateInvalidCandles: true },
+    );
     if (candles.length === 0) return;
 
     const key = indicatorStateKey("india-scalper", underlying, timeframe);

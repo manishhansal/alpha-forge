@@ -24,10 +24,9 @@ import "server-only";
 
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { istDateKey } from "@/features/india/daily-picks/engine";
-import { yahoo } from "@/services/india/yahoo";
-import { nse } from "@/services/india/nse";
-import { angel, isAngelConfigured } from "@/services/india/angelone";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { cache as indiaCache } from "@/services/india/cache";
+import { angel, isAngelConfigured } from "@/services/india/angelone";
 import type { OptionChain } from "@/types/india";
 
 import {
@@ -101,21 +100,23 @@ function chainPremiumLookup(
   };
 }
 
-/** Resolve the NIFTY block from the live NSE chain (authoritative expiry). */
+/** Resolve the NIFTY block from the live option chain (authoritative expiry). */
 async function buildNiftyBlock(
   now: number,
   tradeDate: string,
   vix: number | null,
 ): Promise<ExpiryIndexBlock | null> {
   try {
-    const chain = await nse.getOptionChain("NIFTY");
+    // registry.getOptionChain routes: Angel One → Upstox → NSE
+    const mdChain = await registry.getOptionChain("NIFTY");
+    const chain = mdChain as unknown as OptionChain;
     const isExpiry = isExpiryDayFromChain(chain.expiry, tradeDate);
     if (!isExpiry) return null;
 
-    const spot = chain.spot ?? (await yahoo.getQuote("^NSEI")).price ?? 0;
+    const spotMd = await registry.getLatestQuote("^NSEI");
+    const spot = chain.spot ?? spotMd?.ltp ?? 0;
     if (!spot) return null;
-    const quote = await yahoo.getQuote("^NSEI");
-    const bias = biasFromChange(quote.changePct);
+    const bias = biasFromChange(spotMd?.changePct);
     const ivPct = chain.analytics.atmIv ?? vix;
 
     const trades = buildIndexExpiryTrades({
@@ -158,8 +159,6 @@ async function buildSensexBlock(
   tradeDate: string,
   vix: number | null,
 ): Promise<ExpiryIndexBlock | null> {
-  // Cheap pre-gate: the Angel chain synthesis bulk-quotes hundreds of legs at
-  // 1 req/s, so only attempt it on the BSE weekly-expiry weekday.
   if (istWeekday(new Date(now)) !== EXPIRY_WEEKDAY.SENSEX) return null;
   if (!isAngelConfigured()) {
     return buildEstimatedBlock("SENSEX", now, tradeDate, vix);
@@ -168,12 +167,10 @@ async function buildSensexBlock(
     const chain = await angel.getOptionChain("SENSEX");
     if (!isExpiryDayFromChain(chain.expiry, tradeDate)) return null;
 
-    // Angel may not resolve the SENSEX index spot token — prefer the chain's
-    // spot, fall back to the Yahoo ^BSESN quote (also used for the bias).
-    const quote = await yahoo.getQuote("^BSESN");
-    const spot = chain.spot ?? quote.price ?? 0;
+    const spotMd = await registry.getLatestQuote("^BSESN");
+    const spot = chain.spot ?? spotMd?.ltp ?? 0;
     if (!spot) return null;
-    const bias = biasFromChange(quote.changePct);
+    const bias = biasFromChange(spotMd?.changePct);
     const ivPct = chain.analytics.atmIv ?? vix;
 
     const trades = buildIndexExpiryTrades({
@@ -216,10 +213,10 @@ async function buildEstimatedBlock(
 ): Promise<ExpiryIndexBlock | null> {
   if (istWeekday(new Date(now)) !== EXPIRY_WEEKDAY[index]) return null;
   try {
-    const quote = await yahoo.getQuote(SPOT_SYMBOL[index]);
-    const spot = quote.price ?? 0;
+    const md = await registry.getLatestQuote(SPOT_SYMBOL[index]);
+    const spot = md?.ltp ?? 0;
     if (!spot) return null;
-    const bias = biasFromChange(quote.changePct);
+    const bias = biasFromChange(md?.changePct);
 
     const trades = buildIndexExpiryTrades({
       index,
@@ -256,6 +253,7 @@ async function buildEstimatedBlock(
  */
 export async function getIndiaExpiryTrades(): Promise<ExpiryTradesResponse> {
   return indiaCache.memo("expiry-trades:v1", CACHE_TTL_MS, async () => {
+    await bootstrapRegistry();
     const now = Date.now();
     const tradeDate = istDateKey(new Date(now));
 
@@ -265,7 +263,8 @@ export async function getIndiaExpiryTrades(): Promise<ExpiryTradesResponse> {
 
     let vix: number | null = null;
     try {
-      vix = (await yahoo.getQuote("^INDIAVIX")).price ?? null;
+      const vixMd = await registry.getLatestQuote("^INDIAVIX");
+      vix = vixMd?.ltp ?? null;
     } catch {
       vix = null;
     }
