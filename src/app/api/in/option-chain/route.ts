@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { getOptionChainBroker, getBrokerById } from "@/services/india/broker/factory";
 import { getActiveSelections } from "@/features/settings/active-sources";
 import { nse } from "@/services/india/nse";
+import { redis } from "@/lib/redis";
+import {
+  validateOptionChain,
+  sanitizeOptionChain,
+  withOptionChainFallback,
+} from "@/lib/chaos/option-chain-resilience";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -103,8 +109,35 @@ export async function GET(req: Request) {
   }
 
   try {
-    const chain = await primary.getOptionChain(symbol, expiry);
-    return await respondWithChain(chain as Record<string, unknown>, { source: primary.id });
+    // ── Chaos Scenario 15: withOptionChainFallback wraps the primary fetch.
+    // On partial/empty chain it serves the last-good Redis snapshot instead
+    // of surfacing a blank chain to the client.
+    const { chain: rawChain, fromCache, partial } = await withOptionChainFallback(
+      symbol,
+      expiry ?? "nearest",
+      () => primary.getOptionChain(symbol, expiry) as Promise<import("@/types/india").OptionChain>,
+      redis,
+    );
+
+    // Validate and log completeness for observability
+    const validation = validateOptionChain(rawChain);
+    if (!validation.valid) {
+      console.warn("[option-chain] serving partial chain", {
+        symbol,
+        expiry,
+        reason: validation.reason,
+        strikeCount: validation.strikeCount,
+        fromCache,
+      });
+    }
+
+    // Sanitize non-finite option-level values before sending to the client
+    const chain = sanitizeOptionChain(rawChain);
+    return await respondWithChain(chain as unknown as Record<string, unknown>, {
+      source: primary.id,
+      fromCache,
+      partial,
+    });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     attempts.push({ id: primary.id, error: msg });

@@ -12,6 +12,8 @@ export interface SortedSetEntry {
 export interface RedisLike {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, mode?: "EX" | "PX", ttl?: number): Promise<unknown>;
+  /** SET NX EX — used by distributed lock. Returns "OK" when acquired, null when key exists. */
+  setNX(key: string, value: string, ttlSeconds: number): Promise<string | null>;
   del(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   ping(): Promise<unknown>;
@@ -55,7 +57,7 @@ class MemoryRedis implements RedisLike {
     return entry.value;
   }
 
-  async set(key: string, value: string, mode?: "EX" | "PX", ttl?: number): Promise<"OK"> {
+  async set(key: string, value: string, mode?: "EX" | "PX", ttl?: number): Promise<"OK" | string | null> {
     let expiresAt: number | null = null;
     if (mode === "EX" && typeof ttl === "number") {
       expiresAt = Date.now() + ttl * 1000;
@@ -63,6 +65,15 @@ class MemoryRedis implements RedisLike {
       expiresAt = Date.now() + ttl;
     }
     this.store.set(key, { value, expiresAt });
+    return "OK";
+  }
+
+  async setNX(key: string, value: string, ttlSeconds: number): Promise<string | null> {
+    const existing = this.store.get(key);
+    if (existing && (existing.expiresAt === null || existing.expiresAt > Date.now())) {
+      return null; // key exists — NX fails
+    }
+    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1_000 });
     return "OK";
   }
 
@@ -170,6 +181,14 @@ export class IoredisAdapter implements RedisLike {
     }
     return this.client.set(key, value);
   }
+
+  async setNX(key: string, value: string, ttlSeconds: number): Promise<string | null> {
+    // ioredis v5: set(key, value, "EX", ttl, "NX") — note argument order
+    const result = await (this.client.set as (
+      k: string, v: string, ex: string, ttl: number, nx: string
+    ) => Promise<string | null>)(key, value, "EX", ttlSeconds, "NX");
+    return result;
+  }
   del(key: string) {
     return this.client.del(key);
   }
@@ -226,7 +245,30 @@ export async function cached<T>(
 ): Promise<T> {
   try {
     const hit = await redis.get(key);
-    if (hit) return JSON.parse(hit) as T;
+    if (hit) {
+      // ── Chaos Scenario 17: Stale Redis cache detection ──────────────────
+      // If the cached blob contains a `generatedAt` field, verify it is
+      // within 2× the declared TTL.  A very old value signals a Redis
+      // connection that reconnected and served stale data; in that case we
+      // bypass the cache and refresh from the loader.
+      const parsed = JSON.parse(hit) as Record<string, unknown>;
+      const generatedAt = typeof parsed.generatedAt === "number" ? parsed.generatedAt : null;
+      if (generatedAt !== null) {
+        const ageMs = Date.now() - generatedAt;
+        const maxAgeMs = ttlSeconds * 2 * 1_000; // 2× TTL as the staleness threshold
+        if (ageMs > maxAgeMs) {
+          console.warn(
+            `[redis] stale cache detected for key "${key}": age=${ageMs}ms (max ${maxAgeMs}ms) — forcing refresh`,
+          );
+          await redis.del(key).catch(() => {});
+          // Fall through to loader
+        } else {
+          return parsed as T;
+        }
+      } else {
+        return parsed as T;
+      }
+    }
   } catch (err) {
     console.warn("[redis] cache read failed:", (err as Error).message);
   }

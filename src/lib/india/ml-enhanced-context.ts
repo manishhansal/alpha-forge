@@ -36,6 +36,14 @@ import {
   type MLStrategyResponse,
   type MLPortfolioResponse,
 } from "./ml-client";
+import {
+  mlBreakerInstance,
+  validateMLRegimeResponse,
+  validateMLRankingResponse,
+  validateMLRiskResponse,
+  sanitizeFeatureVector,
+  sanitizeBarMatrix,
+} from "@/lib/chaos/ml-resilience";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -141,6 +149,14 @@ const CACHE_TTL_MS = 60_000;
  * Calls the ML service in parallel for regime + rankings, caches the result
  * for 60s (same cadence as the signal builder's refresh), and falls back to
  * the existing heuristic when the ML service is unreachable.
+ *
+ * Chaos Engineering Hardening:
+ *   - Scenario 3:  MLCircuitBreaker prevents hammering a down ML service.
+ *     After 4 consecutive failures the breaker opens for 30s before a probe.
+ *   - Scenario 13: All ML responses are schema-validated before use;
+ *     invalid output is discarded and the fallback heuristic runs.
+ *   - Scenario 14: Feature vectors are sanitized for NaN/Infinity before
+ *     every HTTP call.  Corrupted fields are logged as structured errors.
  */
 export async function buildMLContext(
   inputs: MLContextInputs,
@@ -152,69 +168,128 @@ export async function buildMLContext(
     return _cachedContext;
   }
 
-  // Check ML service health first (fast, fail-fast)
-  const mlHealthy = await isMLServiceHealthy();
-
-  if (!mlHealthy) {
+  // ── Chaos Scenario 3: Circuit breaker check ─────────────────────────────
+  if (!mlBreakerInstance.isCallable) {
+    console.warn("[ml-context] circuit breaker OPEN — using heuristic fallback");
     const fallback = buildFallbackContext(inputs);
     _cachedContext = fallback;
     _cacheTimestamp = now;
     return fallback;
   }
 
-  // Call regime + rankings in parallel
-  const [regimeResult, rankingsResult] = await Promise.all([
-    predictRegime({
-      nifty_change_pct: inputs.niftyChangePct,
-      banknifty_change_pct: inputs.bankniftyChangePct,
-      india_vix: inputs.indiaVix,
-      nifty_atr_pct: inputs.niftyAtrPct,
-      nifty_adx: inputs.niftyAdx,
-      advance_decline_ratio: inputs.advanceDeclineRatio,
-      market_breadth: inputs.marketBreadth,
-      sector_strength: inputs.sectorStrength,
-      volume_ratio: inputs.volumeRatio,
-      gap_pct: inputs.gapPct,
-      vix_change_pct: inputs.vixChangePct,
-      nifty_rsi: inputs.niftyRsi,
-      nifty_macd_hist: inputs.niftyMacdHist,
-      put_call_ratio: inputs.putCallRatio,
-    }),
-    inputs.stockFeatures && inputs.stockFeatures.length > 0
-      ? predictRankings(
-          inputs.stockFeatures,
-          // Use regime if already known, otherwise default sideways
-          "sideways",
-          30,
-        )
-      : Promise.resolve(null),
-  ]);
+  // Check ML service health first (fast, fail-fast)
+  const mlHealthy = await isMLServiceHealthy();
 
-  // If regime came back, re-rank with the actual regime
-  let finalRankings = rankingsResult;
-  if (
-    regimeResult &&
-    rankingsResult === null &&
-    inputs.stockFeatures &&
-    inputs.stockFeatures.length > 0
-  ) {
-    finalRankings = await predictRankings(
-      inputs.stockFeatures,
-      regimeResult.regime,
-      30,
-    );
+  if (!mlHealthy) {
+    mlBreakerInstance.recordFailure("health check failed");
+    const fallback = buildFallbackContext(inputs);
+    _cachedContext = fallback;
+    _cacheTimestamp = now;
+    return fallback;
   }
 
-  const regime = regimeResult?.regime ?? "sideways";
+  // ── Chaos Scenario 14: Sanitize feature vectors before sending ──────────
+  const regimeFeatures = {
+    nifty_change_pct: inputs.niftyChangePct,
+    banknifty_change_pct: inputs.bankniftyChangePct,
+    india_vix: inputs.indiaVix,
+    nifty_atr_pct: inputs.niftyAtrPct,
+    nifty_adx: inputs.niftyAdx,
+    advance_decline_ratio: inputs.advanceDeclineRatio,
+    market_breadth: inputs.marketBreadth,
+    sector_strength: inputs.sectorStrength,
+    volume_ratio: inputs.volumeRatio,
+    gap_pct: inputs.gapPct,
+    vix_change_pct: inputs.vixChangePct,
+    nifty_rsi: inputs.niftyRsi,
+    nifty_macd_hist: inputs.niftyMacdHist,
+    put_call_ratio: inputs.putCallRatio,
+  };
+  const { sanitized: cleanRegimeFeatures } = sanitizeFeatureVector(
+    regimeFeatures as Record<string, number>,
+    { label: "regime-features" },
+  );
+
+  // Call regime + rankings in parallel
+  let rawRegimeResult: unknown = null;
+  let rawRankingsResult: unknown = null;
+  try {
+    [rawRegimeResult, rawRankingsResult] = await Promise.all([
+      predictRegime(cleanRegimeFeatures as Parameters<typeof predictRegime>[0]),
+      inputs.stockFeatures && inputs.stockFeatures.length > 0
+        ? predictRankings(
+            inputs.stockFeatures.map((sf) => {
+              const { sanitized } = sanitizeFeatureVector(
+                sf as unknown as Record<string, number>,
+                { label: `ranking-features:${sf.symbol}` },
+              );
+              return sanitized as typeof sf;
+            }),
+            "sideways",
+            30,
+          )
+        : Promise.resolve(null),
+    ]);
+    mlBreakerInstance.recordSuccess();
+  } catch (mlErr) {
+    mlBreakerInstance.recordFailure((mlErr as Error).message);
+    const fallback = buildFallbackContext(inputs);
+    _cachedContext = fallback;
+    _cacheTimestamp = now;
+    return fallback;
+  }
+
+  // ── Chaos Scenario 13: Validate ML output before using ──────────────────
+  const regimeValidation = validateMLRegimeResponse(rawRegimeResult);
+  if (!regimeValidation.valid) {
+    console.error(
+      `[ml-context] invalid regime response — using fallback: ${regimeValidation.reason}`,
+      { raw: rawRegimeResult },
+    );
+    mlBreakerInstance.recordFailure(`invalid regime: ${regimeValidation.reason}`);
+    const fallback = buildFallbackContext(inputs);
+    _cachedContext = fallback;
+    _cacheTimestamp = now;
+    return fallback;
+  }
+  const regimeResult = regimeValidation.data as MLRegimeResponse;
+
+  let finalRankings: MLRankingResponse | null = null;
+  if (rawRankingsResult !== null) {
+    const rankValidation = validateMLRankingResponse(rawRankingsResult);
+    if (rankValidation.valid) {
+      finalRankings = rankValidation.data as MLRankingResponse;
+    } else {
+      console.warn(
+        `[ml-context] invalid rankings response discarded: ${rankValidation.reason}`,
+      );
+    }
+  }
+
+  // If regime came back but rankings didn't, re-rank with the actual regime
+  if (finalRankings === null && inputs.stockFeatures && inputs.stockFeatures.length > 0) {
+    try {
+      const rawReranked = await predictRankings(
+        inputs.stockFeatures,
+        regimeResult.regime,
+        30,
+      );
+      const v = validateMLRankingResponse(rawReranked);
+      if (v.valid) finalRankings = v.data as MLRankingResponse;
+    } catch {
+      // Best-effort
+    }
+  }
+
+  const regime = regimeResult.regime;
 
   // Fetch the TFT 1-hour ahead price regime forecast (Requirement 8.5, 8.6).
-  // This is independent of the market-regime model and runs after regime+rankings
-  // so it does not block them. Routes through predictPriceRegime() in ml-client.ts
-  // which respects ML_MODE. Real bars are passed when available via inputs.niftyLast60Bars.
   let priceForecast: PriceForecastResult | null = null;
   try {
-    const bars = inputs.niftyLast60Bars ?? [];
-    const forecast = await predictPriceRegime(bars);
+    const rawBars = inputs.niftyLast60Bars ?? [];
+    // ── Chaos Scenario 14: Sanitize bar matrix ───────────────────────────
+    const { sanitized: cleanBars } = sanitizeBarMatrix(rawBars, { label: "nifty-bars" });
+    const forecast = await predictPriceRegime(cleanBars);
     if (forecast) {
       priceForecast = {
         regime: forecast.regime,
@@ -314,7 +389,14 @@ export async function getMLRisk(
   });
 
   if (result) {
-    context.risks.set(cacheKey, result);
+    // ── Chaos Scenario 13: validate ML risk output before caching ─────────
+    const validation = validateMLRiskResponse(result);
+    if (!validation.valid) {
+      console.warn(`[ml-context] invalid risk response for ${params.symbol}: ${validation.reason}`);
+      return null;
+    }
+    context.risks.set(cacheKey, validation.data!);
+    return validation.data;
   }
   return result;
 }

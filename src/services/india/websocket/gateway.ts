@@ -2,9 +2,23 @@
 // FeedDiff JSON-lines, one per polling cycle. Only changed symbols are
 // emitted (diff updates) — this is the same pattern a real broker WS would
 // use, so client logic stays identical when we swap in Groww's binary feed.
+//
+// Chaos Engineering Hardening:
+//   Scenario 4: isTickStale() filters quotes older than 30s before emission.
+//   Scenario 5: TickDeduplicator drops ticks with the same (symbol, ts).
+//   Scenario 6: TickSequenceBuffer reorders out-of-order ticks within a 2s
+//               hold window before emitting to the client.
+//   Scenario 12: The gateway tolerates rapid EventSource reconnects — the
+//               `last` diff map is scoped to each stream instance so reconnects
+//               receive a full snapshot rather than a stale diff slice.
 
 import type { FeedDiff, FeedTick, Quote } from "@/types/india";
 import { yahoo } from "@/services/india/yahoo";
+import {
+  isTickStale,
+  TickDeduplicator,
+  TickSequenceBuffer,
+} from "@/lib/chaos/market-data-resilience";
 
 export type GatewayOptions = {
   symbols: string[];
@@ -43,6 +57,12 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
   let timer: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
   let closed = false;
+
+  // ── Chaos Scenarios 5 & 6: Per-stream dedup + reorder ───────────────────
+  // Each stream instance gets its own deduplicator and reorder buffer so
+  // state does not leak across SSE reconnects (Scenario 12).
+  const deduplicator = new TickDeduplicator(10_000);
+  const sequenceBuffer = new TickSequenceBuffer({ flushDelayMs: 2_000, maxGapMs: 10_000 });
 
   const stop = () => {
     if (closed) return;
@@ -85,10 +105,20 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
       const send = (payload: unknown) =>
         safeEnqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
 
+      // ── Chaos Scenario 12: Full snapshot on every (re)connect ──────────
+      // The `last` map is cleared on each new stream instance (it's scoped to
+      // this closure), so reconnecting clients always receive a fresh full
+      // snapshot rather than an incremental diff from a previous connection.
       try {
         const quotes = await fetchQuotes(symbols);
         if (closed) return;
-        const ticks = quotes.map(tickerToFeed);
+        const ticks = quotes
+          .map(tickerToFeed)
+          .filter((t) => {
+            // ── Chaos Scenario 4: Drop stale initial snapshot ticks ──────
+            if (isTickStale(t, { maxAgeMs: 60_000, label: "snapshot" })) return false;
+            return true;
+          });
         for (const t of ticks) last.set(t.symbol, t);
         send({ ticks, ts: Date.now() } satisfies FeedDiff);
       } catch (e: unknown) {
@@ -96,18 +126,40 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
         send({ error: msg });
       }
 
-      // Diff a single quote against the last sent tick; emit only on change.
-      const pushQuote = (q: Quote) => {
+      /** Process a single quote through dedup + reorder + stale filters,
+       *  then emit any ticks that are ready to go. */
+      const processQuote = (q: Quote) => {
         if (closed) return;
         const next = tickerToFeed(q);
-        const prev = last.get(next.symbol);
-        if (
-          !prev ||
-          prev.ltp !== next.ltp ||
-          prev.changePct !== next.changePct
-        ) {
-          last.set(next.symbol, next);
-          send({ ticks: [next], ts: Date.now() } satisfies FeedDiff);
+
+        // ── Chaos Scenario 4: Stale tick filter ──────────────────────────
+        if (isTickStale(next, { maxAgeMs: 30_000, label: "push" })) return;
+
+        // ── Chaos Scenario 5: Duplicate tick filter ───────────────────────
+        if (deduplicator.isDuplicate({ symbol: next.symbol, ts: next.ts })) return;
+
+        // ── Chaos Scenario 6: Out-of-order reorder buffer ────────────────
+        const toEmit = sequenceBuffer.push({
+          symbol: next.symbol,
+          ts: next.ts,
+          price: next.ltp,
+          volume: next.volume,
+        });
+
+        for (const tick of toEmit) {
+          // Rebuild FeedTick from buffer output (price already ordered)
+          const feedTick: FeedTick = {
+            symbol: tick.symbol,
+            ltp: tick.price,
+            changePct: next.changePct, // preserve original diff
+            volume: tick.volume ?? null,
+            ts: tick.ts,
+          };
+          const prev = last.get(feedTick.symbol);
+          if (!prev || prev.ltp !== feedTick.ltp || prev.changePct !== feedTick.changePct) {
+            last.set(feedTick.symbol, feedTick);
+            send({ ticks: [feedTick], ts: Date.now() } satisfies FeedDiff);
+          }
         }
       };
 
@@ -115,7 +167,7 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
       // becomes a keep-alive heartbeat so proxies don't drop an idle stream.
       if (opts.subscribe) {
         try {
-          const handle = await opts.subscribe(pushQuote);
+          const handle = await opts.subscribe(processQuote);
           if (closed) {
             try {
               handle();
@@ -142,23 +194,8 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array
         try {
           const quotes = await fetchQuotes(symbols);
           if (closed) return;
-          const diffs: FeedTick[] = [];
           for (const q of quotes) {
-            const next = tickerToFeed(q);
-            const prev = last.get(next.symbol);
-            if (
-              !prev ||
-              prev.ltp !== next.ltp ||
-              prev.changePct !== next.changePct
-            ) {
-              diffs.push(next);
-              last.set(next.symbol, next);
-            }
-          }
-          if (diffs.length > 0) {
-            send({ ticks: diffs, ts: Date.now() } satisfies FeedDiff);
-          } else {
-            safeEnqueue(enc.encode(`: ping\n\n`));
+            processQuote(q);
           }
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "poll failed";
