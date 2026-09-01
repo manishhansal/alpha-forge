@@ -21,7 +21,7 @@
  *   disabled  → returns { candles: [], status: "DISABLED" }
  */
 
-"use server";
+import "server-only";
 
 import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 import type { OHLCVCandle } from "@/lib/market-data/types";
