@@ -2,6 +2,237 @@
 
 ---
 
+## [Unreleased] — V6 Evidence-Driven Quant Research Platform
+
+**Tests:** 92 new research tests · 8 test files · 0 failures (all existing tests preserved)
+**New source files:** 40 (research infrastructure + API routes + frontend pages + components)
+**New doc files:** 3 (`docs/STRATEGY_INVENTORY.md`, `docs/ALPHA_RESEARCH_REPORT.md`, `docs/STRATEGY_GOVERNANCE_MATRIX.md`)
+
+AlphaForge V6 transforms the platform from a collection of sophisticated strategies into a **scientifically rigorous, evidence-driven quant research platform**. Every existing strategy has been inventoried, hypothesised, and wired into a 24-phase research pipeline that evaluates strategies from initial hypothesis through to live candidate status.
+
+### Core Principle
+
+> Backtest profit is not sufficient evidence. All performance metrics used for promotion decisions must be **out-of-sample**. In-sample performance is computed but never used as promotion evidence. Live promotion always requires explicit human approval — it can never be automatic.
+
+---
+
+### Phase 1 — Strategy Registry (`src/lib/research/registry/strategy-registry.ts`)
+- `StrategyRegistry` — singleton in-memory registry of all 18 strategies (10 crypto scalping + 7 India F&O + 1 user-defined)
+- Every strategy records: `strategyId`, `version`, `market`, `instrumentType`, `timeframe`, `entryLogic`, `exitLogic`, `stopLossLogic`, `targetLogic`, `positionSizing`, `requiredData`, `requiredFeatures`, `mlDependencies`, `riskDependencies`, `expectedHoldingPeriod`, `strategyCategory`, `status`
+- `getOrThrow()` throws (not warns) for unregistered strategies
+- `updateStatus()` is the only mutation allowed — strategy metadata is code, not database
+- Tests: 7 tests confirming all expected strategies are registered, IDs are unique, required fields are populated
+
+### Phase 2 — Strategy Hypothesis Framework (`src/lib/research/hypothesis/strategy-hypothesis.ts`)
+- `HypothesisRegistry` — 18 hypothesis declarations (17 DEFINED, 1 UNVALIDATED for user-defined strategies)
+- Every hypothesis specifies: `hypothesis`, `marketInefficiency`, `expectedEdge`, `expectedFailureMode`, `expectedRegime[]`, `expectedHoldingPeriod`, `whyEdgeShouldExist`, `whatWouldInvalidate`
+- Strategies without a declared hypothesis are marked `UNVALIDATED` and blocked from promotion past EXPERIMENTAL
+- `getOrDefault()` returns a sentinel `UNVALIDATED` record rather than throwing, so the UI always has something to display
+- Tests: 4 tests confirming all DEFINED hypotheses have non-empty required fields, isValidated works correctly
+
+### Phase 3 — Canonical Research Datasets (`src/lib/research/datasets/research-dataset-builder.ts`)
+- `buildResearchDataset()` — creates immutable, SHA-256 fingerprinted dataset records
+- `computeDatasetFingerprint()` — deterministic canonical serialisation → Web Crypto `SHA-256` → 32-char hex prefix
+- `assertDatasetIntegrity()` — throws if a dataset fingerprint has changed since experiment registration
+- 4 canonical dataset configs: `NSE_FNO_DAILY_5Y`, `NSE_FNO_DAILY_2Y`, `CRYPTO_5M_3Y`, `CRYPTO_1M_1Y`
+- Prevents accidental research against changing live data
+
+### Phase 4 — IS/OOS Governance (`src/lib/research/splits/research-split.ts`)
+- `validateSplitIntegrity()` — throws `Error` (not warning) on any temporal overlap between development/validation/OOS periods, or on embargo violations
+- `buildResearchSplit()` — creates immutable `ResearchSplit` records only after integrity validation passes
+- `generateWalkForwardWindows()` — produces non-overlapping train/test windows with hard assertion `testStart > trainEnd`
+- Supports: WALK_FORWARD, ANCHORED_WALK_FORWARD, ROLLING_WALK_FORWARD, PURGED_KFOLD, CPCV, SIMPLE_SPLIT
+- Canonical splits for NSE F&O (2020-2022 dev / 2023 val / 2024-2025 OOS) and Crypto 5m
+- Tests: 15 leakage tests — temporal leaks, embargo violations, expanding/rolling windows, no-overlap guarantees
+
+### Phase 5 — Strategy Performance Analyzer (`src/lib/research/performance/strategy-performance-analyzer.ts`)
+- `computePerformanceMetrics()` — 35 metrics: TOTAL_RETURN, CAGR, SHARPE, SORTINO, CALMAR, PROFIT_FACTOR, WIN_RATE, LOSS_RATE, EXPECTANCY, AVG_WIN, AVG_LOSS, PAYOFF_RATIO, MAX_DRAWDOWN, AVERAGE_DRAWDOWN, DRAWDOWN_DURATION, ULCER_INDEX, SQN, TURNOVER, AVG_HOLD_TIME, TRADE_COUNT, TRADES_PER_MONTH, EXPOSURE_TIME, BEST_TRADE, WORST_TRADE, TAIL_LOSS, SKEWNESS, KURTOSIS, T_STATISTIC, P_VALUE, STATISTICALLY_SIGNIFICANT
+- Separate metrics for: IN_SAMPLE, VALIDATION, FINAL_OOS, PAPER, SHADOW
+- `buildPerformanceReport()` — multi-period report in a single call
+- Includes t-test for statistical significance of OOS returns
+- Tests: 13 tests covering all metrics, zero-trades edge case, period flag correctness
+
+### Phase 6 — Transaction Cost Attribution (`src/lib/research/costs/cost-attribution.ts`)
+- `computeCostBreakdown()` — full breakdown: brokerage, exchange charges, taxes, slippage, spread, market impact, gross PnL, net PnL
+- Three pre-built cost models: `NSE_FNO_OPTIONS_COST_MODEL`, `NSE_FNO_FUTURES_COST_MODEL`, `CRYPTO_PERP_COST_MODEL`
+- `buildCostAttributionReport()` — 4 stress scenarios (1×, 1.5×, 2×, 3× costs) with `COST_FRAGILE` flag
+- `COST_FRAGILE` is a hard gate: blocks WALK_FORWARD_VALIDATED promotion
+- `breakEvenCostMultiple` — the smallest cost multiplier at which the strategy becomes unprofitable
+- Tests: 9 tests covering zero-trades, cost ordering, NSE slippage presence, stress multipliers
+
+### Phase 7 — Regime Attribution Engine (`src/lib/research/regimes/regime-attribution.ts`)
+- `classifyDayRegime()` — heuristic regime classifier using ADX, ATR, volume, SMA slope, calendar
+- `classifyRegimeSeries()` — batch-classify a full historical series into 10 regimes
+- `computeRegimeAttribution()` — per-regime Sharpe, expectancy, profit factor, win rate, max drawdown, statistical confidence
+- Regimes: BULL_TRENDING, BEAR_TRENDING, RANGE_BOUND, HIGH_VOLATILITY, LOW_VOLATILITY, HIGH_LIQUIDITY, LOW_LIQUIDITY, EVENT_DRIVEN, EXPIRY_DAY, NORMAL_DAY
+
+### Phase 8 — Strategy Regime Matrix (`src/lib/research/regimes/regime-attribution.ts`)
+- `buildStrategyRegimeMatrix()` — N-strategy × 10-regime matrix of `RegimeMatrixCell` records
+- Each cell: Sharpe, profit factor, expectancy, win rate, max drawdown, trade count, statistical confidence
+- Consumable by Strategy Selector, Meta Decision Engine, Risk Engine, and Allocation Engine
+- Frontend regime matrix page with colour-coded Sharpe values (green > 0.8, yellow 0–0.3, red < 0)
+
+### Phase 9 — Strategy Correlation & Redundancy (`src/lib/research/correlation/strategy-correlation.ts`)
+- `computePairCorrelation()` — 5 metrics per pair: return correlation, signal correlation, trade overlap, drawdown correlation, tail-loss correlation
+- `buildCorrelationMatrix()` — full N×N matrix + hierarchical clustering
+- `clusterStrategies()` — complete-linkage clustering at 0.70 threshold with capital allocation caps per cluster
+- Cluster caps: 2-strategy = 25%, 3-strategy = 20%, 4+ strategy = 15%
+- Tests: 9 tests — identical = 1.0, opposite = -1.0, symmetry, clustering, cap validation
+
+### Phase 10 — Alpha Decay Detection (`src/lib/research/decay/alpha-decay-monitor.ts`)
+- `updateDecayMonitor()` — updates rolling metrics (Sharpe, Expectancy, Win Rate, Profit Factor, Max DD, Signal Quality) vs historical baseline
+- 5-state machine: HEALTHY → WARNING → DEGRADED → CRITICAL → DISABLED
+- Thresholds: 1σ = WARNING, 2σ = DEGRADED, 3σ = CRITICAL
+- `DecayAlert` records with metric name, deviation sigma, alert level
+- Rolling history: last 52 weekly snapshots preserved
+
+### Phase 11 — Monte Carlo Robustness Testing (`src/lib/research/montecarlo/monte-carlo-robustness.ts`)
+- 7 simulation types: TRADE_SHUFFLE, BOOTSTRAP, RETURN_PERTURB, SLIPPAGE_PERTURB, COST_PERTURB, MISSED_TRADES, PARTIAL_FILL
+- Default 10,000 iterations; seeded `SeededRNG` for reproducibility
+- Per-simulation: `probabilityOfLoss`, `probabilityOfRuin`, `expectedDrawdown`, `drawdown95thPct`, `drawdown99thPct`, `sharpeDistribution` (p5/p25/median/p75/p95), `terminalWealthDistribution`, `worstCaseScenario`
+- `computeMonteCarloRobustness()` → 0-100 `overallScore` + `ROBUST/MODERATE/FRAGILE` label
+- FRAGILE blocks WALK_FORWARD_VALIDATED promotion
+- Tests: 11 tests — deterministic RNG, distribution ordering, good > bad, fragile classification
+
+### Phase 12 — Parameter Stability Testing (`src/lib/research/parameters/parameter-stability.ts`)
+- `analyseParameterStability()` — tests symmetric neighbourhood for each parameter, computes CV of Sharpe across neighbours
+- `OVERFIT_SUSPECTED` flags: neighbour Sharpe < canonical×0.3, Sharpe range > 3.0, or peak isolated (local max surrounded by losers)
+- `buildParameterStabilityScore()` — aggregate 0-100 score + STABLE/MODERATE/OVERFIT_SUSPECTED label
+- OVERFIT_SUSPECTED blocks WALK_FORWARD_VALIDATED promotion
+- Canonical component definitions for all 14 strategies in `STRATEGY_COMPONENT_DESCRIPTIONS`
+
+### Phase 13 — Multiple Testing Guard (`src/lib/research/overfitting/multiple-testing-guard.ts`)
+- `computeDeflatedSharpe()` — Bailey & López de Prado (2014) DSR adjusted for nTrials, nObservations, skewness, kurtosis
+- `estimatePBO()` — Probability of Backtest Overfitting from IS rank vs OOS rank comparison
+- `bonferroniThreshold()` — family-wise error rate adjustment
+- `bhFdrAdjust()` — Benjamini-Hochberg FDR correction for multiple p-values
+- `buildMultipleTestingGuard()` — PASS/WARN/FAIL verdict; FAIL blocks promotion
+
+### Phase 14 — Signal Quality Analysis (`src/lib/research/signals/signal-calibration.ts`)
+- `brierScore()` — mean squared error of probability predictions (0 = perfect, 0.25 = no-skill)
+- `computeCalibrationBins()` — 10-bin reliability diagram data
+- `expectedCalibrationError()` — weighted MAE of predicted vs actual win rate
+- `computeSignalCalibration()` — full calibration report; `wellCalibrated = (ECE < 0.05)`
+- Tests: 8 tests — perfect calibration ECE ≈ 0, no-skill Brier = 0.25, overconfident > calibrated
+
+### Phase 15 — Strategy Ablation Testing (`src/lib/research/ablation/strategy-ablation.ts`)
+- `ablateComponent()` — compares full strategy vs without-component on FINAL_OOS trades
+- `LOW_VALUE_COMPONENT` flag: set when removing a component doesn't hurt OOS Sharpe by >0.05
+- `runStrategyAblation()` — runs all components in one call
+- Pre-defined ablation component descriptions for all complex strategies
+
+### Phase 16 — Strategy Promotion Engine (`src/lib/research/promotion/strategy-promotion-engine.ts`)
+- `evaluatePromotion()` — evidence gates per lifecycle stage; returns `StrategyPromotionRecord` with all gates and pass/fail status
+- `applyPromotion()` — applies promotion to registry if all gates pass
+- **LIVE promotion always blocked without `approvalToken` + `approvedBy`** — hardcoded `MANUAL_HUMAN_APPROVAL` gate
+- Lifecycle: EXPERIMENTAL → RESEARCH → BACKTEST_VALIDATED → WALK_FORWARD_VALIDATED → SHADOW → PAPER → LIVE_CANDIDATE → MANUAL_APPROVAL → LIVE
+- Tests: 9 tests — hypothesis gate, trade count gate, expectancy gate, drawdown gate, live-requires-approval, approval-passes
+
+### Phase 17 — Strategy Demotion Engine (`src/lib/research/promotion/strategy-promotion-engine.ts`)
+- `applyDemotion()` — applies demotion with preserved `demotionReason`, `timestamp`, `metricsSnapshot`, `trigger`
+- `checkAutoDemotion()` — evaluates CRITICAL decay, excessive drawdown (>40%), COST_FRAGILE
+- 8 `DemotionTrigger` types: ALPHA_DECAY, EXCESSIVE_DRAWDOWN, REGIME_FAILURE, COST_DETERIORATION, EXECUTION_DEGRADATION, DATA_QUALITY_ISSUE, MODEL_DRIFT, STATISTICAL_CONFIDENCE_LOSS
+- `forceDisable` flag for direct DISABLED demotion
+- Tests: 3 tests — full record fields, force-disable, default LIVE→DEGRADED path
+
+### Phase 18 — Strategy Confidence Score (`src/lib/research/confidence/strategy-confidence-score.ts`)
+- `computeStrategyConfidenceScore()` — 8-component weighted score (0-100) with documented weights
+- Components (weights): OOS Performance (0.25), Walk-Forward Stability (0.15), Monte Carlo Robustness (0.15), Parameter Stability (0.10), Cost Robustness (0.10), Regime Consistency (0.10), Paper Performance (0.10), Statistical Confidence (0.05)
+- Weight redistribution when components are unavailable — score never artificially deflated by missing data
+- Bands: HIGH_CONFIDENCE (90-100), VALIDATED (75-89), WATCH (60-74), DEGRADED (40-59), DISABLED (0-39)
+- 7-day validity window; requires recomputation after expiry
+
+### Phase 19 — Research Experiment Tracking (`src/lib/research/experiments/research-experiment-tracker.ts`)
+- `createExperimentRecord()` — immutable records with `experimentId`, `strategyVersion`, `datasetVersion`, `parameterSet`, `marketUniverse`, `dateRange`, `validationMethod`, `costModelId`, `slippageModelId`, `gitCommitHash`
+- `ExperimentStore.add()` throws if `experimentId` already exists — experiments cannot be overwritten
+- `completeExperiment()` returns a new frozen object; never mutates the original
+- Git commit hash captured from `process.env.VERCEL_GIT_COMMIT_SHA` for full reproducibility
+
+### Phase 20 — Strategy Leaderboard (`src/lib/research/leaderboard/strategy-leaderboard.ts`)
+- `buildLeaderboard()` — ranks strategies by configurable metric with 6 view filters
+- Views: ALL, RESEARCH, VALIDATED, PAPER, LIVE_CANDIDATE, DISABLED
+- Sort by: confidenceScore, oosSharpe, calmar, expectancy, netSharpe, maxDrawdown, profitFactor
+- API: `GET /api/research/leaderboard?view=ALL&sortBy=confidenceScore`
+
+### Phase 21 — Strategy Allocation Engine (`src/lib/research/leaderboard/strategy-leaderboard.ts`)
+- `computeAllocation()` — risk-based capital allocation: raw weight = confidence × regime_fit × decay_factor × drawdown_factor
+- Per-strategy cap (default 25%), per-cluster cap (from cluster `allocationCapPct`)
+- Herfindahl-Hirschman Index (HHI) as concentration measure
+- Eligible filter: status not DISABLED/EXPERIMENTAL/RESEARCH, confidence ≥ 40, decay not CRITICAL
+
+### Phase 22 — Strategy Kill Switch (`src/lib/research/killswitch/strategy-kill-switch.ts`)
+- `activateKillSwitch()` — SOFT_KILL (no new trades, manage existing) or HARD_KILL (no new trades, EMERGENCY_CLOSE policy)
+- `evaluateAutoKillSwitch()` — automatic activation on: drawdown > 1.5× limit (HARD), consecutive errors ≥ 10 (HARD), decay CRITICAL (SOFT), drawdown > limit (SOFT)
+- `isNewTradeAllowed()` — checked before every trade entry
+- Kill switches never auto-remove — require explicit `deactivateKillSwitch()` call
+
+### Phase 23 — Paper Performance Analyzer (`src/lib/research/paper-analysis/paper-performance-analyzer.ts`)
+- `analyzePaperPerformance()` — compares backtest vs shadow vs paper on: Sharpe, Expectancy, Win Rate, Profit Factor, Max Drawdown
+- Material drift thresholds: Sharpe >30%, Expectancy >50%, Win Rate >10pp, PF >25%, Max DD >50%
+- KL divergence for regime distribution shift detection
+- `requiresInvestigation = true` blocks LIVE_CANDIDATE promotion
+
+### Phase 24 — Validation Session Tracker (`src/lib/research/validation-sessions/validation-session-tracker.ts`)
+- `addValidationSession()` / `buildValidationSessionSummary()` — tracks individual paper/shadow trading sessions
+- Minimum 20 sessions to advance to LIVE_CANDIDATE; preferred 40+
+- Regime diversity requirements: must have seen NORMAL_DAY, trending, and range-bound sessions
+- `readyForPromotion` flag requires minimum sessions + regime diversity
+
+### Phase 25 — Frontend Quant Research Dashboard
+- 10 new pages under `/research/`:
+  - `/research` — Strategy Leaderboard (main entry point)
+  - `/research/strategies` — Strategy Inventory with expandable hypothesis details
+  - `/research/regime-matrix` — Strategy×Regime colour-coded matrix
+  - `/research/monte-carlo` — Per-strategy Monte Carlo robustness
+  - `/research/parameter-stability` — Parameter neighbourhood analysis
+  - `/research/signal-calibration` — Brier Score + ECE + reliability diagram
+  - `/research/experiments` — Immutable experiment history
+  - `/research/correlation` — Strategy correlation matrix + cluster view
+  - `/research/promotion-pipeline` — Pipeline status + evidence gate breakdown
+  - `/research/alpha-decay` — Rolling decay state per strategy
+- Components: `ResearchNav`, `ResearchSummaryCards`, `ResearchLeaderboard`, `StrategyInventoryTable`, `RegimeMatrixView`, `MonteCarloView`, `ParameterStabilityView`, `SignalCalibrationView`, `ExperimentHistoryView`, `CorrelationView`, `PromotionPipelineView`, `AlphaDecayMonitorView`, `StatusBadge`, `ConfidenceBadge`, `DecayStateBadge`
+
+### Phase 26 — Research APIs (13 endpoints)
+- `GET /api/research/strategies` — full inventory with hypothesis status
+- `GET /api/research/strategies/:id` — single strategy + hypothesis
+- `GET /api/research/strategies/:id/performance` — multi-period scorecard
+- `GET /api/research/strategies/:id/regimes` — regime attribution
+- `GET /api/research/strategies/:id/monte-carlo` — MC robustness
+- `GET /api/research/strategies/:id/parameters` — parameter stability
+- `GET /api/research/strategies/:id/experiments` — experiment history
+- `GET /api/research/leaderboard` — ranked leaderboard (filterable by view and sort)
+- `GET /api/research/correlation` — correlation matrix + clusters
+- `GET /api/research/promotion` — promotion pipeline status
+- `GET /api/research/experiments` — all experiments (filterable by strategyId)
+- `POST /api/research/experiments` — create new experiment (authenticated, Zod-validated)
+- All external inputs validated with Zod; all strategy IDs validated against registry
+
+### Phase 27 — Research Test Suite (`tests/research/`)
+- 8 test files, 92 tests, 0 failures
+- `strategy-registry.test.ts` — 11 tests: all strategies registered, required fields, no duplicate IDs, hypothesis completeness
+- `oos-leakage.test.ts` — 15 tests: temporal leaks throw, embargo violations throw, walk-forward non-overlap, expanding vs rolling windows
+- `performance-metrics.test.ts` — 13 tests: all metrics correct, zero-trades, period flag, Sharpe positive/negative
+- `cost-attribution.test.ts` — 9 tests: zero-trades, cost ordering, NSE slippage, multiplier monotonicity
+- `monte-carlo.test.ts` — 11 tests: seeded RNG determinism, probability bounds, distribution ordering, good > bad
+- `signal-calibration.test.ts` — 8 tests: perfect calibration ECE ≈ 0, Brier 0.25 for no-skill, bin structure
+- `correlation.test.ts` — 9 tests: identical = 1.0, opposite = -1.0, symmetry, clustering, capital caps
+- `promotion-demotion.test.ts` — 16 tests: all promotion gates, LIVE always blocked without token, demotion records
+
+### Phase 28 — Final Research Documentation
+- `docs/STRATEGY_INVENTORY.md` — complete per-strategy breakdown: all 18 strategies with entry logic, exit logic, stop loss, position sizing, expected regimes, hypothesis, invalidation criteria, required data and features
+- `docs/ALPHA_RESEARCH_REPORT.md` — 22-section comprehensive research report covering: strategy inventory, hypotheses, datasets, IS/OOS governance, performance framework, cost attribution, regime attribution, correlation analysis, alpha decay, Monte Carlo, parameter stability, overfitting risk, signal calibration, ablation, promotion pipeline, demotion, confidence scoring, paper vs backtest comparison, known limitations, and research roadmap
+- `docs/STRATEGY_GOVERNANCE_MATRIX.md` — full governance matrix with all 18 strategies, all gate columns, promotion blockers, confidence component weights, infrastructure health (92 tests passing), demotion history, kill switch status
+
+### Absolute Research Rules (enforced in code)
+1. **No in-sample promotion:** `PerformancePeriod.IN_SAMPLE` metrics computed but never used for promotion
+2. **LIVE requires human approval:** `MANUAL_HUMAN_APPROVAL` gate cannot be bypassed — `approvalToken` + `approvedBy` always required
+3. **Temporal leakage throws:** `validateSplitIntegrity()` throws `Error` on any overlap
+4. **Experiments are immutable:** `ExperimentStore.add()` throws on duplicate `experimentId`
+5. **Kill switches never auto-remove:** require explicit `deactivateKillSwitch()` call
+6. **No strategy outside registry:** `getOrThrow()` enforced at all API entry points
+
+---
+
 ## [Unreleased] — Remaining Build: All Critical Bypasses Resolved
 
 **Tests:** 2550 passing · 170 test files · 0 failures  

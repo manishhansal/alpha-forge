@@ -22,6 +22,41 @@ top-of-sidebar switcher:
   and an **Intelligent Auto Paper-Trading Engine** (daily ₹1L budget,
   signal scoring, 5-position max, EOD close-out).
 
+## What's New — V6 Evidence-Driven Quant Research Platform (Sep 2026)
+
+AlphaForge V6 transforms the platform from a collection of sophisticated strategies into a **scientifically rigorous quant research platform**. Every strategy is inventoried, hypothesised, and evaluated through a 24-phase research pipeline before any live capital is allocated.
+
+**Core principle:** Backtest profit is not sufficient evidence. All promotion decisions are based exclusively on out-of-sample performance. Live promotion always requires explicit human approval — it can never be automatic.
+
+- **Strategy Registry (`src/lib/research/registry/`)** — 18 strategies catalogued (10 crypto + 7 India F&O + 1 user-defined). No strategy exists outside the registry. `getOrThrow()` enforces this at all API entry points.
+- **Hypothesis Framework (`src/lib/research/hypothesis/`)** — every strategy declares its market inefficiency, expected edge, expected failure mode, expected regimes, and falsifiable invalidation criteria. Strategies without a declared hypothesis are blocked from advancement.
+- **Research Datasets with SHA-256 fingerprints (`src/lib/research/datasets/`)** — canonical dataset configs fingerprinted with SHA-256. Any change to underlying data invalidates the fingerprint and requires experiment re-registration.
+- **IS/OOS Governance with leakage prevention (`src/lib/research/splits/`)** — temporal split validation throws `Error` on any overlap. 15 dedicated leakage tests. Supports Walk-Forward, Anchored Walk-Forward, CPCV, and Purged K-Fold.
+- **StrategyPerformanceAnalyzer (`src/lib/research/performance/`)** — 35 metrics computed per period: Sharpe, Sortino, Calmar, SQN, Ulcer Index, Expectancy, Profit Factor, t-test significance, and more. Separate reports for IN_SAMPLE, VALIDATION, FINAL_OOS, PAPER, SHADOW.
+- **Transaction Cost Attribution (`src/lib/research/costs/`)** — full NSE F&O and Crypto cost models. 1×/1.5×/2×/3× cost stress testing. `COST_FRAGILE` flag blocks promotion when the strategy fails at 2× costs.
+- **Regime Attribution Engine (`src/lib/research/regimes/`)** — every trade attributed to one of 10 regimes. Strategy×Regime matrix of Sharpe/PF/Expectancy/WinRate. Strategies should be tested in regimes where they are declared to fail — if they profit there, the hypothesis is wrong.
+- **Strategy Correlation & Redundancy (`src/lib/research/correlation/`)** — return/signal/drawdown/tail-loss correlation between all strategy pairs. Hierarchical clustering at 0.70 threshold with capital allocation caps per cluster.
+- **Alpha Decay Monitor (`src/lib/research/decay/`)** — 5-state machine (HEALTHY→WARNING→DEGRADED→CRITICAL→DISABLED) tracking rolling Sharpe, Expectancy, Win Rate vs historical OOS baseline. CRITICAL state triggers automatic demotion.
+- **Monte Carlo Robustness (`src/lib/research/montecarlo/)** — 7 simulation types × 10,000 iterations. Tests trade ordering, bootstrap, return/slippage/cost perturbation, missed trades, partial fills. `FRAGILE` result blocks promotion.
+- **Parameter Stability (`src/lib/research/parameters/`)** — tests each parameter's neighbourhood. `OVERFIT_SUSPECTED` flag (knife-edge performance) blocks promotion. A robust strategy has a flat performance region.
+- **Multiple Testing Guard (`src/lib/research/overfitting/`)** — Deflated Sharpe Ratio (Bailey & López de Prado 2014), Probability of Backtest Overfitting, Bonferroni and Benjamini-Hochberg corrections.
+- **Signal Calibration (`src/lib/research/signals/`)** — Brier Score, Expected Calibration Error, 10-bin reliability diagram. Poorly calibrated confidence is a promotion blocker.
+- **Strategy Ablation Testing (`src/lib/research/ablation/`)** — measures each component's incremental contribution to OOS performance. `LOW_VALUE_COMPONENT` marks complexity without evidence.
+- **Promotion & Demotion Engine (`src/lib/research/promotion/`)** — evidence-based promotion gates per lifecycle stage. Automatic demotion on alpha decay, excessive drawdown, cost deterioration. LIVE **always** requires a human `approvalToken`.
+- **Strategy Confidence Score (`src/lib/research/confidence/`)** — documented 8-component weighted score (0-100) from OOS performance through paper validation. HIGH_CONFIDENCE / VALIDATED / WATCH / DEGRADED / DISABLED bands.
+- **Immutable Experiment Tracking (`src/lib/research/experiments/`)** — every experiment records `gitCommitHash`, `datasetFingerprint`, `parameterSet`. `ExperimentStore.add()` throws on duplicate IDs — experiments cannot be overwritten.
+- **Strategy Leaderboard + Allocation Engine (`src/lib/research/leaderboard/`)** — ranked views by configurable metric. Capital allocation engine applies correlation/drawdown/confidence/decay constraints.
+- **Kill Switch (`src/lib/research/killswitch/`)** — SOFT_KILL (no new trades) and HARD_KILL (emergency close) with automatic triggers. Never auto-removed.
+- **Paper Performance Analyzer (`src/lib/research/paper-analysis/`)** — compares backtest vs shadow vs paper. Material drift (>30% Sharpe divergence) triggers investigation flag and blocks promotion.
+- **Validation Session Tracker (`src/lib/research/validation-sessions/`)** — requires ≥20 paper sessions across diverse regimes before LIVE_CANDIDATE. Preferred 40+ sessions.
+- **Quant Research Dashboard (`/research/`)** — 10 pages: Leaderboard, Strategy Inventory, Regime Matrix, Monte Carlo, Parameter Stability, Signal Calibration, Experiment History, Correlation, Promotion Pipeline, Alpha Decay Monitor.
+- **Research APIs** — 13 REST endpoints under `/api/research/` with Zod validation and strategy registry enforcement.
+- **92 new research tests** across 8 test files. All passing. Zero failures.
+
+**Docs:** `docs/STRATEGY_INVENTORY.md` · `docs/ALPHA_RESEARCH_REPORT.md` · `docs/STRATEGY_GOVERNANCE_MATRIX.md`
+
+---
+
 ## What's New — Institutional Infrastructure Layer (Sep 2026)
 
 Eight new modules that bring the codebase to institutional / prop-desk level across backtesting, risk, ML, and market microstructure:
