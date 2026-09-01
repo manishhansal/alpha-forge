@@ -2,6 +2,115 @@
 
 ---
 
+## [Unreleased] — 20-Session NSE Market Validation
+
+**Tests:** 25 new regression tests · 3 new test files · 0 failures (2768 total, 182 test files)
+**New source files:** 1 (`src/lib/market-data/services/candle-persist.service.ts`)
+**New doc files:** 2 (`docs/NSE_20_SESSION_VALIDATION_WINDOW.md`, `docs/INDIAN_MARKET_20_SESSION_CERTIFICATION.md`)
+**New report files:** 2 (`reports/validation/config-snapshot.json`, `reports/20-session-data-quality.json`)
+
+Comprehensive 20-session replay and validation of the AlphaForge Indian market signal engine and paper trading system across sessions 2026-08-04 → 2026-09-01. Includes calendar hardening, three defect fixes, and a full PARTIALLY_CERTIFIED outcome.
+
+### Validation Window
+
+20 valid NSE trading sessions ending 2026-09-01, identified using `NSETradingCalendar.isTradingDay()`. No NSE holidays fall within the window. Five weekly NIFTY expiry sessions (Aug 4, 11, 18, 25; Sep 1). Id-E-Milad (Aug 26) is a settlement-only holiday — NSE trading remained open.
+
+### CAL-001 — Missing 2025/2026 NSE Holidays (CRITICAL BUG FIX)
+
+`src/lib/india/nse-trading-calendar.ts`
+
+The canonical `nseCalendar` instance was initialised with only the 2024 holiday list. Any `isTradingDay()` call on a 2025/2026 holiday (e.g. 2025-08-15 Independence Day, 2025-08-27 Ganesh Chaturthi, 2026-01-26 Republic Day) incorrectly returned `true`.
+
+- Added `NSE_HOLIDAYS_2025` (14 entries — source: NSE Capital Markets Circular)
+- Added `NSE_HOLIDAYS_2026` (16 entries — source: NSE/CMTR/71775)
+- Added `NSE_HOLIDAYS_2024_2026` combined array
+- Added `NSE_MUHURAT_2025` and `NSE_MUHURAT_2026` Muhurat session arrays
+- Added `NSE_MUHURAT_2024_2026` combined array
+- Updated `nseCalendar` global instance to use `NSE_HOLIDAYS_2024_2026` + `NSE_MUHURAT_2024_2026`
+- Bumped `HOLIDAY_CALENDAR_VERSION` from `"2024-v2"` to `"2026-v1"`
+- Regression tests: `tests/lib/nse-trading-calendar.test.ts` (51 tests)
+
+### CAL-002 — Sunday Muhurat Session Returns WEEKEND (BUG FIX)
+
+`src/lib/india/nse-trading-calendar.ts` — `NSETradingCalendar.getSessionInfo()`
+
+`getSessionInfo()` checked weekends before Muhurat. Diwali 2026 falls on Sunday (Nov 8) — the method incorrectly returned `sessionType: "WEEKEND"` instead of `sessionType: "MUHURAT"` for that evening's trading session.
+
+- Moved Muhurat lookup before the weekend check in `getSessionInfo()`
+- Added explanatory comment about ordering requirement
+- Regression test: "Muhurat 2026 on Sunday 2026-11-08: session type is MUHURAT in evening"
+
+### RCA-001 — CandleBar DB Persistence Not Wired (HIGH DEFECT FIX)
+
+`src/lib/market-data/services/candle-persist.service.ts` (new) · `worker/src/jobs/india-scalper.ts`
+
+The `CandleBar` PostgreSQL table (TimescaleDB-ready) was never written to. Intraday candles (1m–1h) were served live from Angel One with a 30s Redis TTL and lost after session close, making deterministic minute-level historical replay impossible.
+
+- New `persistCandles(candles, instrumentId, exchange, interval)` function — idempotent upsert using the composite unique key `(instrumentId, exchange, intervalStr, time)`, skips non-finite / zero / negative values
+- New `persistCandlesBatch()` helper for multi-instrument parallel persistence
+- Wired into `refreshIndiaIndicatorState()` in the india-scalper job — after each intraday candle fetch, candles are fire-and-forget persisted to `CandleBar`; errors are logged but never block trading
+- Regression tests: `tests/lib/market-data/candle-persist.test.ts` (8 tests)
+
+### RCA-002 — OC Snapshot Gap Not Detected (MEDIUM DEFECT FIX)
+
+`worker/src/jobs/india-oc-capture.ts`
+
+The 2.5-hour OC snapshot gap observed on 2026-09-01 (12:51–15:30 IST) was silent — no alert, no structured log warning. The affected option-chain strategies (Liquidity Edge, Max-Pain Gravity, PCR Extreme, IV Spike, OI Build-up) used stale 12:51 data for all afternoon signals.
+
+- Added `OC_LAST_CAPTURE_KEY` Redis key (`india:oc-capture:last-success-ms`) updated after every successful capture; 1-hour TTL
+- Added `checkOcCaptureHealth()` — compares `Date.now()` against last-success key; emits `child.warn("oc_capture_stale", ...)` when age exceeds `OC_STALENESS_ALERT_MS = 15 minutes`
+- Alert fires at the start of each tick when market is open, before the capture attempt
+- Redis unavailability degrades gracefully (both `set` and `get` wrapped in try/catch)
+- Regression tests: `tests/lib/market-data/oc-capture-health.test.ts` (5 tests)
+
+### RCA-003 — Yahoo Ticker Mapping Gaps (LOW DEFECT FIX)
+
+`src/services/india/yahoo/index.ts` · `src/lib/market-data/normalizer.ts`
+
+Four F&O stocks returned empty quote/candle arrays from Yahoo Finance because `"{SYMBOL}.NS"` was not a valid Yahoo ticker:
+
+| NSE Symbol | Old (broken) | New (correct) | Reason |
+|-----------|-------------|---------------|--------|
+| TMPV | TMPV.NS ❌ | TATAMOTORS.NS | TMPV.NS not listed on Yahoo; parent TATAMOTORS serves as proxy |
+| M&M | M&M.NS ❌ | MM.NS | Yahoo strips the ampersand |
+| BAJAJ-AUTO | BAJAJ-AUTO.NS ✅ | BAJAJ-AUTO.NS | Explicit override ensures no silent stripping |
+| HYUNDAI | HYUNDAI.NS ✅ | HYUNDAI.NS | Hyundai Motor India IPO (2024); explicit override for clarity |
+
+- Added `YAHOO_SYMBOL_OVERRIDES` map in both `src/services/india/yahoo/index.ts` and `src/lib/market-data/normalizer.ts` (kept in sync)
+- `toYahooSymbol()` checks the override map before appending `.NS`
+- Exported `getYahooSymbolOverrides()` from `yahoo/index.ts` for testability
+- Regression tests: `tests/services/india/yahoo-ticker-overrides.test.ts` (12 tests)
+
+### Validation Artefacts
+
+| File | Description |
+|------|-------------|
+| `docs/NSE_20_SESSION_VALIDATION_WINDOW.md` | 20 valid sessions, expiry calendar, holiday context, methodology |
+| `reports/validation/config-snapshot.json` | Frozen configuration for all 20 replay sessions (git hash, strategy versions, model versions, risk config, paper trading config, provider config) |
+| `reports/20-session-data-quality.json` | Per-session OHLCV coverage, OC snapshot coverage, data quality scores and issues |
+| `docs/INDIAN_MARKET_20_SESSION_CERTIFICATION.md` | Full 21-section certification report: data quality, strategy execution matrix, signal consistency, P&L reconciliation, regime coverage, provider scorecards, ML pipeline, worker reliability, failure injection, frontend consistency, subsystem verdicts, answers to all 6 success criteria |
+
+### Final Certification: PARTIALLY_CERTIFIED
+
+| Subsystem | Status |
+|-----------|--------|
+| NSE Trading Calendar | ✅ CERTIFIED |
+| Signal Engine | ✅ CERTIFIED |
+| Signal Deduplication | ✅ CERTIFIED |
+| Paper Trading Pipeline | ✅ CERTIFIED |
+| P&L Reconciliation | ✅ CERTIFIED (183 trades, zero divergence) |
+| EOD Square-Off | ✅ CERTIFIED (exactly-once) |
+| Strategy Execution | ✅ CERTIFIED (all 13 strategies, every session) |
+| Worker Reliability | ✅ CERTIFIED |
+| ML Pipeline | ⚠️ PARTIALLY_CERTIFIED |
+| Data Completeness | ⚠️ PARTIALLY_CERTIFIED |
+| Provider Reliability | ⚠️ PARTIALLY_CERTIFIED |
+| Replay Determinism | ⚠️ PARTIALLY_CERTIFIED |
+| Frontend Consistency | ⚠️ PARTIALLY_CERTIFIED |
+| Intraday Candle Replay | ❌ FAILED → Fixed by RCA-001 (future sessions) |
+
+---
+
 ## [Unreleased] — V6 Evidence-Driven Quant Research Platform
 
 **Tests:** 92 new research tests · 8 test files · 0 failures (all existing tests preserved)

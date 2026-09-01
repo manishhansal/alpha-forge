@@ -15,6 +15,8 @@ import type { PaperTradeEvent, IndiaPaperTradeSnapshot } from "@/features/whatsa
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+// RCA-001 fix: persist fetched intraday candles to CandleBar table for replay
+import { persistCandles } from "@/lib/market-data/services/candle-persist.service";
 import { bootstrapRegistry } from "@/lib/market-data/registry";
 import type { OHLCVCandle } from "@/lib/market-data/types";
 
@@ -127,6 +129,9 @@ function candleToBar(candle: OHLCVCandle, intervalSec: number): Parameters<typeo
  * state survives worker restarts — on the next tick, the handle is restored
  * and only new bars need to be fed (warm-up in ≤ 5 bars per Requirement 1.6).
  *
+ * RCA-001 fix: candles are also upserted into the CandleBar table so they
+ * survive beyond the 30s Redis TTL and are available for historical replay.
+ *
  * Best-effort — any error is logged and swallowed so the main trade-opening
  * logic is never blocked.
  */
@@ -157,6 +162,26 @@ async function refreshIndiaIndicatorState(
     }
 
     await saveIndicatorState(key, handle);
+
+    // RCA-001 fix: persist candles to CandleBar so they survive Redis TTL
+    // and are available for deterministic replay across sessions.
+    // Fire-and-forget — persist errors are logged but never block trading.
+    void persistCandles(candles, underlying, "NSE", interval).then((r) => {
+      if (r.errors > 0) {
+        log.warn("candle persist partial failure", {
+          underlying,
+          interval,
+          upserted: r.upserted,
+          errors: r.errors,
+        });
+      }
+    }).catch((err: unknown) => {
+      log.warn("candle persist failed", {
+        underlying,
+        interval,
+        err: (err as Error).message,
+      });
+    });
   } catch (err) {
     log.warn("refreshIndiaIndicatorState failed", {
       underlying,

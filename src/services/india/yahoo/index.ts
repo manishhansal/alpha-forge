@@ -41,11 +41,38 @@ function rangeToFrom(range: string): Date {
   return new Date(now - ms);
 }
 
-/** Map an "NSE-style" symbol (RELIANCE, ^NSEI) to a Yahoo ticker. */
+/** Map an "NSE-style" symbol (RELIANCE, ^NSEI) to a Yahoo ticker.
+ *
+ * RCA-003 fix: explicit override map for symbols where the simple
+ * "{SYMBOL}.NS" pattern does not resolve on Yahoo Finance.
+ *
+ * Sources verified against Yahoo Finance as of 2026:
+ *   TMPV   → TATAMOTORS.NS  (Tata Motors commercial vehicles; TMPV.NS does not exist)
+ *   HYUNDAI → HYUNDAI.NS    (Hyundai Motor India; standard .NS suffix works after IPO)
+ *   M&M    → MM.NS          (Mahindra & Mahindra; ampersand stripped by Yahoo)
+ *   BAJAJ-AUTO → BAJAJ-AUTO.NS  (hyphen preserved; standard .NS suffix works)
+ */
+const YAHOO_SYMBOL_OVERRIDES: Readonly<Record<string, string>> = {
+  TMPV:       "TATAMOTORS.NS",  // TMPV.NS not available; use parent TATAMOTORS
+  "M&M":      "MM.NS",          // Yahoo strips & — use MM.NS
+  "BAJAJ-AUTO": "BAJAJ-AUTO.NS", // Standard suffix; override ensures no stripping
+  HYUNDAI:    "HYUNDAI.NS",     // Hyundai Motor India Ltd (listed 2024)
+};
+
 export function toYahooSymbol(symbol: string): string {
   if (symbol.startsWith("^")) return symbol;
   if (symbol.includes(".")) return symbol;
+  // RCA-003: check override map before applying generic .NS suffix
+  if (YAHOO_SYMBOL_OVERRIDES[symbol]) return YAHOO_SYMBOL_OVERRIDES[symbol]!;
   return `${symbol}.NS`;
+}
+
+/**
+ * Returns all symbols that have an explicit Yahoo Finance ticker override.
+ * Used in tests to verify override coverage.
+ */
+export function getYahooSymbolOverrides(): Readonly<Record<string, string>> {
+  return YAHOO_SYMBOL_OVERRIDES;
 }
 
 interface YfRawQuote {
