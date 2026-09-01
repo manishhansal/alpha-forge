@@ -10,11 +10,24 @@
  * trades). After the first successful square-off of the day there will be
  * no more OPEN rows until the next session, so subsequent ticks cost one
  * cheap Prisma COUNT query and return immediately.
+ *
+ * Chaos Engineering Hardening:
+ *   - Scenario 11: Distributed lock (acquireEodLock) ensures exactly-once
+ *     execution per trading day, even across rapid worker restarts or
+ *     multiple replicas.  The lock key is scoped to `tradeDate` (IST) and
+ *     carries a 20-minute TTL covering the full 15:30–15:50 window.
+ *   - Scenario 2: Each individual paperTrade.update is wrapped in withDbRetry
+ *     so a transient Postgres hiccup doesn't leave trades half-closed.
+ *   - No duplicate close: the COUNT check is still performed even when Redis
+ *     is unavailable (the lock degrades gracefully to "proceed without lock").
  */
 
 import { isNseMarketOpenIST, nseCloseMsForDateIST } from "@/lib/india/market-hours";
 import { istDateKey } from "@/features/india/daily-picks/engine";
+import { acquireEodLock } from "@/lib/chaos/worker-resilience";
+import { withDbRetry } from "@/lib/chaos/db-resilience";
 import { getPrisma } from "../db";
+import { getRedis } from "../redis";
 import { createLogger } from "../log";
 import { scheduleJob, type JobHandle } from "../scheduler";
 
@@ -52,6 +65,33 @@ export function startIndiaEodSquareOffJob(): JobHandle {
         if (!isSessionEnded()) return;
 
         const child = log.child("tick");
+        const tradeDate = istTodayKey();
+
+        // ── Chaos Scenario 11: Exactly-once EOD lock ─────────────────────
+        // Acquire a distributed lock scoped to today's IST date.  If another
+        // worker replica (or a rapid restart) already holds the lock, the
+        // square-off was already run — return immediately.
+        let eodRelease: (() => Promise<void>) | undefined;
+        try {
+          let redis;
+          try { redis = getRedis(); } catch { /* Redis unavailable — proceed without lock */ }
+
+          if (redis) {
+            const lockResult = await acquireEodLock(redis, tradeDate);
+            if (!lockResult.acquired) {
+              child.info("eod lock already held — square-off already completed for today", {
+                tradeDate,
+              });
+              return;
+            }
+            eodRelease = lockResult.release;
+          }
+        } catch (lockErr) {
+          child.warn("eod lock acquire failed — proceeding (single-worker assumption)", {
+            err: (lockErr as Error).message,
+          });
+        }
+
         try {
           const db = getPrisma();
 
@@ -108,22 +148,33 @@ export function startIndiaEodSquareOffJob(): JobHandle {
             const pnlPct = rawPnl * 100;
             const pnlUsd = (pnlPct / 100) * t.notional;
 
-            await db.paperTrade.update({
-              where: { id: t.id },
-              data:  {
-                status:    "EXPIRED",   // EXPIRED = closed at session end, not WIN/LOSS
-                exitPrice,
-                pnlPct,
-                pnlUsd,
-                closedAt,
-              },
-            });
+            // ── Chaos Scenario 2: DB retry on transient Postgres failure ──
+            await withDbRetry(
+              () => db.paperTrade.update({
+                where: { id: t.id },
+                data:  {
+                  status:    "EXPIRED",   // EXPIRED = closed at session end, not WIN/LOSS
+                  exitPrice,
+                  pnlPct,
+                  pnlUsd,
+                  closedAt,
+                },
+              }),
+              { label: `eod-squareoff:${t.id}`, maxAttempts: 3, baseDelayMs: 300 },
+            );
             closed++;
           }
 
-          child.info("squared off", { closed, tradeDate: istTodayKey() });
+          child.info("squared off", { closed, tradeDate });
         } catch (err) {
           log.warn("eod squareoff failed", { err: (err as Error).message });
+        } finally {
+          // Always release the EOD lock so it's not held until TTL expiry
+          if (eodRelease) {
+            await eodRelease().catch((e: unknown) =>
+              log.warn("eod lock release failed", { err: (e as Error).message }),
+            );
+          }
         }
       },
     },

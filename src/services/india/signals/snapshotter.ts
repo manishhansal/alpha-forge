@@ -10,12 +10,10 @@
 // A change resets `since = now`. This means clients can compute true age as
 // `Date.now() - since`, even on first page-load mid-session.
 
-import YahooFinance from "yahoo-finance2";
+import { yahoo } from "@/services/india/yahoo";
 import { FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
 import { classifySignal, computeScore, type SignalLabel } from "./score";
-
-const yfClient = new YahooFinance();
 
 export type SignalRecord = {
   signal: SignalLabel;
@@ -82,35 +80,22 @@ export async function getSignalRecords(
   return out;
 }
 
-interface YfSnapshotQuote {
-  symbol?: string;
-  regularMarketPrice?: number;
-  fiftyDayAverage?: number;
-  twoHundredDayAverage?: number;
-  regularMarketChangePercent?: number;
-  targetMeanPrice?: number;
-}
+// yahoo adapter handles quote fetching; no raw YfSnapshotQuote needed here
 
-async function snapshotChunk(yfSymbols: string[]): Promise<number> {
+async function snapshotChunk(nseSymbols: string[]): Promise<number> {
   let stamped = 0;
   try {
-    const result = (await yfClient.quote(yfSymbols)) as
-      | YfSnapshotQuote
-      | YfSnapshotQuote[];
-    const arr = Array.isArray(result) ? result : [result];
-    for (const q of arr) {
-      const ySym = q?.symbol;
-      if (!ySym) continue;
-      const symbol = ySym.replace(/\.NS$/, "");
-      const price = q.regularMarketPrice ?? null;
-      if (price == null) continue;
-
+    const quotes = await yahoo.getQuotes(nseSymbols);
+    for (let i = 0; i < nseSymbols.length; i++) {
+      const q = quotes[i];
+      if (!q || q.price == null) continue;
+      const symbol = nseSymbols[i]!;
       const score = computeScore({
-        price,
-        sma50: q.fiftyDayAverage ?? null,
-        sma200: q.twoHundredDayAverage ?? null,
-        changePct: q.regularMarketChangePercent ?? null,
-        targetMean: q.targetMeanPrice ?? null,
+        price: q.price,
+        sma50: null,          // yahoo adapter getQuotes doesn't return SMA
+        sma200: null,
+        changePct: q.changePct ?? null,
+        targetMean: null,
       });
       const signal = classifySignal(score);
       await recordSignalObservation(symbol, signal, score);
@@ -118,7 +103,7 @@ async function snapshotChunk(yfSymbols: string[]): Promise<number> {
     }
   } catch (e) {
     console.error(
-      `[india-signal-snapshotter] chunk failed (${yfSymbols.length} symbols):`,
+      `[india-signal-snapshotter] chunk failed (${nseSymbols.length} symbols):`,
       (e as Error)?.message,
     );
   }
@@ -126,13 +111,15 @@ async function snapshotChunk(yfSymbols: string[]): Promise<number> {
 }
 
 async function snapshotAll(): Promise<void> {
-  const yfSymbols = FNO_STOCKS.map((s) => `${s}.NS`);
+  // Use NSE symbols directly — the yahoo adapter's getQuotes() converts to Yahoo
+  // format internally. This keeps snapshotter decoupled from Yahoo ticker format.
+  const nseSymbols = [...FNO_STOCKS];
   let stamped = 0;
-  for (let i = 0; i < yfSymbols.length; i += SNAPSHOT_CHUNK) {
-    stamped += await snapshotChunk(yfSymbols.slice(i, i + SNAPSHOT_CHUNK));
+  for (let i = 0; i < nseSymbols.length; i += SNAPSHOT_CHUNK) {
+    stamped += await snapshotChunk(nseSymbols.slice(i, i + SNAPSHOT_CHUNK));
   }
   console.log(
-    `[india-signal-snapshotter] stamped ${stamped}/${yfSymbols.length} symbols`,
+    `[india-signal-snapshotter] stamped ${stamped}/${nseSymbols.length} symbols`,
   );
 }
 

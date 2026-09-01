@@ -5,6 +5,8 @@ import type { ScalpStrategyId, ScalpTimeframe } from "@/features/scalping/types"
 import { TRACKED_SYMBOLS } from "@/lib/constants";
 import { getServerBroker } from "@/services/brokers/registry";
 import type { KlineInterval } from "@/services/binance/klines";
+import { checkAndSetTradeGuard, WorkerCheckpoint } from "@/lib/chaos/worker-resilience";
+import { withDbRetry, paperTradeDLQ } from "@/lib/chaos/db-resilience";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
@@ -14,6 +16,7 @@ import {
   saveIndicatorState,
 } from "../indicator-state";
 import { createLogger } from "../log";
+import { getRedis } from "../redis";
 import { scheduleJob, type JobHandle } from "../scheduler";
 
 const log = createLogger("worker:scalper");
@@ -100,6 +103,15 @@ async function refreshIndicatorState(
  *
  * The job is intentionally idempotent — running it more often only changes
  * the latency of TP/SL resolution, never the number of trades opened.
+ *
+ * Chaos Engineering Hardening:
+ *   - Scenario 8:  checkAndSetTradeGuard (Redis) provides a second layer of
+ *     duplicate prevention on top of the DB findFirst dedup in paper-trader.ts,
+ *     guarding against rapid restart between create and tick completion.
+ *   - Scenario 9:  WorkerCheckpoint persists completed (symbol, timeframe)
+ *     pairs so a crash mid-loop resumes without re-processing items.
+ *   - Scenario 2:  DB writes are wrapped in withDbRetry; failures after all
+ *     retries go to paperTradeDLQ for replay on next tick.
  */
 export function startScalperJob(): JobHandle {
   return scheduleJob(
@@ -110,6 +122,31 @@ export function startScalperJob(): JobHandle {
       tick: async () => {
         const child = log.child("tick");
         const prisma = getPrisma();
+
+        let redis;
+        try { redis = getRedis(); } catch { /* Redis unavailable — checkpoint/guard skipped */ }
+
+        // ── Chaos Scenario 9: crash-recovery checkpoint ───────────────────
+        const checkpoint = redis ? new WorkerCheckpoint(redis, "scalper") : null;
+        const priorCheckpoint = await checkpoint?.load();
+        if (priorCheckpoint) {
+          child.warn("resuming from crash checkpoint", {
+            phase: priorCheckpoint.phase,
+            completed: priorCheckpoint.completedItems.length,
+          });
+        }
+        await checkpoint?.start("open-trades");
+
+        // ── Flush DLQ from previous failed ticks ──────────────────────────
+        if (paperTradeDLQ.size > 0) {
+          await paperTradeDLQ.flush(async (entry) => {
+            const { signal, opts } = entry.payload as {
+              signal: Parameters<typeof openPaperTrade>[0];
+              opts: Parameters<typeof openPaperTrade>[1];
+            };
+            await openPaperTrade(signal, { ...opts, prisma });
+          });
+        }
 
         let opened = 0;
         let dupSignal = 0;
@@ -131,16 +168,63 @@ export function startScalperJob(): JobHandle {
             );
 
             for (const sig of signals) {
-              const result = await openPaperTrade(sig, { prisma });
+              const itemId = `${sig.symbol}:${tf}:${sig.triggeredAt}`;
+
+              // Skip already-completed items from crash checkpoint
+              if (checkpoint?.isCompleted(itemId)) {
+                child.debug("skipping checkpoint-completed item", { itemId });
+                continue;
+              }
+
+              // ── Chaos Scenario 8: Redis trade guard ──────────────────────
+              if (redis) {
+                const source = `${sig.strategyId}:${tf}`;
+                const guard = await checkAndSetTradeGuard(
+                  redis, source, sig.symbol, sig.triggeredAt,
+                );
+                if (guard.isDuplicate) {
+                  dupSignal++;
+                  await checkpoint?.markCompleted(itemId);
+                  continue;
+                }
+              }
+
+              // ── Chaos Scenario 2: DB retry + DLQ ─────────────────────────
+              let result;
+              try {
+                result = await withDbRetry(
+                  () => openPaperTrade(sig, { prisma }),
+                  { label: `scalper:open:${sig.symbol}:${tf}`, maxAttempts: 3 },
+                );
+              } catch (dbErr) {
+                paperTradeDLQ.enqueue(
+                  "open-paper-trade",
+                  { signal: sig, opts: { notional: undefined } },
+                  (dbErr as Error).message,
+                );
+                child.warn("paper trade enqueued to DLQ after DB failure", {
+                  symbol: sig.symbol, tf,
+                });
+                continue;
+              }
+
               if (result.opened) {
                 opened += 1;
                 openedByStrategy[sig.strategyId] = (openedByStrategy[sig.strategyId] ?? 0) + 1;
                 openedByTf[tf] = (openedByTf[tf] ?? 0) + 1;
+
+                // Register the tradeId in the Redis guard so restart dedup works
+                if (redis && result.tradeId) {
+                  const source = `${sig.strategyId}:${tf}`;
+                  await checkAndSetTradeGuard(redis, source, sig.symbol, sig.triggeredAt, result.tradeId);
+                }
               } else if (result.reason === "duplicate-signal") {
                 dupSignal += 1;
               } else if (result.reason === "already-open") {
                 alreadyOpen += 1;
               }
+
+              await checkpoint?.markCompleted(itemId);
             }
           } catch (err) {
             child.warn("signal fetch/open failed", {
@@ -150,12 +234,20 @@ export function startScalperJob(): JobHandle {
           }
         }
 
+        await checkpoint?.advancePhase("resolve-trades");
+
         let resolveStats;
         try {
-          resolveStats = await resolveOpenTrades(prisma);
+          resolveStats = await withDbRetry(
+            () => resolveOpenTrades(prisma),
+            { label: "scalper:resolve", maxAttempts: 3 },
+          );
         } catch (err) {
           child.warn("resolve failed", { err: (err as Error).message });
         }
+
+        // Clear checkpoint on successful tick completion
+        await checkpoint?.clear();
 
         if (
           opened > 0 ||
@@ -167,6 +259,7 @@ export function startScalperJob(): JobHandle {
             alreadyOpen,
             byStrategy: openedByStrategy,
             byTimeframe: openedByTf,
+            dlqSize: paperTradeDLQ.size,
             ...(resolveStats ?? {}),
           });
         }

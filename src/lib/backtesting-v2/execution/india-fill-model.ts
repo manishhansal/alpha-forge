@@ -87,6 +87,8 @@ export interface IndiaFillExtras {
   isPartialFill:       boolean;
   liquidityTier:       string;
   spreadFraction:      number;
+  /** Index signature so this type is assignable to FillEvent.extras. */
+  [key: string]:       string | number | boolean | null | undefined;
 }
 
 // ── IndiaFillModel ────────────────────────────────────────────────────────────

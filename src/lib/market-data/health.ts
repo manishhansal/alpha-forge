@@ -260,7 +260,7 @@ export function isStale(
  */
 export function isTickStale(
   exchangeTimestampMs: number,
-  thresholdMs = STALE_THRESHOLDS_MS.liveTick,
+  thresholdMs: number = STALE_THRESHOLDS_MS.liveTick,
   now = Date.now(),
 ): boolean {
   return now - exchangeTimestampMs > thresholdMs;

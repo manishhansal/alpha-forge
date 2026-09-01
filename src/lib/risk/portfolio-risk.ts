@@ -238,15 +238,15 @@ export class PortfolioRiskEngine {
     // Caller should pass the *final* daily P&L at session close.
 
     // Age the correlation matrix
-    this._corrMatrixAge++;
+    this._corrMatrixBarAge++;
 
     // Rebuild correlation matrix on schedule
     if (
-      this._corrMatrixAge >= this._corrRebuildEveryBars ||
+      this._corrMatrixBarAge >= this._corrRebuildEveryBars ||
       this._corrMatrix === null
     ) {
       this._rebuildCorrMatrix();
-      this._corrMatrixAge = 0;
+      this._corrMatrixBarAge = 0;
     }
   }
 
@@ -353,7 +353,7 @@ export class PortfolioRiskEngine {
       killSwitchState: this._killSwitch.state,
       portfolioDailyVolFraction,
       maxPairwiseCorrelation,
-      corrMatrixAge: this._corrMatrixAge,
+      corrMatrixAge: this._corrMatrixBarAge,  // bars since last correlation matrix rebuild
     };
 
     // Helper: build rejected result

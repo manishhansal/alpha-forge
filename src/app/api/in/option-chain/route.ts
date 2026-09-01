@@ -2,46 +2,37 @@ import { NextResponse } from "next/server";
 import { getOptionChainBroker, getBrokerById } from "@/services/india/broker/factory";
 import { getActiveSelections } from "@/features/settings/active-sources";
 import { nse } from "@/services/india/nse";
+import { redis } from "@/lib/redis";
+import {
+  validateOptionChain,
+  sanitizeOptionChain,
+  withOptionChainFallback,
+} from "@/lib/chaos/option-chain-resilience";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL ?? "http://localhost:8100";
+void ML_SERVICE_URL; // kept for any direct URL references below
+
+import { fetchOptionChainGreeks, predictIVRegime } from "@/lib/india/ml-client";
 
 /**
  * Attempt to enrich the option chain with real Black-76/BS greeks from the
  * ML service. Returns the enriched strikes array on success, or null if the
  * ML service is unreachable or returns an error. Never throws.
+ *
+ * Routes through ml-client.ts (fetchOptionChainGreeks) which respects ML_MODE.
  */
 async function fetchEnrichedGreeks(
   chain: Record<string, unknown>,
 ): Promise<unknown[] | null> {
-  try {
-    const mlRes = await fetch(`${ML_SERVICE_URL}/analytics/greeks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chain: chain.strikes,
-        spot: chain.underlyingPrice,
-        india_vix: 15.0, // use real VIX when available
-        expiry_dt: chain.expiry,
-      }),
-      signal: AbortSignal.timeout(3000), // 3-second timeout
-    });
-    if (mlRes.ok) {
-      const data = (await mlRes.json()) as { strikes?: unknown[] } | unknown[];
-      // The endpoint may return the enriched strikes array directly, or wrap
-      // them in a { strikes: [...] } object — handle both shapes.
-      if (Array.isArray(data)) return data;
-      if (data && typeof data === "object" && "strikes" in data && Array.isArray((data as Record<string, unknown>).strikes)) {
-        return (data as { strikes: unknown[] }).strikes;
-      }
-    }
-    return null;
-  } catch {
-    // ML service unreachable — degrade gracefully
-    return null;
-  }
+  return fetchOptionChainGreeks({
+    chain: (chain.strikes as unknown[]) ?? [],
+    spot: (chain.underlyingPrice as number) ?? 0,
+    india_vix: 15.0, // use real VIX when available
+    expiry_dt: (chain.expiry as string) ?? "",
+  });
 }
 
 /**
@@ -80,40 +71,28 @@ export async function GET(req: Request) {
   ): Promise<ReturnType<typeof NextResponse.json>> {
     const enrichedStrikes = await fetchEnrichedGreeks(chain);
 
-    // Attempt to classify the IV regime via the ML service (Requirement 9.4–9.7).
-    // Build the input from the chain data that is already available.
-    // Falls back to null when the ML service is down (Requirement 9.7).
+    // Attempt to classify the IV regime via the ml-client (Requirement 9.4–9.7).
+    // Routes through predictIVRegime() which respects ML_MODE and centralises
+    // timeout/retry logic. Falls back to null when the ML service is down.
     let iv_regime: string | null = null;
     try {
-      const ivRes = await fetch(`${ML_SERVICE_URL}/predict/iv-regime`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // Provide available chain-derived features; the model uses the last
-          // 20 days of {atm_iv, pcr, oi_change, vix, spot_change}.
-          // We pass what we have from the current snapshot; the ML service
-          // handles missing history gracefully.
-          atm_iv: chain.atmIv ?? chain.atm_iv ?? null,
-          pcr: chain.pcr ?? chain.putCallRatio ?? null,
-          oi_change: chain.oiChange ?? chain.oi_change ?? null,
-          vix: chain.indiaVix ?? chain.india_vix ?? null,
-          spot_change: chain.underlyingChangePct ?? chain.spot_change ?? null,
-        }),
-        signal: AbortSignal.timeout(3000),
+      // Build a minimal 1-row feature matrix from the current snapshot.
+      // In production this should be a 20-day rolling history; the model
+      // handles a 1-row input gracefully by returning the heuristic fallback.
+      const atm_iv = Number(chain.atmIv ?? chain.atm_iv ?? 0);
+      const pcr = Number(chain.pcr ?? chain.putCallRatio ?? 1);
+      const oi_change = Number(chain.oiChange ?? chain.oi_change ?? 0);
+      const vix = Number(chain.indiaVix ?? chain.india_vix ?? 15);
+      const spot_change = Number(chain.underlyingChangePct ?? chain.spot_change ?? 0);
+      const ivResult = await predictIVRegime({
+        data: [[atm_iv, pcr, oi_change, vix, spot_change]],
       });
-      if (ivRes.ok) {
-        const ivData = (await ivRes.json()) as {
-          iv_regime?: string;
-          ivRegime?: string;
-        };
-        const raw = ivData.iv_regime ?? ivData.ivRegime ?? null;
-        // Only accept valid classifier outputs
-        if (raw === "CRUSH" || raw === "STABLE" || raw === "SPIKE") {
-          iv_regime = raw;
-        }
+      const raw = ivResult?.iv_regime ?? null;
+      if (raw === "CRUSH" || raw === "STABLE" || raw === "SPIKE") {
+        iv_regime = raw;
       }
     } catch {
-      // ML service unreachable — iv_regime stays null (Requirement 9.7)
+      // Graceful degradation — iv_regime stays null (Requirement 9.7)
     }
 
     const payload: Record<string, unknown> = {
@@ -130,8 +109,35 @@ export async function GET(req: Request) {
   }
 
   try {
-    const chain = await primary.getOptionChain(symbol, expiry);
-    return await respondWithChain(chain as Record<string, unknown>, { source: primary.id });
+    // ── Chaos Scenario 15: withOptionChainFallback wraps the primary fetch.
+    // On partial/empty chain it serves the last-good Redis snapshot instead
+    // of surfacing a blank chain to the client.
+    const { chain: rawChain, fromCache, partial } = await withOptionChainFallback(
+      symbol,
+      expiry ?? "nearest",
+      () => primary.getOptionChain(symbol, expiry) as Promise<import("@/types/india").OptionChain>,
+      redis,
+    );
+
+    // Validate and log completeness for observability
+    const validation = validateOptionChain(rawChain);
+    if (!validation.valid) {
+      console.warn("[option-chain] serving partial chain", {
+        symbol,
+        expiry,
+        reason: validation.reason,
+        strikeCount: validation.strikeCount,
+        fromCache,
+      });
+    }
+
+    // Sanitize non-finite option-level values before sending to the client
+    const chain = sanitizeOptionChain(rawChain);
+    return await respondWithChain(chain as unknown as Record<string, unknown>, {
+      source: primary.id,
+      fromCache,
+      partial,
+    });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     attempts.push({ id: primary.id, error: msg });

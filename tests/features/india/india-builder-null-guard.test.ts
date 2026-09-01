@@ -49,6 +49,7 @@ vi.mock("@/lib/india/ml-client", () => ({
   predictRisk: vi.fn(),
   predictStrategy: vi.fn(),
   predictPortfolio: vi.fn(),
+  predictPriceRegime: vi.fn(),
 }));
 
 import {
@@ -56,6 +57,7 @@ import {
   mlFetch,
   predictRegime,
   predictRankings,
+  predictPriceRegime,
 } from "@/lib/india/ml-client";
 import { buildMLContext, invalidateMLCache } from "@/lib/india/ml-enhanced-context";
 import type { MLEnhancedContext, PriceForecastResult } from "@/lib/india/ml-enhanced-context";
@@ -68,6 +70,7 @@ const mockIsHealthy = isMLServiceHealthy as ReturnType<typeof vi.fn>;
 const mockPredictRegime = predictRegime as ReturnType<typeof vi.fn>;
 const mockPredictRankings = predictRankings as ReturnType<typeof vi.fn>;
 const mockMlFetch = mlFetch as ReturnType<typeof vi.fn>;
+const mockPredictPriceRegime = predictPriceRegime as ReturnType<typeof vi.fn>;
 
 const BASE_INPUTS = {
   niftyChangePct: 0.5,
@@ -99,6 +102,7 @@ beforeEach(() => {
   mockPredictRankings.mockResolvedValue(null);
   // Default: price-regime endpoint throws (simulates 404 pre-restart)
   mockMlFetch.mockRejectedValue(new Error("Not Found"));
+  mockPredictPriceRegime.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -183,7 +187,10 @@ describe("Bug 2b safe pattern — null mlCtxResult returns undefined safely", ()
      * "When mlCtxResult is null, all property accesses resolve to undefined
      *  without throwing TypeError."
      */
-    const mlCtxResult: MLEnhancedContext | null = null;
+    // Cast via `unknown` to prevent TypeScript constant-narrowing from collapsing
+    // the union to `null`. We want the full `MLEnhancedContext | null` type
+    // visible when accessing the optional-chained properties.
+    const mlCtxResult = null as unknown as MLEnhancedContext | null;
 
     // Safe pattern — should never throw
     const regime = mlCtxResult?.priceForecast?.regime;
@@ -272,6 +279,7 @@ describe("Bug 2b preservation — non-null mlCtxResult behavior unchanged", () =
      * priceForecast stays null and no other part of the context is affected.
      */
     mockMlFetch.mockRejectedValue(new Error("Not Found"));
+    mockPredictPriceRegime.mockResolvedValue(null);
 
     const ctx = await buildMLContext(BASE_INPUTS);
 
@@ -294,6 +302,7 @@ describe("Bug 2b preservation — non-null mlCtxResult behavior unchanged", () =
       q90: 1.5,
     };
     mockMlFetch.mockResolvedValue(mockForecast);
+    mockPredictPriceRegime.mockResolvedValue(mockForecast);
 
     const ctx = await buildMLContext(BASE_INPUTS);
 

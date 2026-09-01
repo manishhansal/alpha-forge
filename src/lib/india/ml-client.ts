@@ -6,14 +6,29 @@
  * for regime classification, stock ranking, strategy selection, risk
  * prediction, portfolio optimization, and SHAP explanations.
  *
- * All methods are fail-soft: if the ML service is down or responds with
- * an error, they return `null` so the existing heuristic engine continues
- * to drive signals (graceful degradation).
+ * ML_MODE controls fallback behaviour:
+ *   required  — ML failure surfaces as an error (no silent fallback)
+ *   fallback  — heuristic fallback allowed when ML service is down (default)
+ *   disabled  — ML intentionally bypassed; all calls return null immediately
+ *
+ * When ML_MODE=fallback (default), a null return means the caller should
+ * apply heuristic logic. When ML_MODE=required, null is never returned —
+ * the call throws if the ML service is unreachable.
  */
 
 import "server-only";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+/** Controls ML fallback behaviour. Set via ML_MODE environment variable. */
+export type MLMode = "required" | "fallback" | "disabled";
+
+/** Read ML_MODE from env; defaults to "fallback" for backward compatibility. */
+export function getMLMode(): MLMode {
+  const raw = (process.env.ML_MODE ?? "fallback").toLowerCase();
+  if (raw === "required" || raw === "fallback" || raw === "disabled") return raw;
+  return "fallback";
+}
 
 export type MLMarketRegime =
   | "strong_bull"
@@ -135,12 +150,17 @@ const ML_TIMEOUT_MS = 10_000;
 
 /**
  * POST to the ML service with timeout and error handling.
- * Returns null on any failure (network, timeout, HTTP error).
+ * Returns null on any failure when ML_MODE=fallback.
+ * Throws when ML_MODE=required and the service is unavailable.
+ * Returns null immediately when ML_MODE=disabled.
  */
 async function mlPost<T>(
   path: string,
   body: Record<string, unknown>,
 ): Promise<T | null> {
+  const mode = getMLMode();
+  if (mode === "disabled") return null;
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ML_TIMEOUT_MS);
@@ -157,9 +177,9 @@ async function mlPost<T>(
     clearTimeout(timeout);
 
     if (!res.ok) {
-      console.warn(
-        `[ml-client] ${path} returned ${res.status}: ${res.statusText}`,
-      );
+      const msg = `[ml-client] ${path} returned ${res.status}: ${res.statusText}`;
+      if (mode === "required") throw new Error(msg);
+      console.warn(msg);
       return null;
     }
 
@@ -167,12 +187,18 @@ async function mlPost<T>(
   } catch (err) {
     // AbortError = timeout, TypeError = network failure
     const msg = err instanceof Error ? err.message : String(err);
+    if (mode === "required") {
+      throw new Error(`[ml-client] ML_MODE=required but ${path} failed: ${msg}`);
+    }
     console.warn(`[ml-client] ${path} failed: ${msg}`);
     return null;
   }
 }
 
 async function mlGet<T>(path: string): Promise<T | null> {
+  const mode = getMLMode();
+  if (mode === "disabled") return null;
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
@@ -183,9 +209,16 @@ async function mlGet<T>(path: string): Promise<T | null> {
     });
 
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (mode === "required") throw new Error(`[ml-client] ${path} returned ${res.status}`);
+      return null;
+    }
     return (await res.json()) as T;
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (mode === "required") {
+      throw new Error(`[ml-client] ML_MODE=required but ${path} failed: ${msg}`);
+    }
     return null;
   }
 }
@@ -355,6 +388,106 @@ export async function explainPrediction(params: {
     `/explain/${params.model}`,
     params,
   );
+}
+
+// ─── Analytics endpoints ──────────────────────────────────────────────────────
+
+export interface MLGreeksResult {
+  strikes?: unknown[];
+  [key: string]: unknown;
+}
+
+/**
+ * Enrich an option chain with Black-76/BS greeks from the ML service.
+ * Returns null when the ML service is unreachable (never throws in fallback mode).
+ */
+export async function fetchOptionChainGreeks(params: {
+  chain: unknown[];
+  spot: number;
+  india_vix: number;
+  expiry_dt: string;
+}): Promise<unknown[] | null> {
+  const result = await mlPost<unknown[]>("/analytics/greeks", params as Record<string, unknown>);
+  if (!result) return null;
+  if (Array.isArray(result)) return result;
+  const r = result as Record<string, unknown>;
+  if ("strikes" in r && Array.isArray(r.strikes)) return r.strikes as unknown[];
+  return null;
+}
+
+/**
+ * Classify the IV regime from option chain data.
+ * Returns null when the ML service is unreachable.
+ */
+export async function predictIVRegime(params: {
+  data: number[][];
+}): Promise<{ iv_regime: string } | null> {
+  return mlPost<{ iv_regime: string }>("/predict/iv-regime", params as Record<string, unknown>);
+}
+
+/**
+ * Get the implied volatility surface for a symbol (GET endpoint).
+ * Returns null when unavailable.
+ */
+export async function fetchVolSurface(symbol: string): Promise<Record<string, unknown> | null> {
+  return mlGet<Record<string, unknown>>(`/analytics/vol-surface?symbol=${encodeURIComponent(symbol)}`);
+}
+
+/**
+ * Compute the IV surface from per-expiry snapshots (POST endpoint).
+ * Returns null when unavailable.
+ */
+export async function computeVolSurface(params: {
+  symbol: string;
+  snapshots_by_expiry: Record<string, unknown>;
+}): Promise<Record<string, unknown> | null> {
+  return mlPost<Record<string, unknown>>("/analytics/vol-surface", params as Record<string, unknown>);
+}
+
+/**
+ * Run portfolio optimization via Riskfolio-Lib (v2 endpoint).
+ */
+export async function predictPortfolioV2(params: {
+  symbols: string[];
+  method?: string;
+  returns?: Record<string, number[]>;
+  alpha?: number;
+}): Promise<Record<string, unknown> | null> {
+  return mlPost<Record<string, unknown>>("/predict/portfolio-v2", params as Record<string, unknown>);
+}
+
+/**
+ * Get model load status from the ML service.
+ */
+export async function getMLModelsStatus(): Promise<Record<string, unknown> | null> {
+  return mlGet<Record<string, unknown>>("/models/status");
+}
+
+/**
+ * Get the 1-hour ahead price regime forecast.
+ * @param last60Bars - Last 60 5-minute OHLCV bars as [open,high,low,close,volume,vpin,atm_iv,pcr,oi_buildup][]
+ */
+export async function predictPriceRegime(last60Bars: number[][]): Promise<{
+  regime: "bull" | "bear" | "flat";
+  probability: number;
+  q10: number;
+  q90: number;
+} | null> {
+  const result = await mlPost<{
+    regime: string;
+    probability: number;
+    q10: number;
+    q90: number;
+  }>("/predict/price-regime", { last_60_bars: last60Bars });
+
+  if (!result) return null;
+  if (result.regime !== "bull" && result.regime !== "bear" && result.regime !== "flat") return null;
+  return {
+    regime: result.regime as "bull" | "bear" | "flat",
+    probability: result.probability,
+    q10: result.q10,
+    q90: result.q90,
+  };
 }
 
 // ─── Regime Mapping Helpers ──────────────────────────────────────────────────

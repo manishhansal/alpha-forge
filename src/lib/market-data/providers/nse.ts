@@ -154,7 +154,7 @@ export class NseProvider implements MarketDataProvider {
     _opts?: ProviderCallOptions,
   ): Promise<MDQuote | null> {
     return memoQuote(symbol, PROVIDER_ID, async () => {
-      const [quote] = await nse.getQuotes([symbol], { allowFallback: false });
+      const [quote] = await nse.getQuotes([symbol]);
       if (!quote || quote.price == null) return null;
       return translateQuote(quote);
     });
@@ -165,7 +165,7 @@ export class NseProvider implements MarketDataProvider {
     _opts?: ProviderCallOptions,
   ): Promise<Array<MDQuote | null>> {
     if (symbols.length === 0) return [];
-    const legacyQuotes = await nse.getQuotes(symbols, { allowFallback: false });
+    const legacyQuotes = await nse.getQuotes(symbols);
     return legacyQuotes.map((q) => {
       if (!q || q.price == null) return null;
       return translateQuote(q);
