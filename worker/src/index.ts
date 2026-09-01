@@ -107,6 +107,31 @@ async function bootstrap(): Promise<void> {
   jobs.push({ name: indiaScanner.name, stop: indiaScanner.stop });
 
   log.info("worker ready", { jobs: jobs.map((j) => j.name) });
+
+  // Emit a Redis heartbeat every 60 s so the /api/health/ready endpoint can
+  // confirm the worker is alive.  Heartbeat key: worker:heartbeat
+  // Shape: { ts: <epochMs>, jobs: string[], version: string }
+  const emitHeartbeat = async () => {
+    try {
+      const redis = getRedis();
+      await redis.set(
+        "worker:heartbeat",
+        JSON.stringify({ ts: Date.now(), jobs: jobs.map((j) => j.name), version: process.version }),
+        "EX",
+        300,
+      );
+    } catch {
+      // best-effort — don't crash the worker for a heartbeat miss
+    }
+  };
+  await emitHeartbeat();
+  const heartbeatTimer = setInterval(() => void emitHeartbeat(), 60_000);
+  jobs.push({
+    name: "heartbeat",
+    stop: async () => {
+      clearInterval(heartbeatTimer);
+    },
+  });
 }
 
 let shuttingDown = false;

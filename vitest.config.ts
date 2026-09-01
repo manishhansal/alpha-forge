@@ -73,7 +73,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup/vitest.setup.ts"],
     env: TEST_ENV,
     css: false,
-    include: ["tests/**/*.{test,spec}.{ts,tsx}"],
+    include: ["tests/**/*.{test,spec}.{ts,tsx}", "tests/runtime/**/*.{test,spec}.{ts,tsx}"],
     // We deliberately do NOT exclude `worker/` here — its source modules
     // are imported by `tests/worker/**` via the `@worker` alias above.
     exclude: ["node_modules", ".next", "tests/setup/**"],

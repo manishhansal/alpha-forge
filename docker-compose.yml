@@ -22,6 +22,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - alphaforge
 
   redis:
     image: redis:7
@@ -37,6 +39,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - alphaforge
 
   # ─── ML Service (Python multi-model AI decision engine) ─────────────────────
   ml-service:
@@ -72,8 +76,80 @@ services:
           memory: 4G
         reservations:
           memory: 1G
+    networks:
+      - alphaforge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Integration profile: Next.js Application ────────────────────────────────
+  # Only started with: docker compose --profile integration up
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: alpha-forge-app
+    restart: unless-stopped
+    profiles:
+      - integration
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://crypto:crypto@postgres:5432/crypto_dashboard
+      REDIS_URL: redis://redis:6379
+      ML_SERVICE_URL: http://ml-service:8100
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health/ready | grep -q '\"status\"' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    networks:
+      - alphaforge
+
+  # ─── Integration profile: Background Worker ───────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: alpha-forge-worker
+    restart: unless-stopped
+    profiles:
+      - integration
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://crypto:crypto@postgres:5432/crypto_dashboard
+      REDIS_URL: redis://redis:6379
+      ML_SERVICE_URL: http://ml-service:8100
+      WORKER_APP_BASE_URL: http://app:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - alphaforge
 
 volumes:
   postgres_data:
   redis_data:
   ml_artifacts:
+
+networks:
+  alphaforge:
+    driver: bridge
