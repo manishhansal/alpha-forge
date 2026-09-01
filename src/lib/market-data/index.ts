@@ -180,15 +180,34 @@ export {
 } from "./services/instrument-master.service";
 
 export {
-  reconcileQuotes,
-  reconcileCandles,
+  reconcileTick,
+  reconcileCandle,
   checkQuoteStaleness,
-  checkCandleStaleness,
+  checkTickStaleness,
+  checkOptionChainStaleness,
+  validateOHLC,
+  validateOHLCSequence,
+  detectOutlier,
+  comparePrices,
+  buildQualityEnvelope,
+  evaluateSafetyGate,
+  computeProviderHealthScore,
+  resetProviderStats,
 } from "./services/reconciliation.service";
 
 export type {
-  QuoteDiscrepancy,
-  CandleDiscrepancy,
+  QualityEnvelope,
+  QualifiedMarketEvent,
+  ReconciliationTick,
+  ValidationStatus,
+  InstrumentCategory,
+  OHLCValidationError,
+  OHLCValidationResult,
+  PriceComparisonResult,
+  OutlierResult,
+  SafetyGateResult,
+  ProviderHealthSnapshot,
+  ReconciliationConfig,
 } from "./services/reconciliation.service";
 
 // ── Cache ─────────────────────────────────────────────────────────────────────

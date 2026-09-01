@@ -84,6 +84,17 @@ const serverSchema = z.object({
   // Delta Exchange India REST base. Override for testnet
   // (`https://cdn-ind.testnet.deltaex.org`).
   DELTA_REST_BASE_URL: z.string().url().default("https://api.india.delta.exchange"),
+
+  // ML Service
+  ML_SERVICE_URL: z.string().url().optional(),
+  // Controls ML fallback behaviour.
+  //   required  — ML failure surfaces as an error (no silent fallback)
+  //   fallback  — heuristic fallback allowed when ML service is down (default)
+  //   disabled  — ML intentionally bypassed; all calls return null immediately
+  ML_MODE: z.enum(["required", "fallback", "disabled"]).default("fallback"),
+
+  // Live trading guard. Must be set to "true" to allow real broker order calls.
+  LIVE_TRADING_ENABLED: z.string().optional(),
 });
 
 const clientSchema = z.object({
@@ -140,6 +151,9 @@ const processEnv = {
   UPSTOX_CLIENT_ID: process.env.UPSTOX_CLIENT_ID,
   UPSTOX_CLIENT_SECRET: process.env.UPSTOX_CLIENT_SECRET,
   UPSTOX_ANALYTICS_TOKEN: process.env.UPSTOX_ANALYTICS_TOKEN,
+  ML_SERVICE_URL: process.env.ML_SERVICE_URL,
+  ML_MODE: process.env.ML_MODE,
+  LIVE_TRADING_ENABLED: process.env.LIVE_TRADING_ENABLED,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   NEXT_PUBLIC_BINANCE_WS: process.env.NEXT_PUBLIC_BINANCE_WS,
   NEXT_PUBLIC_BINANCE_FUTURES_WS: process.env.NEXT_PUBLIC_BINANCE_FUTURES_WS,

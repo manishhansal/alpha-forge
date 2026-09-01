@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
 import { cache } from "@/services/india/cache";
+import { fetchVolSurface } from "@/lib/india/ml-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-const ML_SERVICE_URL =
-  process.env.ML_SERVICE_URL ?? "http://localhost:8100";
-
-const ML_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,10 +39,10 @@ export interface VolSurfaceResponse {
  * Returns the SVI-fitted implied volatility surface for the given symbol.
  * Includes per-expiry IV smile arrays, SVI parameters, and ATM term structure.
  *
- * Calls the ML service GET /analytics/vol-surface?symbol=NIFTY.
- * Cached in Redis for 5 minutes.
- * Returns { available: false, reason: "..." } on any ML service failure
- * — never a 5xx.
+ * Routes through ml-client.ts (fetchVolSurface) which respects ML_MODE and
+ * encapsulates timeout, retry, and circuit-break logic.
+ *
+ * Returns { available: false, reason: "..." } on any ML service failure — never a 5xx.
  *
  * Validates: Requirements 5.3, 5.4, 13.1
  */
@@ -65,24 +61,10 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    // Call ML service
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ML_TIMEOUT_MS);
+    // Delegate to the canonical ML client (respects ML_MODE, timeouts, etc.)
+    const mlData = await fetchVolSurface(symbol);
 
-    let mlRes: Response;
-    try {
-      mlRes = await fetch(
-        `${ML_SERVICE_URL}/analytics/vol-surface?symbol=${encodeURIComponent(symbol)}`,
-        {
-          signal: controller.signal,
-          cache: "no-store",
-        },
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!mlRes.ok) {
+    if (!mlData) {
       const unavailable: VolSurfaceResponse = {
         symbol,
         expiries: [],
@@ -90,14 +72,12 @@ export async function GET(req: Request): Promise<Response> {
         termStructure: [],
         sviParams: {},
         available: false,
-        reason: `ML service returned ${mlRes.status}`,
+        reason: "ML service unreachable or returned no data",
       };
       return NextResponse.json(unavailable, {
         headers: { "Cache-Control": "no-store" },
       });
     }
-
-    const mlData = (await mlRes.json()) as Record<string, unknown>;
 
     const response: VolSurfaceResponse = {
       symbol,

@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
+import { predictPortfolioV2 } from "@/lib/india/ml-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const ML_SERVICE_URL =
-  process.env.ML_SERVICE_URL ?? "http://localhost:8100";
-
-const ML_TIMEOUT_MS = 15_000;
 
 export interface PortfolioAllocation {
   method: "hrp" | "cvar" | "max_diversification" | "factor";
@@ -25,12 +21,11 @@ export interface PortfolioAllocation {
  * POST /api/in/portfolio-optimizer
  *
  * Accepts { symbols: string[], method: 'hrp' | 'cvar' | 'max_diversification' | 'factor' }
- * and calls the ML service POST /predict/portfolio-v2 to run a
- * Riskfolio-Lib portfolio optimisation.
+ * and calls the ML service POST /predict/portfolio-v2 via ml-client.ts
+ * (which respects ML_MODE, timeouts, circuit-break, etc.).
  *
- * Returns a PortfolioAllocation payload with weights and risk metrics
- * on success, or { available: false, reason } when the ML service is
- * unreachable or returns an error — never a 5xx (Requirements 10.6, 13.1).
+ * Returns { available: false, reason } when the ML service is unreachable
+ * or returns an error — never a 5xx.
  *
  * Validates: Requirements 10.1, 10.2, 10.3, 10.5, 10.6, 13.1
  */
@@ -53,30 +48,15 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ML_TIMEOUT_MS);
+    // Route through the canonical ML client (respects ML_MODE, timeouts, etc.)
+    const data = await predictPortfolioV2({ symbols, method });
 
-    const mlRes = await fetch(`${ML_SERVICE_URL}/predict/portfolio-v2`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbols, method }),
-      signal: controller.signal,
-      cache: "no-store",
-    });
-
-    clearTimeout(timeout);
-
-    if (!mlRes.ok) {
+    if (!data) {
       return NextResponse.json(
-        {
-          available: false,
-          reason: `ML service returned ${mlRes.status}: ${mlRes.statusText}`,
-        },
+        { available: false, reason: "ML service unreachable or ML_MODE=disabled" },
         { status: 200 },
       );
     }
-
-    const data = (await mlRes.json()) as Record<string, unknown>;
 
     if (!data.available) {
       return NextResponse.json(

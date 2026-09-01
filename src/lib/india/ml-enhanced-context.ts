@@ -21,7 +21,6 @@ import type { Quote } from "@/types/india";
 
 import {
   isMLServiceHealthy,
-  mlFetch,
   mlRegimeToAiRegime,
   mlRegimeToScore,
   predictRankings,
@@ -29,6 +28,7 @@ import {
   predictRisk,
   predictStrategy,
   predictPortfolio,
+  predictPriceRegime,
   type MLMarketRegime,
   type MLRankingResponse,
   type MLRegimeResponse,
@@ -119,6 +119,13 @@ export interface MLContextInputs {
     gap_pct: number;
     [key: string]: unknown;
   }>;
+  /**
+   * Last 60 5-minute OHLCV bars for the NIFTY/BANKNIFTY index used by the
+   * TFT price forecaster. Each row: [open, high, low, close, volume, vpin,
+   * atm_iv, pcr, oi_buildup]. Shape [n_bars, 9].
+   * Pass an empty array to use the heuristic fallback (price regime not forecasted).
+   */
+  niftyLast60Bars?: number[][];
 }
 
 // ─── ML Context Builder ──────────────────────────────────────────────────────
@@ -202,27 +209,15 @@ export async function buildMLContext(
 
   // Fetch the TFT 1-hour ahead price regime forecast (Requirement 8.5, 8.6).
   // This is independent of the market-regime model and runs after regime+rankings
-  // so it does not block them.
+  // so it does not block them. Routes through predictPriceRegime() in ml-client.ts
+  // which respects ML_MODE. Real bars are passed when available via inputs.niftyLast60Bars.
   let priceForecast: PriceForecastResult | null = null;
   try {
-    const forecast = await mlFetch<{
-      regime: string;
-      probability: number;
-      q10: number;
-      q90: number;
-    }>("/predict/price-regime", {
-      // Real bars come from the data pipeline; pass empty array for now
-      // as specified in the task (Task 10.3 integration point).
-      last_60_bars: [],
-    });
-    if (
-      forecast &&
-      (forecast.regime === "bull" ||
-        forecast.regime === "bear" ||
-        forecast.regime === "flat")
-    ) {
+    const bars = inputs.niftyLast60Bars ?? [];
+    const forecast = await predictPriceRegime(bars);
+    if (forecast) {
       priceForecast = {
-        regime: forecast.regime as "bull" | "bear" | "flat",
+        regime: forecast.regime,
         probability: forecast.probability,
         q10: forecast.q10,
         q90: forecast.q90,

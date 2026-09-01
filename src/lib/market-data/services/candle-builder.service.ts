@@ -27,7 +27,7 @@
 
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { mdLog } from "../health";
 import type { Exchange, Interval, LiveTick, OHLCVCandle } from "../types";
@@ -709,7 +709,7 @@ export class RealTimeCandleBuilder {
   ): Promise<void> {
     if (!this.persistToDb) return;
     try {
-      await prisma.candleBar.upsert({
+      await getPrisma().candleBar.upsert({
         where: {
           instrumentId_exchange_intervalStr_time: {
             instrumentId: this.instrumentId,

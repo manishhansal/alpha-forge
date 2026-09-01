@@ -168,7 +168,11 @@ export type SafetyGateResult = {
 // ── Reconciliation configuration ─────────────────────────────────────────────
 
 export type ReconciliationConfig = {
-  staleThresholdsMs?: Partial<typeof DEFAULT_STALE_THRESHOLDS_MS>;
+  staleThresholdsMs?: {
+    LIVE_TICK_MAX_AGE_MS?: number;
+    QUOTE_MAX_AGE_MS?: number;
+    OPTION_CHAIN_MAX_AGE_MS?: number;
+  };
   divergenceThresholdsPct?: Partial<Record<InstrumentCategory, number>>;
   /**
    * When true, SUSPICIOUS data is forwarded to ML feature computation.
