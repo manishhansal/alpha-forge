@@ -1,5 +1,83 @@
 # ALPHAFORGE.md
 
+## V6 — Evidence-Driven Quant Research Platform
+
+AlphaForge V6 transforms the platform from a collection of sophisticated strategies into a scientifically rigorous quant research platform. This is the single most important architectural change in the project's history.
+
+### The Problem V6 Solves
+
+The system contained many strategies, scanners, signal engines, and ML models. But answering the question **"which strategies actually work?"** was impossible. Backtests existed, but:
+
+- Parameters may have been tuned in-sample (overfitting risk)
+- No out-of-sample governance existed
+- Costs were not systematically attributed
+- Regime sensitivity was undeclared
+- Strategies could not be formally promoted or demoted
+- No strategy had a falsifiable hypothesis
+
+### V6 Research Infrastructure
+
+All research infrastructure lives under `src/lib/research/`. The system enforces these absolute rules in code:
+
+1. **No in-sample promotion evidence** — `IN_SAMPLE` metrics are computed but the promotion engine ignores them
+2. **LIVE requires human approval** — the `MANUAL_HUMAN_APPROVAL` gate cannot be bypassed; `approvalToken` + `approvedBy` are always required
+3. **Temporal leakage throws** — `validateSplitIntegrity()` throws `Error` on any overlap between IS/OOS periods
+4. **Experiments are immutable** — `ExperimentStore.add()` throws on duplicate IDs
+5. **Kill switches never auto-remove** — require explicit deactivation
+6. **No strategy outside the registry** — `getOrThrow()` enforced at all API entry points
+
+### Strategy Universe (18 strategies)
+
+**Crypto (11):** UT_SMC, VWAP_SWEEP_TREND, NEWS_MOMENTUM, RANGE_SCALP, EMA_PULLBACK, VWAP_REVERSION, ORDERFLOW_SWEEP, FIB_PULLBACK, INSTITUTIONAL_SMC, AI_INSTITUTIONAL_PRO, STRATEGY_LAB_USER
+
+**NSE F&O (7):** FNO_TREND, FNO_RANGE_EXPANSION, INDIA_MOMENTUM, INDIA_VOLUME_BREAKOUT, INDIA_OI_BUILDUP, INDIA_AI_SIGNALS (SHADOW), INDIA_SUPER_CONFLUENCE
+
+### Promotion Lifecycle
+
+```
+EXPERIMENTAL (hypothesis required)
+↓ RESEARCH (backtest pipeline)
+↓ BACKTEST_VALIDATED (OOS Sharpe≥0.3, 30 trades, +expectancy, DD<30%, cost-profitable)
+↓ WALK_FORWARD_VALIDATED (OOS Sharpe≥0.5, not overfit, MC not FRAGILE, not COST_FRAGILE)
+↓ SHADOW (10 shadow trades, Sharpe≥0.3, decay not CRITICAL)
+↓ PAPER (20 paper trades, +expectancy, DD<25%, no material backtest drift)
+↓ LIVE_CANDIDATE (20+ sessions, paper Sharpe≥0.6, PF≥1.2, decay HEALTHY)
+↓ MANUAL_APPROVAL (human review)
+↓ LIVE (explicit approvalToken + approvedBy — NEVER automatic)
+```
+
+### Research Dashboard
+
+Navigate to `/research` for the Quant Research Dashboard:
+- **Leaderboard** — all strategies ranked by configurable metrics
+- **Strategy Inventory** — full per-strategy breakdown with expandable hypothesis details
+- **Regime Matrix** — Strategy×Regime colour-coded Sharpe values
+- **Monte Carlo** — 7 simulation types × 10,000 iterations per strategy
+- **Parameter Stability** — neighbourhood analysis, OVERFIT_SUSPECTED detection
+- **Signal Calibration** — Brier Score, ECE, reliability diagram
+- **Experiment History** — immutable experiment records
+- **Correlation** — strategy cluster map with capital allocation constraints
+- **Promotion Pipeline** — current stage + gate-by-gate blockers for every strategy
+- **Alpha Decay Monitor** — rolling performance vs OOS baseline, 5-state decay machine
+
+### Key Files
+
+| Purpose | Path |
+|---------|------|
+| All research types | `src/lib/research/types.ts` |
+| Strategy registry | `src/lib/research/registry/strategy-registry.ts` |
+| Hypothesis registry | `src/lib/research/hypothesis/strategy-hypothesis.ts` |
+| Central re-export | `src/lib/research/index.ts` |
+| Research tests | `tests/research/` (92 tests) |
+| Research APIs | `src/app/api/research/` (13 endpoints) |
+| Dashboard pages | `src/app/(dashboard)/research/` (10 pages) |
+| UI components | `src/components/research/` (15 components) |
+| Strategy inventory | `docs/STRATEGY_INVENTORY.md` |
+| Research report | `docs/ALPHA_RESEARCH_REPORT.md` |
+| Governance matrix | `docs/STRATEGY_GOVERNANCE_MATRIX.md` |
+
+---
+
 ```md
 # Alphaforge — Project Context
 
