@@ -4,7 +4,13 @@ import type { PrismaClient } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
-import { yahoo } from "@/services/india/yahoo";
+import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+import { bootstrapRegistry } from "@/lib/market-data/registry";
+import {
+  executeExactlyOnce,
+  buildTradeGuardKey,
+} from "@/lib/india/atomic-trade-guard";
+import { getRedis } from "@/lib/redis";
 
 import {
   INDIA_DEFAULT_NOTIONAL,
@@ -80,6 +86,35 @@ export async function openIndiaPaperTrade(
 
   const source = buildIndiaTradeSource(signal.strategyId, signal.timeframe);
 
+  // ── Atomic Redis claim (Phase 9) ─────────────────────────────────────────
+  // Build a 5-minute-bucketed idempotency key. The atomic SET NX EX ensures
+  // exactly one worker among any number of concurrent ticks can proceed.
+  // When Redis is unavailable the DB dedup queries below act as the fallback.
+  let redis: ReturnType<typeof getRedis> | undefined;
+  try { redis = getRedis(); } catch { /* Redis unavailable — DB dedup covers it */ }
+
+  const guardKey = buildTradeGuardKey({
+    symbol: signal.symbol,
+    strategyId: signal.strategyId,
+    timeframe: signal.timeframe,
+    triggeredAtMs: signal.triggeredAt,
+  });
+
+  if (redis) {
+    const claim = await (async () => {
+      try {
+        const { atomicClaim } = await import("@/lib/india/atomic-trade-guard");
+        return atomicClaim(redis!, guardKey, `pt:${signal.symbol}:${signal.triggeredAt}`);
+      } catch {
+        return { claimed: true, key: guardKey } as const;
+      }
+    })();
+    if (!claim.claimed && "reason" in claim && claim.reason === "already_claimed") {
+      return { opened: false, reason: "duplicate-signal" };
+    }
+  }
+
+  // ── DB-level dedup (fallback when Redis unavailable) ─────────────────────
   const existingOpen = await prisma.paperTrade.findFirst({
     where: { symbol: signal.symbol, status: "OPEN", source },
     select: { id: true },
@@ -242,11 +277,15 @@ export async function resolveIndiaOpenTrades(
       // and uses a distinct cache key from the ATR fetch ("5d"), preventing
       // the resolver from re-using a pre-open candle snapshot cached by
       // getIndiaIntradayAtr earlier in the same tick.
-      candles = await yahoo.getHistorical({
-        symbol: t.symbol,
-        interval: "5m",
-        range: "1d",
-      });
+      const ohlcv = await getHistoricalCandlesByRange(
+        t.symbol,
+        "5m",
+        "1d",
+        "NSE",
+        { tolerateInvalidCandles: true },
+      );
+      // OHLCVCandle is a strict superset of legacy Candle.
+      candles = ohlcv as unknown as typeof candles;
     } catch (err) {
       console.warn(
         `[india/paper-trader] candle fetch failed for ${t.symbol}:`,
@@ -351,12 +390,15 @@ export async function getIndiaIntradayAtr(
   period = 14,
 ): Promise<number | null> {
   try {
-    const candles = await yahoo.getHistorical({
+    await bootstrapRegistry();
+    const ohlcv = await getHistoricalCandlesByRange(
       symbol,
-      interval: "5m",
-      range: "5d",
-    });
-    return atrFromCandles(candles, period);
+      "5m",
+      "5d",
+      "NSE",
+      { tolerateInvalidCandles: true },
+    );
+    return atrFromCandles(ohlcv as unknown as Parameters<typeof atrFromCandles>[0], period);
   } catch {
     return null;
   }

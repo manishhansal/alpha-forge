@@ -3,23 +3,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OptionChain } from "@/types/india";
 
 const getOptionChainMock = vi.fn();
+const getLatestQuoteMock = vi.fn();
 const getAngelChainMock = vi.fn();
-const getQuoteMock = vi.fn();
 let angelConfigured = false;
 
 // `cache.memo` just runs the producer in tests (no real caching).
 vi.mock("@/services/india/cache", () => ({
   cache: { memo: (_k: string, _ttl: number, fn: () => unknown) => fn() },
 }));
-vi.mock("@/services/india/nse", () => ({
-  nse: { getOptionChain: (s: string) => getOptionChainMock(s) },
+
+// Mock the canonical registry — expiry-trades/builder.ts now calls
+// registry.getOptionChain() and registry.getLatestQuote().
+vi.mock("@/lib/market-data/registry", () => ({
+  registry: {
+    getOptionChain: (s: string) => getOptionChainMock(s),
+    getLatestQuote: (s: string) => getLatestQuoteMock(s),
+  },
+  bootstrapRegistry: () => Promise.resolve(),
 }));
+
 vi.mock("@/services/india/angelone", () => ({
   angel: { getOptionChain: (s: string) => getAngelChainMock(s) },
   isAngelConfigured: () => angelConfigured,
-}));
-vi.mock("@/services/india/yahoo", () => ({
-  yahoo: { getQuote: (s: string) => getQuoteMock(s) },
 }));
 vi.mock("@/features/india/best-time/engine", () => ({
   getBestTimeStatus: () => ({ active: { slug: "ideal", label: "Morning" } }),
@@ -58,14 +63,17 @@ beforeEach(() => {
   angelConfigured = false;
   getOptionChainMock.mockReset();
   getAngelChainMock.mockReset();
-  getQuoteMock.mockReset();
-  getQuoteMock.mockImplementation((s: string) =>
+  getLatestQuoteMock.mockReset();
+  // registry.getLatestQuote returns an MDQuote (ltp, changePct etc.)
+  getLatestQuoteMock.mockImplementation((s: string) =>
     Promise.resolve({
       symbol: s,
-      price: s === "^BSESN" ? 75000 : 23000,
+      ltp: s === "^BSESN" ? 75000 : 23000,
       change: 50,
       changePct: 0.6,
       prevClose: 22950,
+      provider: "yahoo",
+      fetchedAt: new Date().toISOString(),
     }),
   );
 });

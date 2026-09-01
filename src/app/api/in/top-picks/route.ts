@@ -8,14 +8,14 @@
  *
  * GET /api/in/top-picks?limit=5
  *
- * This route is intentionally lightweight — it re-uses computeScore /
- * classifySignal from the shared signals service and does not require the
- * ML service to be running (graceful fallback to the heuristic model).
+ * Data source: canonical MarketDataRegistry (registry.getQuotes()).
+ * Previously this used `new YahooFinance()` directly — MIGRATED in Phase 2.
  */
 
 import { NextResponse } from "next/server";
-import YahooFinance from "yahoo-finance2";
 
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
+import type { MDQuote } from "@/lib/market-data/types";
 import { SECTOR_STOCKS } from "@/lib/india/sectors";
 import {
   classifySignal,
@@ -26,24 +26,7 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const yahooFinance = new YahooFinance();
-
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type YfRichQuote = {
-  regularMarketPrice?: number | null;
-  regularMarketChangePercent?: number | null;
-  regularMarketPreviousClose?: number | null;
-  fiftyDayAverage?: number | null;
-  twoHundredDayAverage?: number | null;
-  fiftyTwoWeekHigh?: number | null;
-  fiftyTwoWeekLow?: number | null;
-  targetMeanPrice?: number | null;
-  shortName?: string | null;
-  longName?: string | null;
-  averageDailyVolume3Month?: number | null;
-  regularMarketVolume?: number | null;
-};
 
 export type TopPickRow = {
   rank: number;
@@ -56,9 +39,9 @@ export type TopPickRow = {
   signal: SignalLabel;
   upsidePct: number | null;
   fromSma50Pct: number | null;
-  /** Relative volume vs 3-month average (1.0 = average). */
+  /** Relative volume — not available from canonical MDQuote; null until enriched. */
   relativeVolume: number | null;
-  /** Analyst mean target price. */
+  /** Analyst mean target price — not in MDQuote; null until enriched. */
   targetMean: number | null;
 };
 
@@ -70,46 +53,38 @@ type TopPicksResponse = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function safeQuote(yfSymbol: string): Promise<YfRichQuote | null> {
-  try {
-    return (await yahooFinance.quote(yfSymbol)) as unknown as YfRichQuote;
-  } catch {
-    return null;
-  }
-}
-
 function buildRow(
   symbol: string,
   sector: string,
-  q: YfRichQuote | null,
+  q: MDQuote | null,
 ): Omit<TopPickRow, "rank"> {
-  const price = q?.regularMarketPrice ?? null;
-  const sma50 = q?.fiftyDayAverage ?? null;
-  const sma200 = q?.twoHundredDayAverage ?? null;
-  const high52w = q?.fiftyTwoWeekHigh ?? null;
-  const targetMean = q?.targetMeanPrice ?? null;
-  const changePct = q?.regularMarketChangePercent ?? null;
+  const price = q?.ltp ?? null;
+  const changePct = q?.changePct ?? null;
+  const high52w = q?.weekHigh52 ?? null;
+  // MDQuote does not carry SMA50 / targetMean — we fall back to directional
+  // change-based scoring for the canonical path. For richer scoring the
+  // india-builder.ts pipeline (which fetches historical data) should be used.
+  const sma50: number | null = null;
+  const sma200: number | null = null;
+  const targetMean: number | null = null;
 
   const score = computeScore({ price, sma50, sma200, changePct, targetMean });
   const signal: SignalLabel = price == null ? "N/A" : classifySignal(score);
 
   const upsidePct =
-    price && (targetMean || high52w)
-      ? ((Math.max(targetMean ?? 0, high52w ?? 0) - price) / price) * 100
+    price && high52w && high52w > price
+      ? ((high52w - price) / price) * 100
       : null;
 
-  const fromSma50Pct =
-    price && sma50 ? ((price - sma50) / sma50) * 100 : null;
-
-  const avgVol = q?.averageDailyVolume3Month ?? null;
-  const todayVol = q?.regularMarketVolume ?? null;
-  const relativeVolume =
-    avgVol && avgVol > 0 && todayVol != null ? todayVol / avgVol : null;
+  // SMA50 not in MDQuote; fromSma50Pct unavailable on this path
+  const fromSma50Pct: number | null = null;
+  // volume relative to avg — MDQuote has only current volume, no 3-month avg
+  const relativeVolume: number | null = null;
 
   return {
     symbol,
     sector,
-    shortName: q?.shortName ?? q?.longName ?? null,
+    shortName: q?.name ?? null,
     price,
     changePct,
     score,
@@ -124,6 +99,8 @@ function buildRow(
 // ─── Route ────────────────────────────────────────────────────────────────────
 
 export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>> {
+  await bootstrapRegistry();
+
   const { searchParams } = new URL(req.url);
   const limit = Math.min(20, Math.max(1, Number(searchParams.get("limit") ?? 5)));
 
@@ -136,43 +113,36 @@ export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>>
   }
 
   const symbols = [...symbolSectorMap.keys()];
-  const yfSymbols = symbols.map((s) => `${s}.NS`);
-  const quotes = await Promise.all(yfSymbols.map(safeQuote));
+
+  // Canonical path: batch quote via registry (Angel One → Upstox → Yahoo failover).
+  // The registry applies health checks, circuit breakers, and normalization.
+  let quotes: Array<MDQuote | null>;
+  try {
+    quotes = await registry.getQuotes(symbols);
+  } catch {
+    quotes = symbols.map(() => null);
+  }
 
   // Build scored rows and filter:
   //  - must have a price
   //  - must be directional (BUY / STRONG BUY / SELL / STRONG SELL)
-  //  - HOLD and N/A are noise; never actionable for a "tomorrow picks" board
   const ACTIONABLE: SignalLabel[] = ["STRONG BUY", "BUY", "SELL", "STRONG SELL"];
   const rows = symbols
     .map((sym, i) => buildRow(sym, symbolSectorMap.get(sym)!, quotes[i]))
     .filter((r) => r.price != null && ACTIONABLE.includes(r.signal as SignalLabel));
 
-  /**
-   * "Top gainer / loser" momentum score — mirrors how NSE's own gainers list
-   * works: rank by absolute day % move, then break ties with relative volume
-   * so institutional-volume moves rank above low-volume noise. Stocks likely
-   * to appear in today's top-10 gainers/losers are exactly the ones whose
-   * `|changePct|` × `relVol` product is largest.
-   *
-   * We keep the quant score as a secondary tiebreaker so a +3% move with
-   * strong SMA / RSI alignment beats a raw momentum spike that has nothing
-   * else going for it.
-   */
   function momentumRank(r: (typeof rows)[0]): number {
     const absPct = Math.abs(r.changePct ?? 0);
     const vol = r.relativeVolume ?? 1.0;
-    return absPct * Math.max(vol, 0.5);          // min vol factor 0.5 so no-vol rows aren't zeroed
+    return absPct * Math.max(vol, 0.5);
   }
 
-  // Split into gainers (bullish signals) and losers (bearish signals),
-  // ranked within each group by momentum score descending.
   const gainers = rows
     .filter((r) => r.signal === "STRONG BUY" || r.signal === "BUY")
     .sort((a, b) => {
       const dm = momentumRank(b) - momentumRank(a);
       if (Math.abs(dm) > 0.01) return dm;
-      return b.score - a.score;                  // quant-score tiebreak
+      return b.score - a.score;
     });
 
   const losers = rows
@@ -180,12 +150,9 @@ export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>>
     .sort((a, b) => {
       const dm = momentumRank(b) - momentumRank(a);
       if (Math.abs(dm) > 0.01) return dm;
-      return a.score - b.score;                  // more negative = stronger sell
+      return a.score - b.score;
     });
 
-  // Interleave top gainers then top losers (gainers first, losers appended),
-  // sliced to `limit`. A caller that wants only gainers can request
-  // `?limit=5&side=gainers`; default returns the blended list.
   const side = searchParams.get("side");
   let merged: typeof rows;
   if (side === "gainers") {
@@ -193,8 +160,6 @@ export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>>
   } else if (side === "losers") {
     merged = losers;
   } else {
-    // Default: top gainers followed by top losers, capped at limit each side
-    // so the response is balanced rather than all-gainers on a bullish day.
     const half = Math.ceil(limit / 2);
     merged = [...gainers.slice(0, half), ...losers.slice(0, limit - half)];
   }

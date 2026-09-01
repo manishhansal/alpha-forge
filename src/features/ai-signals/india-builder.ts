@@ -15,8 +15,9 @@ import "server-only";
 
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
-import { yahoo } from "@/services/india/yahoo";
-import { nse } from "@/services/india/nse";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
+import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+import type { MDQuote } from "@/lib/market-data/types";
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import type {
   DerivOiBuildup,
@@ -67,6 +68,35 @@ import {
 } from "@/lib/india/ml-enhanced-context";
 import type { MLStockRank } from "@/lib/india/ml-client";
 import { computeSuperConfluence } from "@/features/india/indicators/super-confluence";
+import {
+  buildPriceForecasterInput,
+  candlesToBarMatrix,
+} from "@/lib/india/price-forecaster-input-builder";
+import { isComponentEnabled } from "@/lib/india/decision-pipeline-config";
+
+// ─── MDQuote → legacy Quote adapter ──────────────────────────────────────────
+// The signal-building engine was written against the legacy Quote type from
+// @/types/india. The canonical registry returns MDQuote. This thin shim maps
+// the relevant fields so no signal logic needs to change.
+function mdQuoteToLegacy(md: MDQuote | null, nseSymbol: string): Quote | null {
+  if (!md) return null;
+  return {
+    symbol: nseSymbol,
+    name: md.name ?? null,
+    price: md.ltp ?? null,
+    change: md.change ?? null,
+    changePct: md.changePct ?? null,
+    prevClose: md.prevClose ?? null,
+    open: md.open ?? null,
+    high: md.high ?? null,
+    low: md.low ?? null,
+    volume: md.volume ?? null,
+    weekHigh52: md.weekHigh52 ?? null,
+    weekLow52: md.weekLow52 ?? null,
+    source: md.provider as import("@/features/settings/data-sources-shared").DataSourceId,
+    fetchedAt: md.fetchedAt,
+  };
+}
 
 // During market hours: refresh every 60s so signals stay live.
 // Outside market hours: cache for 5 minutes — the data is daily-bar-based
@@ -1524,19 +1554,29 @@ async function computeIndiaUniverse(
   },
 ): Promise<IndiaUniverseResult> {
   const fetchChainFor = opts?.fetchChainFor ?? (() => true);
-  const yahooSymbols = universe.map((u) => u.yahooSymbol);
+  const nseSymbols = universe.map((u) => u.symbol);
 
-  const [quotes, vixQuoteRes, scannerScoresRes, derivRes, newsRes] =
+  // Bootstrap the registry once (idempotent).
+  await bootstrapRegistry();
+
+  const [mdQuotesRes, vixMdRes, scannerScoresRes, derivRes, newsRes] =
     await Promise.allSettled([
-      yahoo.getQuotes(yahooSymbols),
-      yahoo.getQuote("^INDIAVIX"),
+      registry.getQuotes(nseSymbols),
+      registry.getLatestQuote("^INDIAVIX"),
       loadScannerScores(),
       loadFirstPartyDerivatives(),
       loadNewsScores(),
     ]);
 
-  const quoteList = quotes.status === "fulfilled" ? quotes.value : [];
-  const vixQuote = vixQuoteRes.status === "fulfilled" ? vixQuoteRes.value : null;
+  const mdQuoteList = mdQuotesRes.status === "fulfilled" ? mdQuotesRes.value : [];
+  // Map to legacy Quote shape expected by all downstream signal logic.
+  const quoteList: (Quote | null)[] = mdQuoteList.map((md, i) =>
+    mdQuoteToLegacy(md, nseSymbols[i] ?? universe[i]?.symbol ?? ""),
+  );
+  const vixMdQuote = vixMdRes.status === "fulfilled" ? vixMdRes.value : null;
+  const vixQuote: Quote | null = vixMdQuote
+    ? mdQuoteToLegacy(vixMdQuote, "^INDIAVIX")
+    : null;
   const scannerMap =
     scannerScoresRes.status === "fulfilled"
       ? scannerScoresRes.value
@@ -1548,42 +1588,45 @@ async function computeIndiaUniverse(
   const dailiesByYf = new Map<string, Candle[]>();
   const chainBySymbol = new Map<string, OptionChain | null>();
 
-  // Two-phase fan-out with concurrency caps — at 170+ universe entries an
-  // unbounded `Promise.all` would fire every Yahoo / NSE call simultaneously
-  // and earn us a 429 on cold cache. Phase 1 pulls daily candles (the heavy
-  // one; cached 4h downstream — see `cache.memo` TTL in the Yahoo adapter).
-  // Phase 2 pulls option chains only for the gated subset.
+  // Phase 1: pull daily candles via the canonical historical service.
+  // The registry routes Angel One → Upstox → Yahoo with health-monitored
+  // failover. Concurrency cap of YAHOO_HIST_CONCURRENCY (8) matches the
+  // original limit so we stay clear of provider rate limits on cold cache.
   await mapWithConcurrency(
     universe,
     YAHOO_HIST_CONCURRENCY,
-    async (u, idx) => {
-      const yfSym = yahooSymbols[idx];
+    async (u) => {
       try {
-        const candles = await yahoo.getHistorical({
-          symbol: u.yahooSymbol,
-          interval: "1d",
-          range: "1y",
-        });
-        dailiesByYf.set(yfSym, candles);
+        const ohlcv = await getHistoricalCandlesByRange(
+          u.symbol,
+          "1d",
+          "1y",
+          "NSE",
+          { tolerateInvalidCandles: true },
+        );
+        // OHLCVCandle is a superset of legacy Candle — cast is safe.
+        dailiesByYf.set(u.symbol, ohlcv as unknown as Candle[]);
       } catch (err) {
         console.warn(
           `[ai-signals/india] hist failed for ${u.symbol}:`,
           (err as Error).message,
         );
-        dailiesByYf.set(yfSym, []);
+        dailiesByYf.set(u.symbol, []);
       }
     },
     { onError: () => null },
   );
 
+  // Phase 2: pull option chains via the canonical registry.
+  // Registry routes: Angel One → Upstox → NSE (Yahoo has no option chains).
   const chainFetches = universe.filter(fetchChainFor);
   await mapWithConcurrency(
     chainFetches,
     4,
     async (u) => {
       try {
-        const chain = await nse.getOptionChain(u.symbol);
-        chainBySymbol.set(u.symbol, chain);
+        const chain = await registry.getOptionChain(u.symbol);
+        chainBySymbol.set(u.symbol, chain as unknown as OptionChain);
       } catch (err) {
         console.warn(
           `[ai-signals/india] option-chain failed for ${u.symbol}:`,
@@ -1617,7 +1660,9 @@ async function computeIndiaUniverse(
   // index intraday.
   const context = buildIndiaContext({
     vixQuote,
-    indexQuotes: quoteList.slice(0, FNO_INDICES.length),
+    indexQuotes: quoteList
+      .slice(0, FNO_INDICES.length)
+      .filter((q): q is Quote => q !== null),
     inActiveWindow,
     windowLabel,
     nextSession,
@@ -1637,13 +1682,27 @@ async function computeIndiaUniverse(
   // Build stock feature vectors for ML ranking (stocks only, not indices)
   const stockFeatures: MLContextInputs["stockFeatures"] = universe
     .filter((u) => !u.isIndex)
-    .map((u, _i) => {
+    .map((u) => {
       const idx = universe.indexOf(u);
-      const yfSym = yahooSymbols[idx];
-      const dailies = dailiesByYf.get(yfSym) ?? [];
+      const dailies = dailiesByYf.get(u.symbol) ?? [];
       const quote = quoteList[idx] ?? null;
       return buildStockFeaturesForML(u.symbol, dailies, quote);
     });
+
+  // ── Price Forecaster input (wired when ENABLE_PRICE_FORECASTER=true) ────
+  // Fetch 60 confirmed 5-min NIFTY candles from the canonical registry and
+  // convert to the [60,9] bar matrix the TFT model expects.
+  // Gated behind the decision-pipeline feature flag (disabled by default
+  // since the model is EXPERIMENTAL — see docs/MODEL_ABLATION_REPORT.md).
+  let niftyLast60Bars: number[][] | undefined;
+  if (isComponentEnabled("PRICE_FORECASTER")) {
+    const forecastInput = await buildPriceForecasterInput("NIFTY 50", "NSE").catch(
+      () => null,
+    );
+    if (forecastInput?.status === "OK") {
+      niftyLast60Bars = candlesToBarMatrix(forecastInput.candles);
+    }
+  }
 
   const mlCtxResult = await buildMLContext({
     niftyChangePct: niftyQ?.changePct ?? 0,
@@ -1657,6 +1716,7 @@ async function computeIndiaUniverse(
     volumeRatio: 1.0,
     gapPct: 0,
     stockFeatures,
+    niftyLast60Bars,
   }).catch(() => null);
 
   // Build ML rank lookup: symbol → 0-100 rank score
@@ -1677,9 +1737,8 @@ async function computeIndiaUniverse(
   }
 
   const signals: AiSignal[] = universe.map((u, idx) => {
-    const yfSym = yahooSymbols[idx];
     const quote = quoteList[idx] ?? null;
-    const dailies = dailiesByYf.get(yfSym) ?? [];
+    const dailies = dailiesByYf.get(u.symbol) ?? [];
     const chain = chainBySymbol.get(u.symbol) ?? null;
     const scannerScore = scannerMap.get(u.symbol) ?? null;
 

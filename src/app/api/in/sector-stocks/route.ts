@@ -1,5 +1,18 @@
+/**
+ * API Route: Sector Stocks
+ *
+ * Returns live quote data for all stocks in a given NSE sector.
+ *
+ * GET /api/in/sector-stocks?sector=Bank
+ *
+ * Data source: canonical MarketDataRegistry (registry.getQuotes()).
+ * Previously this used `new YahooFinance()` directly — MIGRATED in Phase 2.
+ */
+
 import { NextResponse } from "next/server";
-import YahooFinance from "yahoo-finance2";
+
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
+import type { MDQuote } from "@/lib/market-data/types";
 import { SECTOR_STOCKS } from "@/lib/india/sectors";
 import {
   classifySignal,
@@ -13,8 +26,6 @@ import {
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const yahooFinance = new YahooFinance();
 
 // Boot the per-symbol snapshot loop the first time this module is imported.
 // Idempotent — guarded by a globalThis flag in the snapshotter.
@@ -40,31 +51,23 @@ type StockRow = {
   signalSince: number | null;
 };
 
-// Subset of `yahoo-finance2`'s rich quote shape that we read here.
-type YfRichQuote = {
-  regularMarketPrice?: number | null;
-  regularMarketChangePercent?: number | null;
-  regularMarketPreviousClose?: number | null;
-  fiftyDayAverage?: number | null;
-  twoHundredDayAverage?: number | null;
-  fiftyTwoWeekHigh?: number | null;
-  fiftyTwoWeekLow?: number | null;
-  targetMeanPrice?: number | null;
-  shortName?: string | null;
-  longName?: string | null;
-};
-
 async function computeRow(
   symbol: string,
-  q: YfRichQuote | null,
+  q: MDQuote | null,
 ): Promise<StockRow> {
-  const price: number | null = q?.regularMarketPrice ?? null;
-  const sma50: number | null = q?.fiftyDayAverage ?? null;
-  const sma200: number | null = q?.twoHundredDayAverage ?? null;
-  const high52w: number | null = q?.fiftyTwoWeekHigh ?? null;
-  const low52w: number | null = q?.fiftyTwoWeekLow ?? null;
-  const targetMean: number | null = q?.targetMeanPrice ?? null;
-  const changePct: number | null = q?.regularMarketChangePercent ?? null;
+  // MDQuote provides: ltp, changePct, prevClose, high, low, weekHigh52, weekLow52
+  // It does NOT carry SMA50/SMA200/targetMean — those require historical data.
+  const price: number | null = q?.ltp ?? null;
+  const changePct: number | null = q?.changePct ?? null;
+  const prevClose: number | null = q?.prevClose ?? null;
+  const high52w: number | null = q?.weekHigh52 ?? null;
+  const low52w: number | null = q?.weekLow52 ?? null;
+
+  // SMA and analyst targets not available from single quote; null until
+  // enriched from historical service (future enhancement).
+  const sma50: number | null = null;
+  const sma200: number | null = null;
+  const targetMean: number | null = null;
 
   const score = computeScore({
     price,
@@ -98,10 +101,10 @@ async function computeRow(
 
   return {
     symbol,
-    shortName: q?.shortName ?? q?.longName ?? null,
+    shortName: q?.name ?? null,
     price,
     changePct,
-    prevClose: q?.regularMarketPreviousClose ?? null,
+    prevClose,
     sma50,
     sma200,
     high52w,
@@ -116,19 +119,9 @@ async function computeRow(
   };
 }
 
-async function safeQuote(yfSymbol: string): Promise<YfRichQuote | null> {
-  try {
-    return (await yahooFinance.quote(yfSymbol)) as unknown as YfRichQuote;
-  } catch (e) {
-    console.error(
-      `india.sector-stocks: quote failed for ${yfSymbol}:`,
-      (e as Error)?.message,
-    );
-    return null;
-  }
-}
-
 export async function GET(req: Request) {
+  await bootstrapRegistry();
+
   const { searchParams } = new URL(req.url);
   const sector = searchParams.get("sector") ?? "";
 
@@ -151,11 +144,16 @@ export async function GET(req: Request) {
     });
   }
 
-  const yfSymbols = tickers.map((t) => `${t}.NS`);
-  const quotes = await Promise.all(yfSymbols.map(safeQuote));
+  // Canonical path: batch quote via registry (Angel One → Upstox → Yahoo failover).
+  let mdQuotes: Array<MDQuote | null>;
+  try {
+    mdQuotes = await registry.getQuotes(tickers);
+  } catch {
+    mdQuotes = tickers.map(() => null);
+  }
 
   const rows: StockRow[] = await Promise.all(
-    tickers.map((t, i) => computeRow(t, quotes[i])),
+    tickers.map((t, i) => computeRow(t, mdQuotes[i])),
   );
 
   rows.sort((a, b) => {

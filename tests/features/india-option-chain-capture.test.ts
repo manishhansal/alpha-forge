@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 
-vi.mock("@/services/india/nse", () => ({ nse: { getOptionChain: vi.fn() } }));
-vi.mock("@/services/india/yahoo", () => ({ yahoo: { getQuotes: vi.fn() } }));
+const getOptionChainMock = vi.fn();
+const getQuotesMock = vi.fn();
 
-import { nse } from "@/services/india/nse";
-import { yahoo } from "@/services/india/yahoo";
+vi.mock("@/lib/market-data/registry", () => ({
+  registry: {
+    getOptionChain: (s: string) => getOptionChainMock(s),
+    getQuotes: (ss: string[]) => getQuotesMock(ss),
+  },
+  bootstrapRegistry: () => Promise.resolve(),
+}));
+
 import { captureOptionChainSnapshots } from "@/features/india/scalping/option-chain-capture";
 import type { OptionChain } from "@/types/india";
-
-const mockedChain = nse.getOptionChain as unknown as ReturnType<typeof vi.fn>;
-const mockedQuotes = yahoo.getQuotes as unknown as ReturnType<typeof vi.fn>;
 
 function chain(over: Partial<OptionChain> = {}): OptionChain {
   return {
@@ -47,15 +50,16 @@ function fakePrisma() {
 }
 
 beforeEach(() => {
-  mockedChain.mockReset();
-  mockedQuotes.mockReset();
+  getOptionChainMock.mockReset();
+  getQuotesMock.mockReset();
 });
 afterEach(() => vi.clearAllMocks());
 
 describe("india/scalping/option-chain-capture — captureOptionChainSnapshots", () => {
   it("persists a snapshot row with analytics + spot + day change for an underlying", async () => {
-    mockedQuotes.mockResolvedValue([{ symbol: "^NSEI", changePct: 0.42 }]);
-    mockedChain.mockResolvedValue(chain());
+    // registry.getQuotes returns MDQuote[] (changePct field is the same)
+    getQuotesMock.mockResolvedValue([{ ltp: 22000, changePct: 0.42, provider: "yahoo", fetchedAt: new Date().toISOString() }]);
+    getOptionChainMock.mockResolvedValue(chain());
     const { prisma, create } = fakePrisma();
 
     const res = await captureOptionChainSnapshots({ prisma, underlyings: ["NIFTY"] });
@@ -74,8 +78,8 @@ describe("india/scalping/option-chain-capture — captureOptionChainSnapshots", 
   });
 
   it("counts a failed chain fetch as an error without throwing", async () => {
-    mockedQuotes.mockResolvedValue([{ symbol: "^NSEI", changePct: null }]);
-    mockedChain.mockRejectedValue(new Error("NSE throttled"));
+    getQuotesMock.mockResolvedValue([{ ltp: null, changePct: null, provider: "yahoo", fetchedAt: new Date().toISOString() }]);
+    getOptionChainMock.mockRejectedValue(new Error("NSE throttled"));
     const { prisma, create } = fakePrisma();
 
     const res = await captureOptionChainSnapshots({ prisma, underlyings: ["NIFTY"] });
@@ -86,8 +90,8 @@ describe("india/scalping/option-chain-capture — captureOptionChainSnapshots", 
   });
 
   it("still captures when the quote lookup fails (changePct null)", async () => {
-    mockedQuotes.mockRejectedValue(new Error("quotes down"));
-    mockedChain.mockResolvedValue(chain());
+    getQuotesMock.mockRejectedValue(new Error("quotes down"));
+    getOptionChainMock.mockResolvedValue(chain());
     const { prisma, create } = fakePrisma();
 
     const res = await captureOptionChainSnapshots({ prisma, underlyings: ["NIFTY"] });

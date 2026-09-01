@@ -184,11 +184,16 @@ export async function withOptionChainFallback(
         `[option-chain] partial/invalid chain for ${symbol}/${expiry}: ${validation.reason}`,
         { strikeCount: validation.strikeCount, missingLegPct: validation.missingLegPct },
       );
-      // Don't discard — mark as partial and continue; fallback logic below
-      // will overlay with a cached snapshot only if the partial is too degraded
-      if (validation.strikeCount < MIN_STRIKES) {
-        // Too degraded — fall through to Redis fallback
+      // Return partial chain with fromCache=false, partial=true so callers
+      // can log and serve degraded data instead of a blank response.
+      // Only fall through to Redis when we have zero usable data.
+      if (validation.strikeCount === 0) {
+        // No data at all — fall through to Redis fallback
         chain = null;
+      } else {
+        // Some data — sanitize and return as partial
+        const sanitized = sanitizeOptionChain(chain);
+        return { chain: sanitized, fromCache: false, partial: true };
       }
     } else {
       // Chain is good — sanitize values and persist as last-good

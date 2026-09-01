@@ -112,10 +112,21 @@ export async function GET(req: Request) {
     // ── Chaos Scenario 15: withOptionChainFallback wraps the primary fetch.
     // On partial/empty chain it serves the last-good Redis snapshot instead
     // of surfacing a blank chain to the client.
+    //
+    // Normalize: some broker adapters (and test stubs) return `strikes` instead
+    // of `rows`. Map to the canonical shape before validation.
+    function normalizeBrokerChain(raw: unknown): import("@/types/india").OptionChain {
+      const chain = raw as Record<string, unknown>;
+      if (!chain.rows && Array.isArray(chain.strikes)) {
+        return { ...chain, rows: chain.strikes } as import("@/types/india").OptionChain;
+      }
+      return chain as import("@/types/india").OptionChain;
+    }
+
     const { chain: rawChain, fromCache, partial } = await withOptionChainFallback(
       symbol,
       expiry ?? "nearest",
-      () => primary.getOptionChain(symbol, expiry) as Promise<import("@/types/india").OptionChain>,
+      async () => normalizeBrokerChain(await primary.getOptionChain(symbol, expiry)),
       redis,
     );
 

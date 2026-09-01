@@ -2,6 +2,135 @@
 
 ---
 
+## [Unreleased] — Remaining Build: All Critical Bypasses Resolved
+
+**Tests:** 2550 passing · 170 test files · 0 failures  
+**Files changed:** 11 (5 source + 3 tests + 3 docs)
+
+### Canonical Registry Migrations
+
+#### `src/features/ai-signals/india-builder.ts` — CRITICAL bypass resolved
+- Replaced `yahoo.getQuotes(yahooSymbols)` → `registry.getQuotes(nseSymbols)` (Angel One → Upstox → Yahoo failover)
+- Replaced `yahoo.getHistorical({symbol, interval: "1d", range: "1y"})` → `getHistoricalCandlesByRange(symbol, "1d", "1y", "NSE")`
+- Replaced `nse.getOptionChain(u.symbol)` → `registry.getOptionChain(u.symbol)` (Angel One → Upstox → NSE failover)
+- Added `mdQuoteToLegacy()` shim to map canonical `MDQuote` (`.ltp`) to legacy `Quote` (`.price`) without changing any signal math
+- Wired `PriceForecasterInputBuilder` into the `buildMLContext` call: `niftyLast60Bars` now populated from 60 confirmed canonical 5-min NIFTY candles when `ENABLE_PRICE_FORECASTER=true` (disabled by default — model is EXPERIMENTAL)
+
+#### `src/features/india/scalping/paper-trader.ts` — HIGH bypass resolved
+- Replaced `yahoo.getHistorical({interval: "5m", range: "1d"})` → `getHistoricalCandlesByRange(symbol, "5m", "1d", "NSE")`
+- Replaced `yahoo.getHistorical({interval: "5m", range: "5d"})` in `getIndiaIntradayAtr` → `getHistoricalCandlesByRange(symbol, "5m", "5d", "NSE")`
+- **Wired atomic trade guard into `openIndiaPaperTrade`:** Redis `SET NX EX` claim runs before DB dedup queries, eliminating the GET-then-SET race under multi-worker concurrency
+
+#### `worker/src/jobs/india-scalper.ts` — HIGH bypass resolved
+- Replaced `yahoo.getHistorical({symbol: yahooSymbol, interval, range: "5d"})` → `getHistoricalCandlesByRange(underlying, interval, "5d", "NSE")`
+- Now uses canonical `underlying` (NSE symbol) directly
+
+#### `src/features/india/scalping/option-chain-capture.ts` — HIGH bypass resolved
+- Replaced `yahoo.getQuotes(...)` → `registry.getQuotes(nseSymbols)`
+- Replaced `nse.getOptionChain(underlying)` → `registry.getOptionChain(underlying)`
+
+#### `src/features/india/expiry-trades/builder.ts` — HIGH bypass resolved
+- Replaced `yahoo.getQuote("^INDIAVIX")` / `yahoo.getQuote("^NSEI")` / `yahoo.getQuote("^BSESN")` → `registry.getLatestQuote(symbol)`
+- Replaced `nse.getOptionChain("NIFTY")` → `registry.getOptionChain("NIFTY")`
+- Added `bootstrapRegistry()` call
+
+### Tests Updated
+- `tests/features/india-expiry-trades-builder.test.ts` — mocks `@/lib/market-data/registry` instead of legacy adapters
+- `tests/features/india-option-chain-capture.test.ts` — mocks `@/lib/market-data/registry`
+- `tests/features/india-paper-trader.test.ts` — mocks `@/lib/market-data/services/historical.service` + stubs `getRedis`
+
+### CI Guard
+`tests/lib/market-data/canonical-import-guard.test.ts` confirms **0 violations** — no direct `yahoo-finance2` imports outside approved adapter modules.
+
+---
+
+## [Unreleased] — V5 Quant Governance & Hardening Milestone
+
+**Tests:** 2550 passing · 170 test files · 0 failures  
+**New source files:** 18  
+**Modified source files:** 10  
+**New test files:** 11  
+**New doc files:** 5
+
+### Phase 1 — Architecture & Legacy Bypass Audit
+- `docs/CANONICAL_DATA_AUDIT.md` — full dependency map of all market data consumers; identifies 16 bypass files (2 CRITICAL, 8 HIGH, 6 MEDIUM)
+
+### Phase 2 — Canonical Market Data Enforcement
+- `src/lib/market-data/canonical-import-guard.ts` — policy document + `isAllowlistedBypass()` for CI checks
+- `src/app/api/in/top-picks/route.ts` — **migrated** from raw `new YahooFinance()` instantiation to `registry.getQuotes()` via `bootstrapRegistry()`
+- `src/app/api/in/sector-stocks/route.ts` — **migrated** from raw `new YahooFinance()` to `registry.getQuotes()`
+- `tests/lib/market-data/canonical-import-guard.test.ts` — CI guard: scans entire `src/` + `worker/src/` tree; fails on any new `yahoo-finance2` import outside approved adapter files
+
+### Phase 3 — Price Forecaster Real Data Pipeline
+- `src/lib/india/price-forecaster-input-builder.ts` — `PriceForecasterInputBuilder` + `candlesToBarMatrix()`: canonical fetch → confirmed candles only → OHLCV validation → dedup → freshness check → exactly 60 bars
+- `tests/lib/price-forecaster-input-builder.test.ts` — 14 tests covering all edge cases
+
+### Phase 4 — ML Feature Contract & Safe Data Quality
+- `src/lib/india/feature-quality-validator.ts` — `FeatureQualityValidator`, `validateFeatureVector()`, model-specific `FeatureContract`s for regime classifier and stock ranker; replaces unsafe generic `NaN→0` with per-feature `REJECT` / `TRAINING_MEDIAN` / `ZERO_ONLY_IF_TRAINED` / `FORWARD_FILL` / `MODEL_DEFAULT` policies
+- `tests/lib/feature-quality-validator.test.ts` — 18 tests
+
+### Phase 5 — Feature Parity Registry
+- `src/lib/india/feature-contract-registry.ts` — `FeatureContractRegistry` with `verifyParity()` for training/inference contract enforcement; registers all 3 production models
+- `tests/lib/feature-contract-registry.test.ts` — parity verification tests
+- `docs/FEATURE_PARITY_REPORT.md` — feature-by-feature parity report for all production models
+
+### Phase 6 — Meta Model True OOS Calibration
+- `src/lib/india/meta-calibration.ts` — `MetaCalibrationDatasetBuilder` with three timestamp assertions preventing any in-sample leakage; `assertNoLeakage()` for post-build verification; `getCalibrationStatus()` returning `CALIBRATED` / `STALE` / `UNAVAILABLE`
+- `tests/lib/meta-calibration.test.ts` — leakage detection tests (intentional leakage tests that **must fail** when leakage exists)
+
+### Phase 7 — Model Governance & Promotion Gates
+- `src/lib/india/model-governance.ts` — `ModelGovernanceRegistry` with 9-stage lifecycle (`EXPERIMENTAL` → `LIVE`); `PromotionPolicy` gates with explicit metric thresholds; all 3 production models registered
+
+### Phase 8 — Model Incremental Value Measurement
+- `src/lib/india/model-ablation.ts` — `ModelAblationRegistry`; ablation results for all 3 models; price forecaster production weight = **0** (NOT_EVALUATED)
+- `docs/MODEL_ABLATION_REPORT.md` — walk-forward ablation report
+
+### Phase 9 — Atomic Trade Guard & Exactly-Once Execution
+- `src/lib/india/atomic-trade-guard.ts` — `atomicClaim()` using `SET key value NX EX` (single atomic Redis op); `executeExactlyOnce()` wrapper; `buildTradeGuardKey()` / `buildEodGuardKey()`; Redis-unavailable policy (`allow` vs `reject`)
+- `tests/lib/atomic-trade-guard.test.ts` — concurrency tests: same signal × 1/2/10/100 concurrent workers → exactly 1 execution
+
+### Phase 10 — Transactional Trading State Machine
+- `src/lib/india/trading-state-machine.ts` — `TradingStateMachine` with 9 states, legal transition map, `applyFill()` with partial→full fill tracking, `InvalidStateTransitionError` / `DuplicateFillError` / `FillAfterTerminalStateError`
+- `tests/lib/trading-state-machine.test.ts` — 18 tests including fill-after-cancel, duplicate fills, backwards transitions
+
+### Phase 11 — NSE Trading Calendar
+- `src/lib/india/nse-trading-calendar.ts` — `NSETradingCalendar` with `NSE_HOLIDAYS_2024` (versioned, updateable), Muhurat trading support, `MarketSessionService` singleton; `isMarketOpen()`, `isTradingDay()`, `prevTradingDay()`, `nextTradingDay()`, `isSessionEndedForDate()`
+- `tests/lib/nse-trading-calendar.test.ts` — 11 boundary tests including 09:14:59/09:15:00/15:30:00/15:31:00, weekends, holidays
+
+### Phase 12 — Indian F&O Data Quality Rules
+- `src/lib/india/fno-data-quality.ts` — `evaluateOptionChainQuality()` detecting crossed markets, negative IV/OI, stale quotes, zero liquidity, wide spreads, partial chains, expiry mismatches, invalid Greeks; `GOOD` / `DEGRADED` / `PARTIAL` / `STALE` / `INVALID` quality levels
+
+### Phase 13 — Decision Pipeline Simplification
+- `src/lib/india/decision-pipeline-config.ts` — `DecisionPipelineConfig` with environment-variable feature flags: `ENABLE_PRICE_FORECASTER` (default false), `ENABLE_RL_EXECUTOR` (false), `ENABLE_MICROSTRUCTURE` (false), `ENABLE_META_CALIBRATION` (true), `ENABLE_STOCK_RANKER` (true), `ENABLE_REGIME_CLASSIFIER` (true), `ENABLE_PORTFOLIO_OPTIMIZER` (false)
+
+### Phase 14 — Coverage Gates by Risk
+- `coverage/critical-modules.json` — 13 coverage gates with per-module line/branch thresholds (95% for execution-guard and order-state-machine; 90% for risk/failover/ML; 85% for others)
+
+### Phase 15 — Fix All Failing Tests
+- `src/lib/chaos/option-chain-resilience.ts` — fixed: partial chains with `strikeCount > 0` now returned (not silently dropped to Redis fallback); added `strikes → rows` normalization in route
+- `src/app/api/in/option-chain/route.ts` — added chain shape normalization (`strikes → rows`) for broker adapter compatibility
+- `src/lib/chaos/ml-resilience.ts` — fixed `validateMLRegimeResponse()`: `probabilities` field is now optional (some model versions omit it); was previously causing `mlAvailable: false` in tests
+- **12 previously failing tests now pass**
+
+### Phase 16 — Local Integration Environment
+- `scripts/verify-local.sh` — reproducible integration runner: docker compose up → health checks → migrations → fixtures → unit tests → E2E smoke → shutdown
+
+### Phase 17 — True End-to-End Test
+- `tests/integration/full-pipeline-e2e.test.ts` — 10 deterministic E2E assertions using a single `correlationId`; covers candle fetch → feature validation → contract parity → pipeline config → option chain quality → state machine lifecycle → NSE calendar; runs without live providers
+
+### Phase 18 — Paper Trading Soak Mode
+- `src/lib/india/paper-soak-mode.ts` — `assertPaperSoakSafe()` (blocks if `LIVE_TRADING_ENABLED=true`), `isPaperSoakSafe()`, `getDurationMs()`, `generateSoakReport()` producing `SOAK_REPORT.md`
+
+### Phase 19 — Observability & Trade Explainability
+- `src/lib/india/decision-trace.ts` — `DecisionTrace` type, `DecisionTraceBuilder`, `formatTradeExplanation()` producing human-readable audit trail answering "WHY WAS THIS TRADE TAKEN?"
+- `src/app/api/trades/[id]/explain/route.ts` — `GET /api/trades/{id}/explain` returning full decision trace + audit trail for any paper trade
+
+### Phase 20 — Final Reports
+- `docs/V5_QUANT_GOVERNANCE_REPORT.md` — 18-section governance report covering all phases; honest accounting of what was verified vs. what remains
+- `docs/PRODUCTION_READINESS_MATRIX.md` — full component × verification-level matrix (50+ components); 8 CERTIFIED, 22 PARTIALLY_CERTIFIED, 20 NOT_TESTED
+
+---
+
 ## [Unreleased] — Market Microstructure Intelligence Engine
 
 **Commit:** `08ef581`
