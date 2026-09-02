@@ -1,5 +1,58 @@
 # ALPHAFORGE.md
 
+## Signal Intelligence Engine (45-Phase Indian F&O)
+
+The Signal Intelligence Engine is the measurement and attribution layer built on top of V6. It does not add new strategies — it instruments existing ones so the system can answer definitively what works, what doesn't, and why.
+
+### Core Modules (`src/lib/signal-intelligence/`)
+
+| Module | Purpose |
+|--------|---------|
+| `types.ts` | Canonical `EnrichedSignal`, `SignalQualityVector`, `ExpectedValueEstimate`, `OpportunityCluster`, lifecycle states, all shared types |
+| `signal-source-registry.ts` | `SignalSourceRegistry` singleton — validates every source ID, classifies into reporting buckets, prevents generic `technical` masking |
+| `fno-universe.ts` | `FNOUniverseService` — canonical F&O universe (4 indices + ~200 stocks); `buildUniverseCoverageSnapshot()` for session-level coverage validation |
+| `market-context-engine.ts` | `buildMarketContextSnapshot()` — NIFTY trend, VIX regime, breadth, opening range, VWAP, volume regime; `scoreContextAlignment()` |
+| `multi-layer-engine.ts` | 12-layer architecture with `LayerResult`; breakout quality, momentum quality, volume intelligence, volatility regime, liquidity, market structure |
+| `derivatives-intelligence.ts` | OI buildup classification (with freshness guard), option chain intelligence, options flow quality (OBSERVATION/INFERENCE/HCI labels), expiry context |
+| `signal-quality-vector.ts` | 14-component `SignalQualityVector`, `computeExpectedValue()` (calibrated), `gradeSignal()`, `evaluateAbstention()`, time-of-day buckets |
+| `conflict-resolver.ts` | `resolveSignalConflict()` (BUY/SELL/WAIT/NO_TRADE), `clusterSignals()` (anti-double-counting opportunity clusters) |
+| `signal-lifecycle.ts` | State machine (DETECTED→EXITED), `buildRecallReport()`, `buildSignalAttribution()`, `detectSignalDecay()`, `computeDynamicPositionSize()` |
+| `paper-trading-fidelity.ts` | Realistic paper fill (spread + impact + latency), signal funnel, `TODAY_SIGNAL_AUDIT_MODE`, execution mode isolation, deterministic replay hash |
+| `strategy-scorecard.ts` | Per-strategy scorecard, `evaluateProductionGates()` (8 gates for LIVE_CANDIDATE), strategy status lifecycle |
+| `index.ts` | Barrel export for all above |
+
+### New API Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/in/signal-audit?date=YYYY-MM-DD` | Today's signal audit report (universe coverage, funnel, ML contribution, replay hash) |
+| `GET /api/in/universe-coverage?date=YYYY-MM-DD` | F&O universe summary + session coverage snapshot |
+
+### New DB Models
+
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `SignalLifecycleEvent` | `signal_lifecycle_event` | Full state-machine audit trail per signal |
+| `UniverseCoverageSnapshot` | `universe_coverage_snapshot` | Per-session F&O universe coverage |
+| `OpportunityCluster` | `opportunity_cluster` | Anti-double-counting cluster records |
+| `SignalIntelligenceRecord` | `signal_intelligence_record` | Full enriched signal taxonomy envelope |
+
+### Production Guard
+
+**8 gates must all pass for LIVE_CANDIDATE promotion:**
+1. Minimum sample size (≥ 30 resolved trades)
+2. OOS validation
+3. Walk-forward stability
+4. Cost sensitivity (profitable at 2× base cost)
+5. Regime coverage (≥ 3 distinct regimes)
+6. Calibration (Brier score < 0.25)
+7. Paper trading evidence (≥ 10 sessions)
+8. Execution quality (≥ 0.70)
+
+Positive backtest P&L satisfies **none** of these gates.
+
+---
+
 ## V6 — Evidence-Driven Quant Research Platform
 
 AlphaForge V6 transforms the platform from a collection of sophisticated strategies into a scientifically rigorous quant research platform. This is the single most important architectural change in the project's history.

@@ -2,6 +2,138 @@
 
 ---
 
+## [Unreleased] — Signal Intelligence Engine (45-Phase Indian F&O)
+
+**Tests:** 196 new tests · 9 new test files · 0 failures (all new tests green)  
+**New source files:** 12 (`src/lib/signal-intelligence/`)  
+**New API routes:** 2 (`/api/in/signal-audit`, `/api/in/universe-coverage`)  
+**New DB models:** 4 (`SignalLifecycleEvent`, `UniverseCoverageSnapshot`, `OpportunityCluster`, `SignalIntelligenceRecord`)  
+**New doc files:** 1 (`docs/INDIAN_FNO_SIGNAL_INTELLIGENCE_REPORT.md`)  
+
+Complete build of the AlphaForge Professional Indian F&O Signal Intelligence Engine.
+Purpose: measurement and attribution infrastructure, not more indicators.
+
+### What Was Built
+
+#### Phase 1–2 — Signal Source Registry & Taxonomy
+`src/lib/signal-intelligence/signal-source-registry.ts` · `src/lib/signal-intelligence/types.ts`
+
+- Strict `SignalSourceType` enum: `STRATEGY | SCANNER | ML | META | TECHNICAL_BASELINE | MANUAL | RESEARCH | LEGACY | UNKNOWN`
+- `UNKNOWN` is an explicit error state — routes to investigation, never to a leaderboard
+- `SignalSourceRegistry` singleton with `validate()`, `classifyBucket()`, `classifyPaperTradeSource()`, `isGenericTechnical()`, `getFlowDestination()`
+- **Regression fixed:** `AI_SIGNAL` is now classified as `MANUAL` (not `STRATEGY` or `TECHNICAL_BASELINE`)
+- **Regression fixed:** `technical`, `generic`, `fallback`, `heuristic` source IDs are explicitly identified as generic technical, never silently promoted to strategy metrics
+- **Regression fixed:** Only the 9 official India F&O strategies (`RANGE_EXPANSION`, `MOMENTUM`, `VOLUME_BREAKOUT`, `OI_BUILDUP`, `PCR_EXTREME`, `IV_SPIKE`, `LIQUIDITY_EDGE`, `MAX_PAIN_GRAVITY`, `OPENING_BREAKOUT`) are leaderboard-eligible
+- `SignalReportingBucket`: `OFFICIAL_STRATEGIES | BASELINE | FALLBACK | SCANNER | ML | META | MANUAL | RESEARCH | UNKNOWN`
+- `EnrichedSignal` type: 40-field canonical signal envelope with `signalId`, `correlationId`, `sourceType`, `qualityVector`, `expectedValue`, `grade`, `lifecycleState`, `riskDecision`, `paperDecision`, `abstentionReason`
+
+#### Phase 3–4 — FNO Universe Service & Coverage Monitor
+`src/lib/signal-intelligence/fno-universe.ts`
+
+- `FNOUniverseService` singleton: derives canonical universe from `sectors.ts` + `fno-symbols.ts`; includes all 4 F&O index underlyings + ~200+ F&O stocks
+- `buildUniverseCoverageSnapshot()`: per-session coverage report (expected / available / scanned / complete / partial / missing / evaluated / eligible / excluded)
+- `UniverseCoverageScore`: signal session is **INVALID** when coverage < 80% of expected instruments
+- **Regression fixed:** universe coverage is now tracked and validated; a signal report without coverage data is explicitly flagged invalid
+- API route: `GET /api/in/universe-coverage?date=YYYY-MM-DD`
+- DB model: `UniverseCoverageSnapshot` — persists coverage snapshot per session
+
+#### Phase 5–13 — Multi-Layer Signal Engine
+`src/lib/signal-intelligence/market-context-engine.ts` · `src/lib/signal-intelligence/multi-layer-engine.ts`
+
+- `IndiaMarketContextEngine` (`buildMarketContextSnapshot()`): NIFTY trend, VIX regime, A/D breadth, volume regime, opening range, VWAP, gap analysis, composite momentum/volatility scores
+- `scoreContextAlignment()`: [-1, 1] directional alignment score for any signal vs market context
+- 12-layer architecture: `MARKET_CONTEXT | REGIME | STRUCTURE | MOMENTUM | VOLUME | VOLATILITY | LIQUIDITY | DERIVATIVES | RELATIVE_STRENGTH | ML | RISK | EXECUTION`
+- Each layer produces `LayerResult` with `status | score | confidence | direction | quality | reason | contributing`
+- `VETO` status from any layer triggers immediate signal rejection
+- `aggregateLayerResults()`: weighted composite (liquidity and volume weighted 10% each; no blind sum)
+- `evaluateBreakoutQuality()`: classifies `WEAK_BREAKOUT | VALID_BREAKOUT | STRONG_BREAKOUT | EXHAUSTION_BREAKOUT` with false-probability scoring
+- `evaluateMomentumQuality()`: detects `CONTINUATION | EXHAUSTION | DIVERGENCE | NEUTRAL`; RSI/ROC/ADX/EMA slope computed from candles
+- `evaluateVolumeIntelligence()`: RVOL + time-of-day normalization (09:20 vs 13:00 volume no longer naively compared); volume climax/exhaustion detection; price-volume confirmation
+- `evaluateVolatilityRegime()`: ATR percentile, realized vol, intraday range percentile, VIX regime; `regimeSupportedByStrategy` flag
+- `evaluateLiquidity()`: spread % thresholds (>0.30% = POOR + rejection); volume guard (RVOL < 0.2 = rejected)
+- `evaluateMarketStructure()`: swing H/L, BOS/CHoCH detection, FVG detection, structure expiry (events expire after 4–8h)
+
+#### Phase 14–18 — Derivatives Intelligence
+`src/lib/signal-intelligence/derivatives-intelligence.ts`
+
+- `classifyOIBuildup()`: `LONG_BUILDUP | SHORT_BUILDUP | LONG_UNWINDING | SHORT_COVERING | NEUTRAL | UNCLASSIFIED`; OI freshness check (max 15 min stale); requires both price AND OI direction; returns `UNCLASSIFIED` when data quality insufficient
+- `buildOptionChainIntelligence()`: CE wall distance, PE floor distance, max pain distance, chain quality (`COMPLETE | PARTIAL | STALE | MISSING`), ATM computation
+- `classifyOptionsFlow()`: `CALL_ACCUMULATION | PUT_ACCUMULATION | CALL_UNWINDING | PUT_UNWINDING | ...`; **explicitly labels every classification as `OBSERVATION | INFERENCE | HIGH_CONFIDENCE_INFERENCE`**; OI alone never qualifies as `HIGH_CONFIDENCE_INFERENCE`; always includes warning that OI ≠ smart money
+- `buildExpiryContext()`: detects weekly/monthly expiry day; gamma risk active flag (after 14:30 IST Thursday)
+- `getStrategyExpiryBehavior()`: `ALLOW_EXPIRY | AVOID_EXPIRY | REDUCE_SIZE_EXPIRY | EXPIRY_SPECIAL_MODE` per strategy
+
+#### Phase 19–23 — Signal Quality Vector, EV Engine, Ranking, Abstention
+`src/lib/signal-intelligence/signal-quality-vector.ts`
+
+- `SignalQualityVector`: 14 independently-inspectable components; composite weighted score
+- `computeExpectedValue()`: `EV = P(win)×E[win%] − P(loss)×E[loss%] − costs − slippage`; uses Platt-calibrated win probability (35% shrinkage toward 0.5); raw confidence ≠ win probability
+- `buildSignalQualityVector()`: converts layer scores into directionally-adjusted quality vector
+- `gradeSignal()`: `A_PLUS | A | B | C | REJECT` with statistical thresholds (EV + quality; not arbitrary score)
+- `computeRankingScore()`: [0, 100] composite for sorting
+- `evaluateAbstention()`: 15 explicit abstention reasons (`LOW_EDGE | BAD_REGIME | LOW_LIQUIDITY | POOR_RISK_REWARD | DATA_QUALITY | ML_UNCERTAINTY | CONFLICTING_TIMEFRAMES | CONFLICTING_DERIVATIVES | HIGH_CORRELATION | EXPIRY_RISK | EXCESS_PORTFOLIO_EXPOSURE | ...`); abstention is a valid model outcome
+- `getTODBucket()`: 10 IST intraday buckets with TRADE / CAUTION / AVOID recommendations
+
+#### Phase 24–26 — ML Filter, Conflict Resolver, Opportunity Clustering
+`src/lib/signal-intelligence/conflict-resolver.ts`
+
+- `resolveSignalConflict()`: weighted vote resolution → `BUY | SELL | WAIT | NO_TRADE` with explicit explanation; range regime raises confirmation threshold; derivatives conflict triggers `WAIT`
+- `clusterSignals()`: groups correlated signals (same instrument + direction + within 10-min window + strategies in same correlated group) into `OpportunityCluster`
+- **Regression fixed:** ORB + Momentum + Volume Breakout on same NIFTY breakout = ONE cluster, not three independent confirmations
+- Cluster confidence = geometric mean of members (not sum); avoids double-counting inflation
+- Every signal gets a `correlationId` for deduplication; DB model: `OpportunityCluster`
+
+#### Phase 27–36 — Lifecycle, Attribution, Decay, Sizing
+`src/lib/signal-intelligence/signal-lifecycle.ts`
+
+- `SignalLifecycleEvent`: state machine `DETECTED → VALIDATING → QUALIFIED → RISK_CHECK → APPROVED → PAPER_EXECUTED → ACTIVE → PARTIAL → EXITED | EXPIRED | REJECTED | CANCELLED`; invalid transitions throw; all events persisted to `signal_lifecycle_event` table
+- `buildRecallReport()`: explicitly marks `notIndependentlyValidated = true` when independent reference detector not deployed; 20% conservative miss-rate baseline documented
+- `buildSignalAttribution()`: per-signal explanation (features present, filters applied, ML contribution, regime, provider, data quality)
+- `detectSignalDecay()`: rolling windows 20/50/100/250; states `HEALTHY | WATCH | DEGRADED | CRITICAL | DISABLED`; **no demotion on < 10 trades** (avoids premature demotion on tiny samples)
+- `computeDynamicPositionSize()`: signal score + calibrated win probability + volatility regime + drawdown state + correlation + liquidity; respects hard caps (maxPositionSizePct, maxPortfolioExposurePct); never sizes solely from signal score
+
+#### Phase 37–40 — Paper Trading Fidelity, Funnel, Audit, Isolation
+`src/lib/signal-intelligence/paper-trading-fidelity.ts`
+
+- **Regression fixed:** `computePaperFill()` models realistic execution: fill = mid + half-spread + market impact + latency drift; EOD square-off flagged separately; limit order may miss if price drifts; paper fill ≠ candle close
+- `buildSignalPaperFunnel()`: 8-stage funnel `OPPORTUNITIES → SIGNALS_GENERATED → QUALIFIED → RISK_APPROVED → ORDERS_PLACED → FILLED → WINNERS → LOSERS`; bottleneck detection
+- `buildTodaySignalAuditReport()`: `TODAY_SIGNAL_AUDIT_MODE` — per-session audit report with universe coverage, signal counts, funnel, ML contribution, execution quality, replay hash
+- `computeReplayHash()`: deterministic hash from session data; same inputs must produce same hash; any difference requires investigation
+- `ExecutionMode` isolation: `BACKTEST | RESEARCH | SHADOW | PAPER | LIVE`; `assertExecutionModeIsolation()` throws on mode mismatch; `canProducePaperTrades()` / `canProduceLiveOrders()` guards
+- API route: `GET /api/in/signal-audit?date=YYYY-MM-DD`
+
+#### Phase 43–45 — Final Report, Strategy Scorecard, Production Guard
+`src/lib/signal-intelligence/strategy-scorecard.ts` · `docs/INDIAN_FNO_SIGNAL_INTELLIGENCE_REPORT.md`
+
+- `buildScorecardEntry()`: per-strategy scorecard with all 16 required metrics (sample size, precision, recall, F1, expectancy, profit factor, max drawdown, regime coverage, calibration, paper fidelity, signal stability, alpha decay state)
+- `evaluateProductionGates()`: 8 mandatory gates for `LIVE_CANDIDATE` promotion; all must pass
+- **Production Guard (Phase 45):** positive backtest P&L alone satisfies ZERO gates; requires: minimum sample + OOS validation + walk-forward + cost sensitivity (profitable at 2× cost) + regime coverage (≥3 regimes) + calibration (Brier < 0.25) + paper evidence (≥10 sessions) + execution quality (≥0.70)
+- Strategy statuses: `RESEARCH | PROMISING | VALIDATED | PAPER_CANDIDATE | LIVE_CANDIDATE | DEGRADED | DISABLED | INSUFFICIENT_EVIDENCE`
+- All 9 official strategies currently `INSUFFICIENT_EVIDENCE` — correct state; no fabricated promotions
+
+### New Regression Tests (196 tests, 9 files)
+
+| File | Tests | Coverage |
+|------|-------|---------|
+| `tests/lib/signal-intelligence/signal-source-registry.test.ts` | 27 | Signal taxonomy, generic masking, AI_SIGNAL=MANUAL, UNKNOWN=error |
+| `tests/lib/signal-intelligence/fno-universe.test.ts` | 18 | Universe composition, coverage validity gate, INVALID when no scanner |
+| `tests/lib/signal-intelligence/market-context-engine.test.ts` | 19 | NIFTY trend, VIX regime, breadth, context alignment |
+| `tests/lib/signal-intelligence/multi-layer-engine.test.ts` | 28 | Breakout quality, momentum, volume intelligence, layer aggregation, VETO |
+| `tests/lib/signal-intelligence/derivatives-intelligence.test.ts` | 28 | OI classification (incl. stale data), options chain, flow warning, expiry |
+| `tests/lib/signal-intelligence/signal-quality-vector.test.ts` | 26 | EV engine, quality vector, grading, abstention, NO_TRADE preference |
+| `tests/lib/signal-intelligence/conflict-resolver.test.ts` | 13 | Conflict resolution, opportunity clustering anti-double-count |
+| `tests/lib/signal-intelligence/signal-lifecycle.test.ts` | 22 | State machine, invalid transitions, recall, attribution, decay, sizing |
+| `tests/lib/signal-intelligence/paper-trading-fidelity.test.ts` | 15 | Realistic fill, funnel, execution isolation, deterministic replay hash |
+
+### Known Remaining Limitations (Documented)
+
+1. **Independent recall detector** — `NOT_INDEPENDENTLY_VALIDATED`; requires full historical candle replay per strategy
+2. **TFT price forecaster** — `last_60_bars` infrastructure ready but no production caller yet
+3. **Scanner ProviderRegistry bypass** — `src/services/india/scanner/engine.ts` still uses legacy provider singletons (pre-existing; documented in SYSTEM_VERIFICATION_REPORT.md §9)
+4. **Per-strategy calibration curves** — global 35% shrinkage constant; replace with Platt curves after ≥50 OOS trades per strategy
+5. **SENSEX** — not yet included (BSE instruments need separate provider)
+
+---
+
 ## [Unreleased] — 20-Session NSE Market Validation
 
 **Tests:** 25 new regression tests · 3 new test files · 0 failures (2768 total, 182 test files)
