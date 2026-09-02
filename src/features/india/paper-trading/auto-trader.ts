@@ -58,6 +58,12 @@ import {
   type ReturnSeries,
 } from "@/lib/opportunity-engine";
 import type { OpportunityV1 } from "@/lib/opportunity-engine";
+// OPP-001 FIX: import candle-fetching infrastructure so the opportunity pipeline
+// receives real OHLCV bars rather than empty arrays.
+import { bootstrapRegistry } from "@/lib/market-data/registry";
+import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+import type { OHLCVCandle } from "@/lib/market-data/types";
+import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 // AUDIT-001 FIX: wire lifecycle-event persistence so the signal audit trail
 // is written to the DB and survives worker restarts.
 import { emitLifecycleEvent } from "@/lib/signal-intelligence/lifecycle-persist";
@@ -86,6 +92,43 @@ const AUTO_TRADE_SOURCE_AI_SIGNAL  = "in:AI_SIGNAL:1d";
 const AUTO_TRADE_SOURCES = [AUTO_TRADE_SOURCE_DAILY_PICK, AUTO_TRADE_SOURCE_AI_SIGNAL] as const;
 /** Don't open more trades after this point in the session (IST minutes). */
 const LAST_ENTRY_MINUTES = 14 * 60 + 45; // 14:45 IST
+
+// ─── Candle-derived indicator helpers (OPP-001) ───────────────────────────────
+// Used to populate real ATR, RSI, SMA into the opportunity pipeline input
+// instead of the previous stubs (empty arrays / null). Mirrors the helpers
+// in the opportunity-engine route.
+
+function _computeAtr(candles: OHLCVCandle[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i]; const p = candles[i - 1];
+    trs.push(Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close)));
+  }
+  const win = trs.slice(-period);
+  return win.length ? win.reduce((a, b) => a + b, 0) / win.length : null;
+}
+function _computeSma(candles: OHLCVCandle[], period: number): number | null {
+  if (candles.length < period) return null;
+  const sl = candles.slice(-period);
+  return sl.reduce((s, c) => s + c.close, 0) / period;
+}
+function _computeRsi(candles: OHLCVCandle[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const sl = candles.slice(-(period + 1));
+  let gains = 0; let losses = 0;
+  for (let i = 1; i < sl.length; i++) {
+    const d = sl[i].close - sl[i - 1].close;
+    if (d > 0) gains += d; else losses -= d;
+  }
+  const avgG = gains / period; const avgL = losses / period;
+  if (avgL === 0) return 100;
+  return 100 - 100 / (1 + avgG / avgL);
+}
+function _computeAvgVol(candles: OHLCVCandle[], days = 20): number | null {
+  if (candles.length < days) return null;
+  return candles.slice(-days).reduce((s, c) => s + (c.volume ?? 0), 0) / days;
+}
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
@@ -356,13 +399,43 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
       return { opened: 0, skipped: preSorted.length, reason: dailyBudget.reason };
     }
 
-    // Empty universe returns for relative strength (would be populated with real data in full wiring)
-    const emptyNiftyReturns: ReturnSeries = { symbol: "NIFTY", returns: [], avgVolume20d: null, currentVolume: null };
+    // OPP-001 FIX: pre-fetch real daily candles for every candidate instrument + NIFTY.
+    // Candles are fetched once before the pipeline loop — each iteration only
+    // does a fast map lookup. Concurrency cap of 6 avoids provider rate-limits.
+    await bootstrapRegistry().catch(() => null); // idempotent; fail-soft
+
+    const uniqueCandidateSymbols = [...new Set(preSorted.map((c) => c.symbol))];
+    const [niftyDailyCandles, ...perSymbolCandlesArr] = await Promise.all([
+      getHistoricalCandlesByRange("NIFTY", "1d", "1y", "NSE", { tolerateInvalidCandles: true }).catch(() => [] as OHLCVCandle[]),
+      ...await mapWithConcurrency(
+        uniqueCandidateSymbols,
+        6,
+        (sym) => getHistoricalCandlesByRange(sym, "1d", "1y", "NSE", { tolerateInvalidCandles: true })
+          .catch(() => [] as OHLCVCandle[]),
+      ),
+    ]);
+    const dailyCandleMap = new Map<string, OHLCVCandle[]>(
+      uniqueCandidateSymbols.map((sym, i) => [sym, perSymbolCandlesArr[i] ?? []]),
+    );
+    const niftyCloses = niftyDailyCandles.map((c) => c.close);
+    const niftyReturns: ReturnSeries = {
+      symbol: "NIFTY",
+      returns: niftyCloses.slice(1).map((c, i) => niftyCloses[i] > 0 ? (c - niftyCloses[i]) / niftyCloses[i] : 0),
+      avgVolume20d: _computeAvgVol(niftyDailyCandles) ?? null,
+      currentVolume: niftyDailyCandles.at(-1)?.volume ?? null,
+    };
 
     const pipelineResults: Array<{ candidate: ScoredCandidate; opportunity: OpportunityV1; shouldTrade: boolean }> = [];
 
     for (const c of preSorted) {
       try {
+        const dailyCandles = dailyCandleMap.get(c.symbol) ?? [];
+        const realAtr    = _computeAtr(dailyCandles)    ?? Math.abs(c.entry - c.stopLoss) * 1.3;
+        const realRsi    = _computeRsi(dailyCandles)    ?? null;
+        const realSma20  = _computeSma(dailyCandles, 20) ?? null;
+        const realSma50  = _computeSma(dailyCandles, 50) ?? null;
+        const realAvgVol = _computeAvgVol(dailyCandles)  ?? null;
+
         const pipelineInput: OpportunityPipelineInput = {
           instrument: c.symbol,
           instrumentName: c.symbol,
@@ -370,16 +443,18 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
           segment: "FUTURES",
           lotSize: 1,
           currentPrice: c.entry,
-          dailyCandles: [], // populated from provider in full wiring
+          // OPP-001 FIX: real candle data
+          dailyCandles,
           intradayCandles: [],
-          atr: Math.abs(c.entry - c.stopLoss) * 1.3, // ATR proxy from SL
-          rsi: null,
-          sma20: null,
-          sma50: null,
+          atr: realAtr,
+          rsi: realRsi,
+          sma20: realSma20,
+          sma50: realSma50,
           vwap: null,
-          avgVolume20d: null,
-          currentVolume: null,
-          niftyDailyCandles: [],
+          avgVolume20d: realAvgVol,
+          currentVolume: dailyCandles.at(-1)?.volume ?? null,
+          // OPP-001 FIX: real NIFTY daily candles for regime detection
+          niftyDailyCandles,
           niftyChangePct: null,
           bankniftyChangePct: null,
           indiaVix: null,
@@ -411,7 +486,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
             isDailyLossBreach: liveDrawdownPct < -5, // 5% daily loss breach threshold
           },
           universeReturns: [],
-          niftyReturns: emptyNiftyReturns,
+          niftyReturns,
           sessionOpenMs: now.getTime() - istMinutes * 60000 + 9 * 3600000 + 15 * 60000,
           nowMs: now.getTime(),
           tradeDate,
@@ -533,6 +608,8 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
           target:    c.target,
           riskReward: c.riskReward,
           atr:       0,
+          // USD-001 FIX: auto-trader trades are INR-denominated.
+          currency:  "INR",
           openedAt:  now,
         },
         select: { id: true },
@@ -629,7 +706,7 @@ export async function finaliseAutoTradingSession(): Promise<void> {
     const pnlUsd    = (pnlPct / 100) * t.notional;
     await db.paperTrade.update({
       where: { id: t.id },
-      data:  { status: "EXPIRED", exitPrice, pnlPct, pnlUsd, closedAt },
+      data:  { status: "EXPIRED", exitPrice, pnlPct, pnlUsd, currency: "INR", closedAt }, // USD-001 FIX
     });
   }
 

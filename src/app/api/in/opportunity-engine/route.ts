@@ -4,9 +4,14 @@
  * Runs the full 12-stage Opportunity Pipeline against the current live
  * AI signals and returns a ranked list of OpportunityV1 objects.
  *
- * This endpoint is the primary entry point for the new opportunity engine.
- * It does NOT open trades — it evaluates and ranks opportunities for display
- * and downstream consumption.
+ * OPP-001 FIX: The pipeline now receives real 1-year daily OHLCV candles
+ * for each instrument (and NIFTY) fetched from the provider registry
+ * (Angel One → Upstox → Yahoo failover).  Real ATR, SMA20, SMA50, and
+ * avgVolume20d are computed from those bars and passed into every pipeline
+ * input instead of the previous stubs (empty arrays / null).
+ *
+ * Candles are pre-fetched in a single concurrency-limited batch before the
+ * pipeline loop so the per-signal cost is only an in-memory map lookup.
  *
  * Query params:
  *   limit     — max opportunities to return (default: 20, max: 50)
@@ -35,6 +40,10 @@ import {
   type ReturnSeries,
 } from "@/lib/opportunity-engine";
 import type { OpportunityV1, OpportunityFunnel, QualityTier } from "@/lib/opportunity-engine";
+import { bootstrapRegistry } from "@/lib/market-data/registry";
+import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
+import type { OHLCVCandle } from "@/lib/market-data/types";
+import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,6 +51,52 @@ export const runtime = "nodejs";
 // 60-second cache — opportunity evaluations are expensive
 let _cache: { result: unknown; generatedAt: number } | null = null;
 const CACHE_TTL_MS = 60_000;
+
+// ─── Technical indicator helpers ─────────────────────────────────────────────
+// Computed from the real daily candle series fetched per instrument.
+
+/** Average True Range over `period` bars (simple, not Wilder-smoothed). */
+function computeAtr(candles: OHLCVCandle[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const p = candles[i - 1];
+    trs.push(Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close)));
+  }
+  const win = trs.slice(-period);
+  return win.length ? win.reduce((a, b) => a + b, 0) / win.length : null;
+}
+
+/** Simple moving average of closes over `period` bars. */
+function computeSma(candles: OHLCVCandle[], period: number): number | null {
+  if (candles.length < period) return null;
+  const slice = candles.slice(-period);
+  return slice.reduce((s, c) => s + c.close, 0) / period;
+}
+
+/** RSI(14) using the simple average-gain/loss formulation. */
+function computeRsi(candles: OHLCVCandle[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const slice = candles.slice(-(period + 1));
+  let gains = 0; let losses = 0;
+  for (let i = 1; i < slice.length; i++) {
+    const d = slice[i].close - slice[i - 1].close;
+    if (d > 0) gains += d; else losses -= d;
+  }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+/** Average daily volume over the last `days` candles (0 when insufficient). */
+function computeAvgVolume(candles: OHLCVCandle[], days = 20): number | null {
+  if (candles.length < days) return null;
+  const slice = candles.slice(-days);
+  return slice.reduce((s, c) => s + (c.volume ?? 0), 0) / days;
+}
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
@@ -80,9 +135,47 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Empty NIFTY returns stub (full wiring would fetch from registry)
+    // ── OPP-001 FIX: pre-fetch real candles for all candidate instruments ──
+    // Warm the provider registry once, then concurrently fetch 1-year daily
+    // bars for every unique instrument + NIFTY (for regime detection).
+    // Concurrency cap of 8 matches the india-builder's YAHOO_HIST_CONCURRENCY
+    // to avoid provider rate-limits.
+    await bootstrapRegistry();
+
+    const candidateSignals = signals.filter(
+      (s) => s.action !== "WAIT" && s.market === "india",
+    ).slice(0, 30);
+
+    const uniqueSymbols = [
+      ...new Set(
+        candidateSignals.map((s) => s.symbol.replace(/\.NS$/i, "").toUpperCase()),
+      ),
+    ];
+
+    // Fetch NIFTY + all candidate instrument daily candles in parallel
+    const [niftyDailyCandles, ...perSymbolCandles] = await Promise.all([
+      getHistoricalCandlesByRange("NIFTY", "1d", "1y", "NSE", { tolerateInvalidCandles: true }).catch(() => [] as OHLCVCandle[]),
+      ...await mapWithConcurrency(
+        uniqueSymbols,
+        8,
+        (sym) => getHistoricalCandlesByRange(sym, "1d", "1y", "NSE", { tolerateInvalidCandles: true })
+          .catch(() => [] as OHLCVCandle[]),
+      ),
+    ]);
+
+    const dailyCandleMap = new Map<string, OHLCVCandle[]>(
+      uniqueSymbols.map((sym, i) => [sym, perSymbolCandles[i] ?? []]),
+    );
+
+    // Pre-compute NIFTY returns series for relative-strength engine
+    const niftyCloses = niftyDailyCandles.map((c) => c.close);
     const niftyReturns: ReturnSeries = {
-      symbol: "NIFTY", returns: [], avgVolume20d: null, currentVolume: null,
+      symbol: "NIFTY",
+      returns: niftyCloses.slice(1).map((c, i) =>
+        niftyCloses[i] > 0 ? (c - niftyCloses[i]) / niftyCloses[i] : 0,
+      ),
+      avgVolume20d: computeAvgVolume(niftyDailyCandles) ?? null,
+      currentVolume: niftyDailyCandles.at(-1)?.volume ?? null,
     };
 
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -100,30 +193,42 @@ export async function GET(req: NextRequest) {
     let approvedCount = 0;
     let watchCount = 0;
 
-    for (const sig of signals.slice(0, 30)) { // cap at 30 for performance
-      if (sig.action === "WAIT" || sig.market !== "india") continue;
+    for (const sig of candidateSignals) {
       candidateCount++;
 
       const tp1 = sig.takeProfits?.[0]?.price ?? sig.entry * 1.01;
       const tp2 = sig.takeProfits?.[1]?.price ?? tp1 * 1.01;
 
+      const instrument = sig.symbol.replace(/\.NS$/i, "").toUpperCase();
+      const dailyCandles = dailyCandleMap.get(instrument) ?? [];
+
+      // Derive real technical indicators from fetched bars.
+      const realAtr     = computeAtr(dailyCandles)     ?? Math.abs(sig.entry - sig.stopLoss) * 1.3;
+      const realRsi     = computeRsi(dailyCandles)     ?? null;
+      const realSma20   = computeSma(dailyCandles, 20) ?? null;
+      const realSma50   = computeSma(dailyCandles, 50) ?? null;
+      const realAvgVol  = computeAvgVolume(dailyCandles) ?? null;
+      const realCurVol  = dailyCandles.at(-1)?.volume ?? null;
+
       const pipelineInput: OpportunityPipelineInput = {
-        instrument: sig.symbol.replace(/\.NS$/i, "").toUpperCase(),
+        instrument,
         instrumentName: sig.displayName ?? sig.symbol,
         exchange: "NSE",
         segment: "FUTURES",
         lotSize: 1,
         currentPrice: sig.entry,
-        dailyCandles: [],
-        intradayCandles: [],
-        atr: Math.abs(sig.entry - sig.stopLoss) * 1.3,
-        rsi: null,
-        sma20: null,
-        sma50: null,
-        vwap: null,
-        avgVolume20d: null,
-        currentVolume: null,
-        niftyDailyCandles: [],
+        // OPP-001 FIX: real candle data instead of empty arrays
+        dailyCandles,
+        intradayCandles: [], // intraday bars not yet persisted (RCA-001 closed by india-scalper)
+        atr: realAtr,
+        rsi: realRsi,
+        sma20: realSma20,
+        sma50: realSma50,
+        vwap: null, // intraday VWAP requires 1m/5m bars
+        avgVolume20d: realAvgVol,
+        currentVolume: realCurVol,
+        // OPP-001 FIX: real NIFTY daily candles for regime detection
+        niftyDailyCandles,
         niftyChangePct: (aiResp.context as { niftyChangePct?: number | null })?.niftyChangePct ?? null,
         bankniftyChangePct: (aiResp.context as { bankniftyChangePct?: number | null })?.bankniftyChangePct ?? null,
         indiaVix: aiResp.context?.indiaVix ?? null,
@@ -211,11 +316,11 @@ export async function GET(req: NextRequest) {
       softPenaltiesByCode: {} as OpportunityFunnel["softPenaltiesByCode"],
     };
 
-    // Compute regime from available data
+    // Compute regime from real NIFTY candles (OPP-001 FIX)
     let regimeData = null;
     try {
       regimeData = classifyMarketRegime({
-        niftyDailyCandles: [],
+        niftyDailyCandles,
         niftyChangePct: (aiResp.context as { niftyChangePct?: number | null })?.niftyChangePct ?? null,
         bankniftyChangePct: (aiResp.context as { bankniftyChangePct?: number | null })?.bankniftyChangePct ?? null,
         indiaVix: aiResp.context?.indiaVix ?? null,

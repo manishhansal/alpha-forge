@@ -126,7 +126,13 @@ model PaperTrade {
   atr        Float
   exitPrice  Float?
   pnlPct     Float?
+  /// P&L in the notional's currency. For crypto rows (`source` without `in:` prefix)
+  /// this is USD (notional = $1,000). For India rows (`source` starts with `in:`)
+  /// this is INR (notional = ₹20,000). See `currency` field for the explicit label.
   pnlUsd     Float?
+  /// Currency of `notional` and `pnlUsd`. Defaults to "USD" for crypto rows
+  /// (backward-compatible). India rows set this to "INR" at write time.
+  currency   String               @default("USD")
   /// Free-form note set by the user (POST/PATCH).
   note       String?
   openedAt   DateTime             @default(now())
@@ -211,7 +217,13 @@ model StrategyPaperTrade {
   rationale   String[]
   exitPrice   Float?
   pnlPct      Float?
+  /// P&L in the notional's currency. For user Strategy Lab trades this is
+  /// USD (notional default = $1,000). India auto-trader rows set `currency`
+  /// to "INR" at write time so display layers can format correctly.
   pnlUsd      Float?
+  /// Currency of `notional` and `pnlUsd`. Defaults to "USD". Set to "INR"
+  /// for India paper trades.
+  currency    String               @default("USD")
   /// Reason the trade closed: TARGET / STOP / EXIT_RULE / EXPIRED / CANCELLED.
   closeReason String?
   openedAt    DateTime             @default(now())

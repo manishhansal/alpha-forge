@@ -157,6 +157,7 @@ export function startIndiaEodSquareOffJob(): JobHandle {
                   exitPrice,
                   pnlPct,
                   pnlUsd,
+                  currency:  "INR",       // USD-001 FIX: India P&L is INR
                   closedAt,
                 },
               }),

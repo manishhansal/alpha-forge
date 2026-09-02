@@ -192,6 +192,10 @@ export async function openIndiaPaperTrade(
       target,
       riskReward,
       atr: atr ?? signal.atr,
+      // USD-001 FIX: India paper trades store P&L in INR, not USD.
+      // Setting currency = "INR" makes the denomination explicit so display
+      // layers format values correctly without inspecting the source prefix.
+      currency: "INR",
       openedAt: new Date(signal.triggeredAt),
     },
     select: { id: true },
@@ -336,6 +340,7 @@ export async function resolveIndiaOpenTrades(
           exitPrice: resolvedOutcome.exitPrice,
           pnlPct,
           pnlUsd: (pnlPct / 100) * t.notional,
+          currency: "INR", // USD-001 FIX
           closedAt: new Date(closedAtMs),
         },
       });
@@ -371,6 +376,7 @@ export async function resolveIndiaOpenTrades(
           exitPrice: exit,
           pnlPct,
           pnlUsd: (pnlPct / 100) * t.notional,
+          currency: "INR", // USD-001 FIX
           closedAt: new Date(now),
         },
       });
