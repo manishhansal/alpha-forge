@@ -58,6 +58,9 @@ import {
   type ReturnSeries,
 } from "@/lib/opportunity-engine";
 import type { OpportunityV1 } from "@/lib/opportunity-engine";
+// AUDIT-001 FIX: wire lifecycle-event persistence so the signal audit trail
+// is written to the DB and survives worker restarts.
+import { emitLifecycleEvent } from "@/lib/signal-intelligence/lifecycle-persist";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -332,12 +335,20 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
   const approvedOpportunities: OpportunityV1[] = [];
 
   if (ENABLE_OPPORTUNITY_PIPELINE) {
+    // RISK-001 FIX: use real portfolio state from the live IndiaDaySession
+    // rather than hardcoded 0% drawdown. This ensures the drawdown halt,
+    // correlation limits, and risk-adjusted sizing all use actual session data.
+    const livePnlPct = budget.session
+      ? (budget.session.realisedPnl ?? 0) / DAILY_BUDGET * 100
+      : 0;
+    const liveDrawdownPct = budget.session?.maxDrawdownPct ?? 0;
+
     // Build a minimal portfolio state for the pipeline
-    const drawdownState = classifyDrawdownTier(0); // actual drawdown would come from analytics
+    const drawdownState = classifyDrawdownTier(liveDrawdownPct);
     const dailyBudget = computeDailyRiskBudget(
       budget.session ? DAILY_BUDGET : DAILY_BUDGET,
       budget.deployed,
-      0, // realized PnL (would come from session)
+      livePnlPct,
       budget.session?.totalTrades ?? 0,
     );
 
@@ -392,12 +403,12 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
           portfolioState: {
             capitalINR: DAILY_BUDGET,
             currentExposurePct: (budget.deployed / DAILY_BUDGET) * 100,
-            currentDrawdownPct: 0,
-            dailyPnlPct: 0,
+            currentDrawdownPct: liveDrawdownPct,  // RISK-001 FIX: real session drawdown
+            dailyPnlPct: livePnlPct,               // RISK-001 FIX: real session P&L
             correlatedPositions: budget.openCount,
             openRiskPct: (budget.deployed / DAILY_BUDGET) * MAX_RISK_PER_TRADE_PCT * 100,
             isKillSwitchActive: false,
-            isDailyLossBreach: false,
+            isDailyLossBreach: liveDrawdownPct < -5, // 5% daily loss breach threshold
           },
           universeReturns: [],
           niftyReturns: emptyNiftyReturns,
@@ -420,6 +431,26 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
         if (result.shouldTrade) {
           pipelineResults.push({ candidate: c, opportunity: result.opportunity, shouldTrade: true });
           approvedOpportunities.push(result.opportunity);
+        } else {
+          // AUDIT-001 FIX: persist REJECTED lifecycle event for pipeline-rejected candidates.
+          emitLifecycleEvent(db, {
+            signalId:    result.opportunity.opportunityId ?? `${c.symbol}-${tradeDate}-${Date.now()}`,
+            fromState:   "RISK_CHECK",
+            toState:     "REJECTED",
+            reason:      result.rejectionStage
+              ? `Pipeline rejected at ${result.rejectionStage}: ${result.opportunity.hardRejections.slice(0, 2).join(", ")}`
+              : `Quality gate: tier=${result.opportunity.qualityTier}`,
+            strategyId:  result.opportunity.strategy ?? "INDIA_AI_SIGNALS",
+            instrument:  c.symbol,
+            sessionDate: tradeDate,
+            sourceType:  c.source === "DAILY_PICK" ? "DAILY_PICK" : "AI_SIGNAL",
+            metadata: {
+              decision:     result.opportunity.decision,
+              qualityTier:  result.opportunity.qualityTier,
+              netEV:        result.opportunity.scores.netExpectedValue,
+              rejectionStage: result.rejectionStage ?? null,
+            },
+          });
         }
       } catch {
         // Pipeline failure: fall back to legacy scoring for this candidate
@@ -509,6 +540,29 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
       newTradeIds.push(trade.id);
       deployedThisTick += tradeNotional;
       opened++;
+
+      // AUDIT-001 FIX: persist PAPER_EXECUTED lifecycle event for this signal.
+      // The signalId is the auto-trader's internal opportunity ID (or trade ID
+      // when no opportunity was produced by the pipeline). This gives every
+      // paper trade an auditable lifecycle record in the DB.
+      emitLifecycleEvent(db, {
+        signalId:    approvedOpp?.opportunityId ?? trade.id,
+        fromState:   "APPROVED",
+        toState:     "PAPER_EXECUTED",
+        reason:      `Auto-trader opened trade — score=${c.score.toFixed(3)}, source=${c.source}`,
+        strategyId:  approvedOpp ? (approvedOpp.strategy ?? "INDIA_AI_SIGNALS") : c.source,
+        instrument:  c.symbol,
+        sessionDate: tradeDate,
+        sourceType:  c.source === "DAILY_PICK" ? "DAILY_PICK" : "AI_SIGNAL",
+        metadata: {
+          tradeId:      trade.id,
+          score:        c.score,
+          qualityTier:  approvedOpp?.qualityTier ?? null,
+          netEV:        approvedOpp?.scores.netExpectedValue ?? null,
+          regime:       approvedOpp?.marketRegime ?? null,
+          tradeNotional,
+        },
+      });
     } catch {
       skipped++;
     }

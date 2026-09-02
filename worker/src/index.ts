@@ -19,6 +19,9 @@ import {
   initObservability,
 } from "./observability";
 import { closeRedis, getRedis } from "./redis";
+// AUDIT-001 FIX: flush lifecycle events on graceful shutdown so queued
+// signal audit records are not lost when the worker is terminated.
+import { flushLifecycleEvents } from "@/lib/signal-intelligence/lifecycle-persist";
 
 const SERVICE_NAME = process.env.WORKER_SERVICE_NAME?.trim() || "crypto-desk-worker";
 
@@ -150,6 +153,13 @@ async function shutdown(signal: string, code: number): Promise<void> {
   await Promise.all(stopPromises);
 
   await Promise.allSettled([closeRedis(), closePrisma()]);
+
+  // AUDIT-001 FIX: flush any queued signal lifecycle events before exit.
+  // These are the last in-flight DB writes and must complete before the
+  // process terminates to prevent audit trail gaps.
+  try {
+    await flushLifecycleEvents();
+  } catch { /* best-effort */ }
 
   // Flush queued Sentry events before we exit — otherwise SIGTERM during a
   // crash loop would drop the most useful event of the lifecycle.

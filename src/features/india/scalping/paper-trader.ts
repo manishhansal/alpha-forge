@@ -114,7 +114,24 @@ export async function openIndiaPaperTrade(
     }
   }
 
-  // ── DB-level dedup (fallback when Redis unavailable) ─────────────────────
+  // ── DUP-001 FIX: Cross-timeframe duplicate guard ─────────────────────────
+  // The india-scalper fans out across 1m/5m/15m timeframes, each building a
+  // `source` string of the form `in:<strategyId>:<tf>`. Without this guard
+  // the same signal fires 3 trades (one per TF) with identical entry/exit/PnL,
+  // inflating statistics 3×. We now reject any new trade if ANY open position
+  // already exists for this symbol on the India scalper (regardless of TF).
+  // The `in:` prefix identifies all India scalper trades in the shared table.
+  const existingOpenAnyTf = await prisma.paperTrade.findFirst({
+    where: {
+      symbol: signal.symbol,
+      status: "OPEN",
+      source: { startsWith: "in:" },
+    },
+    select: { id: true },
+  });
+  if (existingOpenAnyTf) return { opened: false, reason: "already-open" };
+
+  // ── Source-specific DB-level dedup (fallback when Redis unavailable) ─────
   const existingOpen = await prisma.paperTrade.findFirst({
     where: { symbol: signal.symbol, status: "OPEN", source },
     select: { id: true },
