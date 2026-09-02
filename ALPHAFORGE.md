@@ -1,47 +1,529 @@
-# ALPHAFORGE.md
+# AlphaForge — Architecture & Product Specification
 
-## Signal Intelligence Engine (45-Phase Indian F&O)
+This document is the authoritative reference for AlphaForge's product design, system architecture, data flows, and coding standards. It covers both markets (Crypto and Indian NSE F&O) and all major subsystems from the frontend through the ML microservice.
 
-The Signal Intelligence Engine is the measurement and attribution layer built on top of V6. It does not add new strategies — it instruments existing ones so the system can answer definitively what works, what doesn't, and why.
+---
 
-### Core Modules (`src/lib/signal-intelligence/`)
+## Table of Contents
 
-| Module | Purpose |
-|--------|---------|
-| `types.ts` | Canonical `EnrichedSignal`, `SignalQualityVector`, `ExpectedValueEstimate`, `OpportunityCluster`, lifecycle states, all shared types |
-| `signal-source-registry.ts` | `SignalSourceRegistry` singleton — validates every source ID, classifies into reporting buckets, prevents generic `technical` masking |
-| `fno-universe.ts` | `FNOUniverseService` — canonical F&O universe (4 indices + ~200 stocks); `buildUniverseCoverageSnapshot()` for session-level coverage validation |
-| `market-context-engine.ts` | `buildMarketContextSnapshot()` — NIFTY trend, VIX regime, breadth, opening range, VWAP, volume regime; `scoreContextAlignment()` |
-| `multi-layer-engine.ts` | 12-layer architecture with `LayerResult`; breakout quality, momentum quality, volume intelligence, volatility regime, liquidity, market structure |
-| `derivatives-intelligence.ts` | OI buildup classification (with freshness guard), option chain intelligence, options flow quality (OBSERVATION/INFERENCE/HCI labels), expiry context |
-| `signal-quality-vector.ts` | 14-component `SignalQualityVector`, `computeExpectedValue()` (calibrated), `gradeSignal()`, `evaluateAbstention()`, time-of-day buckets |
-| `conflict-resolver.ts` | `resolveSignalConflict()` (BUY/SELL/WAIT/NO_TRADE), `clusterSignals()` (anti-double-counting opportunity clusters) |
-| `signal-lifecycle.ts` | State machine (DETECTED→EXITED), `buildRecallReport()`, `buildSignalAttribution()`, `detectSignalDecay()`, `computeDynamicPositionSize()` |
-| `paper-trading-fidelity.ts` | Realistic paper fill (spread + impact + latency), signal funnel, `TODAY_SIGNAL_AUDIT_MODE`, execution mode isolation, deterministic replay hash |
-| `strategy-scorecard.ts` | Per-strategy scorecard, `evaluateProductionGates()` (8 gates for LIVE_CANDIDATE), strategy status lifecycle |
-| `index.ts` | Barrel export for all above |
+1. [Product Overview](#1-product-overview)
+2. [Market Surfaces](#2-market-surfaces)
+3. [Design System — IIT](#3-design-system--iit)
+4. [Core Architecture](#4-core-architecture)
+5. [Indian Market Data Layer](#5-indian-market-data-layer)
+6. [AI Signals Engine](#6-ai-signals-engine)
+7. [Daily Picks & Auto Paper-Trading](#7-daily-picks--auto-paper-trading)
+8. [Opportunity Engine (12-Stage Pipeline)](#8-opportunity-engine-12-stage-pipeline)
+9. [Signal Intelligence Engine (45-Phase)](#9-signal-intelligence-engine-45-phase)
+10. [V6 Quant Research Platform (24-Phase)](#10-v6-quant-research-platform-24-phase)
+11. [Institutional Infrastructure](#11-institutional-infrastructure)
+12. [ML Microservice](#12-ml-microservice)
+13. [Strategy Catalogue](#13-strategy-catalogue)
+14. [Worker Jobs](#14-worker-jobs)
+15. [Database Schema](#15-database-schema)
+16. [API Surface](#16-api-surface)
+17. [Folder Structure](#17-folder-structure)
+18. [Environment Variables](#18-environment-variables)
+19. [Testing & TDD Policy](#19-testing--tdd-policy)
+20. [Coding Standards](#20-coding-standards)
 
-### New API Endpoints
+---
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /api/in/signal-audit?date=YYYY-MM-DD` | Today's signal audit report (universe coverage, funnel, ML contribution, replay hash) |
-| `GET /api/in/universe-coverage?date=YYYY-MM-DD` | F&O universe summary + session coverage snapshot |
+## 1. Product Overview
 
-### New DB Models
+AlphaForge is a professional multi-market trading desk that ships two fully independent surfaces in one shell:
 
-| Model | Table | Purpose |
-|-------|-------|---------|
-| `SignalLifecycleEvent` | `signal_lifecycle_event` | Full state-machine audit trail per signal |
-| `UniverseCoverageSnapshot` | `universe_coverage_snapshot` | Per-session F&O universe coverage |
-| `OpportunityCluster` | `opportunity_cluster` | Anti-double-counting cluster records |
-| `SignalIntelligenceRecord` | `signal_intelligence_record` | Full enriched signal taxonomy envelope |
+- **Crypto** — BTC · ETH · SOL via a pluggable broker adapter (Delta Exchange India by default, Binance opt-in). Derivatives analytics, sentiment engine, AI signals, 10 scalping strategies, 5-year strategy backtest, conversational strategy lab, paper trading.
+- **Indian NSE F&O** — Complete sidebar parity with the Crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, multi-confluence AI signals, Daily Picks, FnO trend scanners, intelligent auto paper-trading (₹1L/day), trade history, GEX, IV surface, options workbench, portfolio optimizer, and a full evidence-driven quant research platform.
 
-### Production Guard
+A top-of-sidebar **Market Switcher** toggles between surfaces. The URL is the source of truth — `/` is Crypto, `/in/*` is India. Deep links and browser history always land correctly with no extra persistence.
 
-**8 gates must all pass for LIVE_CANDIDATE promotion:**
+---
+
+## 2. Market Surfaces
+
+### 2.1 Shared Core (both markets, same order)
+
+Both sidebars expose the same 10 surfaces in the same order so the user's mental map carries across the switcher:
+
+| # | Crypto | India (NSE F&O) | Auth |
+|---|---|---|---|
+| 1 | Overview (`/`) | Overview (`/in/dashboard`) | **Public** |
+| 2 | Best Time (`/best-time`) | Best Time (`/in/best-time`) | Protected |
+| 3 | Options (`/options`) | Options (`/in/options`) | Protected |
+| 4 | Signals (`/signals`) | Signals (`/in/signals`) | Protected |
+| 5 | AI Signals (`/ai-signals`) | AI Signals (`/in/ai-signals`) | Protected |
+| 6 | Strategies (`/strategies`) | Strategies (`/in/strategies`) | Protected |
+| 7 | Paper Trading (`/paper-trading`) | Paper Trading (`/in/paper-trading`) | Protected |
+| 8 | Strategy Backtest (`/strategy-backtest`) | Strategy Backtest (`/in/strategy-backtest`) | Protected |
+| 9 | Strategy Lab (`/strategy-lab`) | Strategy Lab (`/in/strategy-lab`) | Protected |
+| 10 | Heatmap (`/heatmap`) | Heatmap (`/in/heatmap`) | **Public** |
+
+Market-specific extras are appended below the shared core. Profile lives on the topbar avatar (`/profile`, `/in/profile`).
+
+### 2.2 India-Only Extras
+
+| Page | Path | Purpose |
+|---|---|---|
+| Daily Picks | `/in/daily-picks` | Top-3-per-bucket frozen picks + expiry-day plays + history |
+| Trade History | `/in/history` | Unified history: Daily Picks + Scalper + FnO Trend Scanner |
+| News | `/in/news` | RSS feeds + bull/bear sentiment + F&O impact tags |
+| Scanner | `/in/scanner` | Single-mode F&O scanner |
+| Watchlist | `/in/watchlist` | Persistent F&O watchlist |
+| Chart | `/in/chart/[symbol]` | Per-symbol lightweight-charts deep-dive |
+| Options Workbench | `/in/options-workbench` | Multi-leg options payoff builder + greeks + GEX strike scan |
+| Portfolio Optimizer | `/in/portfolio` | Riskfolio-Lib HRP + CVaR allocation |
+
+### 2.3 Auth Gating
+
+`src/proxy.ts` (Next.js middleware) gates every non-public route via Auth.js v5. The `isPublicPath()` helper is the single source of truth. Anonymous users see Overview + Heatmap per market and a "Sign in to unlock" CTA. All other routes redirect to `/login?callbackUrl=…`.
+
+### 2.4 Best Time to Trade
+
+**Crypto engine** (`src/features/best-time/engine.ts`) — pure, IST-anchored. Six named windows from Worst Zone (02:00–07:00) to Golden Scalp Zone (19:00–22:00). Higher-priority windows win on overlap. Day-of-week quality multiplier (Tue/Wed/Thu = excellent, Sun = low liquidity). Forces WAIT outside active windows.
+
+**NSE engine** (`src/features/india/best-time/engine.ts`) — same API, seven NSE-specific windows:
+
+| Window | Hours (IST) | Quality |
+|---|---|---|
+| Pre-Open Auction | 09:00–09:15 | Preparation |
+| Opening Volatility | 09:15–10:00 | High |
+| Morning Trend | 10:00–11:30 | Ideal |
+| Midday Lull | 11:30–13:30 | Avoid |
+| Afternoon Trend | 13:30–15:00 | Good |
+| Power Hour | 15:00–15:30 | Ideal |
+| Closing Auction | 15:30–15:40 | Closing risk |
+
+Expiry-aware day quality: Thursday (NIFTY weekly) adds a gamma-risk flag.
+
+### 2.5 Paginated Data Views
+
+All large Indian market tables are paginated at **5 items per page** using a shared `usePaginationFilter` hook with three filter tabs — All / Most Confidence / High Winrate. Covers: Scanner, MSB Signals, Range Expansion, Sector Stocks Modal, Live Signals, Open Positions, News Feed, Watchlist.
+
+---
+
+## 3. Design System — IIT
+
+AlphaForge's visual language is the **Institutional Intelligence Terminal (IIT)** — precision-first, data-dense, and regime-reactive.
+
+### 3.1 Color Tokens
+
+All colors are defined in OKLCH via the `@theme inline` block in `globals.css`. No hardcoded hex or RGB values in component files.
+
+```css
+--color-panel-bg         /* card / panel background */
+--color-panel-border     /* 1px panel borders */
+--color-data-positive    /* green: profits, bullish readings */
+--color-data-negative    /* red: losses, bearish readings */
+--color-data-neutral     /* amber: caution, neutral */
+--color-ai-accent        /* AI/ML signal highlight */
+--color-regime-bull      /* bull regime: green */
+--color-regime-bear      /* bear regime: red */
+--color-regime-sideways  /* sideways: amber */
+--color-regime-highvol   /* high volatility: purple */
+```
+
+### 3.2 Motion System
+
+Four named Spring presets exported from `src/lib/motion-presets.ts`:
+
+| Preset | Stiffness / Damping | Use case |
+|---|---|---|
+| `SPRING_MICRO` | 800 / 40 | Price ticks, badge updates |
+| `SPRING_FAST` | 600 / 35 | Tab indicators, theme toggle |
+| `SPRING_DEFAULT` | 400 / 28 | Panel opens, sidebar |
+| `SPRING_GENTLE` | 240 / 24 | Page transitions |
+
+All spring animations reference named presets — no ad-hoc values in components.
+
+### 3.3 Data Density
+
+Components read `data-density` from their DOM ancestor. No prop drilling:
+- `compact` — 32px rows
+- `default` — 40px rows
+- `comfortable` — 48px rows
+
+### 3.4 CSS Keyframes
+
+Six custom animations: `price-flash-up`, `price-flash-down`, `breakout-pulse`, `vix-warning-pulse`, `celebration-pulse`, `shimmer-border`. All respect `prefers-reduced-motion`.
+
+### 3.5 Regime-Reactive UI
+
+`RegimeProvider` wraps the `(dashboard)` layout. It reads `UIStore.activeRegime` and injects `--aurora-regime-a` CSS variable for the shell aurora background (1200ms CSS transition). `RegimeSync` (India) and `CryptoRegimeSync` bridge their market stores into UIStore without direct coupling.
+
+### 3.6 UIStore
+
+`src/store/uiStore.ts` — Zustand v5, persists to localStorage:
+
+```ts
+sidebarCollapsed: boolean    // persisted: af-ui-sidebar-collapsed
+tableDensity: Density        // persisted: af-ui-table-density
+activeRegime: MarketRegime
+commandPaletteOpen: boolean  // blocks body scroll when open
+chartFullscreen: boolean
+radarVisible: boolean
+```
+
+### 3.7 Trading Component Library
+
+Located in `src/components/trading/`:
+
+| Component | Purpose |
+|---|---|
+| `SignalBadge` | LONG / SHORT / BUY / SELL / WAIT with IIT tokens + icon |
+| `ConfidenceBar` | 0–100 gradient fill with optional numeric label |
+| `RegimeBadge` | BULL / BEAR / SIDEWAYS / HIGH_VOL with regime tokens + SPRING_MICRO entrance |
+| `NumberMorph` | Framer Motion number interpolation; magnitude-scaled duration (120ms–360ms) |
+| `StatGrid` | Responsive grid of stat cells (`--font-label` keys + `--font-data` values) |
+| `PanelHeader` | 40px fixed row: title + optional badge + optional right-slot |
+| `RiskMeter` | Segmented bar (green / yellow / red); horizontal or vertical |
+| `AiRadar` | TanStack Table v9; hover detail panels; multi-column sort; keyboard nav |
+
+### 3.8 Layout Primitives
+
+Located in `src/components/layout/`:
+
+| Component | Purpose |
+|---|---|
+| `BentoGrid` + `BentoCell` | 12-column CSS grid; `data-bento-cell` for mobile reflow priority |
+| `PageHeader` | `<h1>` + optional subtitle + optional regime badge |
+| `EmptyState` | Centered Lucide icon + heading + description + optional action |
+| `ErrorState` | Red-tinted error + "Retry" → nearest TanStack Query `refetch()` |
+| `PageTransition` | SPRING_GENTLE fade-from-below entrance for page default exports |
+
+### 3.9 3D Suite
+
+All 3D components use `next/dynamic` with `ssr: false` and skeleton loading states:
+- `MarketIntelligenceCore` — quality prop (low/medium/high); `useReducedMotion()` halts frame updates
+- `RiskSphere` — R3F sphere; color + scale + opacity encode portfolio risk 0–100
+- `PortfolioGalaxy` — R3F `Points` particle system; Fibonacci sphere; particle size = position size; color = P&L sign
+
+---
+
+## 4. Core Architecture
+
+### 4.1 Data Flow
+
+```
+Browser
+  └── Zustand stores (UIStore + market stores)
+        ↑ WebSocket (broker adapter)
+        ↑ TanStack Query (polling REST routes)
+
+Next.js Route Handlers (Node runtime)
+  └── cached(key, ttl, fn) → Redis → provider adapter → response
+
+Background Worker (tsx, separate process)
+  └── Scheduler (non-overlapping tick) → jobs → DB + Redis
+
+ML Microservice (FastAPI, port 8100)
+  └── Prediction endpoints ← HTTP from Next.js route handlers
+```
+
+### 4.2 Broker Adapter Pattern
+
+```ts
+interface BrokerAdapter {
+  getTicker(symbol): Promise<Ticker>
+  getKlines(symbol, interval, limit): Promise<Candle[]>
+  fetchKlinesRange(symbol, interval, start, end): Promise<Candle[]>
+  getFundingRate(symbol): Promise<number>
+  getOpenInterest(symbol): Promise<number>
+  getLongShortRatio(symbol): Promise<LongShortRatio>
+  getAllFuturesTickers(): Promise<Ticker[]>
+  createTickerWS(symbol): WebSocketFactory
+  createLiquidationWS(): WebSocketFactory
+  capabilities: BrokerCapabilities
+}
+```
+
+Active broker resolved from `ACTIVE_BROKER` env var (`delta` or `binance`). The `capabilities` flags let signal/alert pipelines handle feature gaps without special-casing the broker ID.
+
+### 4.3 Redis Usage
+
+- API response caching (`cached(key, ttl, loader)`)
+- WebSocket snapshots (last tick per symbol)
+- Rate limit protection
+- Liquidation rolling buffer (sorted sets, `liq:rolling:{PAIR}`)
+- Atomic trade guard (`SET key value NX EX` — exactly-once execution)
+- Option chain health tracking (`india:oc-capture:last-success-ms`)
+- Indicator state snapshots for worker warm-start
+- Alert cooldown keys
+- Experiment results
+
+### 4.4 Auth
+
+Auth.js v5 with Credentials provider + JWT sessions. `src/proxy.ts` protects routes via the `authorized` callback. API keys stored AES-256-GCM encrypted; `src/lib/crypto.ts` owns the key operations.
+
+---
+
+## 5. Indian Market Data Layer
+
+`src/lib/market-data/` — provider-agnostic, single canonical type system for all Indian market data.
+
+### 5.1 Provider Priority Chain
+
+```
+Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  NSE direct (3)  →  Yahoo Finance (4)
+```
+
+| Provider | File | Capabilities |
+|---|---|---|
+| Angel One SmartAPI | `providers/angel-one.ts` | Quotes, historical, option chain, live stream, instrument master |
+| Upstox Analytics v2 | `providers/upstox.ts` | Quotes, historical, option chain |
+| NSE direct | `providers/nse.ts` | Option chain, quotes (cookie-warmed scraper) |
+| Yahoo Finance | `providers/yahoo.ts` | Historical OHLCV, quotes (no derivatives) |
+
+When a provider's env vars are absent, it is silently registered as `enabled: false` — no degradation.
+
+### 5.2 Failover Engine
+
+`withFailover(capability, fn, context?)` — wraps any provider call:
+1. Retries up to 3× within the current provider with exponential backoff (300ms base, 5s cap, 20% jitter)
+2. Fails over to the next provider in priority order
+3. 10s cooldown prevents provider oscillation
+4. Every failover emits a structured log event (`from`, `to`, `reason`, `attempt`)
+
+### 5.3 Circuit Breaker
+
+Health scores start at 100. Each consecutive failure subtracts up to 40 pts; each success recovers 10 pts. Auth failures add an extra −25 pt penalty. Circuit opens at < 20 pts, attempts half-open after 30s.
+
+### 5.4 Canonical Types
+
+`src/lib/market-data/types.ts` — the single source of truth:
+
+```ts
+type ProviderId = "angel_one" | "upstox" | "nse" | "yahoo"
+type Exchange = "NSE" | "NFO" | "BSE" | "BFO" | "MCX" | "CDS"
+type MDQuote      // normalized quote: ltp, OHLCV, OI, 52W, circuits, depth
+type OHLCVCandle  // OHLCV + interval + UTC timestamp
+type OptionChain  // per-strike CE/PE with greeks + PCR/max-pain/ATM IV analytics
+type LiveTick     // normalized streaming tick: LTP, OI, bid/ask
+```
+
+### 5.5 CandleBuilder Service
+
+`src/lib/market-data/services/candle-builder.service.ts` — real-time OHLCV candle assembly:
+- Assembles candles for all 8 NSE-aligned timeframes: `1m`, `3m`, `5m`, `10m`, `15m`, `30m`, `1h`, `1d`
+- All bar boundaries aligned to **09:15 IST** (NSE open), never Unix-epoch midnight
+- Redis-backed active candle state — mid-bar restart recovery
+- Confirmed candles upserted to `CandleBar` table (idempotent)
+- Configurable late-tick tolerance (default 2s); closed candles never mutated
+- Backfill gap detection on reconnect; caller-supplied `loader` fills gaps
+
+### 5.6 Validation
+
+`candle-validator.ts` — rejects zero/negative prices, `high < low`, `close` outside `[low, high]`.
+`tick-validator.ts` — rejects negative LTP, future timestamps (> 5s ahead), extreme single-bar moves (> 20%).
+
+### 5.7 Angel One SmartAPI Integration
+
+Beyond the data layer, the Angel One adapter (`services/india/angelone/`) provides:
+- **First-party F&O scanners** — gainers/losers, PCR, OI buildup from the `marketData/v1/` API
+- **Full option greeks** — delta, gamma, theta, vega per strike (not just IV)
+- **Real ΔOI** — diffs live OI against a session-open baseline cached until midnight IST
+- **FULL-mode quotes** — OI, 52W high/low, daily circuit limits, order-book imbalance ∈ [−1, 1]
+- **SmartStream WebSocket 2.0** — binary tick stream; decodes LTP/Quote/SnapQuote little-endian frames; exponential-backoff reconnect; falls back to 5s FULL-quote poll on failure
+- **Read-only account layer** — funds/margin, holdings, net positions (all number-typed, string-parsed)
+- **BSE (BFO) option chain** — for SENSEX expiry-day Gamma Blast / Hero Zero plays
+
+---
+
+## 6. AI Signals Engine
+
+### 6.1 Architecture
+
+```
+features/ai-signals/engine.ts     — pure, deterministic helpers (no I/O)
+features/ai-signals/crypto-builder.ts  — getCryptoAiSignals()
+features/ai-signals/india-builder.ts   — getIndiaAiSignals()
+app/api/ai-signals/route.ts        — Crypto AI Signals endpoint
+app/api/in/ai-signals/route.ts     — India AI Signals endpoint
+```
+
+The engine is cross-market. Both builders call the same pure helpers:
+
+```ts
+compositeScore(factors, coverage)
+classifyAction(score, minMagnitude)
+gradeFromConfidence(confidence)
+calibrateWinProbability(confidence)   // Platt-scaled, [0.28, 0.82]
+buildTakeProfits(entry, atr, horizon) // TP1/TP2/TP3 + scale-out allocations
+buildTradeLevels(entry, atr, direction)
+buildTimingWindow(horizon)            // enterBy + exitBy + live countdown
+buildReasons(factors)                 // top-6 confluence factors
+suggestPositionSizePct(confidence, horizon, atr, entry)
+```
+
+### 6.2 Every Signal Carries
+
+- **Action** — `LONG | SHORT | BUY | SELL | WAIT`
+- **Confidence** — 0–100 + grade (S / A / B / C / D)
+- **Win probability** — Platt-calibrated, never pretends certainty
+- **Entry zone** — point entry ± 0.25×ATR
+- **ATM strike** — nearest tradeable instrument (from live NSE chain for India)
+- **TP1 / TP2 / TP3** — ATR-multiple ladder with 50% / 30% / 20% scale-outs
+- **Stop loss** — ATR-sized, with explicit invalidation criteria line
+- **Risk:Reward** — per-TP and blended
+- **Position sizing %** — 1% risk budget, horizon-capped
+- **Time horizon** — `scalp | intraday | swing | positional`
+- **Timing window** — `enterBy` + `exitBy` + live countdown; "Stale" badge on expiry
+- **AI rationale** — top-6 factors with category chips (Tech / Deriv / Sent / Macro / News / Flow)
+
+### 6.3 Crypto Engine (9 factors)
+
+RSI(14), MACD histogram, EMA 20/50 spread, volume thrust, funding rate (inverted), OI 1h Δ, long/short ratio (inverted), liquidation imbalance, Fear & Greed (inverted). Session quality bonus from the IST Best-Time engine.
+
+### 6.4 India Engine v2 — `alphaforge-ai-v2` (10+ factors)
+
+| Factor | Notes |
+|---|---|
+| Daily SMA 20/50/200 trend stack | Price vs each SMA; directional bias |
+| RSI(14) | Wilder method |
+| 5-day momentum | % change |
+| Volume thrust | Today vs 20d average |
+| PCR (OI) | Angel One first-party or chain-derived; put-writing = bullish |
+| ATM IV | Inverted — elevated IV crushes options post-move |
+| ΔPE-CE OI build-up | From live NSE option chain |
+| Max-pain pull | Distance from spot to max-pain strike |
+| Scanner agreement | Cross-references all 6 F&O scanners |
+| NSE session quality | Forces WAIT outside 09:15–15:30 IST |
+| Super Confluence | UT Bot + AI Neural (HMA) + SMC BOS/CHoCH + EMA 9/15/21 |
+
+**Quant pre-filter gate** — ADX ≥ 18, relative volume ≥ 1.1×, ATR% ≥ 0.4%; failures get −18% confidence penalty. Index underlyings always pass.
+
+**ML regime blending** — 65% heuristic + 35% Python ML service.
+
+**ML stock rank boost** — top-20 ML-ranked stocks earn up to +0.06 confidence; bottom stocks up to −0.06.
+
+**Flow-factor confidence bonus** — up to +0.08 when scanner + futuresScreen + volume + oiBuildup + dayChange are all available.
+
+### 6.5 v2 Threshold Changes
+
+| Parameter | Old | New |
+|---|---|---|
+| WAIT threshold | 0.18 composite magnitude | **0.22** |
+| Grade S | ≥ 0.85 | ≥ **0.82** |
+| Grade A | ≥ 0.72 | ≥ **0.68** |
+| Grade B | ≥ 0.58 | ≥ **0.54** |
+| Win probability offset | 0.35 | **0.38** |
+| Low-risk confidence floor | ≥ 0.62 | ≥ **0.68** |
+
+---
+
+## 7. Daily Picks & Auto Paper-Trading
+
+### 7.1 Daily Picks
+
+`/in/daily-picks` — five buckets, top 3 per bucket, frozen at 09:15 IST:
+
+| Bucket | Source | Logic |
+|---|---|---|
+| **Indices Scalping** | F&O index underlyings only | OI build-up + PCR + max-pain + intraday momentum |
+| **Opening Breakout** | `opening-breakout.ts` strategy | First 5-min candle ORB; lazy-frozen after retest |
+| **Highly Momentum** | AI universe + F&O stocks | SMA trend stack + 5d momentum + volume thrust |
+| **Highly Scalping** | AI universe + F&O stocks | Expected range + R:R ≥ 1.5 + scanner agreement |
+| **Highly Potential** | AI universe + F&O stocks | Confidence + win-probability + blended R:R |
+
+Bucket quality floors (v2):
+- MOMENTUM: confidence ≥ 0.25 + dayChange ≥ 0.30
+- SCALPING: confidence ≥ 0.22 + R:R ≥ 1.5 + dayChange ≥ 0.30
+- POTENTIAL: confidence ≥ 0.28 + breakout ≥ 0.25
+
+**Every pick ships**: entry / stop / target / can-move-upto / can-expect / logic / timing.
+
+**Lifecycle**: OPEN → TARGET_HIT / STOP_HIT / CLOSED (force-squared at 15:30 IST if unresolved). Timing fields: `generatedAt` (appeared on board) and `resolvedAt` (how long it took).
+
+**Pre-market guard**: no picks before 09:15 IST. Stale pre-market rows auto-evicted on first post-open request.
+
+**Engine architecture**:
+- `src/features/india/daily-picks/engine.ts` — pure functions (bucketScores, selectDailyPicks, trackPick, groupDailyPicks). No I/O.
+- `src/features/india/daily-picks/builder.ts` — `getIndiaDailyPicks()` (freeze-or-track) + `getIndiaDailyPicksHistory()`. DB-resilient: degrades to ephemeral live picks when Postgres is down.
+- `worker/src/jobs/india-daily-picks.ts` — 5-min cadence, market-hours gated. Both the worker and the on-read path are idempotent.
+
+### 7.2 Expiry-Day Plays (Gamma Blast / Hero Zero)
+
+Rendered on `/in/daily-picks` **only** on a NIFTY (Tuesday) or SENSEX (Thursday) expiry day:
+
+- **Gamma Blast** — Buy ATM option in trend direction. ~2.2× target / 50% hard stop. Maximal gamma with one expiry session of theta left.
+- **Hero / Zero** — Buy far-OTM (3 strikes out) lottery. ~5× target / stop at 0.
+
+NIFTY expiry + premiums from the live NSE chain. SENSEX from the live BSE (BFO) chain via Angel One, with a spot + India VIX Black-Scholes estimate fallback.
+
+### 7.3 Intelligent Auto Paper-Trading Engine
+
+Runs via `worker/src/jobs/india-auto-trader.ts`:
+
+**Signal scoring formula:**
+```
+score = 0.35×confidence + 0.25×winProbability + 0.25×grade + 0.15×R:R
+```
+
+**Rules:**
+- Score threshold ≥ 0.52 (eliminates low-conviction setups)
+- Daily ₹1,00,000 budget — max 5 positions × ₹20,000 notional
+- Risk gate: stop distance / entry ≤ 2.5%
+- No new entries after 14:45 IST
+- All positions closed at 15:30 IST
+- Every candidate routed through the **12-stage Opportunity Pipeline** before execution
+- `IndiaDaySession` table tracks daily budget utilisation and session P&L
+- Analytics at `GET /api/in/paper-trade/analytics?range=1d|7d|15d|30d|6mo|1y|all`
+
+---
+
+## 8. Opportunity Engine (12-Stage Pipeline)
+
+`src/lib/opportunity-engine/` — sits between raw AI signals and paper trade execution. Every candidate signal passes all 12 stages before a paper trade is opened.
+
+```
+Stage 1   Universe Coverage Validation
+Stage 2   Market Context Snapshot (NIFTY trend, VIX, breadth, VWAP)
+Stage 3   Multi-Layer Signal Evaluation (12 layers; VETO from any = rejection)
+Stage 4   Derivatives Intelligence (OI freshness, chain quality, flow classification)
+Stage 5   Signal Quality Vector (14 independently-inspectable components)
+Stage 6   Expected Value (EV = P(win)×E[win] − P(loss)×E[loss] − costs − slippage)
+Stage 7   Opportunity Clustering (correlated signals → one cluster; geometric mean confidence)
+Stage 8   Conflict Resolution (BUY | SELL | WAIT | NO_TRADE)
+Stage 9   Abstention Evaluation (15 explicit abstention reasons)
+Stage 10  Risk Check (Portfolio Risk Engine v2 pre-trade check)
+Stage 11  Position Sizing (base × confidence × vol × correlation × drawdown)
+Stage 12  Execution Mode Isolation (BACKTEST | RESEARCH | SHADOW | PAPER | LIVE)
+```
+
+**Pipeline versions**: `PIPELINE_VERSION = "opportunity-engine-v1"`, `FEATURE_VERSION = "fv1.0"`, `POLICY_VERSION = "pv1.0"`.
+
+**OPP-001 fix**: The pipeline pre-fetches real 1-year daily OHLCV for every candidate (Angel One → Upstox → Yahoo failover) before the pipeline loop, providing real ATR, RSI, SMA20/SMA50, average volume, and regime detection.
+
+**API routes**: `GET /api/in/opportunity-engine`, `/calibration`, `/attribution`, `/regime`, `/[opportunityId]`.
+
+---
+
+## 9. Signal Intelligence Engine (45-Phase)
+
+`src/lib/signal-intelligence/` — measurement and attribution infrastructure. Does not add new strategies. Instruments existing ones so the system can answer what works, what doesn't, and why.
+
+### 9.1 Modules
+
+| Module | Key Exports |
+|---|---|
+| `types.ts` | `EnrichedSignal` (40 fields), `SignalQualityVector`, `ExpectedValueEstimate`, `OpportunityCluster`, all shared types |
+| `signal-source-registry.ts` | `SignalSourceRegistry` — validates source IDs; classifies into `SignalReportingBucket`; only 9 official strategies are leaderboard-eligible; `AI_SIGNAL` = `MANUAL`, never `STRATEGY` |
+| `fno-universe.ts` | `FNOUniverseService` — canonical ~200 stock + 4 index universe; `buildUniverseCoverageSnapshot()` — session INVALID when coverage < 80% |
+| `market-context-engine.ts` | `buildMarketContextSnapshot()` — NIFTY trend, VIX regime, A/D breadth, opening range, VWAP, gap; `scoreContextAlignment()` → [−1, 1] |
+| `multi-layer-engine.ts` | 12-layer architecture (MARKET_CONTEXT → EXECUTION); VETO from any layer = immediate rejection; `aggregateLayerResults()` weighted composite |
+| `derivatives-intelligence.ts` | OI buildup classification (LONG_BUILDUP → UNCLASSIFIED; freshness guard 15min); options flow labels (OBSERVATION / INFERENCE / HIGH_CONFIDENCE_INFERENCE); expiry context |
+| `signal-quality-vector.ts` | 14-component `SignalQualityVector`; `computeExpectedValue()` with Platt-calibrated win probability (35% shrinkage); `gradeSignal()` (A_PLUS / A / B / C / REJECT); `evaluateAbstention()` — 15 explicit reasons |
+| `conflict-resolver.ts` | `resolveSignalConflict()` → BUY/SELL/WAIT/NO_TRADE; `clusterSignals()` — anti-double-counting (ORB + Momentum + Volume Breakout on same event = ONE cluster) |
+| `signal-lifecycle.ts` | State machine: DETECTED → VALIDATING → QUALIFIED → RISK_CHECK → APPROVED → PAPER_EXECUTED → ACTIVE → EXITED/EXPIRED/REJECTED; all transitions persisted; invalid transitions throw |
+| `paper-trading-fidelity.ts` | `computePaperFill()` — realistic execution (mid + half-spread + market impact + latency drift); 8-stage signal funnel; deterministic `computeReplayHash()` |
+| `strategy-scorecard.ts` | `buildScorecardEntry()` — 16 required metrics per strategy; `evaluateProductionGates()` — 8 mandatory gates for LIVE_CANDIDATE |
+
+### 9.2 Production Guard (8 Gates for LIVE_CANDIDATE)
+
+Positive backtest P&L satisfies **none** of these:
+
 1. Minimum sample size (≥ 30 resolved trades)
-2. OOS validation
+2. Out-of-sample validation
 3. Walk-forward stability
 4. Cost sensitivity (profitable at 2× base cost)
 5. Regime coverage (≥ 3 distinct regimes)
@@ -49,2578 +531,646 @@ The Signal Intelligence Engine is the measurement and attribution layer built on
 7. Paper trading evidence (≥ 10 sessions)
 8. Execution quality (≥ 0.70)
 
-Positive backtest P&L satisfies **none** of these gates.
+### 9.3 Strategy Status
+
+All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE`. That is the correct and expected state — no fabricated promotions.
+
+### 9.4 New DB Models
+
+| Model | Purpose |
+|---|---|
+| `SignalLifecycleEvent` | Full state-machine audit trail; enables deterministic replay |
+| `UniverseCoverageSnapshot` | Per-session coverage; session validity gate |
+| `OpportunityCluster` | Correlated signal groups for anti-double-counting |
+| `SignalIntelligenceRecord` | Full 40-field enriched signal envelope |
 
 ---
 
-## V6 — Evidence-Driven Quant Research Platform
+## 10. V6 Quant Research Platform (24-Phase)
 
-AlphaForge V6 transforms the platform from a collection of sophisticated strategies into a scientifically rigorous quant research platform. This is the single most important architectural change in the project's history.
+`src/lib/research/` — a scientifically rigorous evidence-based research infrastructure. The most important architectural shift in the project's history.
 
-### The Problem V6 Solves
+### 10.1 Absolute Rules (enforced in code)
 
-The system contained many strategies, scanners, signal engines, and ML models. But answering the question **"which strategies actually work?"** was impossible. Backtests existed, but:
-
-- Parameters may have been tuned in-sample (overfitting risk)
-- No out-of-sample governance existed
-- Costs were not systematically attributed
-- Regime sensitivity was undeclared
-- Strategies could not be formally promoted or demoted
-- No strategy had a falsifiable hypothesis
-
-### V6 Research Infrastructure
-
-All research infrastructure lives under `src/lib/research/`. The system enforces these absolute rules in code:
-
-1. **No in-sample promotion evidence** — `IN_SAMPLE` metrics are computed but the promotion engine ignores them
-2. **LIVE requires human approval** — the `MANUAL_HUMAN_APPROVAL` gate cannot be bypassed; `approvalToken` + `approvedBy` are always required
-3. **Temporal leakage throws** — `validateSplitIntegrity()` throws `Error` on any overlap between IS/OOS periods
-4. **Experiments are immutable** — `ExperimentStore.add()` throws on duplicate IDs
-5. **Kill switches never auto-remove** — require explicit deactivation
+1. **No in-sample promotion** — `PerformancePeriod.IN_SAMPLE` metrics are computed but the promotion engine ignores them
+2. **LIVE requires human approval** — `MANUAL_HUMAN_APPROVAL` gate cannot be bypassed; `approvalToken` + `approvedBy` always required
+3. **Temporal leakage throws** — `validateSplitIntegrity()` throws `Error` on any IS/OOS overlap
+4. **Experiments are immutable** — `ExperimentStore.add()` throws on duplicate `experimentId`
+5. **Kill switches never auto-remove** — require explicit `deactivateKillSwitch()` call
 6. **No strategy outside the registry** — `getOrThrow()` enforced at all API entry points
 
-### Strategy Universe (18 strategies)
+### 10.2 Strategy Promotion Lifecycle
+
+```
+EXPERIMENTAL  →  hypothesis required
+RESEARCH      →  backtest pipeline
+BACKTEST_VALIDATED  →  OOS Sharpe ≥ 0.3, ≥ 30 trades, positive expectancy, DD < 30%, cost-profitable
+WALK_FORWARD_VALIDATED  →  OOS Sharpe ≥ 0.5, not overfit, MC not FRAGILE, not COST_FRAGILE
+SHADOW        →  ≥ 10 shadow trades, Sharpe ≥ 0.3, decay not CRITICAL
+PAPER         →  ≥ 20 paper trades, positive expectancy, DD < 25%, no material backtest drift
+LIVE_CANDIDATE  →  ≥ 20 sessions, paper Sharpe ≥ 0.6, PF ≥ 1.2, decay HEALTHY
+MANUAL_APPROVAL  →  human review
+LIVE          →  explicit approvalToken + approvedBy — never automatic
+```
+
+### 10.3 Research Platform Modules (24 Phases)
+
+| Phases | Module | Key Feature |
+|---|---|---|
+| 1–2 | Registry + Hypothesis | 18 strategies; falsifiable hypotheses; strategies without hypothesis blocked at EXPERIMENTAL |
+| 3–4 | Datasets + IS/OOS | SHA-256 fingerprinted datasets; `validateSplitIntegrity()` throws on leakage; 15 dedicated leakage tests |
+| 5–6 | Performance + Costs | 35 metrics per period (Sharpe, Sortino, Calmar, t-statistic, SQN, Ulcer Index...); 1×/1.5×/2×/3× cost stress; `COST_FRAGILE` blocks promotion |
+| 7–8 | Regime Attribution | Per-regime Sharpe/PF/WR per strategy; Strategy×Regime matrix (colour-coded Sharpe) |
+| 9 | Correlation | Full N×N correlation matrix; single-linkage clustering at 0.70 threshold; cluster capital allocation caps |
+| 10 | Alpha Decay | 5-state machine (HEALTHY → WARNING → DEGRADED → CRITICAL → DISABLED); rolling 52-week history |
+| 11 | Monte Carlo | 7 simulation types × 10,000 iterations; seeded RNG; FRAGILE blocks promotion |
+| 12 | Parameter Stability | Symmetric neighbourhood testing; OVERFIT_SUSPECTED blocks promotion |
+| 13 | Multiple Testing | Deflated Sharpe Ratio (Bailey & López de Prado 2014); PBO estimation; Benjamini-Hochberg FDR correction |
+| 14 | Signal Calibration | Brier Score, ECE, 10-bin reliability diagram; `wellCalibrated = (ECE < 0.05)` |
+| 15 | Ablation Testing | Per-component incremental OOS contribution; `LOW_VALUE_COMPONENT` flag |
+| 16–17 | Promotion + Demotion | 8 demotion trigger types; automatic demotion on CRITICAL decay, DD > 40%, COST_FRAGILE |
+| 18 | Confidence Score | 8-component weighted 0–100 score (HIGH_CONFIDENCE / VALIDATED / WATCH / DEGRADED / DISABLED) |
+| 19 | Experiment Tracking | Immutable records with `gitCommitHash`, `datasetFingerprint`, `parameterSet` |
+| 20–21 | Leaderboard + Allocation | Ranked views by configurable metric; HHI concentration; per-cluster allocation caps |
+| 22 | Kill Switch | SOFT_KILL (no new trades) + HARD_KILL (emergency close); automatic triggers; never auto-removed |
+| 23 | Paper Analysis | Backtest vs shadow vs paper comparison; KL divergence for regime shift; `requiresInvestigation` flag |
+| 24 | Validation Sessions | ≥ 20 sessions + regime diversity before LIVE_CANDIDATE; preferred 40+ sessions |
+
+### 10.4 Research Dashboard
+
+Navigate to `/research` — 10 pages:
+
+| Page | Path |
+|---|---|
+| Strategy Leaderboard | `/research` |
+| Strategy Inventory | `/research/strategies` |
+| Regime Matrix | `/research/regime-matrix` |
+| Monte Carlo | `/research/monte-carlo` |
+| Parameter Stability | `/research/parameter-stability` |
+| Signal Calibration | `/research/signal-calibration` |
+| Experiment History | `/research/experiments` |
+| Strategy Correlation | `/research/correlation` |
+| Promotion Pipeline | `/research/promotion-pipeline` |
+| Alpha Decay Monitor | `/research/alpha-decay` |
+
+### 10.5 Strategy Universe (18 strategies)
 
 **Crypto (11):** UT_SMC, VWAP_SWEEP_TREND, NEWS_MOMENTUM, RANGE_SCALP, EMA_PULLBACK, VWAP_REVERSION, ORDERFLOW_SWEEP, FIB_PULLBACK, INSTITUTIONAL_SMC, AI_INSTITUTIONAL_PRO, STRATEGY_LAB_USER
 
 **NSE F&O (7):** FNO_TREND, FNO_RANGE_EXPANSION, INDIA_MOMENTUM, INDIA_VOLUME_BREAKOUT, INDIA_OI_BUILDUP, INDIA_AI_SIGNALS (SHADOW), INDIA_SUPER_CONFLUENCE
 
-### Promotion Lifecycle
+---
 
-```
-EXPERIMENTAL (hypothesis required)
-↓ RESEARCH (backtest pipeline)
-↓ BACKTEST_VALIDATED (OOS Sharpe≥0.3, 30 trades, +expectancy, DD<30%, cost-profitable)
-↓ WALK_FORWARD_VALIDATED (OOS Sharpe≥0.5, not overfit, MC not FRAGILE, not COST_FRAGILE)
-↓ SHADOW (10 shadow trades, Sharpe≥0.3, decay not CRITICAL)
-↓ PAPER (20 paper trades, +expectancy, DD<25%, no material backtest drift)
-↓ LIVE_CANDIDATE (20+ sessions, paper Sharpe≥0.6, PF≥1.2, decay HEALTHY)
-↓ MANUAL_APPROVAL (human review)
-↓ LIVE (explicit approvalToken + approvedBy — NEVER automatic)
-```
+## 11. Institutional Infrastructure
 
-### Research Dashboard
+### 11.1 Portfolio Risk Engine v2 (`src/lib/risk/`)
 
-Navigate to `/research` for the Quant Research Dashboard:
-- **Leaderboard** — all strategies ranked by configurable metrics
-- **Strategy Inventory** — full per-strategy breakdown with expandable hypothesis details
-- **Regime Matrix** — Strategy×Regime colour-coded Sharpe values
-- **Monte Carlo** — 7 simulation types × 10,000 iterations per strategy
-- **Parameter Stability** — neighbourhood analysis, OVERFIT_SUSPECTED detection
-- **Signal Calibration** — Brier Score, ECE, reliability diagram
-- **Experiment History** — immutable experiment records
-- **Correlation** — strategy cluster map with capital allocation constraints
-- **Promotion Pipeline** — current stage + gate-by-gate blockers for every strategy
-- **Alpha Decay Monitor** — rolling performance vs OOS baseline, 5-state decay machine
+8-step pre-trade evaluation pipeline running in < 1ms:
 
-### Key Files
+| Step | Module | Logic |
+|---|---|---|
+| 1 | `exposure.ts` | Gross/net/long/short exposure; per-symbol/sector/strategy concentration; correlated-long cluster guard |
+| 2 | `correlation.ts` | Rolling Pearson matrix; single-linkage clustering; pre-trade cluster-breach check |
+| 3 | `var.ts` | Historical VaR + Parametric (Gaussian) VaR + CVaR/Expected Shortfall |
+| 4 | `drawdown.ts` | 4-tier ladder: NORMAL → CAUTION → WARNING → DANGER → HALT; per-tier size multipliers |
+| 5 | `position-sizing.ts` | `qty = base × confidence × vol_factor × correlation_factor × drawdown_factor`; ATR cap + notional cap |
+| 6 | `risk-limits.ts` | Per-trade/strategy/sector/portfolio budgets; SOFT_KILL auto-escalation |
+| 7–8 | `portfolio-risk.ts` | SOFT/HARD kill; final approval + sizing recommendation; full audit snapshot |
 
-| Purpose | Path |
-|---------|------|
-| All research types | `src/lib/research/types.ts` |
-| Strategy registry | `src/lib/research/registry/strategy-registry.ts` |
-| Hypothesis registry | `src/lib/research/hypothesis/strategy-hypothesis.ts` |
-| Central re-export | `src/lib/research/index.ts` |
-| Research tests | `tests/research/` (92 tests) |
-| Research APIs | `src/app/api/research/` (13 endpoints) |
-| Dashboard pages | `src/app/(dashboard)/research/` (10 pages) |
-| UI components | `src/components/research/` (15 components) |
-| Strategy inventory | `docs/STRATEGY_INVENTORY.md` |
-| Research report | `docs/ALPHA_RESEARCH_REPORT.md` |
-| Governance matrix | `docs/STRATEGY_GOVERNANCE_MATRIX.md` |
+### 11.2 Market Microstructure Intelligence (`src/lib/microstructure/`)
+
+Turns raw order-book snapshots and tick stream data into execution-quality signals and ML feature vectors:
+
+| Module | Purpose |
+|---|---|
+| `order-book.ts` | `OrderBookSnapshot` builder; `midPrice`, `weightedMidPrice`, `spread` |
+| `imbalance.ts` | L1 / L5 / weighted-depth imbalance; `DEMAND_HEAVY / SUPPLY_HEAVY / BALANCED` |
+| `spread.ts` | Rolling percentile tracker; `TIGHT / NORMAL / WIDE / EXTREME` spread regime |
+| `liquidity.ts` | 5-dimension score (volume, depth, spread, OI, trade frequency) |
+| `toxicity.ts` | TypeScript VPIN port; composite toxicity; confidence + sizing adjustments |
+| `pressure.ts` | Bid/ask replenishment; price-response pressure (informed vs noise) |
+| `index.ts` | `MicrostructureEngine` facade; `ExecQuality` (EXCELLENT/GOOD/FAIR/POOR); 1m/5m ring-buffer feature store |
+
+### 11.3 Shadow Trading & Experiment Framework (`src/lib/experiments/`)
+
+A/B testing and safe strategy promotion infrastructure:
+
+| Module | Purpose |
+|---|---|
+| `strategy-version.ts` | `StrategyVersionRegistry`; `VersionStamp`; stage FSM (DEVELOPMENT → SHADOW → PAPER → LIVE → RETIRED) |
+| `experiment-manager.ts` | Multi-arm experiments; traffic allocation; immutable audit log |
+| `shadow-trader.ts` | Per-arm fill simulation (SHADOW: in-memory / PAPER: DB writes); EOD sweep |
+| `comparison.ts` | Welch t-test; Satterthwaite df; p-value; 95% CI on mean return difference; Cohen's d sample size |
+| `promotion.ts` | SHADOW → PAPER → LIVE; LIVE always requires human approval; single-use cryptographic tokens (32 bytes, 10-min expiry) |
+
+API: `GET /api/experiments` · `GET /api/experiments/[id]` · `POST /api/experiments/[id]`.
+
+### 11.4 Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)
+
+Institutional-grade NSE F&O backtester. Parallel to the existing strategy backtester — additive, existing strategies untouched.
+
+| Layer | Key Components |
+|---|---|
+| `events/` | Typed discriminated-union bus: MarketEvent → SignalEvent → RiskCheckEvent → OrderEvent → FillEvent → PositionEvent |
+| `models/` | `Portfolio`, `Position`, `OrderBook`, `Trade` — pure, no I/O |
+| `engine/` | `SimulationClock` (NSE calendar: weekly/monthly expiry, IST gate, holiday filtering); `EventQueue`; `EventEngine`; `DefaultRiskManager` |
+| `execution/` | India-specific: instrument-aware slippage (spread + √impact + ATR + OTM penalty); full NSE brokerage (STT + exchange fee + GST + SEBI + stamp); 3 latency profiles; 4 order types with partial fills + gap-through-stop |
+| `analytics/` | CAGR, Sharpe, Sortino, Calmar, MaxDD; equity curve; `AttributionReport` (strategyId + modelVersion + featureVersion + marketRegime + dataQualityScore per trade) |
+| `adapter/` | `india-price-adapter` (→ HistoricalService); `strategy-adapter` (wraps existing F&O strategy modules) |
+
+**Conservative tie-break**: a bar touching both stop and target is always recorded as a stop. Consistent across all paper-trading resolvers in the codebase.
 
 ---
 
-```md
-# Alphaforge — Project Context
-
-## Project Overview
-Build a professional **multi-market** trading desk focused on:
-
-- **Crypto** (default) — BTC · ETH · SOL
-- **Indian Market** (NSE F&O) — NIFTY 50 / BANKNIFTY / FINNIFTY + F&O stocks
-
-A top-of-sidebar Market Switcher toggles between the two surfaces. The
-URL is the source of truth (`/` = crypto, `/in/*` = Indian), so deep
-links and browser back/forward always land in the right mode. A
-three-way **theme toggle** (Light · System · Dark) sits in the topbar
-and works identically across both markets — driven by a single
-`<ThemeProvider>` that uses `useSyncExternalStore` to mirror
-`localStorage` + `prefers-color-scheme`, plus a pre-hydration inline
-script in `app/layout.tsx` so light-mode users never see a flash of
-dark.
-
-The dashboard should provide:
-
-### Crypto surface
-- Live market overview
-- Best-time-to-trade indicator (IST, anchored to Indian retail traders)
-- Market sentiment analysis
-- Futures data
-- Options chain data
-- Open interest tracking
-- Funding rates
-- Long/Short ratio
-- Liquidation heatmaps
-- Buy/Sell/Long/Short trade suggestions
-- TradingView-like charts
-- Delta Exchange inspired UI/UX
-
-### Indian Market surface (`/in/*`)
-
-The India sidebar mirrors the crypto sidebar one-for-one — the same ten
-core surfaces (Overview, Best Time, Options, Signals, AI Signals,
-Strategies, Paper Trading, Strategy Backtest, Strategy Lab, Heatmap)
-live in both markets, each routed to `/in/*` so the data and UI are
-scoped to NSE F&O. Crypto-only items (Futures) and India-only items
-(Scanner, Watchlist, Chart) are appended as extras under the shared
-core, plus the new **Options Workbench** (`/in/options-workbench`) for multi-leg strategy payoff diagrams and the **Portfolio Optimizer** (`/in/portfolio`) for Riskfolio-Lib–powered institutional portfolio construction. Account-level preferences (settings, data sources, API keys,
-alerts, sign-out) live on the consolidated Profile page (`/profile`,
-`/in/profile`), opened by clicking the user avatar in the top-right of
-the topbar.
-
-- **Overview / Market Pulse** (`/in/dashboard`) — NIFTY indices hero
-  strip with 3D tilt, sectoral heatmap (bullish→bearish), MSB–OB
-  intraday signals table, range-expansion (WR8 + bullish-trend) scanner
-  section, **Top 5 Stocks for Tomorrow** post-market picks section,
-  sector drill-down modal with sortable F&O constituents
-  (price, day %, vs SMA50, upside, downside, score, signal, held-for).
-- **Best Time** (`/in/best-time`) — NSE-anchored session guide. Seven
-  windows (Pre-Open Auction 09:00–09:15, Opening Volatility 09:15–10:00,
-  Morning Trend 10:00–11:30, Midday Lull 11:30–13:30, Afternoon Trend
-  13:30–15:00, Power Hour 15:00–15:30, Closing Auction 15:30–15:40),
-  weekday quality (Tue/Wed = ideal, Thu = weekly expiry warning,
-  Sat/Sun = closed), 09:00–16:00 IST timeline with a live "now" cursor,
-  per-style matrix and a NIFTY/BANKNIFTY focus card. Forces "off"
-  outside trading hours and on weekends.
-- **Options / Option Chain** (`/in/options`) — live NSE option chain
-  with PCR, max-pain, ATM ±5 strikes, IV per strike, OI heat.
-  PHASE2 adds an **IV Surface** tab (SVI-fitted smile + term structure + optional 3D canvas) and a **GEX** tab (Dealer Gamma Exposure bar chart, gamma flip level, expected daily move band).
-- **Signals** (`/in/signals`) — unified F&O signal feed merging all six
-  scanner types from `/api/in/scanner` (range-expansion, momentum,
-  volume breakout, OI build-up, PCR, IV-spike) into a single ranked
-  board. Per-source filter strip persisted to localStorage; rows ranked
-  by absolute metric magnitude across sources. Each row supports
-  Add-to-Watchlist + chart drill-down. Pinned with the India Best-Time
-  banner so signal context is always visible.
-- **AI Signals** (`/in/ai-signals`) — multi-confluence AI engine on top
-  of the F&O surface. Pulls daily trend (SMA 20/50/200 + RSI + momentum),
-  option-chain positioning (PCR, ATM IV, ΔPE-CE OI, max-pain) from the
-  live NSE chain, and cross-references the existing scanners. Produces a
-  confidence-scored trade plan per index + F&O leader with the nearest ATM
-  strike, tiered TP ladder, ATR-sized stop, position-sizing %, and a live
-  entry/exit timing window. Forces WAIT outside NSE session hours.
-
-  **Quant Upgrade (v2 engine):**
-  - 8-factor scoring model per stock: SMA-50/200 trend, intraday demand,
-    analyst target, RSI(14), ADX(14), relative volume, NSE delivery %
-  - Quantitative pre-filter: stocks failing ADX ≥ 18, relative volume ≥ 1.1×,
-    ATR% ≥ 0.4% floors receive an 18% confidence penalty; index underlyings
-    always pass
-  - ML regime blending: Python ML service regime prediction is blended 35%
-    ML + 65% heuristic; ML stock rankings apply a ±0.06 confidence delta
-  - Factor weights boosted: `futuresScreen` 0.12→0.14, `scanner` 0.08→0.10
-  - WAIT threshold tightened from 0.18 → 0.22 composite score magnitude
-  - Grade thresholds tightened (S≥0.82, A≥0.68, B≥0.54, C≥0.38)
-- **Strategies** (`/in/strategies`) — full structural mirror of the
-  crypto Strategies page. Best-Time banner pinned to the active NSE
-  window, a nine-strategy picker (Range Expansion, Momentum, Volume
-  Breakout, OI Build-up, PCR Extreme, IV Spike — each derived from the
-  existing NSE scanners — plus India Liquidity Edge, a liquidity-first
-  quant framework ported from the ILE Pine indicator, India
-  Max-Pain Gravity, an option-positioning mean-reversion play carved
-  from the same Pine framework, and Opening Breakout, the first 5-min
-  candle opening-range break entered on the retest), per-strategy
-  1m / 5m / 15m timeframe toggles,
-  a live multi-timeframe signal feed served by `/api/in/scalper/signals`
-  (cards in ₹ / NSE ticker form), and a "how the F&O strategies work"
-  reference card. Replaces the legacy `/in/scalper` URL (308-redirects
-  to `/in/strategies`).
-- **Paper Trading** (`/in/paper-trading`) — full structural mirror of
-  the crypto Paper Trading page. Best-Time banner, F&O open-positions
-  table with live MTM (mark prices via `/api/in/quote`), server-
-  paginated journal with status / symbol filters and in-place note
-  editor, and per-symbol + per-strategy performance panel. Backed by
-  India-scoped journal helpers (`getIndia*` in
-  `src/features/india/scalping/journal.ts`) that filter the shared
-  `PaperTrade` table on the canonical `in:` source prefix so India and
-  crypto journals never collide. The `india-scalper` worker job now fills
-  the journal: it books each signal with ATR-sized SL/TP (NSE 0.05-tick
-  rounded), an expiry-day gamma cooldown (Thursday ≥ 14:30 IST), and 5m
-  NSE-candle resolution — so the cards populate as soon as the worker
-  runs against a live session.
-- **Strategy Backtest** (`/in/strategy-backtest`) — live OHLCV scaffold
-  against `/api/in/historical` with a selectable underlying (NIFTY,
-  BANKNIFTY, FINNIFTY, MIDCPNIFTY + top F&O stocks) and timeframe
-  (5m → 1w). Surfaces the exact bars the engine will replay plus quick
-  stats (avg daily %, ATR/close %, hi/lo). Roadmap covers retargeting
-  the strategy modules, tick-size rounding, and the score+grade engine
-  drop-in.
-- **Strategy Lab** (`/in/strategy-lab`) — conversational F&O intake.
-  Free-form prompt with four NSE-specific templates (NIFTY ORB,
-  BANKNIFTY VWAP reversion, expiry IV-crush straddle, F&O-stock EMA
-  pullback), underlying + lookback + timeframe + stop/target capture.
-  Roadmap describes the F&O-aware AST parser (IV ATM, India VIX, OI
-  ΔBUILDUP, expiry-day tokens), NSE backtest pipeline, per-user table,
-  and worker forward-test.
-- **Heatmap** (`/in/heatmap`) — sector + stock-level grid across all 11
-  F&O sectors, fed by `/api/in/sector-stocks`. Tiles tinted by day %
-  using inline `color-mix()` so saturation scales continuously (Tailwind
-  JIT can't synthesise arbitrary `color-mix` percentages from a template
-  literal). Sector pulse strip across the top, sectors sorted by average
-  move, click-through to per-symbol charts.
-- **Profile** (`/in/profile`, opened from the topbar avatar) — same
-  Account / Data sources / API keys / Alerts tabs as the crypto
-  `/profile` page (settings are user-scoped, not market-scoped) but
-  with copy reframed around NSE F&O concerns: India-broker selection
-  (Yahoo / NSE proxy / Groww), the cookie-warmed NSE proxy, and
-  weekly-expiry alert templates. Tabs are hash-routed
-  (`/in/profile#api-keys`) for deep-linking. The legacy `/in/settings`
-  URL 308-redirects here.
-
-#### India-specific extras (kept under the shared core)
-
-- **Daily Picks** (`/in/daily-picks`) — the day's standout F&O signals
-  distilled into the **top three per bucket**: *Indices Scalping*, *Opening Breakout*,
-  *Highly Momentum*, *Highly Scalping* and *Highly Potential*. Each pick carries
-  entry, stop, target, can-move-upto, can-expect, P&L tracking and logic.
-  All picks are intraday-only; squared off at 15:30 IST.
-  Also shows the **FnO Bullish Trend Scanner** (14-condition MA+ADX+MACD screener
-  with ATR-based entry/SL/TP levels) and **FnO Bearish Trend Scanner** (bearish mirror).
-- **Trade History** (`/in/history`) — unified trade history across three sources:
-  **Daily Picks** (frozen picks with TARGET_HIT/STOP_HIT/CLOSED outcomes, aggregate
-  stats, bucket heat strip, day accordions with outcome/direction filters),
-  **Scalper Trades** (strategy paper trades from the PaperTrade DB with per-strategy
-  win rate heat strip), and **FnO Trend Scanner** (persisted scan results with
-  TP1/SL outcome tracking). Time range filters: 7d / 14d / 30d / 60d.
-- **News** (`/in/news`) — top market news pulled from Indian market RSS feeds. Each headline is tagged
-  with the F&O stocks /
-  index underlyings / sectors it impacts (high / medium / low) and scored
-  for bull/bear sentiment via a deterministic lexicon engine; the
-  impactful set is folded into an overall market sentiment (bullish /
-  bearish / neutral) and a 0-100 risk-on / risk-off ratio shown in a
-  banner above an India / Global filterable feed. Live + Redis-cached.
-- **Scanner** (`/in/scanner`) — single-mode scanner UI driven directly
-  by `/api/in/scanner` (range-expansion default). Same data the unified
-  Signals page consumes; different UX for users who want one source at
-  a time.
-- **Watchlist** (`/in/watchlist`) — persistent F&O watchlist (Zustand
-  persist key `india-fno-watchlist`).
-- **Chart** (`/in/chart/[symbol]`) — per-symbol lightweight-charts
-  deep-dive with intraday / daily toggles.
-
-#### Client-side Pagination & Filter System
-
-All large data tables and grids in the Indian Market surface are paginated
-at **5 items per page** with a shared `usePaginationFilter` hook and
-reusable UI primitives (`FilterTabs`, `PaginationStrip`). The filter tabs
-offer three views:
-
-- **All** — every row, paginated.
-- **Most Confidence** — only items above the 70% confidence threshold
-  (metric varies per component: signal strength, score, impact level).
-- **High Winrate** — only items above the 60% winrate threshold
-  (uses day %, upside %, risk:reward, or sentiment as a proxy).
-
-Paginated components:
-
-| Component | Location | Filter Tabs |
-|-----------|----------|-------------|
-| F&O Scanner | `/in/scanner` | Yes |
-| MSB–OB Intraday Signals | `/in/dashboard` | Yes |
-| Range Expansion (WR8) | `/in/dashboard` | Yes |
-| Top 5 Stocks for Tomorrow | `/in/dashboard` | No (always 5 cards) |
-| Sector Stocks Modal | `/in/dashboard` (drill-down) | Yes |
-| Live F&O Signals | `/in/strategies` | Yes |
-| Open F&O Paper Positions | `/in/paper-trading` | Yes |
-| News Feed | `/in/news` | Yes (High Impact / Bullish) |
-| Watchlist | `/in/watchlist` | No (user-curated) |
-| Daily Picks Board | `/in/daily-picks` (per bucket) | No |
-| Daily Picks History | `/in/daily-picks` (days + picks) | No |
-
-Shared implementation: `src/components/india/ui/pagination-filter.tsx`
-
----
-
-# Tech Stack
-
-## Frontend
-- Next.js (App Router)
-- TypeScript
-- TailwindCSS
-- Shadcn UI (design system base — IIT design language layered on top via `globals.css` `@theme inline` tokens and `src/components/trading/` + `src/components/layout/` primitives)
-- Zustand (state management)
-  - **Zustand UIStore** (`src/store/uiStore.ts`) — dedicated store for high-frequency UI state: active market regime, table density, sidebar collapse, radar visibility, chart fullscreen, command palette. Persists `sidebarCollapsed` + `tableDensity` to `localStorage`.
-- React Query / TanStack Query
-- Framer Motion (Spring preset system: `SPRING_FAST` 600/35, `SPRING_DEFAULT` 400/28, `SPRING_GENTLE` 240/24, `SPRING_MICRO` 800/40 — all interactive transitions use named presets from `src/lib/motion-presets.ts`)
-- **TanStack Table v9** — primary table library for AI Radar, Options Chain, Daily Picks History, Paper Trading Journal, and all data-dense tables
-- Recharts / Lightweight Charts v5 (with Anchored VWAP + Volume Profile plugins)
-
-### Design System (IIT)
-
-The dashboard's visual language is the **Institutional Intelligence Terminal (IIT)** — a precision-first, data-dense aesthetic applied uniformly across all components.
-
-- **OKLCH color token architecture** — all color values defined exclusively in OKLCH via the `@theme inline` block in `globals.css`. New semantic tokens: `--color-panel-bg`, `--color-panel-border`, `--color-data-positive`, `--color-data-negative`, `--color-data-neutral`, `--color-ai-accent`, `--color-regime-bull/bear/sideways/highvol`. No hardcoded hex or RGB in component files.
-- **`data-density` attribute pattern** — components read `data-density="compact"` (32px rows), `"default"` (40px), or `"comfortable"` (48px) from their DOM ancestor for spacing without prop drilling.
-- **Spring motion preset system** — four named constants (`SPRING_FAST`, `SPRING_DEFAULT`, `SPRING_GENTLE`, `SPRING_MICRO`) exported from `src/lib/motion-presets.ts`. All spring animations reference these constants; no ad-hoc stiffness/damping values in components.
-- **Regime-reactive UI system** — `RegimeProvider` wraps the `(dashboard)` layout, reading `UIStore.activeRegime` and injecting `--aurora-regime-a` CSS variable for the shell aurora background (1200ms CSS transition). `RegimeSync` and `CryptoRegimeSync` bridge their respective market stores into the `UIStore` without direct store coupling. `RegimeBadge` components update with `SPRING_MICRO` scale animation on regime change.
-- **BentoGrid layout system** — `BentoGrid` + `BentoCell` components in `src/components/layout/` provide a 12-column CSS grid for Overview pages. Cells use `data-bento-cell` for mobile reflow priority; the grid stacks to single-column below 768px in visual-priority order.
-
-## Backend
-- Next.js API routes OR separate Express server
-- TypeScript
-- Redis caching
-- WebSocket support
-
-## Database
-- PostgreSQL
-- Prisma ORM
-
-## Realtime Data
-- Binance WebSocket
-- Bybit API
-- Deribit API
-- CoinGlass API
-- Alternative.me Fear & Greed API
-
-## Indian-market data sources
-
-All Indian market data now flows through the **provider-agnostic data layer** (`src/lib/market-data/`). Strategy engines, ML services, and API routes consume canonical normalized types — provider-specific shapes never leak through.
-
-**Provider priority chain (automatic failover):**
-
-| Priority | Provider | Capabilities | Activation |
-|---|---|---|---|
-| 1 | **Angel One SmartAPI** | quotes, historical, option chain, live stream, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
-| 2 | **Upstox Analytics v2** | quotes, historical, option chain | `UPSTOX_ANALYTICS_TOKEN` (read-only); or full OAuth2 via `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` |
-| 3 | **NSE direct** | option chain, quotes (cookie-warmed scraper) | None — always available |
-| 4 | **Yahoo Finance** | historical OHLCV, quotes (no derivatives) | None — last-resort fallback |
-
-The `ProviderRegistry` routes each capability request to the highest-priority enabled provider. When a provider fails, `withFailover()` retries up to 3× with exponential backoff then fails over to the next provider in the chain. A circuit breaker (0–100 health score) prevents routing to persistently failing providers.
-
-The legacy `INDIA_BROKER=yahoo|nse|groww|angel|openalgo` env var continues to work for the existing `services/india/` adapters; the new data layer is additive and does not break existing deployments.
-
----
-
-# Core Features
-
-## 0. Market Switcher (Crypto ↔ Indian F&O)
-
-A two-segment toggle sits at the very top of the sidebar — Crypto (BTC ·
-ETH · SOL) or Indian Market (NSE F&O). Selecting a segment navigates to
-that market's landing route (`/` or `/in/dashboard`); the sidebar then
-re-renders its nav from one of two static `NavItem[]` arrays. The active
-market is derived from `usePathname()` via
-`useActiveMarket()` in `src/lib/market-mode.ts` — the URL is the source
-of truth, so deep links, browser back/forward, and shareable URLs all
-land in the right mode with zero extra persistence.
-
-Both surfaces share the same `(dashboard)` layout (LiveStreamMount +
-Topbar + MarketTickerBar + main content), so notifications, the
-connection pill, and the user menu work identically across markets.
-The user-menu avatar in the topbar is a market-aware Link — clicking
-it on a `/in/*` route opens `/in/profile`, otherwise `/profile`.
-
-### Folder partitioning
-
-To keep both markets isolated, the Indian code lives under sibling
-`india/` directories — there is no cross-import between markets and no
-namespace collisions:
-
-- `src/app/(dashboard)/in/*` — pages (one route per item in the India
-  sidebar: `dashboard`, `best-time`, `options`, `signals`, `ai-signals`,
-  `strategies`, `paper-trading`, `strategy-backtest`, `strategy-lab`,
-  `heatmap`, plus the India-specific `scanner`, `watchlist`,
-  `chart/[symbol]`, plus the topbar-anchored `profile`; the legacy
-  `settings` route 308-redirects to `profile`, and the legacy `scalper`
-  route 308-redirects to `strategies`)
-- `src/app/api/in/*` — API routes
-- `src/components/india/*` — UI:
-  - `best-time/` — `india-best-time-banner`, `india-best-time-dashboard`
-  - `heatmap/india-heatmap`
-  - `signals/india-signals-board`
-  - `strategy/india-backtest-preview`, `india-strategy-lab-intake`
-  - `common/india-feature-preview` (shared "live preview + roadmap" shell)
-  - `msb-dashboard`, `charts/price-chart`, `options/option-chain-table`,
-    `ticker/live-ticker`
-  - `ui/*` — India-flavoured shadcn primitives (button / card / table)
-- `src/services/india/*` — broker adapters, cache, scanner, signals
-- `src/features/india/*` — pure engines:
-  - `best-time/engine.ts` — NSE-anchored window catalogue + scoring
-    (mirrors `features/best-time/engine.ts` but with seven NSE-specific
-    sessions, expiry-aware day quality, weekend "off" enforcement)
-- `src/store/india/*` — Zustand stores (prefixed `useIndia…Store`)
-- `src/hooks/india/*` — `useFetchPoll`, `useFeedStream`, `useLiveQuotes`,
-  `useOptionChain`, `useScanner`
-- `src/types/india/*`, `src/lib/india/*`
-
-Globals that *would* collide across markets (Redis prefix, broker env
-var, `globalThis.__cacheInstance`) are renamed in the India surface
-(`INDIA_REDIS_PREFIX`, `INDIA_BROKER`, `__indiaCacheInstance`, …).
-
-#### Sidebar nav parity (`src/components/dashboard/sidebar.tsx`)
-
-The sidebar exposes two static `NavItem[]` arrays — `CRYPTO_NAV` and
-`INDIA_NAV` — and `useActiveMarket()` (URL-derived) picks which one
-renders. Both arrays start with the same ten core items in the same
-order so the user's mental map carries across the market switcher;
-market-specific extras live below the shared core. Account-level
-preferences are intentionally absent from the sidebar — they live on
-the topbar avatar (`/profile`, `/in/profile`).
-
-Each `NavItem` carries an optional `public: true` flag. Only the two
-"showroom" items (Overview + Heatmap, per market) set it, so anonymous
-visitors see a deliberately thin sidebar with just those two rows and a
-`Sign in to unlock` CTA. Every other row is hidden from the UI for
-unauthenticated users *and* protected at the proxy level
-(`src/lib/auth.ts → isPublicPath`), so direct URLs redirect to
-`/login?callbackUrl=…`.
-
-| #  | Crypto                                  | India                                       | Auth        |
-| -- | --------------------------------------- | ------------------------------------------- | ----------- |
-| 1  | Overview (`/`)                          | Overview (`/in/dashboard`)                  | **Public**  |
-| 2  | Best Time (`/best-time`)                | Best Time (`/in/best-time`)                 | Protected   |
-| 3  | Options (`/options`)                    | Options (`/in/options`)                     | Protected   |
-| 4  | Signals (`/signals`)                    | Signals (`/in/signals`)                     | Protected   |
-| 5  | AI Signals (`/ai-signals`)              | AI Signals (`/in/ai-signals`)               | Protected   |
-| 6  | Strategies (`/strategies`)              | Strategies (`/in/strategies`)               | Protected   |
-| 7  | Paper Trading (`/paper-trading`)        | Paper Trading (`/in/paper-trading`)         | Protected   |
-| 8  | Strategy Backtest (`/strategy-backtest`)| Strategy Backtest (`/in/strategy-backtest`) | Protected   |
-| 9  | Strategy Lab (`/strategy-lab`)          | Strategy Lab (`/in/strategy-lab`)           | Protected   |
-| 10 | Heatmap (`/heatmap`)                    | Heatmap (`/in/heatmap`)                     | **Public**  |
-| +  | Futures (crypto-only)                   | Daily Picks / News / Scanner / Watchlist / Chart (India-only) | Protected   |
-| ☰  | Profile (topbar avatar → `/profile`)    | Profile (topbar avatar → `/in/profile`)     | Protected   |
-
-The "Strategies" surface owns the live strategy picker + signal feed
-(the *configuration* half of the old Scalper page), while "Paper
-Trading" owns the open positions table, the journal and the
-per-strategy + per-symbol performance breakdown (the *outcome* half).
-The split lets the user pick strategies and audit results on dedicated
-surfaces while still sharing the same strategy filter via the Zustand
-store. The legacy `/scalper` and `/in/scalper` URLs 308-redirect to
-their respective `/strategies` counterparts.
-
-The nav is `overflow-y-auto` so the longer India list (13 items)
-doesn't overflow on short viewports.
-
-## 1. Market Overview
-Display:
-- BTC price
-- ETH price
-- SOL price
-- 24h change
-- Volume
-- Market cap
-- Dominance
-
-## 1a. Best Time to Trade (IST)
-A pure, IST-anchored engine + UI that tells the user whether *right now* is a
-good moment to trade BTC / ETH / SOL — based on liquidity, volatility and
-when global institutional flow actually shows up.
-
-### Windows (all IST)
-| Window                | Hours          | Quality   | Best for                                     |
-| --------------------- | -------------- | --------- | -------------------------------------------- |
-| Worst Zone            | 02:00 – 07:00  | Avoid     | Skip unless FOMC / CPI / ETF news            |
-| Range Scalp Window    | 11:30 – 15:00  | Moderate  | VWAP / S-R / range trading                   |
-| Volatility Breakout   | 18:00 – 20:00  | Ideal     | Breakouts, momentum entries, news reactions  |
-| Prime Futures Window  | 18:30 – 23:30  | Ideal     | Futures + scalping + momentum                |
-| Golden Scalp Zone     | 19:00 – 22:00  | Ideal     | 1m / 5m / futures scalping (peak liquidity)  |
-| Swing Entry Window    | 20:00 – 00:00  | Good      | Scaling into multi-day positions             |
-
-When several windows overlap, the highest-priority one wins
-(Golden > Breakout > Prime > Swing > Range > Worst). Day-of-week quality
-modulates the score (Tue/Wed/Thu = excellent, Fri = good-but-volatile,
-Sun = low liquidity, Mon = often choppy).
-
-### Engine
-- `src/features/best-time/engine.ts` — pure functions, IST-shifted via the
-  fixed +5:30 offset (no `toLocaleString`, no host-timezone dependence),
-  so server + client always agree.
-- `getBestTimeStatus(at?)` returns the active window, composite score,
-  verdict, overlapping windows, and the next upgrade with a minute-precise
-  countdown.
-
-### UI surface
-1. **Overview banner** (between the search bar and the BTC / ETH / SOL
-   cards) — current window, verdict, day quality, ends-in / next-window
-   countdowns, and a radial quality dial. Recomputes every minute on a
-   wall-clock boundary so all banners tick in unison.
-2. **Best Time tab** (dedicated `/best-time` page) — full breakdown:
-   hero status card, 24h IST timeline visualisation with a "now" cursor,
-   per-window cards with insight + suited styles, best-days table,
-   per-style "best window" matrix, and a BTC spotlight (7-11 PM IST).
-
-## 2. Market Sentiment
-Analyze:
-- Fear & Greed Index
-- Funding rate
-- Open interest trend
-- Liquidation data
-- Long vs short ratio
-- Social sentiment (optional)
-
-Return:
-- Bullish
-- Bearish
-- Neutral
-
-## 3. Futures Dashboard
-Show:
-- Funding rates
-- OI changes
-- Volume spikes
-- Liquidation clusters
-- Top gainers/losers
-
-## 4. Options Dashboard
-Show:
-- Put/Call ratio
-- Max pain
-- Implied volatility
-- Expiry-wise OI
-- Strike-wise data
-
-## 5. Trading Suggestions Engine
-Generate:
-- LONG
-- SHORT
-- BUY
-- SELL
-- HOLD
-
-Signals should be based on:
-- RSI
-- MACD
-- EMA crossover
-- Funding rate
-- Open interest
-- Volume breakout
-- Liquidation imbalance
-- Fear & Greed index
-
-Each signal should include:
-- Confidence score
-- Risk level
-- Suggested entry
-- Stop loss
-- Target
-
-## 5a. AI Signals (multi-confluence intelligence)
-
-A dedicated **AI Signals** surface lives on both markets — crypto
-(`/ai-signals`) and Indian F&O (`/in/ai-signals`) — that goes beyond the
-single-line "BUY/SELL/HOLD" of the legacy Signals page. Each AI signal is
-a complete, confidence-scored trade plan.
-
-### What every signal contains
-- **Action** — `LONG` / `SHORT` / `BUY` / `SELL` / `WAIT` (WAIT forces no
-  trade when outside the active session or when the read is inconclusive).
-- **Confidence score** — 0–100 with a letter **grade** (S / A / B / C / D)
-  scaled by both directional magnitude AND the share of factors that
-  were actually available.
-- **Calibrated win probability** — TP1-before-SL probability mapped via a
-  logistic curve to a sane [0.30, 0.85] range so no signal ever pretends
-  to be "almost certain".
-- **Entry zone** — point entry plus a tight ±0.25×ATR zone where filling
-  is acceptable.
-- **Strike** — nearest tradeable instrument anchor (rounded crypto futures
-  level, or the nearest ATM option strike from the live NSE chain).
-- **Tiered take-profit ladder** — TP1 / TP2 / TP3 at horizon-appropriate
-  ATR multiples (e.g. intraday 1.6× / 2.6× / 4.0×) with scale-out
-  allocations of 50% / 30% / 20%.
-- **ATR-sized stop loss** with explicit invalidation-criteria line
-  ("Setup invalidates on a 15m close below 98 500.00 — exit immediately").
-- **Risk:Reward** — both TP1-vs-SL and blended (allocation-weighted across
-  all three TPs).
-- **Position sizing %** — assumes a 1% per-trade risk budget against the
-  ATR-based stop, scaled by confidence, capped per horizon so a hair-thin
-  stop can never recommend a leverage-up.
-- **Time horizon** — `scalp` (30m) / `intraday` (1-4h) / `swing` (1-3d) /
-  `positional` (1-2w) — picked from the active session × derivative
-  share × score magnitude.
-- **Timing window** — `enterBy` (next 15m) + `exitBy` (horizon-appropriate)
-  with a live UI countdown that flips to a "Stale" badge once it expires.
-- **AI rationale** — top 6 confluence factors as human-readable rows with
-  category chips (Tech / Deriv / Sent / Macro / News / Flow / Chart) and a
-  bull-vs-bear count.
-
-### Crypto AI engine (`/api/ai-signals`)
-
-Fans out across the same data sources we already ship for BTC / ETH / SOL,
-folded into a 9-factor confluence stack:
-
-1. RSI(14)
-2. MACD histogram
-3. EMA 20/50 spread
-4. Volume thrust (current vs 20-bar avg)
-5. Funding rate (inverted — crowded longs paying = contrarian short)
-6. OI 1h Δ
-7. Long/short ratio (inverted)
-8. Liquidation imbalance (short liquidations = bullish flush)
-9. Fear & Greed (inverted — extreme greed = contrarian fade)
-
-Plus a session-quality bonus driven by the IST Best-Time engine — outside
-the active window every signal forces WAIT. The hero banner above the grid
-publishes a market **regime** read (`risk-on` / `risk-off` / `mixed` /
-`compressed`) with a one-line headline + bullets summarising the regime
-inputs (avg funding, OI 1h, F&G classification).
-
-### India F&O AI engine (`/api/in/ai-signals`)
-
-Covers NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + the three
-highest-liquidity F&O stock leaders. Same `AiSignal` shape so the rich
-`<AiSignalCard>` renders 1:1, but with an India-specific 10-factor confluence stack:
-
-1. Daily SMA 20/50/200 trend stack
-2. Daily RSI(14)
-3. 5-day momentum
-4. Volume thrust vs 20-day avg
-5. **PCR (OI)** — heavy PE writing = bullish, heavy CE writing = bearish
-6. **ATM IV** — inverted, since elevated IV crushes options after the move
-7. **OI build-up** — ΔPE OI − ΔCE OI from the live NSE option chain
-8. **Max-pain pull** — distance from spot to max-pain strike
-9. **Scanner agreement** — cross-references the six existing F&O scanners
-   (momentum / volume / range-expansion / OI build-up / PCR / IV-spike)
-   so a strong AI long agrees with what the live multi-scanner board shows
-10. NSE session quality — forces WAIT outside 09:15–15:30 IST and on
-    weekends / weekly-expiry warning days
-
-**Quant confidence boost** (v2 engine — `alphaforge-ai-v2`):
-- Flow factor availability bonus: when `scanner`, `futuresScreen`, `volume`,
-  `oiBuildup`, and `dayChange` factors are present, confidence gets up to
-  +0.08 bonus — rewarding institutionally-confirmed setups
-- Quant pre-filter: stocks that fail ADX ≥ 18 + relative vol ≥ 1.1× +
-  ATR% ≥ 0.4% gates receive an 18% confidence penalty; index underlyings
-  always pass
-- ML regime blend: Python ML service regime (35%) is blended into the
-  heuristic regime score (65%); top-20 ML-ranked stocks get up to +0.06
-  confidence boost
-
-Strike suggestions come from the live NSE option chain — every non-WAIT
-signal carries the nearest ATM strike so the user knows exactly which
-contract to touch on. Prices and stops are rounded to NSE-appropriate tick
-sizes (0.05 INR on stocks, 1 / 5 on indices depending on price band).
-
-### Engine architecture
-
-- `src/types/ai-signals.ts` — shared `AiSignal`, `AiSignalsResponse`,
-  `AiMarketContext` types (cross-market).
-- `src/features/ai-signals/engine.ts` — pure, deterministic helpers
-  (compositeScore, classifyAction, gradeFromConfidence,
-  calibrateWinProbability, buildTakeProfits, buildTradeLevels,
-  buildTimingWindow, buildReasons, suggestPositionSizePct, …). No I/O.
-  **v2 upgrades:** flow-factor confidence bonus, WAIT threshold 0.22,
-  grade thresholds tightened, logistic win-probability offset 0.38.
-- `src/features/ai-signals/crypto-builder.ts` — `getCryptoAiSignals()`
-  fans out broker klines + futures aggregate + fear-greed + liquidations
-  + best-time and folds into the shared engine. Cached via Redis at the
-  `signals` TTL.
-- `src/features/ai-signals/india-builder.ts` — `getIndiaAiSignals()`
-  fans out Yahoo quotes + historical OHLCV + NSE option chain + the
-  india scanner cache + the India best-time engine. **v2 upgrades:**
-  ML regime blending, ML rank boost per stock, quantitative pre-filter
-  (ADX/volume/ATR gate), computeApproxAdx, buildStockFeaturesForML.
-  Cached via the shared india-cache facade (Redis + in-process fallback).
-
-UI components live in `src/components/ai-signals/`:
-- `ai-signal-card.tsx` — the rich per-signal card (renders identically
-  for both markets, just swaps `$` for `₹` on India)
-- `ai-signals-board.tsx` — client polling shell with direction / horizon
-  filters (persisted to localStorage) and manual refresh
-- `ai-market-context-banner.tsx` — regime banner above the grid
-
-## 5b. Daily Picks (India F&O — top 3 per bucket, frozen + live-tracked)
-
-A dedicated **Daily Picks** surface on the Indian F&O market
-(`/in/daily-picks`) that answers "what should I actually look at today?" by
-distilling the whole signal pool down to the **top three signals in each of
-five buckets**:
-
-- **Indices Scalping** — institutional index plays on NIFTY / BANKNIFTY /
-  FINNIFTY / MIDCPNIFTY: heavy option-chain **OI build-up** with **PCR** and
-  **max-pain** positioning confirming intraday demand and the broad tape. Fed
-  only from the index underlyings, so this section is always pure index scalps.
-- **Opening Breakout** — the **first 5-min candle (9:15–9:19:59 IST)**
-  opening-range breakout, sourced from the dedicated Opening Breakout strategy.
-  Entry is on the **retest** of the broken level (the resistance→support flip),
-  stop below the breakout candle, target **2R**, with **PCR / OI / max-pain**
-  confirmation layered in. Freezes *lazily* — the picks only appear once the
-  opening candle has broken and retested (typically 9:30+), and can be an index
-  or a stock.
-- **Highly Momentum Stocks** — the strongest directional names: the daily
-  SMA trend stack, 5-day momentum and volume thrust all pushing the same way.
-- **Highly Scalping Stocks** — the cleanest intraday setups: enough expected
-  range, a sharp risk:reward, live scanner agreement and a short
-  (scalp / intraday) horizon.
-- **Highly Potential Stocks** — the highest-conviction, biggest-payoff
-  trades, ranked by confidence, calibrated win-probability and blended R:R.
-
-### What every pick contains
-- **Entry**, **stop loss** and **target** (realistic first target / TP1).
-- **Can move upto** — the stretch target (TP3) on a clean run.
-- **Can expect** — the % move from entry to the stretch target.
-- **Logic** — a human-readable "why it's here" line built from the signal's
-  top confluence reasons, framed for the bucket it landed in.
-- **Timing** — the **time the signal appeared on the board** (IST, frozen at
-  selection time) and, once resolved, **how long it took to take profit or
-  loss** (`resolvedAt - generatedAt`, e.g. "Target hit in 1h 15m"). While a
-  pick is live the card shows how long it's been running.
-- **Live tracking** — current P&L vs the frozen entry (direction-aware for
-  LONG vs SHORT), **achieved-till-now** (best progress toward target so far)
-  and a status that resolves OPEN → TARGET_HIT / STOP_HIT as price moves, then
-  **CLOSED** (squared off) at the 15:30 IST close if neither level was touched.
-
-### How it works
-- **Intraday-only.** Every candidate is pinned to an `intraday` horizon and
-  its stop/target are sized off a fraction of the daily ATR (a same-session
-  move, not a multi-day swing) — Daily Picks is a day-trading product. No
-  position is carried overnight: once a trade date's 15:30 IST session ends,
-  any pick still OPEN is **force-squared-off at its last mark** (status
-  `CLOSED`), regardless of P&L, both on the live board and across the history
-  (`squareOffPick` + `isNseSessionEndedForDateIST`).
-- **No pre-market freeze.** The builder will not freeze picks before
-  **09:15 IST** — without real opening-session prices, anything captured at
-  e.g. 00:12 (when the IST trade date rolls over) would just lock in last
-  evening's closes and live-track stale levels all day. Pre-market requests
-  return an empty board with the "waiting for open" empty state. If stale
-  pre-market rows already exist in `IndiaDailyPick` for today (e.g. from an
-  off-hours cron in a previous run), they're **auto-evicted on the first
-  post-open request** and immediately re-frozen against fresh opening
-  candidates (`nseOpenMsForDateIST` + `generatedAt < openMs` filter).
-- **Institutional confluence stack.** Beyond the technical/derivatives reads,
-  the signal now weights the factors a desk actually trades on: **intraday
-  demand** (the day's move), **support/resistance breakout confirmed by
-  volume**, **OI build-up**, the **broad market tape** (so single names lean
-  *with* the index, not against it) and **news flow** (per-symbol headline
-  sentiment). The 1-year SMA trend is de-emphasised for intraday.
-- **Quant pre-filter.** Stocks failing the ADX ≥ 18 / relative volume ≥ 1.1×
-  / ATR% ≥ 0.4% gate receive an 18% confidence penalty before bucket ranking,
-  so only genuinely trending, liquid names surface at the top. Index underlyings
-  always pass. A full quant gate (ADX ≥ 20, vol ≥ 1.2×, delivery ≥ 40%) applies
-  a +5% score multiplier to the highest-quality setups.
-- **ML-enhanced ranking.** The Python ML stock ranker's top-20 scores feed a
-  ±0.06 confidence delta into every signal before bucket selection, surfacing
-  the names the ML engine agrees with the technical setup on.
-- **Tighter bucket quality floors (v2).** MOMENTUM requires confidence ≥ 0.25 +
-  dayChange ≥ 0.30; SCALPING requires confidence ≥ 0.22 + RR ≥ 1.5 + dayChange ≥
-  0.30; POTENTIAL requires confidence ≥ 0.28 + breakout ≥ 0.25. Empty is
-  preferred over a low-quality pick.
-- **Futures-segment screen.** Every candidate is also run through the
-  Chartink-style institutional screen and the result feeds both the signal's
-  direction/confidence and the per-bucket ranking (`computeFuturesScreen` →
-  `futuresScreen` factor → `bucketScores`). A name scores highest when it
-  satisfies all seven conditions: today's range is the **widest of the last 8
-  sessions** (range expansion), an **up candle closing above the prior close**,
-  a **bullish weekly and monthly** candle, **prior-session volume > 10k**
-  (liquidity) and a **20 > 50 > 200 SMA stack**. The exact bearish mirror ranks
-  shorts in a down market, so the screen lifts momentum, scalping and potential
-  picks alike toward the cleanest desk setups.
-- **Tape alignment.** In a strongly trending market, picks whose direction
-  fights the tape are demoted (`marketAlignment`), so a bullish session yields
-  longs — not shorts on names that merely look weak on the daily chart.
-- **Index scalps are scored on derivatives positioning.** The Indices-Scalping
-  bucket leans heaviest on **OI build-up** (the option writers' footprint),
-  then **PCR** and **max-pain** confirmation, intraday momentum, expected range
-  and a short horizon — the inputs an index desk actually trades. Indices feed
-  *only* this bucket and stocks feed Momentum / Scalping / Potential
-  (`isIndexSignal` partition), so the index section never crowds out a stock
-  pick and vice-versa.
-- **Opening Breakout is externally sourced.** Unlike the other buckets (ranked
-  from the AI candidate universe), the `OPENING_BREAKOUT` bucket is fed straight
-  from the Opening Breakout strategy's top signals (`getIndiaOpeningBreakoutSignals`
-  → `dailyPickFromScalpSignal`). Because the setup needs the first 5-min candle
-  to break *and* retest, the bucket **freezes lazily** the first time signals
-  exist for the day rather than at the morning's first request, then live-tracks
-  and squares off at 15:30 like every other pick. Its "appeared on board" time is
-  the **retest instant** (the strategy's trigger), not the freeze time.
-- The candidate pool is the India AI universe (four F&O indices + AI leaders)
-  layered with a broad high-liquidity F&O stock set (~30 names), so the board
-  always has enough *distinct*, directional names to fill the buckets (a symbol
-  only ever appears in one bucket — round-robin by best-fit). Option chains are
-  fetched for every index so the OI / PCR / max-pain reads are first-party.
-- Picks are **frozen once per IST trading day** into the `IndiaDailyPick`
-  table (one row per `tradeDate × bucket × rank`) so entry / stop / target
-  never drift under the user. Every subsequent request **live-tracks** the
-  frozen picks against the latest mark and persists the updated P&L /
-  progress / outcome in place.
-- An `india-daily-picks` **worker job** (`worker/src/jobs/india-daily-picks.ts`,
-  default 5-min cadence, market-hours-gated) calls the same freeze-or-track
-  path so the day's picks are frozen at the open and tracked to the close even
-  if nobody opens the page — guaranteeing a complete daily history. Both the
-  worker and the on-read path are idempotent (unique constraint +
-  `skipDuplicates`), so they can't double-freeze.
-- A **history** archives every past trading day's picks with their final
-  outcome and the day's win rate, so the board is an auditable track record.
-- The whole feature is **DB-resilient**: when Postgres is unreachable it
-  degrades to ephemeral, still-live picks instead of hard-failing.
-
-### Engine architecture
-- `src/features/india/daily-picks/engine.ts` — pure, deterministic helpers
-  (bucketScores, selectDailyPicks, pickFromSignal, trackPick, groupDailyPicks,
-  istDateKey). No I/O.
-- `src/features/india/daily-picks/builder.ts` — `getIndiaDailyPicks()`
-  (freeze-or-track) and `getIndiaDailyPicksHistory()`, fed by
-  `getIndiaDailyPickCandidates()` in the AI india-builder. Cached + DB-backed.
-- API: `/api/in/daily-picks` (today's board) and
-  `/api/in/daily-picks/history` (past days). UI in
-  `src/components/india/daily-picks/` (board / card / history).
-- Worker: `worker/src/jobs/india-daily-picks.ts` (cadence in
-  `workerConfig.indiaDailyPicks`, env `WORKER_INDIA_DAILY_PICKS_INTERVAL_MS`)
-  freezes + tracks automatically during NSE hours.
-
-## 5c. Expiry-day index trades (Gamma Blast / Hero Zero)
-
-An **expiry-only** section on the Daily Picks page that surfaces the two
-desk playbooks for index option-buying on the actual expiry session — and
-shows **nothing on any other day**:
-
-- **Gamma Blast** — buy the ATM option in the trend direction. With one
-  expiry session of theta left, ATM gamma is maximal, so a clean directional
-  push expands the premium fast. ~2.2× target, ~50% hard stop.
-- **Hero / Zero** — buy a cheap far-OTM option (3 strikes out): a binary
-  lottery on a sharp move — multiplies into a "hero" or expires at "zero".
-  ~5× target, stop at 0.
-
-Coverage + detection:
-- **NIFTY** (NSE) — expiry is read **from the live option chain** (its nearest
-  expiry resolving to today is authoritative; handles holiday shifts). Premiums
-  use real chain LTPs.
-- **SENSEX** (BSE) — premiums come from the **live BSE option chain** synthesised
-  by the Angel One adapter (the BFO scrip subset + FULL-mode quoting), with the
-  chain's nearest expiry resolving to today as the authoritative gate. To avoid
-  the rate-limited per-strike quoting on non-expiry days, the chain fetch is
-  cheap-gated behind the fixed weekly weekday (**Thursday**, post-Sep-2025 SEBI
-  realignment; NIFTY = Tuesday). When Angel One isn't configured (or the chain
-  is unreachable) it falls back to a spot + India VIX Black-Scholes ATM estimate.
-- Direction (CE vs PE) is taken from the index's intraday bias.
-
-Engine/IO/UI:
-- `src/features/india/expiry-trades/engine.ts` — pure (expiry parsing, weekday,
-  premium estimate, strike math, trade assembly).
-- `src/features/india/expiry-trades/builder.ts` — `getIndiaExpiryTrades()`
-  (chain-or-estimate, resilient, cached).
-- API: `/api/in/expiry-trades`. UI:
-  `src/components/india/daily-picks/expiry-trades-section.tsx` (self-hides off
-  expiry; live-polls). Rendered on `/in/daily-picks` only when it's an expiry
-  day. Strictly defined-risk; the UI carries a prominent risk banner.
-
-## 6. Alerts System
-Create alerts for:
-- Funding spike
-- OI breakout
-- Price breakout
-- Liquidation surge
-- Signal change
-
-## 7. Strategy Lab (conversational backtester)
-Let users describe a strategy in plain English and execute it deterministically.
-
-Inputs:
-- Free-form prompt (e.g. "Buy when RSI drops below 30 and sell when RSI
-  crosses above 70. Stop 2%, take profit 5%.")
-- Symbol: BTC / ETH / SOL
-- Period: 1 week / 1 month / 6 months / 1 year / 5 years
-
-Pipeline:
-1. **Parse** — turn the prompt into a structured rule set with explicit
-   indicators (RSI, MACD line/signal/histogram, EMA, SMA, ATR, volume,
-   N-bar % change), comparators (>, <, crosses above, crosses below), and
-   risk parameters (stop %, target %, ATR multiples, max-hold bars).
-2. **Backtest** — fetch historical klines for the chosen window/interval,
-   evaluate the rule per bar, simulate one open position at a time with
-   intra-bar SL/TP resolution.
-3. **Stats** — return win rate, total / avg / largest win-loss %,
-   profit factor, max drawdown, annualised Sharpe, buy-and-hold benchmark,
-   net P&L on a fixed notional, plus a downsampled equity curve and the
-   full trade log.
-4. **Save** — persist the prompt + parsed AST per user.
-5. **Apply live** — the worker evaluates every active strategy on each
-   fresh closed bar and opens paper trades that resolve against 1m candles
-   (same tie-break rules as the scalper).
-
-## 7a. Strategy Backtest (5-year scoring + recommendations)
-A dedicated read-only tab that takes every scalping strategy and runs it
-against **five years** of historical 4h candles on BTC / ETH / SOL with a
-**$10,000** starting equity and **$10,000** per-trade notional. The runner:
-
-1. Fetches once per symbol via the active broker adapter
-   (`fetchKlinesRange` on a 4h interval — ~10,950 closed bars / symbol).
-2. Walks each candle and feeds a trailing 256-bar window (or `warmup × 2`,
-   whichever is larger) into the live strategy module's `run()` function.
-   Signals whose `triggeredAt` matches the current closeTime open a paper
-   trade with the strategy's own ATR-sized stop / target.
-3. Resolves each trade by walking forward through subsequent bars
-   (WIN on target touch, LOSS on stop touch, EXPIRED after `maxHoldBars`,
-   EOD on the last bar) — same tie-break rules as the live paper-trader.
-4. Produces per-symbol stats (win rate, profit factor, max DD, Sharpe, net
-   P&L, equity curve) and a cross-symbol aggregate.
-
-A scoring engine (`strategy-score.ts`) then collapses the aggregate into a
-**0-100 score** weighting six dimensions — win rate (25%), profit factor
-(20%), alpha over buy & hold (20%), max drawdown (15%), Sharpe (10%) and
-statistical significance / trade count (10%) — and maps the result to a
-letter grade (A+ / A / B / C / D / F) and one of four recommendations:
-**Highly recommended**, **Recommended**, **Use with caution**, **Not
-recommended**.
-
-The full suite is computed once per process and cached for 24h
-(in-memory, keyed by active broker id). The dedicated `/strategy-backtest`
-page renders a leaderboard sorted by score with sparkline equity curves
-per strategy, while the Strategies page's strategy picker shows the
-same score badge next to every strategy chip so users can immediately
-tell which strategies have a proven edge.
-
-## 8. Strategies + Paper Trading (multi-strategy paper-trading engine)
-A live strategy desk that runs **ten independent strategies** in parallel
-on 1m / 5m / 15m closed bars. Every fresh signal opens a paper trade tagged
-with the strategy that produced it, and the journal aggregates win-rate +
-P&L both per-symbol and per-strategy.
-
-The surface is split across two sidebar items:
-
-- **Strategies** (`/strategies`, `/in/strategies`) — the *configuration*
-  half: multi-select strategy picker, live multi-timeframe signal feed,
-  and the strategy reference card. This is where users decide which
-  strategies they want to subscribe to.
-- **Paper Trading** (`/paper-trading`, `/in/paper-trading`) — the
-  *outcome* half: live MTM open positions table, server-paginated
-  journal (10 rows / page) and per-strategy + per-symbol performance
-  breakdown. This is where users audit how their selected strategies
-  are performing.
-
-Users can pick **one or many** strategies from the picker — the selection
-is persisted to localStorage and filters both the live signal feed and the
-journal. The worker keeps producing trades for every strategy in the
-background so the journal stays a transparent track record regardless of
-the user's filter. The strategy filter is shared via the same
-`StrategyProvider` Zustand store, so toggling a strategy on one page is
-reflected on the other.
-
-### Strategies
-1. **UT Bot + SMC** — LuxAlgo UT Bot ATR trailing-stop flips confirmed by a
-   Smart Money Concepts structure bias (BOS / CHoCH on a short pivot
-   length). ATR(10), sensitivity 1, SMC pivot 5. 1×/2× ATR stop/target.
-2. **VWAP Sweep + Trend** — EMA50 trend filter, then waits for a liquidity
-   sweep of the prior 20-bar swing while price is stretched ≥ 0.8× ATR
-   away from a rolling-window VWAP. Enters on the rejection candle; target
-   is VWAP itself.
-3. **News Momentum** — aggressive breakout. Fires on volume ≥ 2.8× the
-   20-bar average + range ≥ 1.8× ATR + decisive body in the trade
-   direction + SMA20 drift filter. Models the footprint of ETF news, Fed
-   prints, liquidation cascades, exchange listings.
-4. **Range Scalp** — Bollinger touches filtered by a rolling-range
-   tightness check (≤ 4.5× ATR width) so the engine only fires when the
-   market is *not* trending. RSI oversold/overbought + rejection close;
-   target is the Bollinger mid-band.
-5. **EMA Pullback** — 9 / 20 / 50 EMA stack + rising EMA50 slope. Prior
-   bar pulls back into the 9-20 zone, current bar prints a confirmation
-   candle in the trend direction. Classic 2:1 RR.
-6. **VWAP Reversion** — pure mean-reversion. Fires when price is ≥ 1.5×
-   ATR stretched from rolling VWAP AND RSI rolls off an extreme. Target =
-   VWAP, stop = 1× ATR.
-7. **Orderflow Sweep** — equal swing highs/lows cluster detection. Current
-   bar wicks through the cluster on ≥ 1.8× volume then closes back inside
-   (rejection). A proxy for the stop-hunt / liquidation-cluster sweeps
-   professional desks engineer.
-8. **Fib Pullback (1m)** — the textbook 1-minute Fibonacci impulse-pullback
-   scalp. Detects an impulse swing ≥ 3× ATR within the last 12 closed bars,
-   waits for the retrace to tag the 0.5-0.618 fib zone (without breaking
-   0.786), and fires a continuation entry on a confirmation candle that
-   reclaims the 0.5 fib. Long after an up impulse, short after a down
-   impulse; target is the impulse extreme (0.0 fib).
-9. **Institutional AI SMC** — port of the *Ultimate Institutional AI SMC
-   System* Pine indicator. Aggregates **nine** institutional components
-   into a 0-9 AI score:
-   1. EMA20 vs EMA50 trend
-   2. HTF bias (EMA200 on the same series — same-timeframe HTF proxy)
-   3. VWAP side (rolling 96-bar)
-   4. SSL / BSL liquidity sweep within the last 6 bars
-   5. Bullish / bearish BOS within the last 6 bars (close crosses the
-      most-recent confirmed pivot extreme, swing length 5)
-   6. Fresh 3-candle Fair Value Gap within the last 6 bars
-   7. Volume spike (≥ 1.5× the 20-bar average) in the trade direction
-   8. Candle delta (close vs open)
-   9. London or New York kill zone (UTC 7-10 and 13-16)
-
-   The signal only fires when the score reaches 7 **and** the four
-   institutional preconditions are *all* satisfied — bull/bear trend +
-   VWAP side + recent sweep + recent BOS — so we never enter on a fresh
-   impulse candle. A retest filter then rejects bars that have already
-   extended away from the EMA20 (the workflow's "wait for retest, don't
-   FOMO" rule). Stop sits one quarter-ATR beyond the actual sweep wick
-   ("SL below the liquidity sweep low / above the bearish OB high");
-   target is 2× ATR from entry. Confidence scales with the score, kill
-   zone alignment, HTF agreement, FVG presence, and risk-reward.
-10. **AI Institutional Pro v5** — port of the *AI Institutional
-    Buy/Sell System [Pro v5]* Pine indicator. Two-stage gating: a set of
-    **hard gates** must all pass before scoring even runs, then an
-    **8-factor confluence score** has to clear the mode-preset minimum:
-
-    Hard gates (all required):
-    1. EMA20 vs EMA50 trend in the trade direction
-    2. HTF EMA bias aligned (same-series EMA200 proxy for the Pine HTF
-       EMA50 security request)
-    3. RSI(14) not pinned in the opposite extreme (BUY blocked above
-       `rsiOB`, SELL blocked below `rsiOS`)
-    4. Per-direction cooldown — no rapid-fire same-direction signals
-
-    Confluence score (8 components, ≥ `minScore` to fire):
-    1. VWAP side (rolling 96-bar)
-    2. BOS — close crosses the most-recent confirmed swing extreme
-       (pivot length 5, same crossover semantics as Pine)
-    3. SSL / BSL liquidity sweep on the current bar (low pierces and
-       closes back above prior bar low, or mirror for short)
-    4. Fresh 3-candle Fair Value Gap within the last 6 bars
-    5. Order block — engulfing close vs prior body
-       (`prev bear & close > prev high` / mirror)
-    6. Volume spike ≥ `volMult × 20-bar avg` in the trade direction
-    7. Kill zone — London 12:30-14:30 IST or NY 18:00-21:00 IST
-       (07:00-09:00 and 12:30-15:30 UTC)
-    8. RSI on the trade side of 50
-
-    Mode preset adapts to the timeframe (mirroring the Pine dropdown):
-
-    | TF      | vol× | minSc | cool | TP×  | SL×  | rsiOB | rsiOS |
-    | ------- | ---- | ----- | ---- | ---- | ---- | ----- | ----- |
-    | 1m / 5m | 1.5  | 6     | 10   | 2.0  | 1.0  | 60    | 40    |
-    | 15m     | 1.4  | 6     |  8   | 2.5  | 1.0  | 62    | 38    |
-
-    Entry is the trigger bar close; TP / SL are ATR multiples per the
-    preset. Confidence scales with score-over-threshold, kill-zone
-    alignment, HTF agreement, FVG / volume presence, and risk-reward.
-
-### Engine + journal
-- Strategy modules live in `src/features/scalping/strategies/*.ts` and
-  share an indicator pack (EMA / SMA / RSI / Bollinger / VWAP / ATR /
-  swing / cluster detection) in `src/features/scalping/helpers.ts`.
-- Every signal carries `strategyId` so the UI can render a strategy chip
-  on the card and the journal row. Each paper trade's `source` column is
-  `${strategyId}:${timeframe}` so the dedupe key isolates strategies — two
-  strategies can hold open positions on the same symbol at the same time
-  without colliding.
-- Trade resolution walks 1m klines from `openedAt` to now: WIN on target
-  touch, LOSS on stop touch, EXPIRED after 6h with no fill. Conservative
-  tie-break: a candle that touches both is recorded as a stop.
-- Performance panel breaks results down by symbol AND by strategy.
-
----
-
-# Dashboard UI Structure
-
-## Layout
-- Left sidebar navigation
-- Top navbar
-- Responsive trading layout
-- Dark mode by default
-
-## Pages
-
-### Home
-- Best Time to Trade banner (IST window + verdict + countdowns)
-- Market summary
-- Sentiment overview
-- Quick signals
-
-### Best Time
-- Hero status card (active window, verdict, IST clock, day quality, score)
-- 24h IST trading map (timeline with a "now" cursor)
-- Per-window cards with insight + suited styles
-- Best days of the week table
-- Best window by trading style matrix
-- BTC spotlight (7 PM – 11 PM IST)
-
-### Futures
-- OI charts
-- Funding charts
-- Liquidation data
-
-### Options
-- Options chain
-- IV charts
-- PCR analysis
-
-### Signals
-- AI trade suggestions
-- Historical accuracy
-
-### AI Signals
-- Multi-confluence intelligence per symbol (9 weighted factors)
-- Confidence score (0–100) + letter grade (S / A / B / C / D)
-- Calibrated win-probability + position-sizing %
-- Tiered take-profit ladder (TP1 / TP2 / TP3) with scale-out allocations
-- ATR-sized stop with explicit invalidation criteria
-- Live timing window (when to enter, when to exit, live countdown)
-- AI rationale with categorised confluence chips (Tech / Deriv / Sent /
-  Macro / News / Flow)
-- Market-regime banner (Risk-on / Risk-off / Mixed / Compressed)
-- Filters by direction (Bullish / Bearish / Wait) and horizon (Scalp /
-  Intraday / Swing / Positional), persisted to localStorage
-
-### Heatmap
-- Sector performance
-- Coin heatmap
-
-### Strategy Lab
-- Conversational prompt input
-- Backtest controls (symbol, period 1W/1M/6M/1Y/5Y)
-- Stats panel (win rate, drawdown, Sharpe, profit factor, P&L)
-- Equity curve sparkline
-- Trade log
-- Saved strategies sidebar with live paper-trading toggle
-
-### Strategy Backtest
-- Five-year backtest of every scalp strategy on BTC / ETH / SOL with
-  $10,000 starting equity.
-- Score (0-100) + letter grade + recommendation per strategy.
-- Per-strategy card: net P&L, win rate, profit factor, max drawdown,
-  Sharpe, total return vs buy & hold, trade count, equity-curve
-  sparkline.
-- Aggregate "ALL symbols" view + per-symbol toggle.
-- Leaderboard sorted by score so the strongest strategies surface first.
-- Same score chip is rendered on each strategy card in the Strategies
-  page picker — users can mix strategies based on backtest performance,
-  not vibes.
-
-### Strategies (`/strategies`)
-The *configuration* half of the engine — picking which strategies fire and
-watching the live signal feed:
-
-- Multi-select strategy picker (10 strategies, mix one or many) with the
-  5-year backtest score badge on every chip.
-- Live signal feed with **multi-select** 1m / 5m / 15m timeframe filter
-  (signals from all selected timeframes are merged and shown together).
-- "How the strategies work" reference card describing each engine's
-  trigger conditions, ATR-sized stop/target, and resolution rules.
-
-### Paper Trading (`/paper-trading`)
-The *outcome* half of the engine — open positions, journal and per-
-strategy performance breakdown stacked on a single page:
-
-- **Open positions** — live MTM table with strategy chip per row, mark
-  price, P&L %, P&L $, and a cancel action.
-- **Journal** — full trade history (strategy chip, status, entry / exit,
-  P&L %, P&L $, free-form notes; filter by symbol, status, and the active
-  strategy selection). The history table is **server-paginated** at 10
-  rows per page — `/api/scalper/journal` accepts `limit` + `offset` and
-  returns `{ items, open, total, limit, offset }`. The frontend never
-  slices client-side; it just renders whatever the server returns and
-  uses `total` to compute the page count.
-- **Performance panel** — overall win rate / profit factor + per-symbol
-  AND per-strategy breakdowns.
-
-Journal data (open trades + history + mark prices) is fetched once by a
-shared `JournalDataProvider` so the polling rate stays flat. The
-strategy filter is shared with `/strategies` via the same
-`StrategyProvider` Zustand store, so toggling a strategy on either page
-is reflected on the other. A monotonic request-id check throws away
-stale responses if the user rapidly changes pages or filters before
-earlier requests resolve.
-
-### Profile (`/profile`, opened from the topbar avatar)
-- Identity header (avatar, name, email, member-since, default-pair and
-  API-key status badges, sign-out button)
-- Hash-routed tab strip — `#account`, `#data-sources`, `#api-keys`,
-  `#alerts` — so each section is shareable / deep-linkable
-- Account tab — display name, default trading pair, live theme preview
-- Data sources tab — primary + fallback broker picker per market
-- API keys tab — AES-256-GCM encrypted per-exchange entries
-- Alerts tab — funding spike, OI breakout, price breakout, liquidation
-  surge, signal change (with cooldown per rule)
-- Legacy `/settings` URL 308-redirects here
-
-## India Pages (`/in/*`)
-
-The India sidebar mirrors the crypto sidebar so each item has a direct
-counterpart. Each page is fully market-aware — no cross-imports from
-the crypto features, no shared stores, no shared API routes.
-
-### Overview / Market Pulse (`/in/dashboard`)
-- NIFTY indices hero strip with 3D tilt
-- Sectoral heatmap (bullish → bearish)
-- MSB–OB intraday signals table
-- Range-expansion (WR8 + bullish-trend) scanner section
-- **Top 5 Stocks for Tomorrow** — post-market picks section (see below)
-- Sector drill-down modal with sortable F&O constituents
-
-#### Top 5 Stocks for Tomorrow (`/api/in/top-picks`)
-
-A post-market section on the Overview dashboard that surfaces the **five
-highest-conviction NSE F&O stocks for the next trading session**, refreshed
-every 5 minutes. Intended for review after market close.
-
-**How it works:**
-- Flattens the entire `SECTOR_STOCKS` universe (~130+ F&O names) into a
-  deduplicated symbol → primary-sector map (first sector wins per symbol).
-- Fetches Yahoo Finance quotes for every symbol in parallel.
-- Scores each stock through the same 8-factor `computeScore` + `classifySignal`
-  pipeline used by the sector-stocks route (SMA-50/200, intraday change,
-  analyst target, RSI, ADX, relative volume, delivery%).
-- Filters out any stock with no price data or an `N/A` signal.
-- Sorts descending by score, with upside% as a tiebreaker.
-- Returns the top 5 (configurable via `?limit=N`).
-
-**API:** `GET /api/in/top-picks?limit=5`
-
-**Response shape:**
-```ts
-{
-  picks: Array<{
-    rank: number;
-    symbol: string;
-    shortName: string | null;
-    sector: string;
-    price: number | null;
-    changePct: number | null;
-    score: number;           // −100 … +100
-    signal: SignalLabel;     // "STRONG BUY" | "BUY" | …
-    upsidePct: number | null;
-    fromSma50Pct: number | null;
-    relativeVolume: number | null;
-    targetMean: number | null;
-  }>;
-  universe: number;          // stocks scored (after filtering nulls)
-  fetchedAt: string;         // ISO timestamp
-}
-```
-
-**UI (`TopPicksSection` in `msb-dashboard.tsx`):**
-- 5-column responsive card grid (stacks on mobile/tablet).
-- Each `TopPickCard` shows: rank badge, TradingView deep-link, company name,
-  sector label, signal badge (color-coded bull/bear), price, day %, upside
-  to analyst/52w-high, vs SMA50, relative volume, and a score pill.
-- Loading skeletons animate while the first fetch is in-flight.
-- Error state with the HTTP message if the API fails.
-- Auto-refresh every 5 minutes (post-market data, not tick-sensitive).
-- Placed between the Range Expansion section and the MSB Signals table.
-
-### Best Time (`/in/best-time`)
-- Hero status card (active NSE window, verdict, IST clock, day quality, score)
-- 09:00–16:00 IST session map with a live "now" cursor
-- Seven session windows (Pre-Open / Opening Volatility / Morning Trend /
-  Midday Lull / Afternoon Trend / Power Hour / Closing Auction)
-- Best days of the week table (Tue/Wed = ideal, Thu = expiry warning,
-  Fri = good-but-volatile, Sat/Sun = closed)
-- Best window by trading style matrix
-- NIFTY / BANKNIFTY focus card (weekly-expiry awareness + Power Hour spotlight)
-
-### Options (`/in/options`)
-- Live NSE option chain with PCR, max-pain, ATM ±5 strikes
-- IV per strike, OI heat
-- Index + stock symbol picker with quick-select chips
-
-### Signals (`/in/signals`)
-- Unified F&O signal feed merging six scanner types
-  (range-expansion, momentum, volume breakout, OI build-up, PCR, IV-spike)
-- Per-source filter chips (toggle on/off, persisted to localStorage)
-- Rows ranked by absolute metric magnitude across sources
-- Each row supports Add-to-Watchlist + chart drill-down
-- Pinned with the India Best-Time banner
-
-### AI Signals (`/in/ai-signals`)
-- Multi-confluence AI signal per F&O index + leader (NIFTY / BANKNIFTY /
-  FINNIFTY / MIDCPNIFTY + RELIANCE / HDFCBANK / TCS)
-- Daily trend stack (SMA 20/50/200 + RSI + momentum + volume thrust)
-- Option-chain positioning — PCR, ATM IV, ΔPE-CE OI build-up, max-pain pull
-  from the live NSE option chain
-- Cross-references the existing F&O scanners (momentum, volume,
-  range-expansion, OI build-up) so AI direction agrees with the
-  multi-scanner board
-- Strike suggestion (nearest ATM from the live chain) on every non-WAIT
-  signal, INR-rounded tick sizes on entries / stops / TPs
-- Forces WAIT outside 09:15–15:30 IST and on weekends / weekly-expiry
-  warning days via the India Best-Time engine
-
-### Strategies (`/in/strategies`)
-- Full structural mirror of the crypto Strategies page — same picker
-  layout, same signal-card layout, same "how the strategies work"
-  reference card. India-scoped data.
-- India Best-Time banner pinning the active NSE window
-- Eight-strategy picker — Range Expansion, Momentum, Volume Breakout, OI
-  Build-up, PCR Extreme, IV Spike — each backed by the corresponding
-  NSE scanner from `/api/in/scanner` — plus **India Liquidity Edge
-  (ILE)**, a liquidity-first quant framework ported from the *India
-  Liquidity Edge — Quant Framework* Pine indicator, and **India
-  Max-Pain Gravity (IMPG)**, an option-positioning mean-reversion play
-  carved from the same Pine framework (both detailed below)
-- Per-strategy 1m / 5m / 15m timeframe toggles (selection persisted to
-  `localStorage` under the `india-scalper:strategy-timeframes:v1` key,
-  fully isolated from crypto)
-- Live signal feed via `/api/in/scalper/signals` — multi-timeframe
-  fan-out, ₹ price formatting, NSE ticker as the card header, kind
-  chip (LONG_BUILDUP / GAINER / BULL_VOLUME etc.) instead of the
-  crypto SMC ✓/✗ badge
-- Synthetic 0.5% stop / 1.0% target band per signal (2:1 RR) until the
-  proper F&O paper-trader lands with ATR-sized sizing
-- **India Liquidity Edge (ILE)** strategy — port of the *India
-  Liquidity Edge — Quant Framework* Pine indicator. Unlike the six
-  scanner-derived strategies, ILE is a self-contained liquidity-first
-  confluence engine for NSE indices + F&O stocks that folds eight
-  modules into a single 0–10 bull/bear score:
-  1. **Liquidity-sweep detector** — pools equal swing highs/lows (pivot
-     legs, equal-H/L tolerance) over a lookback window, then fires only
-     when price sweeps a pool by the sweep buffer (stop hunt) AND closes
-     back inside, gated by a volume spike / VIX > 14 / sweep-window
-     (10:00–11:30 or 14:30–15:15 IST) confluence filter.
-  2. **OI walls + max-pain gravity** — CE/PE walls (strongest two each)
-     from the live NSE option chain, a put-floor→call-ceiling pinning
-     zone, PCR classification (>1.4 bullish / <0.8 bearish), and a
-     post-13:30 (or 14:00 on expiry) max-pain pull when price drifts
-     beyond the buffer.
-  3. **Gap-fill engine** — flags gap-up / gap-down opens vs PDC, takes
-     the first-candle reversal back toward PDC with a 50%-of-gap
-     invalidation, and distinguishes event gaps (fill less reliably)
-     from sentiment gaps.
-  4. **NSE session + expiry timing** — Trap Zone → Discovery → Prime
-     Window → Trend Ride → Dead Zone → Close Rush → Closing Risk, plus
-     an expiry-day (Nifty weekly Thu / BNF weekly Wed / monthly)
-     gamma-blast window (09:30–11:30) and a close countdown.
-  5. **India VIX regime + IV-crush + VIX divergence** — Low / Normal /
-     Elevated / Fear regime tint, IV-rank vs 52-week range, pre-event
-     IV-crush target (VIX × 0.72), and hidden weakness/strength on
-     price-vs-VIX divergence.
-  6. **Confluence score engine** — sums sweep / wall proximity / PCR /
-     gap / Prime-window / VIX / max-pain side / volume / VWAP side /
-     PDC side into a 0–10 score; STRONG BUY/SELL at ≥ 7, BUY/SELL at the
-     user-tunable min-confluence threshold.
-  7. **Auto ATR-sized SL/TP** — 0.25× ATR stop, 2.5× RR target on every
-     fired signal (and a PDC-targeted SL/TP on gap-fill setups).
-  8. **Instrument presets** — Auto (ATR-scaled, works for any F&O
-     stock) / Nifty / BankNifty / MidcapNifty / Custom (manual), so the
-     tolerance, sweep, proximity, max-pain and gap buffers all scale to
-     the underlying.
-- **India Max-Pain Gravity (IMPG)** strategy — a second port from the
-  same *India Liquidity Edge — Quant Framework* Pine indicator, but
-  intentionally distinct from ILE. Where ILE folds all eight Pine
-  modules into a broad liquidity-sweep confluence score, IMPG isolates
-  the **dealer-positioning** modules into a focused, fade-the-extreme
-  mean-reversion play for NSE indices + F&O stocks:
-  1. **Max-pain gravity** — the headline trigger. After 13:30 IST (or
-     14:00 on expiry day) it fades price back toward the max-pain
-     strike once spot has drifted beyond the (ATR-scaled) max-pain pull
-     buffer, on the thesis that dealers pin the underlying to max pain
-     into the close. The buffer is dropped on expiry-day override.
-  2. **OI-wall fade** — short rejections at the strongest CE wall and
-     long rejections off the strongest PE floor when price is within
-     the wall-proximity buffer, gated by PCR (> 1.4 favours PE-floor
-     longs, < 0.8 favours CE-wall shorts) — CE/PE walls (strongest two
-     each) come from the live NSE option chain.
-  3. **Pinning-zone mean reversion** — inside the put-floor →
-     call-ceiling box, fade the edges back toward the centre.
-  4. **Gap-fill toward PDC** — first-candle reversal back to the
-     previous-day close on a gap-up / gap-down open with a 50%-of-gap
-     invalidation, distinguishing event gaps (fill less reliably) from
-     sentiment gaps.
-  5. **Expiry-day gamma awareness** — flags the 09:30–11:30 gamma-blast
-     window and tightens to directional-options only on expiry (Nifty
-     weekly Thu / BNF weekly Wed / monthly).
-  6. **Auto ATR-sized SL with a positioning target** — the max-pain
-     strike (gravity / wall fades) or PDC (gap fills) is the natural
-     target, with an ATR-sized stop beyond the rejection wick.
-  7. **Instrument presets** — reuses ILE's Auto (ATR-scaled) / Nifty /
-     BankNifty / MidcapNifty / Custom presets so the wall-proximity,
-     max-pain and gap buffers all scale to the underlying.
-- **Opening Breakout (ORB)** strategy — the **first 5-min candle
-  (9:15–9:19:59 IST) opening-range breakout**, tuned for Indian markets.
-  Unlike the scanner / positioning strategies, it runs on **live 5-min
-  candles** (Yahoo) fanned out across the F&O indices + liquid leaders,
-  with an NSE option chain layered in for confirmation
-  (`opening-breakout-core.ts` pure builder + `opening-breakout.ts` IO):
-  1. **Opening range** — the 9:15 candle's high/low frames the day's
-     first battle. A later 5-min candle that **closes** beyond the range
-     confirms the winner (bullish above / bearish below).
-  2. **Retest entry (non-negotiable)** — entry is on the **retest** of
-     the broken level (resistance→support flip, or the mirror), the
-     highest-probability, lowest-risk point of the setup. A breakout that
-     hasn't retested yet is flagged `confirmed: false`.
-  3. **2R geometry** — stop below the breakout candle's low (above its
-     high for shorts), target = **2× the stop distance**, with a 3R
-     stretch target carried for the Daily Picks "can move upto".
-  4. **Option-chain confirmation** — PCR / OI / max-pain are projected
-     onto the trade direction (put-writing support for longs, call-writing
-     resistance for shorts, max-pain pull), nudging confidence up or down.
-  5. **India-specific sizing** — sub-0.1% opening ranges (false-move
-     traps) and >0.7% gap-driven ranges (SGX/global cues) down-weight
-     confidence; rationale reminds operators to trade **ATM / 1-strike
-     ITM** to dodge the post-9:30 IV crush.
-  Its **top three signals** also seed the new Opening Breakout bucket on
-  the Daily Picks board.
-- Legacy `/in/scalper` URL 308-redirects here
-
-### Paper Trading (`/in/paper-trading`)
-- Full structural mirror of the crypto Paper Trading page — same
-  three-card layout (open positions → journal → stats), same column
-  set, same in-place note editor, same server-paginated journal.
-  India-scoped data.
-- India Best-Time banner pinning the active NSE window
-- F&O open-positions card with live MTM ticks (mark prices polled from
-  `/api/in/quote?symbols=…` so we only pay for symbols currently in
-  open trades)
-- Server-paginated F&O journal (10 rows / page via the shared
-  `INDIA_JOURNAL_PAGE_SIZE` constant) with free-form symbol filter
-  (NSE F&O is too large for a fixed dropdown), status filter, ₹ P&L,
-  per-row notes
-- Per-symbol + per-strategy performance panel (Total / Win rate / Net
-  P&L / Profit factor headline tiles, then the same breakdown tables
-  as crypto)
-- Strategy filter shared with `/in/strategies` via
-  `<IndiaStrategyProvider>` — toggling a strategy on either page is
-  reflected on the other
-- Every read filters the shared `PaperTrade` Postgres table on the
-  canonical `in:` source prefix, so India and crypto journals stay
-  fully isolated even though they live in the same table. The
-  `symbol` column is now a free-form `String` (migration
-  `20260518050000_papertrade_symbol_string`), so the journal symbol
-  filter rides the Prisma equality path and the
-  `PaperTrade_symbol_openedAt_idx` index instead of being applied
-  in-memory. The `india-scalper` worker books trades into the journal
-  with ATR-sized SL/TP (NSE 0.05-tick rounded), an expiry-day gamma
-  cooldown (Thursday ≥ 14:30 IST) and 5m NSE-candle resolution. Each
-  strategy chip on the Strategies page carries a 0–100 score + A+…F grade
-  (`score-board.ts` → `IndiaStrategyScoreBadge`) blended from two sources:
-  the 3 price strategies (Range Expansion / Momentum / Volume Breakout)
-  are scored from a real 5-year daily-OHLCV backtest (`backtest.ts` +
-  `backtest-core.ts`, scanner logic ported to candle-fed modules in
-  `strategies/price-modules.ts`) and tagged **5Y**; the 5 option-chain
-  strategies (PCR / IV / OI build-up / Liquidity Edge / Max-Pain Gravity)
-  have no historical option-chain feed, so they're scored from the live
-  paper-trade record and tagged **PT**. Both run through the one
-  risk-aware `scoreIndiaStrategy` engine (win rate, profit factor,
-  expectancy, sample size + drawdown / Sharpe when available). To make the
-  option-chain 5 backtestable, the `india-oc-capture` worker snapshots each
-  F&O index's chain analytics into `OptionChainSnapshot` every 5 min during
-  market hours (`option-chain-capture.ts`, gated by `isNseMarketOpenIST`) —
-  NSE has no history API, so this accrues the series the replay engine
-  scores off. That replay engine (`option-chain-replay-core.ts` +
-  `option-chain-replay.ts`) walks the captured snapshot series bar-by-bar,
-  reconstructing each of the 5 option-chain signals from a snapshot (it
-  reuses the exact `positioning-core` ILE/IMPG builders and the same
-  PCR/IV/OI direction thresholds as the live `fetch-signals`, so there is no
-  logic drift) and resolves trades against the forward spot path, flat at
-  the IST day boundary. Pooled across the four indices and graded on the
-  same `scoreIndiaStrategy` scale, it promotes those 5 strategies from the
-  **PT** badge to a true **5Y** backtest score once enough snapshots accrue
-  (`MIN_SNAPSHOTS` / `MIN_TRADES` guards); until then the board falls back
-  to the live paper-trade record.
-
-### Strategy Backtest (`/in/strategy-backtest`)
-- Underlying picker (NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + top F&O stocks)
-- Multi-timeframe selector (5m / 15m / 1h / 1d / 1w) with default lookback per TF
-- Live OHLCV fetch via `/api/in/historical` showing the exact bars the
-  engine will replay
-- Quick stats (avg daily %, ATR/close %, hi/lo, candle count)
-- Roadmap describing strategy-module retargeting + scoring drop-in
-
-### Strategy Lab (`/in/strategy-lab`)
-- Free-form prompt input with four NSE-specific templates (NIFTY ORB,
-  BANKNIFTY VWAP reversion, expiry IV-crush straddle, F&O-stock EMA pullback)
-- Underlying + lookback (1W → 5Y) + timeframe (5m / 15m / 1h / 1d) +
-  stop / target capture
-- Local draft persistence; roadmap describes the F&O-aware AST parser
-  (IV ATM / India VIX / OI ΔBUILDUP / expiry-day tokens)
-
-### Heatmap (`/in/heatmap`)
-- Sector pulse strip across the top (sectors sorted by average move)
-- Per-sector grid of F&O constituents
-- Tiles tinted by day % using inline `color-mix()` for continuous saturation
-- Click-through to per-symbol charts
-- Refresh-all button on top of automatic per-sector loads
-
-### Profile (`/in/profile`, opened from the topbar avatar)
-- Same Account / Data sources / API keys / Alerts tabs as the crypto
-  `/profile` page (settings are user-scoped, not market-scoped)
-- Copy reframed around NSE F&O concerns: India-broker selection
-  (Yahoo / NSE proxy / Groww), cookie-warmed NSE proxy, weekly-expiry
-  alert templates
-- Legacy `/in/settings` URL 308-redirects here
-
-### India-only extras
-
-- **Daily Picks** (`/in/daily-picks`) — top-3-per-bucket board (Indices
-  Scalping / Opening Breakout / Highly Momentum / Highly Scalping / Highly
-  Potential) with entry, stop, target,
-  "can move upto" + "can expect" and per-pick logic, frozen per IST trading
-  day and live-tracked (P&L + progress-to-target → TARGET_HIT / STOP_HIT)
-  with a queryable daily history. Served by `/api/in/daily-picks` (+
-  `/history`); pure engine in `features/india/daily-picks/engine.ts`,
-  freeze/track/history I/O in `…/builder.ts`, persistence via the
-  `IndiaDailyPick` table.
-- **News** (`/in/news`) — Moneycontrol India + global business RSS feeds,
-  parsed and enriched with per-headline bull/bear sentiment and F&O
-  stock / sector / index impact tags, plus an overall market-sentiment +
-  risk-on / risk-off ratio banner. Served by `/api/in/news`
-  (`services/india/news` scraper + `features/india/news/engine.ts` pure
-  engine); feed URLs are env-overridable via `INDIA_NEWS_FEEDS`.
-- **Scanner** (`/in/scanner`) — single-mode scanner UI driven directly
-  by `/api/in/scanner` (range-expansion default).
-- **Watchlist** (`/in/watchlist`) — persistent F&O watchlist (Zustand
-  persist key `india-fno-watchlist`).
-- **Chart** (`/in/chart/[symbol]`) — per-symbol lightweight-charts
-  deep-dive with intraday / daily toggles.
-
----
-
-# Folder Structure
-
-```txt
-src/
- ├── app/
- │    ├── (dashboard)/
- │    │   ├── page.tsx              Crypto Overview
- │    │   ├── best-time/, options/, signals/, ai-signals/,
- │    │   │   strategies/, paper-trading/, strategy-backtest/,
- │    │   │   strategy-lab/, heatmap/, futures/
- │    │   │                        Crypto pages (one per sidebar item)
- │    │   ├── scalper/             308-redirect to /strategies (legacy)
- │    │   ├── profile/             Consolidated profile (topbar avatar)
- │    │   ├── settings/            308-redirect → /profile (legacy)
- │    │   └── in/                   India route group — full sidebar parity
- │    │       ├── dashboard/        Overview (Market Pulse)
- │    │       ├── best-time/        NSE-anchored session guide
- │    │       ├── options/          NSE option chain
- │    │       ├── signals/          Unified F&O signal board
- │    │       ├── ai-signals/       AI multi-confluence F&O signals
- │    │       ├── strategies/       Live F&O signal feed + picker + how-it-works
- │    │       ├── paper-trading/    F&O open positions + journal + per-strategy stats
- │    │       ├── scalper/          308-redirect to /in/strategies (legacy)
- │    │       ├── strategy-backtest/ OHLCV scaffold + roadmap
- │    │       ├── strategy-lab/     F&O prompt intake + roadmap
- │    │       ├── heatmap/          Sector + stock heatmap
- │    │       ├── profile/         India-flavoured profile (topbar avatar)
- │    │       ├── settings/        308-redirect → /in/profile (legacy)
- │    │       ├── daily-picks/      Top-3-per-bucket picks + live tracking + history (India-only)
- │    │       ├── news/             Moneycontrol + global news (India-only)
- │    │       ├── scanner/          (India-only)
- │    │       ├── watchlist/        (India-only)
- │    │       ├── chart/[symbol]/   (India-only)
- │    │       ├── options-workbench/ Multi-leg options strategy workbench (India-only)
- │    │       └── portfolio/         Quant portfolio optimizer (India-only)
- │    └── api/
- │        ├── in/                   India API surface: fno-list, health, historical,
- │        │                          market-snapshot, nifty-bias, option-chain, quote,
- │        │                          scanner, sector-stocks, msb-signals, feed/stream,
- │        │                          ai-signals, daily-picks (+ /history), expiry-trades,
- │        │                          news, top-picks,
- │        │                          gex (Dealer GEX, gamma flip, expected move),
- │        │                          vol-surface (SVI IV surface + term structure),
- │        │                          order-flow (VPIN toxic order-flow),
- │        │                          portfolio-optimizer (Riskfolio-Lib allocation)
- │        └── …                     Crypto API surface
- │
- ├── components/
- │    ├── ai-signals/     ai-signal-card (rich per-signal card),
- │    │                   ai-signals-board (polling shell with filters),
- │    │                   ai-market-context-banner (regime banner)
- │    ├── best-time/      best-time-banner, best-time-dashboard
- │    ├── charts/
- │    ├── dashboard/      sidebar (market-aware), market-switcher, topbar, …
- │    ├── scalper/         Shared building blocks for the Strategies +
- │    │                    Paper Trading surfaces: scalper-tabs (legacy
- │    │                    3-tab shell, kept for back-compat), live-signals,
- │    │                    scalp-signal-card, open-positions-card,
- │    │                    journal-card, journal-data-context,
- │    │                    journal-shared, strategy-picker, strategy-context,
- │    │                    stats-panel, strategy-backtest-panel,
- │    │                    strategy-backtest-context, strategy-score-badge
- │    ├── strategy-lab/
- │    ├── profile/        profile-header (avatar/sign-out card),
- │    │                   profile-tabs (hash-routed tab switcher)
- │    ├── settings/       settings-form, data-sources-form,
- │    │                   api-keys-form, alerts-manager — rendered
- │    │                   inside the profile page's tab panels
- │    ├── india/          India UI (no cross-imports from crypto):
- │    │   ├── best-time/   india-best-time-banner, india-best-time-dashboard
- │    │   ├── daily-picks/ daily-picks-board (live poller), daily-pick-card,
- │    │   │                daily-picks-history (per-day outcomes table)
- │    │   ├── heatmap/     india-heatmap (continuous color-mix tints)
- │    │   ├── signals/     india-signals-board (multi-source poller)
- │    │   ├── strategies/  Mirrors crypto components/scalper for the F&O
- │    │   │                Strategies page: strategy-context (Indian
- │    │   │                StrategyProvider), strategy-picker, live-signals,
- │    │   │                india-scalp-signal-card (₹ + NSE ticker)
- │    │   ├── paper-trading/ Mirrors crypto Paper Trading components:
- │    │   │                journal-data-context (India journal poller +
- │    │   │                /api/in/quote MTM), open-positions-card,
- │    │   │                journal-card, stats-panel, journal-shared
- │    │   ├── strategy/    india-backtest-preview, india-strategy-lab-intake
- │    │   ├── common/      india-feature-preview (shared roadmap shell)
- │    │   ├── msb-dashboard, charts/price-chart,
- │    │   │   ticker/live-ticker, ticker/india-ticker-bar
- │    │   ├── options/  option-chain-table, underlying-flow, gex-panel,
- │    │   │             vol-surface, iv-regime-badge
- │    │   ├── dashboard/ order-flow-panel (VPIN gauge + sparkline)
- │    │   ├── paper-trading/ live-order-modal (double-confirm live order UX)
- │    │   └── ui/          India-flavoured shadcn primitives (button/card/table)
- │    └── ui/
- │
- ├── features/
- │    ├── ai-signals/     Cross-market AI engine (engine.ts) + crypto
- │    │                   builder + india builder (multi-confluence
- │    │                   scoring, grading, sizing, timing)
- │    ├── best-time/      Crypto IST window engine + types
- │    ├── futures/
- │    ├── options/
- │    ├── sentiment/
- │    ├── signals/
- │    ├── scalping/        engine, fetch-signals, paper-trader, journal,
- │    │                    backtest (5Y historical replay),
- │    │                    strategy-score (0-100 + grade + rec),
- │    │                    run-all-backtests (in-process cached suite)
- │    │   └── strategies/  ut-smc, vwap-sweep-trend, news-momentum,
- │    │                    range-scalp, ema-pullback, vwap-reversion,
- │    │                    orderflow-sweep, fib-pullback,
- │    │                    institutional-smc, ai-institutional-pro +
- │    │                    catalog
- │    ├── strategy-lab/
- │    ├── heatmap/
- │    └── india/
- │        ├── best-time/   NSE-anchored session engine (mirrors features/
- │        │                best-time/engine.ts but with seven NSE windows,
- │        │                expiry-aware day quality, weekend "off" guard)
- │        ├── daily-picks/ Pure engine (bucket scoring, top-3 selection,
- │        │                level extraction, live P&L / progress tracking) +
- │        │                builder (freeze-per-day + track + history, backed
- │        │                by the IndiaDailyPick table, DB-resilient)
- │        ├── news/        Pure news engine — bull/bear lexicon scoring,
- │        │                F&O stock / sector / index impact tagging,
- │        │                market sentiment + risk-on/off ratio aggregation
- │        └── scalping/    Structural mirror of features/scalping for the
- │                         F&O surface: types (IndiaScalpSignal,
- │                         IndiaPaperTradeStatus + `in:<id>:<tf>` source
- │                         helpers), strategies/catalog (eight entries —
- │                         Range Expansion, Momentum, Volume Breakout, OI
- │                         Build-up, PCR Extreme, IV Spike, India
- │                         Liquidity Edge, India Max-Pain Gravity),
- │                         fetch-signals
- │                         (wraps services/india/scanner/engine into
- │                         IndiaScalpSignal cards), journal (in:-prefixed
- │                         queries against the shared PaperTrade table —
- │                         segregation boundary between markets),
- │                         journal-constants
- │        ├── options-workbench/ payoff.ts (computePayoff + aggregateGreeks)
- │        └── indicators/       src/features/indicators/ — @debut/indicators
- │                              streaming adapter with dumpState/restoreState
- │
- ├── services/
- │    ├── binance/
- │    ├── bybit/
- │    ├── deribit/
- │    ├── coinglass/
- │    └── india/           Yahoo / NSE / Groww broker adapters, cache,
- │                         scanner, signals, news (RSS), websocket gateway
- │
- ├── hooks/
- │    └── india/           useFetchPoll, useFeedStream, useLiveQuotes,
- │                         useOptionChain, useScanner
- ├── store/
- │    └── india/           useIndia{Market,OptionChain,Scanner,Watchlist}Store
- ├── lib/
- │    ├── market-data/     Provider-agnostic Indian market data layer
- │    │   ├── types.ts     Canonical normalized types — Instrument, MDQuote,
- │    │   │                OHLCVCandle, OptionChain, LiveTick, ProviderHealth
- │    │   ├── provider.ts  MarketDataProvider interface + RegisteredProvider
- │    │   ├── registry.ts  ProviderRegistry — capability routing, priority ordering
- │    │   ├── health.ts    Circuit breaker + health scoring (0–100) + structured logging
- │    │   ├── failover.ts  withFailover() — retry + exponential backoff + failover
- │    │   ├── normalizer.ts Provider-to-canonical normalization utilities
- │    │   ├── providers/   angel-one.ts · upstox.ts · nse.ts · yahoo.ts
- │    │   ├── cache/       market-cache.ts — two-tier (in-process + Redis, md: ns)
- │    │   ├── validation/  candle-validator.ts · tick-validator.ts
- │    │   └── services/    candle-builder.service.ts (NSE-aligned, Redis-backed,
- │    │                    Postgres CandleBar) · historical.service.ts ·
- │    │                    instrument-master.service.ts · live-feed.service.ts ·
- │    │                    option-chain.service.ts · reconciliation.service.ts
- │    ├── risk/            Portfolio Risk Engine v2
- │    │   ├── exposure.ts  Gross/net/long/short exposure; concentration checks; cluster guard
- │    │   ├── correlation.ts Rolling Pearson matrix; single-linkage clustering; pre-trade check
- │    │   ├── var.ts       Historical VaR, Parametric VaR, CVaR/Expected Shortfall
- │    │   ├── drawdown.ts  4-tier DrawdownTracker (NORMAL→CAUTION→WARNING→DANGER→HALT)
- │    │   ├── position-sizing.ts Dynamic qty = base × confidence × vol × correlation × drawdown
- │    │   ├── risk-limits.ts Risk budgets; SOFT_KILL / HARD_KILL; auto-escalation
- │    │   └── portfolio-risk.ts PortfolioRiskEngine — 8-step pre-trade pipeline; audit snapshot
- │    ├── microstructure/  Market Microstructure Intelligence Engine
- │    │   ├── order-book.ts OrderBookSnapshot builder; depth helpers
- │    │   ├── imbalance.ts L1/L5/weighted-depth imbalance; DEMAND_HEAVY/SUPPLY_HEAVY regime
- │    │   ├── spread.ts    Absolute + pct spread; SpreadTracker (rolling percentile)
- │    │   ├── liquidity.ts 5-dimension composite liquidity score (0–100)
- │    │   ├── toxicity.ts  TypeScript VPIN port; composite toxicity; sizing adjustments
- │    │   ├── pressure.ts  Bid/ask replenishment; PressureTracker; price-response pressure
- │    │   └── index.ts     MicrostructureEngine facade — ExecQuality; 1m/5m feature store
- │    ├── experiments/     Shadow Trading & Strategy Experiment Framework
- │    │   ├── strategy-version.ts StrategyVersionRegistry; VersionStamp; stage/status FSM
- │    │   ├── experiment-manager.ts Multi-arm experiments; audit log; summary stats
- │    │   ├── shadow-trader.ts Per-arm fill simulation (SHADOW/PAPER); EOD sweep
- │    │   ├── comparison.ts ComparisonEngine — Welch t-test; Cohen's d; 95% CI; alpha/IR
- │    │   ├── promotion.ts Gated promotion pipeline; single-use cryptographic tokens
- │    │   └── index.ts     Barrel re-exports
- │    ├── backtesting-v2/  Event-driven backtesting engine for NSE F&O
- │    │   ├── events/      Typed event bus (Market/Signal/Risk/Order/Fill/Position)
- │    │   ├── models/      Portfolio, Position, OrderBook, Trade (pure, no I/O)
- │    │   ├── engine/      SimulationClock (NSE calendar), EventQueue, EventEngine, RiskManager
- │    │   ├── execution/   SlippageModel, CommissionModel, fill models;
- │    │   │                india-slippage-model, india-brokerage-model, latency-model,
- │    │   │                india-fill-model, india-execution-engine, execution-quality-report
- │    │   ├── analytics/   metrics (CAGR/Sharpe/Sortino/Calmar/MaxDD), performance, attribution
- │    │   └── adapter/     india-price-adapter (→ HistoricalService); strategy-adapter
- │    └── india/           fno-symbols, sectors, INR-aware formatters
- ├── utils/
- ├── prisma/
- └── types/
-      └── india/           market / options / scanner type packs
-```
-
----
-
-# API Suggestions
-
-## Free APIs
-- Binance API
-- Bybit API
-- Alternative.me API
-- CoinGecko API
-
-## Paid APIs (optional)
-- CoinGlass
-- CryptoQuant
-- Santiment
-- Glassnode
-
----
-
-# Redis Usage
-Use Redis for:
-- Caching API responses
-- WebSocket snapshots
-- Rate limit protection
-- Market aggregation
-
----
-
-# Performance Goals
-- Fast dashboard loading
-- Realtime updates
-- Optimized websocket handling
-- SSR where needed
-- Edge-ready APIs
-
----
-
-# Design Inspiration
-- Delta Exchange
-- Binance Futures
-- TradingView
-- CoinGlass
-
----
-
-# Development Priorities
-
-## Phase 1
-- Setup project
-- Market overview
-- Realtime price websocket
-
-## Phase 2
-- Futures analytics
-- Sentiment engine
-
-## Phase 3
-- Options analytics
-- AI trading signals
-
-## Phase 4
-- Alerts
-- Backtesting
-- User auth
-
-## Phase 2 (Expert Quant Upgrade — complete)
-- [x] Streaming indicators (@debut/indicators)
-- [x] Chart plugins (Anchored VWAP, Volume Profile)
-- [x] Real greeks + IV solver (Black-76/BS, mibian)
-- [x] Dealer GEX engine + dashboard panel
-- [x] 3D IV surface + term structure
-- [x] TA-Lib vectorised feature engineering
-- [x] VPIN toxic order-flow indicator
-- [x] TFT price regime forecaster
-- [x] IV regime classifier (CRUSH/STABLE/SPIKE)
-- [x] Riskfolio-Lib portfolio optimizer + /in/portfolio page
-- [x] Options Strategy Workbench + payoff engine
-- [x] OpenAlgo broker adapter + live order modal
-
-## Phase 3 (Institutional Infrastructure — complete)
-- [x] Event-driven backtesting engine for NSE F&O (`src/lib/backtesting-v2/`) — typed event bus, NSE `SimulationClock`, domain models, NSE cost model, trade attribution
-- [x] Financial ML Validation Framework (`ml-service/src/validation/`) — walk-forward, embargo, Purged K-Fold, CPCV, PSR/DSR
-- [x] Indian Market Execution Simulation (`src/lib/backtesting-v2/execution/`) — instrument-aware slippage, full NSE brokerage, 3 latency profiles, 4 order types
-- [x] Meta Decision Engine (`ml-service/src/meta/`) — Platt + isotonic calibration, regime-aware ensemble (6 regimes × 7 models), abstention policy
-- [x] ML Model Monitoring & Drift Detection (`ml-service/src/monitoring/`) — PSI/KS/JS drift, Brier/ECE performance, 16 FastAPI endpoints
-- [x] Portfolio Risk Engine v2 (`src/lib/risk/`) — 8-step pre-trade pipeline, correlated-cluster guard, VaR/CVaR, 4-tier drawdown, SOFT/HARD kill
-- [x] Shadow Trading & Strategy Experiment Framework (`src/lib/experiments/`) — multi-arm A/B, ComparisonEngine, cryptographic promotion gates
-- [x] Market Microstructure Intelligence Engine (`src/lib/microstructure/`) — imbalance, spread percentile, 5-dim liquidity, VPIN, PressureTracker, ExecQuality
-
----
-
-# Testing & TDD policy (mandatory)
-
-> **Test-Driven Development is non-negotiable.** Every new feature, bug
-> fix, or enhancement **must** start with failing test cases that
-> describe the desired behaviour, then move on to the implementation
-> that turns them green. Code without a corresponding test will not
-> pass review.
-
-## Tooling
-
-- **Runner:** Vitest 4 with the `jsdom` environment.
-- **DOM assertions:** `@testing-library/react` + `@testing-library/jest-dom`.
-- **User interactions:** `@testing-library/user-event`.
-- **Coverage:** v8 provider — `text`, `html`, `lcov` outputs in `coverage/`.
-- **Setup:** `vitest.config.ts` at the repo root; shared mocks in
-  `tests/setup/vitest.setup.ts`. `next/link` is aliased to
-  `tests/setup/next-link-shim.tsx`; `next/navigation` and `next/headers`
-  are mocked so route components and pages can render without the
-  Next runtime.
-
-## Layered test layout (one folder per concern)
-
-```
-tests/
-  setup/         Shared Vitest setup + fixtures (candles, status, ...)
-  lib/           Pure utility tests (formatters, validators, math)
-  features/      Domain engines (best-time, sentiment, scalping,
-                 strategy-lab parser, strategy-score, ...)
-  components/    React component tests (UI primitives + light wrappers)
-  api/           Next 16 Route Handler tests (POST/GET handlers)
-  services/      Service layer (cache backends, broker shared utils)
-  hooks/         Custom React hook tests
-  stores/        Zustand store tests
-  pages/         Page-level smoke / redirect / not-found tests
-  worker/        Background worker — log/scheduler/config/env paths
-```
-
-Each layer has a per-slice npm script (`test:lib`, `test:features`,
-`test:components`, `test:api`, `test:services`, `test:hooks`,
-`test:stores`, `test:pages`) so you can iterate on the slice you're
-changing without paying for the rest of the suite.
-
-## Required scripts (already in `package.json`)
-
-| Script                  | Purpose                                                |
-| ----------------------- | ------------------------------------------------------ |
-| `npm test`              | Full suite, no watcher (the default in CI)             |
-| `npm run test:watch`    | Vitest watcher                                         |
-| `npm run test:ui`       | Vitest browser UI                                      |
-| `npm run test:coverage` | Coverage report (v8) → `coverage/`                     |
-| `npm run test:<layer>`  | Per-layer slice (lib/features/components/api/...)      |
-| `npm run test:ci`       | CI run with JUnit XML at `test-results/junit.xml`      |
-
-## Auto-run wiring (tests run on every code change, automatically)
-
-The suite is plumbed into four trigger points so a stale test result
-is never the reason a regression slips through:
-
-1. **`npm run build` blocks on a red suite.** A `prebuild` script
-   runs `npm test` before `next build`. Failing tests = failing build.
-2. **`npm run dev:tdd` watches every file save.** Runs `next dev` and
-   `vitest --watch` in parallel via `concurrently`, so editing under
-   `src/**` re-runs only the affected tests instantly.
-3. **`npm run check` is the pre-PR gate.** Chains `lint` +
-   `typecheck` + full Vitest run.
-4. **Cursor agent edits trigger the matching test slice.** A project
-   hook at `.cursor/hooks.json` maps each `afterFileEdit` event to
-   its slice and surfaces the pass/fail summary back to the chat.
-   A `stop` hook runs the full suite when the agent finishes its
-   turn.
-
-## Mandatory TDD workflow — for every change
-
-1. **Write the failing test cases first.** Cover the happy path, the
-   most common edge cases, and at least one explicit error / boundary
-   case per public function or component prop.
-2. **Run them and confirm they fail for the _right_ reason** — not
-   because of a syntax error or a missing import. Use the per-layer
-   script to keep the loop tight.
-3. **Write the smallest possible implementation that turns the failing
-   tests green.** Don't anticipate future requirements.
-4. **Refactor under the green safety net.** Re-run the suite after
-   every change.
-5. **Run the full suite (`npm test`) before opening a PR** — or just
-   `npm run check` for the lint + typecheck + tests trio.
-
-## What to test (concrete checklist by layer)
-
-- **`tests/lib/`** — every exported function gets at least: one happy
-  path, one boundary (empty / zero / negative), one explicit error or
-  return-value contract.
-- **`tests/features/`** — test the engine's public API only; build
-  candle / status / strategy fixtures via `tests/setup/fixtures.ts`;
-  assert engine output (signal counts, scores, verdicts) given fixed
-  inputs.
-- **`tests/components/`** — assert what the user sees and how they
-  interact (`getByRole`, `getByText`, `userEvent`). Mock external
-  systems (`framer-motion`, fetchers, `getBestTimeStatus`) only when
-  they leak runtime requirements.
-- **`tests/api/`** — import the handler, build a `Request` with
-  `new Request(url, { method, body })`, await the handler, assert on
-  `response.status` + `await response.json()`. Always cover at least
-  one valid payload and one Zod / validation failure.
-- **`tests/services/`** — exercise the public surface of caches and
-  shared helpers in isolation. Never hit a real network or DB; mock
-  the underlying client.
-- **`tests/hooks/`** — wrap the hook in a tiny harness component
-  inside the test, render it, and assert via the rendered DOM.
-- **`tests/stores/`** — create a fresh store per test; assert on
-  action transitions and selector outputs.
-- **`tests/pages/`** — smoke render to confirm the page composes its
-  imports and renders without throwing. For `redirect()` / `notFound()`
-  paths assert that the call throws the matching mocked sentinel
-  error.
-- **`tests/worker/`** — exercise pure / env-driven worker units in
-  isolation: `log.ts` (level filtering + pretty/json format), 
-  `scheduler.ts` (recurring-tick lifecycle with fake timers, no
-  overlap, `stop()` semantics), `config.ts` (broker resolution +
-  symbol parsing + interval overrides), and the env-validation
-  branches of `redis.ts` / `db.ts` / `observability.ts`. Long-running
-  IO modules (`worker/src/jobs/**`, `worker/src/index.ts`) are
-  excluded from coverage and verified at integration time.
-
-## Adding a feature — example
+## 12. ML Microservice
+
+`ml-service/` — Python 3.11, FastAPI, port 8100.
+
+### 12.1 Model Stack
+
+| Model | Algorithm | Purpose |
+|---|---|---|
+| Market Regime Classifier | XGBoost | 6 regimes: Strong Bull / Bull / Sideways / Volatile / Bear / Crash |
+| Stock Ranker | LightGBM | Outperformance probability for 200+ F&O stocks |
+| Strategy Selector | CatBoost | Best strategy per regime (9 strategies) |
+| Risk Predictor | XGBoost ×3 | P(stop hit), P(target hit), expected drawdown |
+| Portfolio Optimizer | Riskfolio-Lib | HRP + CVaR-constrained allocation |
+| RL Executor | PPO (SB3) | Entry/exit timing, trailing stops, position sizing |
+| Price Forecaster | TFT heuristic | 1-hour price regime forecast (EXPERIMENTAL) |
+| IV Regime Classifier | Heuristic | CRUSH / STABLE / SPIKE |
+| Meta Decision Engine | Platt + isotonic | Combines all 7 base models with regime-aware ensemble weighting |
+| Greeks Engine | Black-76 / Black-Scholes | Delta/gamma/theta/vega + Newton-Raphson IV solver |
+| GEX Engine | Pure Python | Dealer GEX per strike; gamma flip; expected daily move |
+| IV Surface | SVI (scipy L-BFGS-B) | Vol smile + term structure |
+| VPIN | Tick-rule buckets | Toxic order-flow score [0, 1] |
+
+### 12.2 Feature Engineering (150+ features, TA-Lib backed)
+
+- **Technical** — RSI, MACD, ADX, ATR, Bollinger, EMA stack (8/13/21/55/200), Stochastic RSI, CCI, MFI, OBV, Supertrend; 6 candlestick patterns (CDLENGULFING, CDLHAMMER, CDLDOJI...); HT_TRENDLINE deviation
+- **Volume** — Relative volume, VWAP distance, volume profile, VPIN order-flow score
+- **Momentum** — Multi-period returns (1/2/3/5/10/20/60d), sector relative strength (stock 20d return vs sector peer avg), ATR expansion, breakout score
+- **Derivatives** — PCR, OI build-up (4 quadrants), IV rank/percentile, max-pain distance, OI wall proximity
+- **Market Structure** — FVG, Order Blocks, BOS/CHoCH, liquidity sweeps
+- **Macro** — Market breadth, A/D ratio, sector rotation, VIX regime, time-of-day, expiry effects
+
+### 12.3 Meta Decision Engine (`ml-service/src/meta/`)
+
+| Module | Purpose |
+|---|---|
+| `calibration.py` | Platt scaling + isotonic regression; `CalibrationStore` (ECE/MCE/Brier) |
+| `ensemble.py` | `REGIME_WEIGHTS` table (6 regimes × 7 models); disagreement metrics (variance, spread) |
+| `abstention.py` | 7 trigger conditions; `WAIT` (skip bar, retry next) vs `NO_TRADE` (system not ready) |
+| `decision_policy.py` | 5-component `ConfidenceDecomposition`; `ReasonCode` audit trail |
+| `meta_model.py` | End-to-end: parallel model calls → calibration → ensemble → abstention → decision |
+
+### 12.4 ML Validation Framework (`ml-service/src/validation/`)
+
+Replaces all random train/test splits with López de Prado methodology:
+
+| Module | Purpose |
+|---|---|
+| `walk_forward.py` | Rolling + expanding window; `_validate_fold_integrity()`; fold manifest persistence |
+| `embargo.py` | Bars/minutes/days embargo; `purge_train_indices_by_t1()` |
+| `purged_kfold.py` | `PurgedKFold(BaseCrossValidator)` — sklearn-compatible drop-in |
+| `combinatorial_cv.py` | CPCV — all C(N,k) purged+embargoed folds |
+| `metrics.py` | Sharpe, Sortino, Calmar, SQN, PSR, **DSR (Deflated Sharpe Ratio)** |
+
+### 12.5 Model Monitoring (`ml-service/src/monitoring/`)
+
+16 FastAPI endpoints under `/monitoring/*`:
+
+| Module | Detects |
+|---|---|
+| `drift_detector.py` | PSI < 0.1 stable / 0.1–0.2 minor / > 0.2 major drift; KS + p-value; Jensen-Shannon [0,1] |
+| `feature_monitor.py` | Per-(model, feature) rolling deque; auto-trigger on window fill |
+| `performance_monitor.py` | Brier score, ECE, accuracy, log-loss, trading expectancy; exponential decay weighting |
+| `model_registry.py` | HEALTHY → WARNING → DEGRADED → DISABLED; ensemble weights auto-adjusted |
+| `alerts.py` | Structured alerts (structlog); `dispatch_external()` hook; severity/category filtering |
+
+### 12.6 Training Data Pipeline
+
+Three-tier `MarketDataClient` (`ml-service/src/training/market_data_client.py`):
+1. **AlphaForge API** (`ALPHAFORGE_API_BASE_URL`) — canonical first-party source (Angel One + Upstox backed)
+2. **PostgreSQL** (`DATABASE_URL`) — direct query of `OptionChainSnapshot` + `CandleBar` tables
+3. **yfinance** — last-resort OHLCV-only fallback
+
+`DataQuality` classification — GOOD / STALE / INVALID / SUSPICIOUS — filters rows before feature engineering. `DatasetMetadata` written alongside every `.npz` file for full reproducibility.
 
 ```bash
-# 1. Sketch the test cases first (RED).
-$ touch tests/features/my-new-engine.test.ts
-$ npm run test:features          # all new tests fail
-
-# 2. Implement until the suite is green (GREEN).
-$ ${EDITOR:-code} src/features/my-new-engine/index.ts
-$ npm run test:features          # green
-
-# 3. Refactor + final pass (REFACTOR).
-$ npm test                       # full suite still green
-```
-
-## Don't (anti-patterns — automatic review block)
-
-- ❌ Writing tests after shipping the code.
-- ❌ Asserting on private internals (state shape, helper internals).
-- ❌ Snapshot tests of large component trees — prefer targeted
-  `getByText` / `getByRole` assertions.
-- ❌ Tests that hit the network, a real DB, or a real broker.
-- ❌ `it.skip` / `describe.skip` without a TODO referencing the issue
-  tracker.
-
----
-
-# Coding Standards
-- Strict TypeScript
-- Reusable components
-- Feature-based architecture
-- Clean code
-- TDD-first (see "Testing & TDD policy" above) — failing test cases
-  before any implementation
-- Use server actions where useful
-- Avoid unnecessary rerenders
-
----
-
-# Important Notes
-- Never hardcode secrets
-- Use environment variables
-- Handle API rate limits
-- Add retry mechanism
-- Use websocket reconnection strategy
-- Use skeleton loaders
-- Mobile responsive UI required
-```
-
----
-
-# .cursorignore
-
-```txt
-# dependencies
-node_modules
-.pnp
-.pnp.js
-
-# next
-.next
-out
-build
-
-# logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# env
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# cache
-.cache
-.turbo
-.vercel
-
-# coverage
-coverage
-.nyc_output
-
-# prisma generated
-prisma/generated
-
-# uploads
-uploads
-public/uploads
-
-# redis dumps
-dump.rdb
-
-# IDE
-.vscode
-.idea
-
-# OS
-.DS_Store
-Thumbs.db
-
-# temp
-*.tmp
-*.temp
-
-# generated files
-*.generated.ts
-*.generated.js
-
-# test artifacts
-playwright-report
-test-results
-
-# lock files
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-```
-
----
-
-# .cursor/rules/frontend.mdc
-
-```md
-# Frontend Rules
-
-## General
-- Use TypeScript everywhere
-- Use functional React components only
-- Use App Router
-- Prefer server components where possible
-- Use client components only when needed
-
-## Styling
-- Use TailwindCSS
-- Use Shadcn UI
-- Dark mode first
-- Use responsive design
-
-## State Management
-- Use Zustand for global state
-- Use TanStack Query for server state
-
-## Charts
-- Use Lightweight Charts or Recharts
-- Charts should support realtime updates
-
-## Performance
-- Lazy load heavy components
-- Avoid unnecessary rerenders
-- Memoize expensive calculations
-
-## Folder Structure
-- Keep feature-based architecture
-- Reusable UI in components/ui
-
-## Naming
-- PascalCase for components
-- camelCase for variables/functions
-- kebab-case for folders
-```
-
----
-
-# .cursor/rules/backend.mdc
-
-```md
-# Backend Rules
-
-## API
-- Use REST + WebSocket
-- Use typed responses
-- Use Zod validation
-
-## Security
-- Never expose secrets
-- Validate all inputs
-- Use rate limiting
-
-## Database
-- Use Prisma ORM
-- Use migrations properly
-- Avoid N+1 queries
-
-## Redis
-- Cache expensive API calls
-- Store websocket snapshots
-
-## Error Handling
-- Standard error response format
-- Add retry logic
-- Add logging
-
-## Performance
-- Use parallel API fetching
-- Avoid blocking operations
-```
-
----
-
-# .cursor/rules/trading-engine.mdc
-
-```md
-# Trading Engine Rules
-
-## Signal Logic
-Trade suggestions should be based on:
-- RSI
-- MACD
-- EMA crossover
-- Funding rate
-- Open interest trend
-- Long/Short ratio
-- Volume breakout
-- Liquidation imbalance
-
-## Risk Management
-Every signal must include:
-- Entry price
-- Stop loss
-- Target
-- Risk reward ratio
-- Confidence score
-
-## Signal Types
-- LONG
-- SHORT
-- BUY
-- SELL
-- HOLD
-
-## Signal Confidence
-Use weighted scoring system:
-- Technical indicators
-- Sentiment indicators
-- Derivatives data
-
-## Data Freshness
-- Futures data refresh every few seconds
-- Sentiment every minute
-- Options every minute
-```
-
----
-
-# .cursor/rules/code-quality.mdc
-
-```md
-# Code Quality Rules
-
-## Standards
-- Strict TypeScript
-- No any type unless unavoidable
-- Use ESLint + Prettier
-
-## Components
-- Keep components small
-- Reusable logic via hooks
-- Avoid duplicate code
-
-## Async
-- Use async/await
-- Handle loading and errors properly
-
-## Naming
-- Clear naming conventions
-- No abbreviations unless common
-
-## Git
-- Small commits
-- Clear commit messages
-
-## Documentation
-- Add comments for complex logic
-- Keep README updated
-```
-
----
-
-# Multi-Model AI Decision Engine (ML Service)
-
-The Indian Market surface is enhanced by a **Python ML microservice**
-(`ml-service/`) that runs alongside the Next.js app. It implements a
-multi-model decision engine using institutional-grade ML models trained
-on NSE F&O data:
-
-## Architecture
-
-```
-                      NSE Data
-                           │
-              Feature Engineering Layer (150+ features)
-                           │
-      ┌────────────────────┼────────────────────┐
-      │                    │                    │
- Market Regime       Stock Ranking        Risk Prediction
- XGBoost             LightGBM             XGBoost
-      │                    │                    │
-      └────────────────────┼────────────────────┘
-                           │
-                  Strategy Selection (CatBoost)
-                           │
-                  RL Execution (PPO / Stable-Baselines3)
-                           │
-                  Portfolio Optimizer (Riskfolio-Lib HRP + CVaR)
-                           │
-                  Price Forecaster (TFT heuristic) → priceForecast field in buildMLContext()
-                           │
-                  IV Regime Classifier (heuristic) → iv_regime field on option chain
-                           │
-                  ┌────────┴────────┐
-                  │                 │
-         Meta Decision Engine   Model Monitoring
-         (calibration +         (drift detection +
-          ensemble weighting +   performance tracking +
-          abstention policy)     ensemble weight adjustment)
-                  │
-                  └── ML Validation Framework
-                      (walk-forward / purged K-fold / CPCV)
-                           │
-                  SHAP Explainability
-```
-
-## Models
-
-| Layer                    | Model       | Purpose                                                    |
-| ------------------------ | ----------- | ---------------------------------------------------------- |
-| Market Regime            | XGBoost     | Classify into Strong Bull / Bull / Sideways / Volatile / Bear / Crash |
-| Stock Ranking            | LightGBM    | Rank all F&O stocks by outperformance probability (0-100)  |
-| Strategy Selection       | CatBoost    | Select optimal strategy per regime (8 strategies)          |
-| Risk Prediction          | XGBoost ×3  | P(stop hit), P(target hit), expected drawdown              |
-| Portfolio Optimization   | Riskfolio-Lib HRP + CVaR | Hierarchical Risk Parity + CVaR-constrained allocation |
-| Execution                | PPO (RL)    | When to enter/exit, trailing stops, position sizing        |
-| Meta Decision Engine     | Platt + isotonic calibration | Combines all 7 base models; regime-aware ensemble weighting; abstention policy |
-| ML Validation            | Walk-forward + Purged K-Fold + CPCV | Replaces random splits; López de Prado methodology |
-| Model Monitoring         | PSI + KS + Jensen-Shannon + Brier + ECE | Feature drift detection + prediction calibration health |
-| Explainability           | SHAP        | Feature contributions for every prediction                 |
-
-**v2 model upgrades:**
-- **Stock Ranker**: derivatives component weight raised 0.17→0.22 (OI/PCR is
-  the strongest NSE predictor); NSE delivery % added to volume component;
-  `higher_highs_lows` weight raised 0.20→0.26; new `sector_relative_strength`
-  factor (stock 20d return vs sector peer average)
-- **Market Regime**: PCR, OI delta skew, pct_above_sma20/200, and sector
-  rotation score added as regime inputs; all VIX/breadth/ADX thresholds
-  tightened to NSE-calibrated values (e.g. CRASH VIX >30, STRONG_BULL VIX <13)
-- **Feature Engineering**: `sector_relative_strength` added to RANKING_FEATURES;
-  `compute_stock_features()` now computes 20d stock return vs sector peer avg
-
-## Feature Engineering (150+ features)
-
-- **Technical**: RSI, MACD, ADX, ATR, Bollinger Bands, EMA stack (8/13/21/55/200),
-  Stochastic RSI, Williams %R, CCI, MFI, CMF, OBV, Supertrend
-- **Volume**: Relative volume, breakout detection, volume profile, VWAP distance,
-  volume-price confirmation, force index, A/D line
-- **Momentum**: Multi-period returns (1/2/3/5/10/20/60d), ROC, trend strength,
-  ATR expansion, breakout score, gap %, relative strength vs NIFTY, HH/HL
-- **Derivatives**: PCR score, OI build-up (4 quadrants), IV rank/percentile,
-  max-pain distance, OI wall proximity, delta OI skew
-- **Market Structure**: Fair Value Gaps (FVG), Order Blocks, BOS/CHOCH,
-  liquidity sweeps
-- **Macro**: Market breadth (% above SMA20/50/200), advance/decline ratio,
-  sector rotation, VIX regime, inter-market signals, time-of-day, expiry effects
-
-## Integration
-
-- **ML Service** runs on port 8100 (Docker container or local Python)
-- **TypeScript client** (`src/lib/india/ml-client.ts`) — fail-soft HTTP client
-  with typed interfaces, 10s timeout, returns null on any failure
-- **ML Context** (`src/lib/india/ml-enhanced-context.ts`) — orchestrates ML
-  calls in parallel, 60s cache TTL, graceful fallback to rule-based engine
-- **API Route** (`/api/in/ml-predictions`) — proxies ML predictions to frontend
-- **Zero-degradation**: When the ML service is down, the existing heuristic
-  engine continues to drive signals identically (all models have built-in
-  rule-based fallbacks)
-
-## Running
-
-```bash
-# Start ML service alongside the existing infra:
+# Start ML service
 docker compose up -d
 
-# Or run locally for development:
+# Or run locally
 cd ml-service
 pip install -r requirements.txt
 uvicorn src.server:app --port 8100 --reload
 
-# Generate training data (uses AlphaForge API → PostgreSQL → yfinance priority chain):
-# Ensure ALPHAFORGE_API_BASE_URL points to a running Next.js instance with
-# Angel One / Upstox configured for best data quality. Falls back to yfinance
-# automatically when the API is unreachable.
+# Generate training data and train
 python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
-
-# Train all models:
 python -m src.training.train_all
-
-# Train with Optuna HPO:
-python -m src.training.train_all --hpo --n-trials 50
-
-# Quick training (for iteration):
-python -m src.training.train_all --quick
 ```
 
-## Endpoints
+---
 
-| Method | Path                    | Purpose                              |
-| ------ | ----------------------- | ------------------------------------ |
-| POST   | /predict/regime         | Market regime classification         |
-| POST   | /predict/rankings       | Batch stock ranking                  |
-| POST   | /predict/strategy       | Per-stock strategy selection          |
-| POST   | /predict/risk           | Per-trade risk estimation            |
-| POST   | /predict/portfolio      | HRP portfolio optimization           |
-| POST   | /predict/execution      | RL execution decision                |
-| POST   | /predict/price-regime   | TFT heuristic 1h price regime forecast |
-| POST   | /predict/iv-regime      | IV regime classifier (CRUSH/STABLE/SPIKE) |
-| POST   | /predict/portfolio-v2   | Riskfolio-Lib HRP + CVaR allocation  |
-| POST   | /analytics/greeks       | Black-76/BS greeks + IV solver       |
-| POST   | /analytics/gex          | Dealer GEX + gamma flip + expected move |
-| POST   | /analytics/vol-surface  | SVI IV surface + term structure      |
-| POST   | /analytics/vpin         | VPIN toxic order-flow computation    |
-| POST   | /explain/{model}        | SHAP explanation for a prediction    |
-| GET    | /health                 | Service health check                 |
-| GET    | /models/status          | Model load status                    |
-| GET    | /monitoring/health      | Overall monitoring system status     |
-| GET    | /monitoring/weights     | Ensemble weight multipliers per model |
-| GET    | /monitoring/models      | Full model health registry           |
-| GET    | /monitoring/models/:name | Single model health detail          |
-| POST   | /monitoring/models/:name/recover | Manual recovery to HEALTHY  |
-| POST   | /monitoring/models/:name/disable | Operator disable override   |
-| GET    | /monitoring/alerts      | Alert history (filterable)           |
-| GET    | /monitoring/alerts/summary | Alert counts by severity          |
-| GET    | /monitoring/drift       | All feature drift reports            |
-| GET    | /monitoring/drift/:model | Single model drift report           |
-| POST   | /monitoring/drift/check/:model | Force immediate drift check   |
-| GET    | /monitoring/performance | All performance snapshots            |
-| GET    | /monitoring/performance/:model | Snapshot + strategy decay    |
-| POST   | /monitoring/outcomes    | Ingest trade outcomes                |
+## 13. Strategy Catalogue
 
-### Training pipeline env vars
+### 13.1 Crypto Scalping Strategies (10)
 
-| Variable | Default | Purpose |
+| ID | Name | Trigger | ATR Stop | ATR Target |
+|---|---|---|---|---|
+| `UT_SMC` | UT Bot + SMC | ATR trailing-stop flip + BOS/CHoCH structure | 1× | 2× |
+| `VWAP_SWEEP_TREND` | VWAP Sweep + Trend | EMA50 trend + liquidity sweep + VWAP stretch ≥ 0.8×ATR | VWAP reversion | VWAP |
+| `NEWS_MOMENTUM` | News Momentum | Volume ≥ 2.8× avg + range ≥ 1.8×ATR + decisive body | 1× | 2× |
+| `RANGE_SCALP` | Range Scalp | Bollinger touch + RSI extreme + range tightness ≤ 4.5×ATR | 0.5× | Bollinger mid |
+| `EMA_PULLBACK` | EMA Pullback | 9/20/50 EMA stack + pullback into 9–20 zone + confirmation | 1× | 2× |
+| `VWAP_REVERSION` | VWAP Reversion | Price ≥ 1.5×ATR from VWAP + RSI rolls off extreme | 1× | VWAP |
+| `ORDERFLOW_SWEEP` | Orderflow Sweep | Equal highs/lows sweep + volume ≥ 1.8× + rejection close | 0.5× | 2× |
+| `FIB_PULLBACK` | Fib Pullback | 1m impulse ≥ 3×ATR + retrace into 0.5–0.618 fib | 0.5× | Impulse extreme |
+| `INSTITUTIONAL_SMC` | Institutional SMC | 9-component score ≥ 7 + trend + VWAP + sweep + BOS all present | 0.25× | 2× |
+| `AI_INSTITUTIONAL_PRO` | AI Institutional Pro v5 | Hard gates (EMA trend + HTF + RSI + cooldown) + 8-factor score ≥ min; mode preset adapts to timeframe | Per preset | Per preset |
+
+### 13.2 India NSE F&O Strategies (9)
+
+| ID | Category | Trigger | Source |
+|---|---|---|---|
+| `RANGE_EXPANSION` | Breakout | WR8 range expansion + bullish trend | Scanner |
+| `MOMENTUM` | Momentum | F&O movers by % change | Scanner |
+| `VOLUME_BREAKOUT` | Breakout | Volume ≥ 1.5× avg + price quartile | Scanner |
+| `OI_BUILDUP` | Options Flow | ΔOI × price direction; 4-quadrant classification | Scanner |
+| `PCR_EXTREME` | Options Flow | Contrarian PCR extremes | Scanner |
+| `IV_SPIKE` | Volatility | IV crush/spike detection | Scanner |
+| `LIQUIDITY_EDGE` | Liquidity | 8-module ILE-Pine port: sweep detector + OI walls + max-pain + gap-fill + session timing + VIX regime + confluence score 0–10 | Positioning |
+| `MAX_PAIN_GRAVITY` | Liquidity | IMPG-Pine port: max-pain gravity + OI-wall fade + pinning zone reversion + gap-fill toward PDC | Positioning |
+| `OPENING_BREAKOUT` | Breakout | First 5-min candle ORB; entry on retest; PCR/OI/max-pain confirmation; 2R target | Standalone |
+
+### 13.3 Super Confluence Engine
+
+Port of the "Super Confluence Engine" Pine Script. Four gates must all agree:
+1. **UT Bot ATR Trailing Stop** — keyValue=1, atrPeriod=10 (LuxAlgo port)
+2. **AI Neural Trend Line** — HMA-smoothed adaptive trailing stop (speed=14, mult=2.0)
+3. **SMC Swing Structure** — BOS/CHoCH pivot bias (pivotLen=50)
+4. **EMA 9/15/21 stack** — all three in correct order
+
+Score ∈ [−1, 1]: full 4-way confluence = ±1.0, 3/4 = ±0.75, 2/4 = ±0.5. Used as a confidence factor (weight 0.10) in the India AI signal engine. Accessible via the `🔥 SC` toolbar button on the price chart.
+
+### 13.4 FnO Trend Scanners (14-condition Chartink port)
+
+Bullish conditions: EMA(5) > SMA(20), WMA(10) > SMA(20), ADX DI+(14) > 20, ADX(14) > 20, Volume > 1L, MACD Line > 0, Close > prior/2d close, Close > SMA(50), Close > ₹150, DI+ > DI−, RSI > 50, MACD > Signal, SMA(20) > SMA(40). Bearish = exact mirror.
+
+ATR(14)-based entry/SL/TP1/TP2/TP3 on every hit (intraday profile: SL = 1.4×ATR, TP1 = 1.6×ATR, TP2 = 2.6×ATR, TP3 = 4.0×ATR). Results persisted to `FnoTrendScan` table with TARGET_HIT / STOP_HIT / CLOSED outcome tracking.
+
+---
+
+## 14. Worker Jobs
+
+All 13 jobs in `worker/src/jobs/`:
+
+| Job | Cadence | Purpose |
 |---|---|---|
-| `ALPHAFORGE_API_BASE_URL` | `http://localhost:3000` | Next.js API base URL for the three-tier data client (Tier 1) |
-| `DATABASE_URL` | — | PostgreSQL connection string for the secondary snapshot source (Tier 2) |
-| `ML_DATA_REQUEST_DELAY` | `200` | Delay (ms) between AlphaForge API requests — respects Angel One rate limits |
+| `india-auto-trader` | 60s, market hours | Signal scoring → Opportunity Pipeline → paper trade execution |
+| `india-daily-picks` | 60s, market hours | Freeze top-3 picks at 09:15; track all day; square off at 15:30 |
+| `india-scanner` | Per tick | 6 F&O scanners (range-expansion, momentum, volume-breakout, OI-buildup, PCR-extreme, IV-spike) |
+| `india-oc-capture` | 5min, market hours | Option chain snapshots → `OptionChainSnapshot` table; staleness health check |
+| `india-scalper` | Per tick | 9 F&O strategies; persists `CandleBar` rows after each candle fetch (RCA-001 fix) |
+| `india-eod-squareoff` | 15:30 IST | Force-close all open India paper trades; finalise `IndiaDaySession` |
+| `india-fno-trend-track` | 60s, market hours | Track 14-condition FnO trend scan outcomes |
+| `scalper` | 30s | 10 crypto strategies on 1m/5m/15m; resolve OPEN rows via 1m klines |
+| `signal-ingest` | Periodic | Persist new signals to `SignalHistory` (30-min per-symbol dedup) |
+| `signal-outcome` | Periodic | Resolve open signals via 1m klines (HIT_TARGET / HIT_STOP / EXPIRED) |
+| `alerts` | Periodic | Evaluate active alerts; Redis cooldown before fan-out |
+| `liquidations` | Continuous | Binance `!forceOrder@arr` WS → Redis sorted set `liq:rolling:{PAIR}` |
+| `strategy-lab` | Per fresh hourly bar | Evaluate user-saved strategy lab rules; open paper trades |
 
-The training pipeline uses a three-tier data priority chain: **AlphaForge API** (backed by Angel One + Upstox) → **PostgreSQL snapshots** → **yfinance** fallback. Every training run produces `DatasetMetadata` (`datasetVersion`, `providerSources`, `featureVersion`) alongside the `.npz` files for full reproducibility. `DataQuality` classification (GOOD / STALE / INVALID / SUSPICIOUS) filters bad rows before feature engineering.
-
----
-
-# Institutional Infrastructure Layer (Sep 2026)
-
-Eight new modules that bring the TypeScript and Python stacks to institutional / prop-desk level. All are additive — no existing routes, stores, or worker jobs changed.
-
-## Portfolio Risk Engine v2 (`src/lib/risk/`)
-
-A 7-module, TypeScript-native risk engine with an orchestrating facade. Plugs into the position-sizing path of every strategy and the India auto-trader.
-
-| Module | Purpose |
-|---|---|
-| `exposure.ts` | Gross/net/long/short exposure; per-symbol/sector/strategy concentration checks; correlated-long cluster guard (e.g. max 3 Bank longs) |
-| `correlation.ts` | Rolling Pearson correlation matrix; single-linkage clustering; pre-trade cluster-breach check |
-| `var.ts` | Historical VaR, Parametric (Gaussian) VaR, CVaR/Expected Shortfall; portfolio daily volatility |
-| `drawdown.ts` | 4-tier ladder (NORMAL→CAUTION→WARNING→DANGER→HALT); `DrawdownTracker`; per-tier size multipliers |
-| `position-sizing.ts` | Dynamic qty = `base × confidence × vol_factor × correlation_factor × drawdown_factor`; ATR cap + notional cap |
-| `risk-limits.ts` | Risk budgets (per-trade/strategy/sector/portfolio); SOFT_KILL / HARD_KILL; auto-escalation on daily loss |
-| `portfolio-risk.ts` | `PortfolioRiskEngine` — 8-step pre-trade evaluation pipeline; stateful price history + daily P&L rolling windows; full audit snapshot |
-
-## Market Microstructure Intelligence Engine (`src/lib/microstructure/`)
-
-Turns raw order-book snapshots and tick stream data into execution-quality signals and ML feature vectors.
-
-| Module | Purpose |
-|---|---|
-| `order-book.ts` | `OrderBookSnapshot` builder; `midPrice`, `weightedMidPrice`, `spread`, `bestBid/Ask` helpers |
-| `imbalance.ts` | L1 / L5 / weighted-depth imbalance; `DEMAND_HEAVY` / `SUPPLY_HEAVY` / `BALANCED` regime classification |
-| `spread.ts` | Absolute + pct spread; `SpreadTracker` (rolling percentile); `TIGHT/NORMAL/WIDE/EXTREME` regime |
-| `liquidity.ts` | 5-dimension composite liquidity score (0–100): volume, depth, spread, OI, trade frequency |
-| `toxicity.ts` | TypeScript VPIN port (matches Python `compute_vpin`); composite toxicity score; confidence + sizing adjustments |
-| `pressure.ts` | Bid/ask replenishment rates; `PressureTracker` ring buffer; price-response pressure (informed vs noise) |
-| `index.ts` | `MicrostructureEngine` facade — `ExecQuality` (EXCELLENT/GOOD/FAIR/POOR); 1m + 5m ring-buffer feature store |
-
-## Shadow Trading & Strategy Experiment Framework (`src/lib/experiments/`)
-
-A/B testing and safe strategy promotion infrastructure.
-
-| Module | Purpose |
-|---|---|
-| `strategy-version.ts` | `StrategyVersionRegistry`; `VersionStamp`; stage machine (DEVELOPMENT→SHADOW→PAPER→LIVE→RETIRED) |
-| `experiment-manager.ts` | Multi-arm experiments; traffic allocation; immutable audit log; `summary()` (Sharpe/PF/WR/DD/return) |
-| `shadow-trader.ts` | Per-arm fill simulation (SHADOW: in-memory, PAPER: DB writes); EOD sweep; benchmark comparison |
-| `comparison.ts` | `ComparisonEngine` — Welch t-test, Satterthwaite df, p-value, 95% CI, Cohen's d sample size, IR, alpha |
-| `promotion.ts` | Gated promotion (SHADOW→PAPER→LIVE); LIVE always requires human approval; single-use cryptographic tokens |
-
-**API routes:** `GET /api/experiments` · `GET /api/experiments/[id]` · `POST /api/experiments/[id]` (lifecycle: start/pause/close/requestPromotion/approvePromotion)
-
-## Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)
-
-An institutional event-driven backtest engine for NSE F&O. Parallel to the existing strategy backtester — additive, existing strategies untouched.
-
-### Architecture layers
-
-| Layer | Key components |
-|---|---|
-| `events/` | Typed discriminated-union bus: `MarketEvent` → `SignalEvent` → `RiskCheckEvent` → `OrderEvent` → `FillEvent` → `PositionEvent` |
-| `models/` | `Portfolio`, `Position`, `OrderBook`, `Trade` — pure, no I/O |
-| `engine/` | `SimulationClock` (NSE calendar: weekly/monthly expiry, IST session gate, holiday filtering); `EventQueue`; `EventEngine`; `DefaultRiskManager` |
-| `execution/` | `SlippageModel`, `CommissionModel` (STT + exchange fee + GST + SEBI + stamp); `NextBarOpenFillModel`, `MarketFillModel`, `LimitFillModel`; `ExecutionModel` factory |
-| `analytics/` | CAGR, Sharpe, Sortino, Calmar, MaxDD; equity curve; `AttributionReport` per trade |
-| `adapter/` | `india-price-adapter` (→ `HistoricalService`); `strategy-adapter` (wraps existing F&O strategy modules) |
-
-### Indian Market Execution Simulation (`execution/` sub-modules)
-
-Realistic NSE/NFO fill simulation on top of the base engine:
-
-| File | Purpose |
-|---|---|
-| `market-depth.ts` | Synthetic 5-level bid/ask book; `buildSyntheticDepth()` from price + spread |
-| `india-slippage-model.ts` | Half-spread + √market-impact + ATR penalty + OTM premium penalty; NSE tick rounding |
-| `india-brokerage-model.ts` | Full regulatory cost breakdown: STT, NSE/BSE exchange fee, GST (18%), SEBI turnover fee, stamp duty, DP charges |
-| `latency-model.ts` | LOW (co-location ~0.5ms) / MEDIUM (retail DMA ~15ms) / HIGH (API ~80ms) lognormal profiles |
-| `india-fill-model.ts` | MARKET / LIMIT / STOP_MARKET / STOP_LIMIT; partial fills; gap-through-stop detection; anti-lookahead |
-| `execution-quality-report.ts` | Per-fill slippage vs mid, commission drag, fill rate, partial-fill rate; aggregate implementation shortfall |
-| `india-execution-engine.ts` | Drop-in `FillModel` facade; factory presets: `createRetailEngine()`, `createProEngine()`, `createHFTEngine()` |
-
-**Conservative tie-break:** a bar touching both stop and target is always recorded as a stop — consistent with all other paper-trading resolvers in the codebase.
-
-### Trade Attribution
-
-Every `Trade` permanently records: `strategyId`, `signalId`, `modelVersion`, `featureVersion`, `marketRegime`, `dataQualityScore` — enabling full attribution analysis without re-running the backtest.
-
-## Meta Decision Engine (`ml-service/src/meta/`)
-
-Combines predictions from all 7 base ML models into a single calibrated decision.
-
-| Module | Purpose |
-|---|---|
-| `calibration.py` | Platt scaling + isotonic regression per model; `CalibrationStore` (ECE/MCE/Brier); JSON persistence |
-| `ensemble.py` | `REGIME_WEIGHTS` table (6 regimes × 7 models); disagreement metrics (variance, direction disagreement, spread) |
-| `abstention.py` | `AbstentionPolicy` with 7 trigger conditions; `WAIT` (skip bar) vs `NO_TRADE` (system not ready) distinction |
-| `decision_policy.py` | 5-component `ConfidenceDecomposition`; `ReasonCode` audit trail; `DecisionPolicy` orchestrator |
-| `meta_model.py` | End-to-end: parallel model calls → calibration → ensemble → abstention → decision; OOS training; save/load |
-
-## ML Model Monitoring & Drift Detection (`ml-service/src/monitoring/`)
-
-Complete model health and data-drift layer wired into every prediction endpoint.
-
-| Module | Purpose |
-|---|---|
-| `drift_detector.py` | PSI (percentile bins), KS statistic + p-value, Jensen-Shannon divergence [0,1]; thread-safe `DriftDetector` |
-| `feature_monitor.py` | Per-(model, feature) rolling deque; auto-trigger drift check on window fill; `force_check()` |
-| `performance_monitor.py` | Brier score, ECE, accuracy, log-loss, trading expectancy; exponential decay weighting for recency |
-| `model_registry.py` | `HEALTHY → WARNING → DEGRADED → DISABLED` lifecycle; ensemble weight multipliers auto-adjusted on degradation |
-| `alerts.py` | Structured alerts (structlog); `dispatch_external()` hook; severity (INFO/WARNING/CRITICAL); category filtering |
-| `router.py` | 16 FastAPI endpoints under `/monitoring/*` — see Endpoints table above |
-
-## Financial ML Validation Framework (`ml-service/src/validation/`)
-
-Replaces all random train/test splits with financially-correct temporal validation.
-
-| Module | Purpose |
-|---|---|
-| `walk_forward.py` | `WalkForwardValidator` — rolling + expanding windows; `_validate_fold_integrity()`; fold manifest persistence |
-| `embargo.py` | `EmbargoApplier` (bars/minutes/days); López de Prado embargo; `purge_train_indices_by_t1()` |
-| `purged_kfold.py` | `PurgedKFold(BaseCrossValidator)` — sklearn drop-in; label-span purging; `GridSearchCV` compatible |
-| `combinatorial_cv.py` | CPCV — all C(N,k) purged+embargoed splits; prevents backtest overfitting |
-| `metrics.py` | Sharpe, Sortino, Calmar, SQN, PSR (Probabilistic Sharpe Ratio), DSR (Deflated Sharpe Ratio) |
+Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-overlapping `Scheduler` primitive (a job skips its tick if the previous tick is still running).
 
 ---
 
-# Build & TypeScript Fix Log
+## 15. Database Schema
 
-## TypeScript + Build Fixes (August 2026)
+18 Prisma models:
 
-Three pre-existing issues that blocked `tsc --noEmit` and `next build` were
-resolved. None affected runtime behaviour.
-
-### 1. `tsconfig.json` — `target` raised to ES2018
-
-**Problem:** The root `tsconfig.json` set `"target": "ES2017"`. Two worker
-test files (`tests/worker/db.test.ts`, `tests/worker/redis.test.ts`) used the
-`s` (dotAll) regex flag (`/pattern/s`) which TypeScript only allows when the
-target is ES2018 or later. This produced `error TS1501` at type-check time.
-
-**Fix:** Changed `"target": "ES2017"` → `"target": "ES2018"`. This is safe
-because the worker already targets `ES2022` and Next.js itself requires
-Node 18+. No code changes needed.
-
-### 2. `tsconfig.json` — `@worker/*` path alias added
-
-**Problem:** The `@worker/*` import alias was defined only in
-`worker/tsconfig.json` but not in the root `tsconfig.json`. The root `tsc`
-type-check (used by `next build` and `npm run typecheck`) couldn't resolve
-any `import … from "@worker/…"` in the `tests/worker/` directory, producing
-`error TS2307: Cannot find module '@worker/…'` for every worker test file.
-
-**Fix:** Added `"@worker/*": ["./worker/src/*"]` to the `paths` map in the
-root `tsconfig.json`. Mirrors the entry already present in
-`worker/tsconfig.json`. The Vitest config had its own `resolve.alias`
-mapping covering this path at test runtime — this fix brings the type-checker
-into alignment with the bundler.
-
-### 3. `tests/setup/vitest.setup.ts` — redundant `NODE_ENV` assignment removed
-
-**Problem:** `vitest.setup.ts` contained `process.env.NODE_ENV ??= "test"`.
-TypeScript's `ProcessEnv` type marks `NODE_ENV` as `readonly`, so the
-nullish assignment operator (`??=`) caused `error TS2540: Cannot assign to
-'NODE_ENV' because it is a read-only property`.
-
-**Fix:** Removed the line. It was already redundant — `vitest.config.ts`
-injects `NODE_ENV=test` via `test.env` before any test file (or its
-transitively-imported modules) starts evaluating, so the assignment in the
-setup file never had any effect.
+| Model | Key Fields | Notes |
+|---|---|---|
+| `User` | id, email, name, passwordHash | Auth.js credentials |
+| `UserSetting` | userId, theme, defaultPair, broker | Per-user preferences |
+| `Alert` | userId, type, condition, channels, cooldownMs | Funding/OI/price/liquidation/signal triggers |
+| `Notification` | userId, alertId, message, readAt | In-app notification feed |
+| `SignalHistory` | symbol, type, confidence, generatedAt, resolvedAt | Outcome tracked via 1m klines |
+| `PaperTrade` | source, symbol, direction, entry, stop, target | `in:` prefix = India; `crypto:` = Crypto. Shared table |
+| `Strategy` | userId, prompt, ast, live, name | Strategy lab saved strategies |
+| `StrategyBacktest` | strategyId, symbol, period, stats | Latest backtest snapshot |
+| `StrategyPaperTrade` | strategyId, symbol, entry, pnl | Strategy lab live paper trades |
+| `IndiaDailyPick` | tradeDate, bucket, rank, entry, stop, target, status | Frozen at 09:15; resolvedAt stamped on outcome |
+| `CandleBar` | symbol, exchange, interval, openTime, OHLCV, oi, confirmed | NSE-aligned; TimescaleDB-ready |
+| `OptionChainSnapshot` | underlying, expiry, snapshot, timestamp | Built up by `india-oc-capture` for strategy backtesting |
+| `FnoTrendScan` | tradeDate, scanType, symbol, entry, sl, tp1, tp2, tp3, status | Chartink-port scanner results |
+| `IndiaDaySession` | date, budgetUsed, positionCount, pnl, winRate | Auto-trader daily tracking |
+| `SignalLifecycleEvent` | signalId, fromState, toState, timestamp, reason | Full audit trail; invalid transitions throw |
+| `UniverseCoverageSnapshot` | date, expected, scanned, coverage, valid | Session INVALID when coverage < 80% |
+| `OpportunityCluster` | clusterId, signalIds, confidence, instrument | Anti-double-counting; geometric mean confidence |
+| `SignalIntelligenceRecord` | signalId, sourceType, qualityVector, ev, grade, lifecycle | Full 40-field enriched signal |
 
 ---
 
-# Suggested Environment Variables
+## 16. API Surface
 
-```env
-NEXT_PUBLIC_BINANCE_WS=
-NEXT_PUBLIC_BYBIT_WS=
-COINGLASS_API_KEY=
-DERIBIT_CLIENT_ID=
-DERIBIT_SECRET=
-DATABASE_URL=
-REDIS_URL=
-NEXT_PUBLIC_APP_URL=
+### Crypto API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/market/overview` | Aggregated price + sentiment + signals (Redis-cached) |
+| `GET /api/scalper/signals` | Live strategy signals (filterable by strategy + timeframe) |
+| `GET /api/scalper/journal` | Paper trade journal (paginated, filterable) |
+| `GET /api/scalper/backtest` | 5Y strategy backtest results (24h cache) |
+| `GET /api/ai-signals` | Crypto AI signals (9-factor engine) |
+| `GET /api/strategy-lab/strategies` | User-saved strategies |
+| `POST /api/strategy-lab/strategies/:id/backtest` | Run a strategy lab backtest |
+| `GET/POST /api/experiments/[id]` | Experiment lifecycle management |
+
+### India API (`/api/in/`)
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /in/market-snapshot` | NIFTY indices snapshot |
+| `GET /in/historical` | OHLCV candles (all providers) |
+| `GET /in/option-chain` | Live NSE option chain + greeks + IV regime |
+| `GET /in/scanner` | F&O scanner results (range-expansion default) |
+| `GET /in/ai-signals` | India AI signals (10-factor v2 engine) |
+| `GET /in/daily-picks` | Today's top-3-per-bucket picks |
+| `GET /in/daily-picks/history` | Past picks with outcomes |
+| `GET /in/signal-audit` | Session signal audit report + replay hash |
+| `GET /in/universe-coverage` | F&O universe coverage snapshot |
+| `GET /in/opportunity-engine` | Ranked opportunity pipeline output |
+| `GET /in/opportunity-engine/[id]` | Single opportunity detail |
+| `GET /in/gex` | Dealer GEX + gamma flip + expected move (5-min cache) |
+| `GET /in/vol-surface` | SVI IV surface + term structure (5-min cache) |
+| `GET /in/order-flow` | VPIN toxic order-flow (2-min cache) |
+| `GET /in/top-picks` | Top 5 stocks for tomorrow (8-factor score) |
+| `POST /in/paper-trade` | Open a paper trade (market-hours guarded) |
+| `POST /in/scalper/close-all` | Force-close all open India trades |
+| `GET /in/paper-trade/analytics` | Auto-trading analytics by range |
+| `POST /in/portfolio-optimizer` | Riskfolio-Lib allocation |
+| `GET /in/expiry-trades` | Expiry-day Gamma Blast / Hero Zero plays |
+| `GET /in/news` | RSS feeds + sentiment |
+
+### Research API (`/api/research/`)
+
+13 endpoints with Zod validation and strategy registry enforcement — all documented in `CHANGES.md`.
+
+---
+
+## 17. Folder Structure
+
+```
+src/
+  app/
+    (auth)/                       /login, /signup
+    (dashboard)/                  Authenticated shell — sidebar + topbar
+      page.tsx                    Crypto Overview
+      best-time/ options/ signals/ ai-signals/ strategies/
+      paper-trading/ strategy-backtest/ strategy-lab/ heatmap/ futures/
+      profile/
+      in/                         India route group
+        dashboard/                NIFTY Pulse + MSB signals + Top Picks + GEX + order-flow
+        options/                  Option chain + IV Surface + GEX tabs
+        daily-picks/              Top-3 picks + expiry trades + history
+        options-workbench/        Multi-leg payoff builder
+        portfolio/                Portfolio optimizer
+        history/                  Unified trade history
+      research/                   10-page V6 quant research dashboard
+    api/                          All API routes (auth, market, scalper, experiments, in/*, research/*)
+  components/
+    ai-signals/                   AiSignalCard, AiSignalsBoard, AiMarketContextBanner
+    dashboard/                    Sidebar (market-aware), Topbar, MarketTickerBar, MarketSwitcher
+    india/                        All India UI — no cross-imports from Crypto
+      msb-dashboard, charts/price-chart, options/, daily-picks/
+      paper-trading/, signal-quality/, strategies/, ticker/
+    trading/                      IIT component library (SignalBadge, NumberMorph, ...)
+    layout/                       BentoGrid, PageHeader, EmptyState, PageTransition
+    3d/                           R3F components (MarketIntelligenceCore, RiskSphere, PortfolioGalaxy)
+    research/                     15 research dashboard components
+    scalper/                      Crypto Strategies + Paper Trading components
+  features/
+    ai-signals/                   engine.ts + crypto-builder.ts + india-builder.ts
+    best-time/                    Crypto IST window engine
+    scalping/                     10 crypto strategies + helpers + backtest
+    strategy-lab/                 Parser + backtest engine + live worker
+    india/
+      best-time/                  NSE session engine
+      daily-picks/                Freeze/track/history engine + builder
+      scalping/                   9 F&O strategies + journal + option-chain replay
+      expiry-trades/              Gamma Blast / Hero Zero engine + builder
+      news/                       RSS + lexicon + sentiment engine
+      options-workbench/          Payoff + greeks aggregation engine
+  lib/
+    market-data/                  4-provider data layer + failover + circuit breaker
+    signal-intelligence/          45-phase signal intelligence (12 modules)
+    opportunity-engine/           12-stage validation pipeline
+    research/                     24-phase V6 quant research platform
+    risk/                         Portfolio Risk Engine v2 (7 modules)
+    microstructure/               Market Microstructure Intelligence (7 modules)
+    experiments/                  Shadow Trading + A/B experiment framework
+    backtesting-v2/               Event-driven NSE F&O backtesting engine
+    india/                        NSE calendar, atomic trade guard, feature validators,
+                                  model governance, decision pipeline config
+  services/
+    brokers/                      BrokerAdapter contract + Delta/Binance adapters
+    india/                        Angel One, Upstox, NSE, Yahoo adapters + SmartAPI
+  store/
+    uiStore.ts                    UIStore — Zustand v5 (regime, sidebar, density, ...)
+    india/                        Market-scoped India stores
+  hooks/india/                    useFetchPoll, useLiveQuotes, useOptionChain, ...
+  types/india/                    Market / options / scanner type packs
+worker/
+  src/
+    index.ts                      Graceful shutdown + job registry
+    scheduler.ts                  Non-overlapping recurring tick primitive
+    config.ts                     Env-driven tunables
+    jobs/                         13 background jobs
+ml-service/
+  src/
+    server.py                     FastAPI app
+    features/                     Feature engineering (150+ features, TA-Lib backed)
+    models/                       XGBoost, LightGBM, CatBoost, PPO, Riskfolio-Lib
+    meta/                         Meta Decision Engine (calibration + ensemble + abstention)
+    monitoring/                   Drift detection + performance tracking (16 endpoints)
+    validation/                   Walk-forward + purged K-fold + CPCV
+    greeks.py                     Black-76/BS greeks + IV solver
+    gex.py                        Dealer GEX engine
+    vol_surface.py                SVI IV surface
+    training/                     Three-tier data pipeline + train_all.py
+prisma/
+  schema.prisma                   18 models
+tests/                            Vitest suite (~3000 tests, 200+ files)
+docker-compose.yml                Postgres 17 + Redis 7 + ML service
 ```
 
 ---
 
-# Recommended Packages
+## 18. Environment Variables
+
+### Required
 
 ```bash
-npm install zustand @tanstack/react-query axios zod prisma @prisma/client ioredis lightweight-charts framer-motion react-hook-form lucide-react
+DATABASE_URL=postgresql://...
+AUTH_SECRET=...
+ENCRYPTION_KEY=...   # 32-byte hex
 ```
 
+### Crypto Broker
+
+```bash
+ACTIVE_BROKER=delta           # or: binance
+NEXT_PUBLIC_ACTIVE_BROKER=delta
+```
+
+### Indian Market
+
+```bash
+# Angel One SmartAPI (primary — all data + SmartStream WS)
+SMARTAPI_API_KEY=
+SMARTAPI_CLIENT_CODE=
+SMARTAPI_PIN=
+SMARTAPI_TOTP_SECRET=    # base32 TOTP secret
+
+# Upstox Analytics v2 (secondary)
+UPSTOX_CLIENT_ID=
+UPSTOX_CLIENT_SECRET=
+UPSTOX_ANALYTICS_TOKEN=  # long-lived read-only bearer — sufficient for data-only use
+
+# OpenAlgo (33+ broker adapter)
+OPENALGO_BASE_URL=
+OPENALGO_API_KEY=        # AES-256-GCM encrypted
+LIVE_TRADING_ENABLED=    # Must be exactly "true" to enable placeOrder
+
+# Cache and worker
+REDIS_URL=redis://localhost:6379
+INDIA_REDIS_PREFIX=fno-pulse:
+INDIA_BROKER=yahoo       # yahoo | nse | groww | angel | openalgo (legacy env var)
+
+# News feeds (optional override)
+INDIA_NEWS_FEEDS=        # comma-separated url|label|category triples
+```
+
+### ML Service
+
+```bash
+ML_SERVICE_URL=http://localhost:8100
+ALPHAFORGE_API_BASE_URL=http://localhost:3000   # for ML training pipeline
+ML_DATA_REQUEST_DELAY=200                        # ms between API requests (Angel One rate limits)
+```
+
+### Worker Feature Flags (India ML decision pipeline)
+
+```bash
+ENABLE_PRICE_FORECASTER=false    # TFT heuristic — EXPERIMENTAL
+ENABLE_RL_EXECUTOR=false
+ENABLE_MICROSTRUCTURE=false
+ENABLE_META_CALIBRATION=true
+ENABLE_STOCK_RANKER=true
+ENABLE_REGIME_CLASSIFIER=true
+ENABLE_PORTFOLIO_OPTIMIZER=false
+```
+
+---
+
+## 19. Testing & TDD Policy
+
+Test-Driven Development is mandatory. Write failing tests first. The `prebuild` hook enforces a green suite before every `next build`.
+
+### Tooling
+
+- **Runner** — Vitest v4 with `jsdom` environment
+- **DOM assertions** — `@testing-library/react` + `@testing-library/jest-dom`
+- **Coverage** — v8 provider, outputs to `coverage/` (text + html + lcov)
+- **E2E** — Playwright (smoke tests)
+
+### Test Layout
+
+```
+tests/
+  lib/           Pure utilities; market-data layer; risk/experiments/microstructure
+  features/      Domain engines (best-time, scalping, daily-picks, ...)
+  components/    React component render + interaction
+  api/           Next.js Route Handler tests (Request/Response pattern)
+  services/      Service layer (cache, broker adapters)
+  hooks/         Custom React hooks
+  stores/        Zustand store transitions
+  pages/         Page-level smoke + redirect tests
+  worker/        Worker scheduler, config, log, env-validation paths
+  research/      V6 research platform (92 tests across 8 files)
+```
+
+### Mandatory Workflow
+
+1. Write failing tests — cover the happy path, key edge cases, at least one error boundary
+2. Confirm tests fail **for the right reason** (not a syntax error or missing import)
+3. Write the smallest implementation that turns them green
+4. Refactor under the green safety net
+5. Run `npm test` (full suite) before opening a PR
+
+### Per-Layer Scripts
+
+```bash
+npm run test:lib         # pure utilities
+npm run test:features    # domain engines
+npm run test:components  # UI components
+npm run test:api         # API route handlers
+npm run test:services    # service layer
+npm run test:hooks       # React hooks
+npm run test:stores      # Zustand stores
+npm run test:pages       # page-level smoke
+npm run test:worker      # background worker
+npm run test:coverage    # v8 coverage report
+```
+
+### Anti-Patterns (automatic review block)
+
+- Writing tests after shipping code
+- Asserting on private internals or implementation details
+- Snapshot tests of large component trees — prefer `getByRole`/`getByText`
+- Tests that hit the network, real DB, or real broker
+- `it.skip` / `describe.skip` without a TODO referencing the issue tracker
+
+---
+
+## 20. Coding Standards
+
+### TypeScript
+
+- Strict TypeScript everywhere — no `any` unless unavoidable and documented
+- Feature-based architecture — keep market code in isolated sibling directories
+- No cross-imports between Crypto and India features
+- Use `zod` for all external inputs and env vars
+- Canonical market data types never leak provider-specific shapes
+
+### Components
+
+- Functional React components only; App Router (no `pages/`)
+- Server components by default; `"use client"` only when needed
+- Never use `"use server"` — use `import "server-only"` instead
+- Keep components small and reusable; hooks for shared logic
+- All animations reference named Spring presets from `motion-presets.ts`
+- All colors from OKLCH CSS tokens — no hardcoded hex/RGB in component files
+
+### Backend
+
+- Route handlers always validate inputs with Zod; type every response
+- `cached(key, ttl, fn)` for Redis-backed route caching
+- Use `withFailover()` for all Indian market data calls
+- `assertExecutionModeIsolation()` on every paper/live order path
+- Atomic trade guards (`SET NX EX`) before any paper trade creation
+
+### Git
+
+- Small, focused commits with a clear imperative subject line
+- One concern per PR
+- Test must be green locally on `main` head before opening a PR
+
+### Security
+
+- Never hardcode secrets — use env vars
+- API keys stored AES-256-GCM encrypted via `src/lib/crypto.ts`
+- Webhook payloads include HMAC-SHA256 signature (`X-Crypto-Desk-Signature`)
+- `LIVE_TRADING_ENABLED=true` must be set explicitly — no accidental live order placement
+- Input validation at every external boundary (Zod on all API routes)
