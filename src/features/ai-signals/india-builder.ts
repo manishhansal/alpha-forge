@@ -1617,6 +1617,29 @@ async function computeIndiaUniverse(
     { onError: () => null },
   );
 
+  // RCA-001 FIX: persist the freshly-fetched 1-year daily candles to the
+  // CandleBar table so they survive across sessions and are available for
+  // deterministic replay and intraday quality scoring.
+  // Fire-and-forget — DB errors are logged but never block signal generation.
+  void (async () => {
+    const { persistCandlesBatch } = await import("@/lib/market-data/services/candle-persist.service");
+    const entries = universe
+      .map((u) => ({
+        candles: (dailiesByYf.get(u.symbol) ?? []) as import("@/lib/market-data/types").OHLCVCandle[],
+        instrumentId: u.symbol,
+        exchange: "NSE",
+        interval: "1d" as import("@/lib/market-data/types").Interval,
+      }))
+      .filter((e) => e.candles.length > 0);
+    if (entries.length === 0) return;
+    const r = await persistCandlesBatch(entries);
+    if (r.totalErrors > 0) {
+      console.warn(`[ai-signals/india] candle persist partial failure — upserted=${r.totalUpserted} errors=${r.totalErrors}`);
+    }
+  })().catch((err: unknown) => {
+    console.warn("[ai-signals/india] candle persist failed:", (err as Error).message);
+  });
+
   // Phase 2: pull option chains via the canonical registry.
   // Registry routes: Angel One → Upstox → NSE (Yahoo has no option chains).
   const chainFetches = universe.filter(fetchChainFor);
