@@ -12,6 +12,7 @@ import {
   Clock3,
   Eye,
   Flame,
+  FlaskConical,
   Gauge,
   History,
   Layers,
@@ -72,6 +73,7 @@ export const INDIA_NAV: NavItem[] = [
   { href: "/in/watchlist",           label: "Watchlist",          icon: Eye },
   { href: "/in/chart/RELIANCE",      label: "Chart",              icon: BarChart3 },
   { href: "/in/options-workbench",   label: "Options Workbench",  icon: TrendingUp },
+  { href: "/in/signal-quality",      label: "Signal Quality",     icon: FlaskConical },
 ];
 
 function isItemActive(item: NavItem, pathname: string | null): boolean {

@@ -71,7 +71,7 @@ export type ExpiryInfo = {
  * Update this when adding new holidays. Consumers check this version to
  * detect calendar updates that require cache invalidation.
  */
-export const HOLIDAY_CALENDAR_VERSION = "2024-v2";
+export const HOLIDAY_CALENDAR_VERSION = "2026-v1";
 
 /**
  * NSE public holidays for 2024.
@@ -97,9 +97,67 @@ export const NSE_HOLIDAYS_2024: readonly string[] = [
   "2024-08-15", // Independence Day
   "2024-10-02", // Mahatma Gandhi Jayanti
   "2024-10-13", // Dussehra
-  "2024-11-01", // Diwali (Laxmi Pujan)
+  "2024-11-01", // Diwali (Laxmi Pujan) — regular session closed; Muhurat evening session open
   "2024-11-15", // Gurunanak Jayanti
   "2024-12-25", // Christmas
+];
+
+/**
+ * NSE public holidays for 2025.
+ * Source: NSE India official circular (Capital Markets Segment).
+ * Total: 14 weekday trading holidays.
+ * Note: Republic Day (Jan 26 Sun), Ram Navami (Apr 6 Sun), Bakri Eid (Jun 7 Sat),
+ * Muharram (Jul 6 Sun) fall on weekends — no additional weekday closure.
+ */
+export const NSE_HOLIDAYS_2025: readonly string[] = [
+  "2025-02-26", // Mahashivratri
+  "2025-03-14", // Holi
+  "2025-03-31", // Id-ul-Fitr (Ramzan Eid)
+  "2025-04-10", // Mahavir Jayanti
+  "2025-04-14", // Dr. Baba Saheb Ambedkar Jayanti
+  "2025-04-18", // Good Friday
+  "2025-05-01", // Maharashtra Day
+  "2025-08-15", // Independence Day
+  "2025-08-27", // Ganesh Chaturthi
+  "2025-10-02", // Gandhi Jayanti / Dussehra
+  "2025-10-21", // Diwali Laxmi Pujan — regular session closed; Muhurat evening session open
+  "2025-10-22", // Diwali Balipratipada
+  "2025-11-05", // Guru Nanak Jayanti
+  "2025-12-25", // Christmas
+];
+
+/**
+ * NSE public holidays for 2026.
+ * Source: NSE India official circular NSE/CMTR/71775 (Capital Markets Segment).
+ * Total: 15 weekday trading holidays.
+ * Note: Mahashivratri (Feb 15 Sun), Eid-ul-Fitr (Mar 21 Sat),
+ * Independence Day (Aug 15 Sat), Diwali Laxmi Pujan (Nov 8 Sun) fall on
+ * weekends — no additional weekday closure. Muhurat Trading on Nov 8 (Sun).
+ */
+export const NSE_HOLIDAYS_2026: readonly string[] = [
+  "2026-01-15", // Municipal Corporation Elections (Maharashtra)
+  "2026-01-26", // Republic Day
+  "2026-03-03", // Holi
+  "2026-03-26", // Shri Ram Navami
+  "2026-03-31", // Shri Mahavir Jayanti
+  "2026-04-03", // Good Friday
+  "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
+  "2026-05-01", // Maharashtra Day
+  "2026-05-28", // Bakri Eid (Eid-ul-Adha)
+  "2026-06-26", // Muharram
+  "2026-09-14", // Ganesh Chaturthi
+  "2026-10-02", // Mahatma Gandhi Jayanti
+  "2026-10-20", // Dussehra (Vijayadashami)
+  "2026-11-10", // Diwali Balipratipada
+  "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
+  "2026-12-25", // Christmas
+];
+
+/** Combined holiday set for 2024–2026 for multi-year calendar instances. */
+export const NSE_HOLIDAYS_2024_2026: readonly string[] = [
+  ...NSE_HOLIDAYS_2024,
+  ...NSE_HOLIDAYS_2025,
+  ...NSE_HOLIDAYS_2026,
 ];
 
 /** Muhurat trading sessions in 2024 (evening sessions). */
@@ -110,6 +168,33 @@ export const NSE_MUHURAT_2024: Array<{ date: string; openMinutes: number; closeM
     closeMinutes: 19 * 60 + 15, // 19:15 IST
     note: "Diwali Muhurat Trading 2024",
   },
+];
+
+/** Muhurat trading sessions in 2025 (evening sessions on Diwali). */
+export const NSE_MUHURAT_2025: Array<{ date: string; openMinutes: number; closeMinutes: number; note: string }> = [
+  {
+    date: "2025-10-21",
+    openMinutes: 18 * 60 + 0,  // ~18:00 IST (exact timings to be notified by NSE)
+    closeMinutes: 19 * 60 + 0, // ~19:00 IST
+    note: "Diwali Muhurat Trading 2025 — Samvat 2082",
+  },
+];
+
+/** Muhurat trading sessions in 2026 (evening sessions on Diwali — falls on Sunday). */
+export const NSE_MUHURAT_2026: Array<{ date: string; openMinutes: number; closeMinutes: number; note: string }> = [
+  {
+    date: "2026-11-08",
+    openMinutes: 18 * 60 + 0,  // ~18:00 IST (exact timings per NSE Circular)
+    closeMinutes: 19 * 60 + 15, // ~19:15 IST
+    note: "Diwali Muhurat Trading 2026 — Samvat 2083 (Sunday)",
+  },
+];
+
+/** Combined Muhurat sessions for 2024–2026. */
+export const NSE_MUHURAT_2024_2026 = [
+  ...NSE_MUHURAT_2024,
+  ...NSE_MUHURAT_2025,
+  ...NSE_MUHURAT_2026,
 ];
 
 // ─── NSE Trading Calendar ────────────────────────────────────────────────────
@@ -154,19 +239,9 @@ export class NSETradingCalendar {
   getSessionInfo(utcMs: number): MarketSessionInfo {
     const { dayOfWeek, minutes, dateStr } = this.toIst(utcMs);
 
-    // Weekend check
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      return {
-        date: dateStr,
-        sessionType: "WEEKEND",
-        isOpen: false,
-        openMinutes: SESSION_OPEN_MINUTES,
-        closeMinutes: SESSION_CLOSE_MINUTES,
-        note: dayOfWeek === 0 ? "Sunday" : "Saturday",
-      };
-    }
-
-    // Muhurat check
+    // Muhurat check — must come before weekend check because Muhurat can
+    // fall on a Sunday (e.g. Diwali 2026-11-08). A Sunday Muhurat date is
+    // still a valid special session within its defined time window.
     const muhurat = this.muhuratByDate.get(dateStr);
     if (muhurat) {
       const isOpen = minutes >= muhurat.openMinutes && minutes <= muhurat.closeMinutes;
@@ -177,6 +252,18 @@ export class NSETradingCalendar {
         openMinutes: muhurat.openMinutes,
         closeMinutes: muhurat.closeMinutes,
         note: muhurat.note,
+      };
+    }
+
+    // Weekend check (after Muhurat so Sunday Muhurat sessions are recognised)
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return {
+        date: dateStr,
+        sessionType: "WEEKEND",
+        isOpen: false,
+        openMinutes: SESSION_OPEN_MINUTES,
+        closeMinutes: SESSION_CLOSE_MINUTES,
+        note: dayOfWeek === 0 ? "Sunday" : "Saturday",
       };
     }
 
@@ -283,10 +370,15 @@ export class NSETradingCalendar {
  * The canonical NSE trading calendar instance.
  * Import this everywhere instead of instantiating your own.
  *
- * To add holidays for a new year, update NSE_HOLIDAYS_2024 (or add a new
- * constant) and pass it when creating a new instance.
+ * Uses the combined 2024–2026 holiday set so the calendar is accurate for
+ * any date in that window without additional instantiation. When a new year
+ * is added, append its holiday constant to NSE_HOLIDAYS_2024_2026 and bump
+ * HOLIDAY_CALENDAR_VERSION.
  */
-export const nseCalendar = new NSETradingCalendar(NSE_HOLIDAYS_2024);
+export const nseCalendar = new NSETradingCalendar(
+  NSE_HOLIDAYS_2024_2026,
+  NSE_MUHURAT_2024_2026,
+);
 
 // ─── Market Session Service ──────────────────────────────────────────────────
 

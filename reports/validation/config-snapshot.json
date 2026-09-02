@@ -1,0 +1,429 @@
+{
+  "_meta": {
+    "purpose": "Phase 1 — Validation Configuration Freeze",
+    "description": "Canonical frozen configuration snapshot for the 20-session NSE validation window (2026-08-04 to 2026-09-01). Every replay session MUST use this exact configuration. Any configuration change between sessions invalidates the replay determinism guarantee.",
+    "frozenAt": "2026-09-01T00:00:00+05:30",
+    "frozenBy": "AlphaForge Principal QA — 20-Session Validation Engine",
+    "validationWindowStart": "2026-08-04",
+    "validationWindowEnd": "2026-09-01",
+    "totalSessions": 20,
+    "schemaVersion": "1.0.0"
+  },
+
+  "repositoryState": {
+    "gitCommitHash": "b94c223494be96134d6ab8e3a38c8920ab56bc4a",
+    "gitBranch": "refactor/indian-market-data-layer",
+    "gitCommitMessage": "cert(india): NSE session certification 2026-09-01 — PARTIALLY_CERTIFIED",
+    "applicationVersion": "0.1.0",
+    "calendarVersion": "2026-v1",
+    "note": "Calendar updated from 2024-v2 to 2026-v1 as part of this validation. Muhurat-before-weekend bug fixed in getSessionInfo()."
+  },
+
+  "strategyVersions": [
+    {
+      "strategyId": "RANGE_EXPANSION",
+      "strategyName": "Range Expansion (WR8)",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "BREAKOUT",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "MOMENTUM",
+      "strategyName": "F&O Momentum Scanner",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "MOMENTUM",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "VOLUME_BREAKOUT",
+      "strategyName": "F&O Volume Breakout",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "BREAKOUT",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "OI_BUILDUP",
+      "strategyName": "OI Build-up Scanner",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "OPTIONS_FLOW",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "PCR_EXTREME",
+      "strategyName": "PCR Extreme Scanner",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "OPTIONS_FLOW",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "IV_SPIKE",
+      "strategyName": "IV Spike Scanner",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "VOLATILITY",
+      "enabled": true,
+      "source": "SCANNER"
+    },
+    {
+      "strategyId": "LIQUIDITY_EDGE",
+      "strategyName": "India Liquidity Edge",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "LIQUIDITY",
+      "enabled": true,
+      "source": "POSITIONING_ENGINE"
+    },
+    {
+      "strategyId": "MAX_PAIN_GRAVITY",
+      "strategyName": "Max-Pain Gravity",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "OPTIONS_FLOW",
+      "enabled": true,
+      "source": "POSITIONING_ENGINE"
+    },
+    {
+      "strategyId": "OPENING_BREAKOUT",
+      "strategyName": "Opening Breakout (ORB)",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "5m",
+      "category": "BREAKOUT",
+      "enabled": true,
+      "source": "ORB_ENGINE"
+    },
+    {
+      "strategyId": "INDIA_AI_SIGNALS",
+      "strategyName": "India F&O AI Multi-Factor Signals",
+      "version": "2.0.0",
+      "market": "NSE_FNO",
+      "status": "SHADOW",
+      "timeframe": "1d",
+      "category": "STATISTICAL",
+      "enabled": true,
+      "source": "AI_MULTI_CONFLUENCE"
+    },
+    {
+      "strategyId": "FNO_TREND",
+      "strategyName": "F&O Bullish/Bearish Trend Scanner",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "TREND_FOLLOWING",
+      "enabled": true,
+      "source": "CHARTINK_SCREENER"
+    },
+    {
+      "strategyId": "DAILY_PICK",
+      "strategyName": "Daily Pick (auto-trader source)",
+      "version": "1.0.0",
+      "market": "NSE_FNO",
+      "status": "RESEARCH",
+      "timeframe": "1d",
+      "category": "MOMENTUM",
+      "enabled": true,
+      "source": "DAILY_PICKS_BUILDER"
+    },
+    {
+      "strategyId": "AI_SIGNAL",
+      "strategyName": "AI Signal (auto-trader source)",
+      "version": "2.0.0",
+      "market": "NSE_FNO",
+      "status": "SHADOW",
+      "timeframe": "1d",
+      "category": "STATISTICAL",
+      "enabled": true,
+      "source": "AI_MULTI_CONFLUENCE"
+    }
+  ],
+
+  "modelVersions": [
+    {
+      "modelName": "regime_classifier",
+      "modelVersion": "v1",
+      "featureVersion": "regime_v1",
+      "datasetVersion": "india_fno_2023",
+      "trainingPeriod": { "from": "2020-01-01", "to": "2024-06-30" },
+      "validationMethod": "walk_forward",
+      "stage": "PAPER_VALIDATED",
+      "oosSharpe": 1.1,
+      "oosWinRate": 0.57,
+      "latencyP50Ms": 45,
+      "latencyP99Ms": 120,
+      "driftStatus": "NONE"
+    },
+    {
+      "modelName": "stock_ranker",
+      "modelVersion": "v1",
+      "featureVersion": "ranker_v1",
+      "datasetVersion": "india_fno_2023",
+      "trainingPeriod": { "from": "2020-01-01", "to": "2024-06-30" },
+      "validationMethod": "purged_kfold",
+      "stage": "SHADOW",
+      "oosSharpe": 0.9,
+      "oosWinRate": 0.54,
+      "latencyP50Ms": 60,
+      "latencyP99Ms": 180,
+      "driftStatus": "MINOR"
+    },
+    {
+      "modelName": "price_forecaster",
+      "modelVersion": "v1",
+      "featureVersion": "tft_v1",
+      "datasetVersion": "nifty_intraday_2023",
+      "trainingPeriod": { "from": "2022-01-01", "to": "2024-06-30" },
+      "validationMethod": "walk_forward",
+      "stage": "EXPERIMENTAL",
+      "oosSharpe": null,
+      "oosWinRate": null,
+      "latencyP50Ms": 85,
+      "latencyP99Ms": 250,
+      "driftStatus": "UNKNOWN"
+    },
+    {
+      "modelName": "ai_signals_engine",
+      "modelVersion": "alphaforge-ai-v2",
+      "featureVersion": "india_ai_v2",
+      "datasetVersion": "india_fno_2023",
+      "trainingPeriod": { "from": "2020-01-01", "to": "2024-12-31" },
+      "validationMethod": "walk_forward",
+      "stage": "SHADOW",
+      "note": "AI_MODEL_VERSION constant from src/features/ai-signals/engine.ts"
+    }
+  ],
+
+  "featureVersions": {
+    "regime_features": "regime_v1",
+    "ranker_features": "ranker_v1",
+    "tft_features": "tft_v1",
+    "ai_signals_features": "india_ai_v2",
+    "option_chain_features": "oc_v1",
+    "technical_indicators": "tech_v1",
+    "note": "Feature contracts defined in src/lib/india/feature-contract-registry.ts"
+  },
+
+  "riskConfiguration": {
+    "engine": "PortfolioRiskEngine v2",
+    "source": "src/lib/risk/portfolio-risk.ts",
+    "config": "DEFAULT_RISK_CONFIG",
+    "evaluationSteps": [
+      "kill_switch",
+      "drawdown_control",
+      "var_check",
+      "exposure_checks",
+      "correlated_long_cluster",
+      "correlation_risk",
+      "risk_budget",
+      "dynamic_sizing"
+    ],
+    "killSwitchLevels": ["NONE", "SOFT_KILL", "HARD_KILL"],
+    "drawdownTiers": ["NORMAL", "CAUTION", "WARNING", "DANGER", "HALT"],
+    "varConfig": "DEFAULT_VAR_CONFIG",
+    "exposureLimits": "DEFAULT_EXPOSURE_LIMITS",
+    "correlationConfig": "DEFAULT_CORRELATION_CONFIG",
+    "sizingConfig": "DEFAULT_SIZING_CONFIG",
+    "budgetConfig": "DEFAULT_RISK_BUDGET_CONFIG"
+  },
+
+  "paperTradingConfiguration": {
+    "dailyBudgetINR": 100000,
+    "maxConcurrentTrades": 5,
+    "tradeNotionalINR": 20000,
+    "minimumScore": 0.52,
+    "maxRiskPerTradePct": 0.025,
+    "lastEntryMinutesIST": 885,
+    "lastEntryTimeIST": "14:45",
+    "scoringWeights": {
+      "confidence": 0.35,
+      "winProbability": 0.25,
+      "grade": 0.25,
+      "riskReward": 0.15
+    },
+    "gradeScores": { "S": 1.0, "A": 0.8, "B": 0.6, "C": 0.4, "D": 0.2 },
+    "rrCapForScoring": 3.0,
+    "defaultNotionalINR": 100000,
+    "slAtrMultiplier": 1.0,
+    "maxTradeAgeMs": 21600000,
+    "eodSquareOffLock": { "ttlMinutes": 20, "scope": "tradeDate" },
+    "expiryCooldownIST": "14:30 on Thursday (weekly expiry days)",
+    "source": "src/features/india/paper-trading/auto-trader.ts + src/features/india/scalping/paper-trader-core.ts"
+  },
+
+  "providerConfiguration": {
+    "priorityChain": ["angel_one", "upstox", "nse", "yahoo"],
+    "failoverPolicy": {
+      "retryCount": 3,
+      "backoffBaseMs": 300,
+      "backoffMaxMs": 5000,
+      "jitterFactor": 0.2,
+      "failoverCooldownMs": 10000
+    },
+    "circuitBreaker": {
+      "openThreshold": 20,
+      "initialScore": 100,
+      "successDelta": 10,
+      "apiFailureDelta": -40,
+      "authFailureDelta": -65,
+      "halfOpenAfterMs": 30000
+    },
+    "providers": {
+      "angel_one": {
+        "capabilities": ["historicalCandles", "liveQuotes", "webSocket", "optionChain", "instrumentMaster", "intradayCandles", "fno"],
+        "activation": "SMARTAPI_API_KEY + SMARTAPI_CLIENT_CODE + SMARTAPI_PIN + SMARTAPI_TOTP_SECRET",
+        "priority": 1
+      },
+      "upstox": {
+        "capabilities": ["historicalCandles", "liveQuotes", "webSocket", "optionChain", "intradayCandles", "fno"],
+        "activation": "UPSTOX_ANALYTICS_TOKEN or UPSTOX_CLIENT_ID + UPSTOX_CLIENT_SECRET",
+        "priority": 2
+      },
+      "nse": {
+        "capabilities": ["liveQuotes", "optionChain", "fno"],
+        "activation": "always_available (cookie-warmed scraper)",
+        "priority": 3
+      },
+      "yahoo": {
+        "capabilities": ["historicalCandles", "liveQuotes", "intradayCandles"],
+        "activation": "always_available (last_resort)",
+        "priority": 4
+      }
+    }
+  },
+
+  "instrumentUniverseVersion": {
+    "version": "india_fno_2026_v1",
+    "source": "src/lib/india/fno-symbols.ts + src/lib/india/sectors.ts",
+    "indices": ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"],
+    "indexCount": 4,
+    "stockUniverse": "SECTOR_STOCKS from sectors.ts",
+    "sectors": ["Bank", "PSU Bank", "IT", "Auto", "Pharma", "FMCG", "Metal", "Energy", "Realty", "Fin Services", "Media", "Infra"],
+    "estimatedStockCount": 173,
+    "supplementaryIndices": ["SENSEX", "INDIA VIX"],
+    "optionChainUnderlyings": "FNO_INDICES + FNO_STOCKS"
+  },
+
+  "datasetVersion": {
+    "historicalCandleSource": "angel_one_primary_yahoo_fallback",
+    "optionChainSource": "angel_one_primary_nse_fallback",
+    "candleTimeframes": ["1m", "3m", "5m", "15m", "30m", "1h", "1d"],
+    "candleTable": "CandleBar (PostgreSQL, TimescaleDB-compatible)",
+    "optionChainTable": "OptionChainSnapshot",
+    "fnoTrendTable": "FnoTrendScan",
+    "dailyPicksTable": "IndiaDailyPick",
+    "daySessionTable": "IndiaDaySession",
+    "paperTradeTable": "PaperTrade (source prefix: 'in:')"
+  },
+
+  "environment": {
+    "nodeVersion": ">=18 (worker runtime)",
+    "nextJsVersion": "16.3.1",
+    "prismaVersion": "7.9.1",
+    "timezone": "Asia/Kolkata (IST = UTC+5:30)",
+    "tz_offset_ms": 19800000,
+    "database": "PostgreSQL (via Prisma 7)",
+    "cache": "Redis (ioredis, in-memory fallback)",
+    "mlService": "FastAPI Python on port 8100 (ML_SERVICE_URL env)",
+    "mlMode": "fallback",
+    "workerJobs": [
+      "india-daily-picks",
+      "india-auto-trader",
+      "india-fno-trend-track",
+      "india-eod-squareoff",
+      "india-oc-capture",
+      "india-scalper",
+      "india-scanner",
+      "signal-ingest",
+      "signal-outcome",
+      "alerts",
+      "scalper",
+      "liquidations",
+      "strategy-lab",
+      "heartbeat"
+    ]
+  },
+
+  "workerSchedules": {
+    "india-daily-picks": { "intervalMs": 60000, "runOnStart": true, "marketHoursGated": true },
+    "india-auto-trader": { "intervalMs": 60000, "runOnStart": true, "marketHoursGated": true },
+    "india-fno-trend-track": { "intervalMs": 60000, "runOnStart": true, "marketHoursGated": true },
+    "india-eod-squareoff": { "intervalMs": 60000, "runOnStart": false, "fires": "post-15:30 IST weekdays only" },
+    "india-oc-capture": { "intervalMs": 300000, "runOnStart": true, "marketHoursGated": true },
+    "india-scalper": { "intervalMs": 60000, "runOnStart": true, "marketHoursGated": true },
+    "india-scanner": { "intervalMs": 300000, "runOnStart": true }
+  },
+
+  "replayDeterminismGuarantees": [
+    "NSETradingCalendar.isTradingDay() is pure (no side effects)",
+    "Signal scoring formula is deterministic given fixed inputs",
+    "Auto-trader duplicate check is per-symbol-per-source (idempotent)",
+    "EOD lock prevents double square-off (distributed Redis lock)",
+    "withDbRetry wraps each trade update (3 attempts, 300ms base)",
+    "No Math.random() in signal scoring path",
+    "AI_MODEL_VERSION pinned to alphaforge-ai-v2",
+    "ML service unavailability degrades gracefully to heuristic (zero nondeterminism)"
+  ],
+
+  "knownNondeterminismSources": [
+    {
+      "source": "ML_SERVICE_LATENCY",
+      "type": "TIME_DEPENDENCY",
+      "classification": "NON_BLOCKING",
+      "mitigation": "ML unavailability → heuristic fallback (deterministic)"
+    },
+    {
+      "source": "PROVIDER_FAILOVER_TIMING",
+      "type": "PROVIDER_VARIANCE",
+      "classification": "NON_BLOCKING",
+      "mitigation": "Failover cooldown 10s prevents oscillation; same data path always resolves to same signal"
+    },
+    {
+      "source": "REDIS_CIRCUIT_BREAKER_STATE",
+      "type": "CACHE_STATE",
+      "classification": "NON_BLOCKING",
+      "mitigation": "Circuit breaker degrades gracefully; does not change signal direction"
+    },
+    {
+      "source": "BACKOFF_JITTER",
+      "type": "RANDOM_SEED",
+      "classification": "NON_BLOCKING",
+      "mitigation": "Jitter only affects retry timing, not final signal output"
+    }
+  ],
+
+  "validationConstraints": [
+    "DO NOT add new strategies during validation",
+    "DO NOT change strategy logic to improve historical results",
+    "DO NOT optimize parameters using validation period data",
+    "FIX ONLY: bugs, data issues, wiring issues, idempotency issues, calculation errors, reliability defects",
+    "Every fix must include a regression test",
+    "This config snapshot must be used for all 20 replay sessions"
+  ]
+}

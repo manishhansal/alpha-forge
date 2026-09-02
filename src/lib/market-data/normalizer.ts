@@ -145,9 +145,22 @@ export function stripYahooSuffix(symbol: string): string {
 /**
  * Add the Yahoo Finance ".NS" suffix for NSE equities.
  * Index proxies (^NSEI etc.) are returned unchanged.
+ *
+ * RCA-003 fix: explicit override map for symbols where the simple
+ * "{SYMBOL}.NS" pattern does not resolve on Yahoo Finance.
  */
+
+/** Symbols that need a non-standard Yahoo Finance ticker. */
+const YAHOO_SYMBOL_OVERRIDES: Readonly<Record<string, string>> = {
+  TMPV:         "TATAMOTORS.NS", // TMPV.NS not available; use parent TATAMOTORS
+  "M&M":        "MM.NS",         // Yahoo strips & — use MM.NS
+  "BAJAJ-AUTO": "BAJAJ-AUTO.NS", // Hyphen preserved; standard .NS suffix works
+  HYUNDAI:      "HYUNDAI.NS",    // Hyundai Motor India Ltd (listed 2024)
+};
+
 export function toYahooSymbol(symbol: string): string {
   if (symbol.startsWith("^") || symbol.includes(".")) return symbol;
+  if (YAHOO_SYMBOL_OVERRIDES[symbol]) return YAHOO_SYMBOL_OVERRIDES[symbol]!;
   return `${symbol}.NS`;
 }
 
