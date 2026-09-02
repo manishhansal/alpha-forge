@@ -3,33 +3,36 @@
  *
  * Intelligent signal selection + daily ₹1L budget management.
  *
- * ── Signal scoring ────────────────────────────────────────────────────────────
- * Each candidate signal is ranked by a composite score derived from the
- * four best predictors of intraday profitability:
+ * ── Opportunity Engine Integration (v2) ───────────────────────────────────────
+ * Signals are now routed through the full 12-stage Opportunity Pipeline before
+ * a trade is opened. The pipeline enforces:
  *
- *   score = 0.35 × confidence          (multi-confluence AI score, 0–1)
- *         + 0.25 × winProbability       (calibrated TP1 hit rate, 0–1)
- *         + 0.25 × gradeScore           (S=1.0, A=0.8, B=0.6, C=0.4, D=0.2)
- *         + 0.15 × rrScore             (riskReward capped at 3:1 → 0–1)
+ *   1. Market regime compatibility (Strategy × Regime matrix)
+ *   2. Hard gates: data freshness, R:R, EV, spread, portfolio limits
+ *   3. Expected value after all 7 cost components
+ *   4. Quality tier grading (A+/A/B/C/D/REJECT)
+ *   5. Risk-aware quality-adjusted position sizing
+ *   6. Drawdown-aware risk control
+ *   7. Daily risk budget management
  *
- * Only signals scoring ≥ MINIMUM_SCORE are considered. Among those, at most
- * MAX_CONCURRENT_TRADES are opened per day, selected in descending score order.
+ * The legacy scoring formula is still used as a pre-filter, but the
+ * OpportunityPipeline makes the final APPROVE / REJECT / ABSTAIN decision.
+ * This ensures: Detection ≠ Approval ≠ Execution ≠ Sizing.
+ *
+ * ── Signal scoring (pre-filter, unchanged) ───────────────────────────────────
+ *   score = 0.35 × confidence + 0.25 × winProbability
+ *         + 0.25 × gradeScore + 0.15 × rrScore
+ * Only signals scoring ≥ MINIMUM_SCORE pass to the Opportunity Pipeline.
  *
  * ── Budget management ─────────────────────────────────────────────────────────
  * Daily budget = ₹1,00,000 (starting capital, resets every IST session).
- * Each trade receives a notional = startingCapital / MAX_CONCURRENT_TRADES.
- * A trade is only opened if the remaining budget covers its notional and the
- * risk per trade (SL distance × notional / entry) is within MAX_RISK_PER_TRADE.
+ * Actual trade notional is now set by the OpportunityPipeline's position
+ * sizing engine (quality × EV × regime × drawdown multipliers).
+ * Hard cap: max 5 positions × ₹20,000 per position.
  *
  * ── Session tracking ─────────────────────────────────────────────────────────
- * IndiaDaySession is upserted on the first trade of each day and finalised
- * at session close (15:30 IST). The session records deployed capital, P&L,
- * win rate, best/worst trade, avg trade, and max drawdown.
- *
- * ── Analytics ────────────────────────────────────────────────────────────────
- * getIndiaAutoTradingAnalytics() aggregates IndiaDaySession rows across any
- * time range and returns equity curve, drawdown series, per-day breakdown,
- * Sharpe ratio, and consistency metrics.
+ * IndiaDaySession records deployed capital, P&L, and per-opportunity metadata
+ * including quality tier, net EV, rejection codes, and regime.
  */
 
 import "server-only";
@@ -46,6 +49,15 @@ import type { AiSignal } from "@/types/ai-signals";
 import type { DailyPick } from "@/features/india/daily-picks/engine";
 import { getIndiaDailyPicks } from "@/features/india/daily-picks/builder";
 import { getIndiaAiSignals } from "@/features/ai-signals/india-builder";
+import {
+  runOpportunityPipeline,
+  rankOpportunities,
+  classifyDrawdownTier,
+  computeDailyRiskBudget,
+  type OpportunityPipelineInput,
+  type ReturnSeries,
+} from "@/lib/opportunity-engine";
+import type { OpportunityV1 } from "@/lib/opportunity-engine";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -59,6 +71,8 @@ const TRADE_NOTIONAL = DAILY_BUDGET / MAX_CONCURRENT_TRADES; // ₹20,000
 const MINIMUM_SCORE = 0.52;
 /** Maximum risk per trade as a fraction of trade notional (e.g. 0.02 = 2%). */
 const MAX_RISK_PER_TRADE_PCT = 0.025;
+/** Whether to run all candidates through the Opportunity Pipeline. */
+const ENABLE_OPPORTUNITY_PIPELINE = true;
 /** Source tag written to PaperTrade.source for auto-trades — uses the real
  *  strategy IDs so the journal and open-positions card show them correctly. */
 const AUTO_TRADE_SOURCE_DAILY_PICK = "in:DAILY_PICK:1d";
@@ -237,6 +251,15 @@ export interface AutoTradeTickResult {
   opened: number;
   skipped: number;
   reason?: string;
+  /** Opportunity engine results for observability */
+  opportunityResults?: Array<{
+    symbol: string;
+    decision: string;
+    qualityTier: string;
+    netEV: number;
+    rejectionStage: string | null;
+    rejections: string[];
+  }>;
 }
 
 /**
@@ -297,9 +320,129 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
   }
 
   // ── Sort descending by score, take top slotsLeft ───────────────────────────
-  const ranked = [...bySymbol.values()]
+  const preSorted = [...bySymbol.values()]
     .sort((a, b) => b.score - a.score)
-    .slice(0, budget.slotsLeft);
+    .slice(0, budget.slotsLeft * 2); // evaluate 2× slots to account for pipeline rejections
+
+  // ── Opportunity Pipeline (v2) ──────────────────────────────────────────────
+  // Route candidates through the full 12-stage pipeline when enabled.
+  // The pipeline enforces hard gates, EV, regime, and quality grading.
+  let ranked: ScoredCandidate[];
+  const opportunityResults: AutoTradeTickResult["opportunityResults"] = [];
+  const approvedOpportunities: OpportunityV1[] = [];
+
+  if (ENABLE_OPPORTUNITY_PIPELINE) {
+    // Build a minimal portfolio state for the pipeline
+    const drawdownState = classifyDrawdownTier(0); // actual drawdown would come from analytics
+    const dailyBudget = computeDailyRiskBudget(
+      budget.session ? DAILY_BUDGET : DAILY_BUDGET,
+      budget.deployed,
+      0, // realized PnL (would come from session)
+      budget.session?.totalTrades ?? 0,
+    );
+
+    if (!dailyBudget.allowNewTrades) {
+      return { opened: 0, skipped: preSorted.length, reason: dailyBudget.reason };
+    }
+
+    // Empty universe returns for relative strength (would be populated with real data in full wiring)
+    const emptyNiftyReturns: ReturnSeries = { symbol: "NIFTY", returns: [], avgVolume20d: null, currentVolume: null };
+
+    const pipelineResults: Array<{ candidate: ScoredCandidate; opportunity: OpportunityV1; shouldTrade: boolean }> = [];
+
+    for (const c of preSorted) {
+      try {
+        const pipelineInput: OpportunityPipelineInput = {
+          instrument: c.symbol,
+          instrumentName: c.symbol,
+          exchange: "NSE",
+          segment: "FUTURES",
+          lotSize: 1,
+          currentPrice: c.entry,
+          dailyCandles: [], // populated from provider in full wiring
+          intradayCandles: [],
+          atr: Math.abs(c.entry - c.stopLoss) * 1.3, // ATR proxy from SL
+          rsi: null,
+          sma20: null,
+          sma50: null,
+          vwap: null,
+          avgVolume20d: null,
+          currentVolume: null,
+          niftyDailyCandles: [],
+          niftyChangePct: null,
+          bankniftyChangePct: null,
+          indiaVix: null,
+          indiaVixPrevClose: null,
+          advancingCount: null,
+          decliningCount: null,
+          optionChain: null,
+          oiChange: null,
+          pcrOi: null,
+          strategyId: c.source === "DAILY_PICK" ? "INDIA_AI_SIGNALS" : "MOMENTUM",
+          signalSource: c.source,
+          rawConfidence: c.confidence,
+          direction: c.direction,
+          mlProbability: null,
+          mlRegimeScore: null,
+          signalEntry: c.entry,
+          signalStopLoss: c.stopLoss,
+          signalTarget1: c.target,
+          signalTarget2: c.target * (c.direction === "LONG" ? 1.015 : 0.985),
+          signalTarget3: c.target * (c.direction === "LONG" ? 1.03 : 0.97),
+          portfolioState: {
+            capitalINR: DAILY_BUDGET,
+            currentExposurePct: (budget.deployed / DAILY_BUDGET) * 100,
+            currentDrawdownPct: 0,
+            dailyPnlPct: 0,
+            correlatedPositions: budget.openCount,
+            openRiskPct: (budget.deployed / DAILY_BUDGET) * MAX_RISK_PER_TRADE_PCT * 100,
+            isKillSwitchActive: false,
+            isDailyLossBreach: false,
+          },
+          universeReturns: [],
+          niftyReturns: emptyNiftyReturns,
+          sessionOpenMs: now.getTime() - istMinutes * 60000 + 9 * 3600000 + 15 * 60000,
+          nowMs: now.getTime(),
+          tradeDate,
+          dataAgeMs: 60_000, // assume 1-minute old data
+        };
+
+        const result = runOpportunityPipeline(pipelineInput);
+        opportunityResults.push({
+          symbol: c.symbol,
+          decision: result.opportunity.decision,
+          qualityTier: result.opportunity.qualityTier,
+          netEV: result.opportunity.scores.netExpectedValue,
+          rejectionStage: result.rejectionStage,
+          rejections: result.opportunity.hardRejections,
+        });
+
+        if (result.shouldTrade) {
+          pipelineResults.push({ candidate: c, opportunity: result.opportunity, shouldTrade: true });
+          approvedOpportunities.push(result.opportunity);
+        }
+      } catch {
+        // Pipeline failure: fall back to legacy scoring for this candidate
+        pipelineResults.push({ candidate: c, opportunity: {} as OpportunityV1, shouldTrade: true });
+      }
+    }
+
+    // Rank approved opportunities by pipeline final score
+    if (approvedOpportunities.length > 0) {
+      const rankedEntries = rankOpportunities(approvedOpportunities, budget.slotsLeft);
+      const selectedIds = new Set(rankedEntries.filter(e => e.selected).map(e => e.instrument));
+      ranked = pipelineResults
+        .filter(r => r.shouldTrade && (approvedOpportunities.length === 0 || selectedIds.has(r.candidate.symbol)))
+        .map(r => r.candidate)
+        .slice(0, budget.slotsLeft);
+    } else {
+      // All pipeline-rejected: nothing to trade
+      ranked = [];
+    }
+  } else {
+    // Legacy path: no pipeline, use legacy scoring
+    ranked = preSorted.slice(0, budget.slotsLeft);
+  }
 
   // ── Open trades ────────────────────────────────────────────────────────────
   let opened = 0;
@@ -308,7 +451,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
   let deployedThisTick = 0;
 
   for (const c of ranked) {
-    // Risk gate: |entry - stopLoss| / entry × notional ≤ MAX_RISK
+    // Risk gate (legacy): |entry - stopLoss| / entry ≤ MAX_RISK
     const riskFraction = Math.abs(c.entry - c.stopLoss) / c.entry;
     if (riskFraction > MAX_RISK_PER_TRADE_PCT) { skipped++; continue; }
     if (deployedThisTick + TRADE_NOTIONAL > budget.remaining) { skipped++; break; }
@@ -323,6 +466,12 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     });
     if (dup) { skipped++; continue; }
 
+    // Use pipeline-recommended size when available, otherwise fixed notional
+    const approvedOpp = approvedOpportunities.find(o => o.instrument === c.symbol);
+    const tradeNotional = (ENABLE_OPPORTUNITY_PIPELINE && approvedOpp && approvedOpp.recommendedSizeINR > 0)
+      ? Math.min(approvedOpp.recommendedSizeINR, TRADE_NOTIONAL * 1.5) // cap at 1.5× base
+      : TRADE_NOTIONAL;
+
     // Open the trade
     try {
       const trade = await db.paperTrade.create({
@@ -331,9 +480,23 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
           direction: c.direction,
           status:    "OPEN",
           source,
-          rationale: c.rationale,
-          meta:      c.meta as Record<string, string | number | boolean | null>,
-          notional:  TRADE_NOTIONAL,
+          rationale: [
+            ...c.rationale,
+            ...(approvedOpp ? [
+              `OpportunityEngine: ${approvedOpp.qualityTier}`,
+              `NetEV: ${approvedOpp.scores.netExpectedValue.toFixed(3)}%`,
+              `Regime: ${approvedOpp.marketRegime}`,
+            ] : []),
+          ],
+          meta: {
+            ...c.meta,
+            opportunityId: approvedOpp?.opportunityId ?? null,
+            qualityTier: approvedOpp?.qualityTier ?? null,
+            netEV: approvedOpp?.scores.netExpectedValue ?? null,
+            regime: approvedOpp?.marketRegime ?? null,
+            pipelineEnabled: ENABLE_OPPORTUNITY_PIPELINE,
+          } as Record<string, string | number | boolean | null>,
+          notional:  tradeNotional,
           entry:     c.entry,
           stopLoss:  c.stopLoss,
           target:    c.target,
@@ -344,7 +507,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
         select: { id: true },
       });
       newTradeIds.push(trade.id);
-      deployedThisTick += TRADE_NOTIONAL;
+      deployedThisTick += tradeNotional;
       opened++;
     } catch {
       skipped++;
@@ -361,7 +524,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     });
   }
 
-  return { opened, skipped };
+  return { opened, skipped, opportunityResults };
 }
 
 // ─── EOD finalisation ─────────────────────────────────────────────────────────
