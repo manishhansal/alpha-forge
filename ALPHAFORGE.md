@@ -11,21 +11,22 @@ This document is the authoritative reference for AlphaForge's product design, sy
 3. [Design System — IIT](#3-design-system--iit)
 4. [Core Architecture](#4-core-architecture)
 5. [Indian Market Data Layer](#5-indian-market-data-layer)
-6. [AI Signals Engine](#6-ai-signals-engine)
-7. [Daily Picks & Auto Paper-Trading](#7-daily-picks--auto-paper-trading)
-8. [Opportunity Engine (12-Stage Pipeline)](#8-opportunity-engine-12-stage-pipeline)
-9. [Signal Intelligence Engine (45-Phase)](#9-signal-intelligence-engine-45-phase)
-10. [V6 Quant Research Platform (24-Phase)](#10-v6-quant-research-platform-24-phase)
-11. [Institutional Infrastructure](#11-institutional-infrastructure)
-12. [ML Microservice](#12-ml-microservice)
-13. [Strategy Catalogue](#13-strategy-catalogue)
-14. [Worker Jobs](#14-worker-jobs)
-15. [Database Schema](#15-database-schema)
-16. [API Surface](#16-api-surface)
-17. [Folder Structure](#17-folder-structure)
-18. [Environment Variables](#18-environment-variables)
-19. [Testing & TDD Policy](#19-testing--tdd-policy)
-20. [Coding Standards](#20-coding-standards)
+6. [Data Service (Credential-Free NSE Scraper)](#6-data-service-credential-free-nse-scraper)
+7. [AI Signals Engine](#7-ai-signals-engine)
+8. [Daily Picks & Auto Paper-Trading](#8-daily-picks--auto-paper-trading)
+9. [Opportunity Engine (12-Stage Pipeline)](#9-opportunity-engine-12-stage-pipeline)
+10. [Signal Intelligence Engine (45-Phase)](#10-signal-intelligence-engine-45-phase)
+11. [V6 Quant Research Platform (24-Phase)](#11-v6-quant-research-platform-24-phase)
+12. [Institutional Infrastructure](#12-institutional-infrastructure)
+13. [ML Microservice](#13-ml-microservice)
+14. [Strategy Catalogue](#14-strategy-catalogue)
+15. [Worker Jobs](#15-worker-jobs)
+16. [Database Schema](#16-database-schema)
+17. [API Surface](#17-api-surface)
+18. [Folder Structure](#18-folder-structure)
+19. [Environment Variables](#19-environment-variables)
+20. [Testing & TDD Policy](#20-testing--tdd-policy)
+21. [Coding Standards](#21-coding-standards)
 
 ---
 
@@ -329,9 +330,88 @@ Beyond the data layer, the Angel One adapter (`services/india/angelone/`) provid
 
 ---
 
-## 6. AI Signals Engine
+## 6. Data Service (Credential-Free NSE Scraper)
 
-### 6.1 Architecture
+`data-service/` — a standalone Python 3.11 / FastAPI microservice that provides NSE market data without any broker credentials. It runs at port **8200** alongside the Next.js app and ML service.
+
+> Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)
+
+### 6.1 What it provides
+
+| Capability | Implementation |
+|---|---|
+| Live quotes (equities + indices) | `httpx` → NSE `api/NextApi` endpoints (no browser) |
+| Live tick publishing | 5 s poll → Redis pub/sub `af:ticks:{SYMBOL}` |
+| Option chain | Playwright / Scrapling `AsyncDynamicSession` → XHR capture |
+| Daily OHLCV | `httpx` → NSE Bhavcopy CDN (`nsearchives.nseindia.com`) |
+| Intraday OHLCV | `httpx` → NSE charting API (`charting.nseindia.com`) |
+| Instrument master | `httpx` → NSE instrument CSV |
+
+### 6.2 NSE NextApi (live quotes)
+
+NSE migrated their frontend to Next.js in 2026. The old `equity-stockIndices` and `api/quote/equity` XHR endpoints are retired. Live quotes now come from three plain-HTTP endpoints — no browser or cookies required:
+
+| Symbol type | Endpoint |
+|---|---|
+| Index (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY) | `api/NextApi/apiClient?functionName=getIndexData&&type=All` |
+| NIFTY 200 constituents | `api/NextApi/apiClient/marketWatchApi?functionName=getIndicesData&symbol=NIFTY%20200` |
+| Other NSE equities | `api/NextApi/apiClient/marketWatchApi?functionName=getIndicesData&symbol=NIFTY%20500` |
+
+### 6.3 Scrapling session management
+
+`AsyncDynamicSession` must be entered as an async context manager before `fetch()` is called. Both the quote session and chain session follow the same singleton pattern:
+
+```python
+raw = AsyncDynamicSession(headless=True, capture_xhr="api/option-chain")
+entered = await raw.__aenter__()   # initialises Playwright browser
+_session_raw = raw                 # kept for __aexit__ on reset
+_session = entered                 # what fetch() is called on
+```
+
+Key constraints:
+- **`capture_xhr` is session-level**, not per-fetch. Passing it to `session.fetch()` is silently ignored.
+- **`network_idle=True` hangs on NSE pages.** NSE's SPA background-polls indefinitely. Use `network_idle=False, wait=N` instead.
+- **Homepage pre-warm is required** before any data XHR. The session visits `https://www.nseindia.com` (`wait=2000`) immediately after `__aenter__` to establish NSE session cookies.
+
+### 6.4 Docker networking requirement
+
+Chromium's built-in DNS resolver rejects Docker's loopback nameserver (`127.0.0.11`). The `data-service` must be configured with real DNS servers:
+
+```yaml
+# docker-compose.yml
+data-service:
+  dns:
+    - 8.8.8.8
+    - 8.8.4.4
+```
+
+### 6.5 Redis schema
+
+| Key | Type | TTL | Purpose |
+|---|---|---|---|
+| `af:ticks:{SYMBOL}` | Pub/Sub | — | Live tick stream |
+| `scraping:quote:{exchange}:{symbol}` | String (JSON) | 5 s | Quote cache |
+| `scraping:chain:{underlying}:{expiry}:{exchange}` | String (JSON) | 20 s | Option chain cache |
+| `scraping:hist:{exchange}:{symbol}:{interval}:{from}:{to}` | String (JSON) | 3600 s | Intraday candle cache |
+
+### 6.6 API surface
+
+```
+GET  /health                                    always 200; degraded flag
+GET  /scraping/status                           capability flags
+GET  /scraping/quotes?symbols=A,B&exchange=NSE  live quotes (httpx)
+GET  /scraping/historical?symbol=...            OHLCV candles (daily + intraday)
+GET  /scraping/option-chain?underlying=NIFTY    option chain (browser)
+GET  /scraping/instruments?exchange=NSE         instrument master
+GET  /publisher/status                          tick publisher stats
+POST /publisher/symbols                         add symbols to tick publisher
+```
+
+---
+
+## 7. AI Signals Engine
+
+### 7.1 Architecture
 
 ```
 features/ai-signals/engine.ts     — pure, deterministic helpers (no I/O)
@@ -355,7 +435,7 @@ buildReasons(factors)                 // top-6 confluence factors
 suggestPositionSizePct(confidence, horizon, atr, entry)
 ```
 
-### 6.2 Every Signal Carries
+### 7.2 Every Signal Carries
 
 - **Action** — `LONG | SHORT | BUY | SELL | WAIT`
 - **Confidence** — 0–100 + grade (S / A / B / C / D)
@@ -370,11 +450,11 @@ suggestPositionSizePct(confidence, horizon, atr, entry)
 - **Timing window** — `enterBy` + `exitBy` + live countdown; "Stale" badge on expiry
 - **AI rationale** — top-6 factors with category chips (Tech / Deriv / Sent / Macro / News / Flow)
 
-### 6.3 Crypto Engine (9 factors)
+### 7.3 Crypto Engine (9 factors)
 
 RSI(14), MACD histogram, EMA 20/50 spread, volume thrust, funding rate (inverted), OI 1h Δ, long/short ratio (inverted), liquidation imbalance, Fear & Greed (inverted). Session quality bonus from the IST Best-Time engine.
 
-### 6.4 India Engine v2 — `alphaforge-ai-v2` (10+ factors)
+### 7.4 India Engine v2 — `alphaforge-ai-v2` (10+ factors)
 
 | Factor | Notes |
 |---|---|
@@ -398,7 +478,7 @@ RSI(14), MACD histogram, EMA 20/50 spread, volume thrust, funding rate (inverted
 
 **Flow-factor confidence bonus** — up to +0.08 when scanner + futuresScreen + volume + oiBuildup + dayChange are all available.
 
-### 6.5 v2 Threshold Changes
+### 7.5 v2 Threshold Changes
 
 | Parameter | Old | New |
 |---|---|---|
@@ -411,9 +491,9 @@ RSI(14), MACD histogram, EMA 20/50 spread, volume thrust, funding rate (inverted
 
 ---
 
-## 7. Daily Picks & Auto Paper-Trading
+## 8. Daily Picks & Auto Paper-Trading
 
-### 7.1 Daily Picks
+### 8.1 Daily Picks
 
 `/in/daily-picks` — five buckets, top 3 per bucket, frozen at 09:15 IST:
 
@@ -441,7 +521,7 @@ Bucket quality floors (v2):
 - `src/features/india/daily-picks/builder.ts` — `getIndiaDailyPicks()` (freeze-or-track) + `getIndiaDailyPicksHistory()`. DB-resilient: degrades to ephemeral live picks when Postgres is down.
 - `worker/src/jobs/india-daily-picks.ts` — 5-min cadence, market-hours gated. Both the worker and the on-read path are idempotent.
 
-### 7.2 Expiry-Day Plays (Gamma Blast / Hero Zero)
+### 8.2 Expiry-Day Plays (Gamma Blast / Hero Zero)
 
 Rendered on `/in/daily-picks` **only** on a NIFTY (Tuesday) or SENSEX (Thursday) expiry day:
 
@@ -450,7 +530,7 @@ Rendered on `/in/daily-picks` **only** on a NIFTY (Tuesday) or SENSEX (Thursday)
 
 NIFTY expiry + premiums from the live NSE chain. SENSEX from the live BSE (BFO) chain via Angel One, with a spot + India VIX Black-Scholes estimate fallback.
 
-### 7.3 Intelligent Auto Paper-Trading Engine
+### 8.3 Intelligent Auto Paper-Trading Engine
 
 Runs via `worker/src/jobs/india-auto-trader.ts`:
 
@@ -471,7 +551,7 @@ score = 0.35×confidence + 0.25×winProbability + 0.25×grade + 0.15×R:R
 
 ---
 
-## 8. Opportunity Engine (12-Stage Pipeline)
+## 9. Opportunity Engine (12-Stage Pipeline)
 
 `src/lib/opportunity-engine/` — sits between raw AI signals and paper trade execution. Every candidate signal passes all 12 stages before a paper trade is opened.
 
@@ -498,11 +578,11 @@ Stage 12  Execution Mode Isolation (BACKTEST | RESEARCH | SHADOW | PAPER | LIVE)
 
 ---
 
-## 9. Signal Intelligence Engine (45-Phase)
+## 10. Signal Intelligence Engine (45-Phase)
 
 `src/lib/signal-intelligence/` — measurement and attribution infrastructure. Does not add new strategies. Instruments existing ones so the system can answer what works, what doesn't, and why.
 
-### 9.1 Modules
+### 10.1 Modules
 
 | Module | Key Exports |
 |---|---|
@@ -518,7 +598,7 @@ Stage 12  Execution Mode Isolation (BACKTEST | RESEARCH | SHADOW | PAPER | LIVE)
 | `paper-trading-fidelity.ts` | `computePaperFill()` — realistic execution (mid + half-spread + market impact + latency drift); 8-stage signal funnel; deterministic `computeReplayHash()` |
 | `strategy-scorecard.ts` | `buildScorecardEntry()` — 16 required metrics per strategy; `evaluateProductionGates()` — 8 mandatory gates for LIVE_CANDIDATE |
 
-### 9.2 Production Guard (8 Gates for LIVE_CANDIDATE)
+### 10.2 Production Guard (8 Gates for LIVE_CANDIDATE)
 
 Positive backtest P&L satisfies **none** of these:
 
@@ -531,11 +611,11 @@ Positive backtest P&L satisfies **none** of these:
 7. Paper trading evidence (≥ 10 sessions)
 8. Execution quality (≥ 0.70)
 
-### 9.3 Strategy Status
+### 10.3 Strategy Status
 
 All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE`. That is the correct and expected state — no fabricated promotions.
 
-### 9.4 New DB Models
+### 10.4 New DB Models
 
 | Model | Purpose |
 |---|---|
@@ -546,11 +626,11 @@ All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE`. That 
 
 ---
 
-## 10. V6 Quant Research Platform (24-Phase)
+## 11. V6 Quant Research Platform (24-Phase)
 
 `src/lib/research/` — a scientifically rigorous evidence-based research infrastructure. The most important architectural shift in the project's history.
 
-### 10.1 Absolute Rules (enforced in code)
+### 11.1 Absolute Rules (enforced in code)
 
 1. **No in-sample promotion** — `PerformancePeriod.IN_SAMPLE` metrics are computed but the promotion engine ignores them
 2. **LIVE requires human approval** — `MANUAL_HUMAN_APPROVAL` gate cannot be bypassed; `approvalToken` + `approvedBy` always required
@@ -559,7 +639,7 @@ All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE`. That 
 5. **Kill switches never auto-remove** — require explicit `deactivateKillSwitch()` call
 6. **No strategy outside the registry** — `getOrThrow()` enforced at all API entry points
 
-### 10.2 Strategy Promotion Lifecycle
+### 11.2 Strategy Promotion Lifecycle
 
 ```
 EXPERIMENTAL  →  hypothesis required
@@ -573,7 +653,7 @@ MANUAL_APPROVAL  →  human review
 LIVE          →  explicit approvalToken + approvedBy — never automatic
 ```
 
-### 10.3 Research Platform Modules (24 Phases)
+### 11.3 Research Platform Modules (24 Phases)
 
 | Phases | Module | Key Feature |
 |---|---|---|
@@ -596,7 +676,7 @@ LIVE          →  explicit approvalToken + approvedBy — never automatic
 | 23 | Paper Analysis | Backtest vs shadow vs paper comparison; KL divergence for regime shift; `requiresInvestigation` flag |
 | 24 | Validation Sessions | ≥ 20 sessions + regime diversity before LIVE_CANDIDATE; preferred 40+ sessions |
 
-### 10.4 Research Dashboard
+### 11.4 Research Dashboard
 
 Navigate to `/research` — 10 pages:
 
@@ -613,7 +693,7 @@ Navigate to `/research` — 10 pages:
 | Promotion Pipeline | `/research/promotion-pipeline` |
 | Alpha Decay Monitor | `/research/alpha-decay` |
 
-### 10.5 Strategy Universe (18 strategies)
+### 11.5 Strategy Universe (18 strategies)
 
 **Crypto (11):** UT_SMC, VWAP_SWEEP_TREND, NEWS_MOMENTUM, RANGE_SCALP, EMA_PULLBACK, VWAP_REVERSION, ORDERFLOW_SWEEP, FIB_PULLBACK, INSTITUTIONAL_SMC, AI_INSTITUTIONAL_PRO, STRATEGY_LAB_USER
 
@@ -621,9 +701,9 @@ Navigate to `/research` — 10 pages:
 
 ---
 
-## 11. Institutional Infrastructure
+## 12. Institutional Infrastructure
 
-### 11.1 Portfolio Risk Engine v2 (`src/lib/risk/`)
+### 12.1 Portfolio Risk Engine v2 (`src/lib/risk/`)
 
 8-step pre-trade evaluation pipeline running in < 1ms:
 
@@ -637,7 +717,7 @@ Navigate to `/research` — 10 pages:
 | 6 | `risk-limits.ts` | Per-trade/strategy/sector/portfolio budgets; SOFT_KILL auto-escalation |
 | 7–8 | `portfolio-risk.ts` | SOFT/HARD kill; final approval + sizing recommendation; full audit snapshot |
 
-### 11.2 Market Microstructure Intelligence (`src/lib/microstructure/`)
+### 12.2 Market Microstructure Intelligence (`src/lib/microstructure/`)
 
 Turns raw order-book snapshots and tick stream data into execution-quality signals and ML feature vectors:
 
@@ -651,7 +731,7 @@ Turns raw order-book snapshots and tick stream data into execution-quality signa
 | `pressure.ts` | Bid/ask replenishment; price-response pressure (informed vs noise) |
 | `index.ts` | `MicrostructureEngine` facade; `ExecQuality` (EXCELLENT/GOOD/FAIR/POOR); 1m/5m ring-buffer feature store |
 
-### 11.3 Shadow Trading & Experiment Framework (`src/lib/experiments/`)
+### 12.3 Shadow Trading & Experiment Framework (`src/lib/experiments/`)
 
 A/B testing and safe strategy promotion infrastructure:
 
@@ -665,7 +745,7 @@ A/B testing and safe strategy promotion infrastructure:
 
 API: `GET /api/experiments` · `GET /api/experiments/[id]` · `POST /api/experiments/[id]`.
 
-### 11.4 Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)
+### 12.4 Event-Driven Backtesting Engine (`src/lib/backtesting-v2/`)
 
 Institutional-grade NSE F&O backtester. Parallel to the existing strategy backtester — additive, existing strategies untouched.
 
@@ -682,11 +762,11 @@ Institutional-grade NSE F&O backtester. Parallel to the existing strategy backte
 
 ---
 
-## 12. ML Microservice
+## 13. ML Microservice
 
 `ml-service/` — Python 3.11, FastAPI, port 8100.
 
-### 12.1 Model Stack
+### 13.1 Model Stack
 
 | Model | Algorithm | Purpose |
 |---|---|---|
@@ -704,7 +784,7 @@ Institutional-grade NSE F&O backtester. Parallel to the existing strategy backte
 | IV Surface | SVI (scipy L-BFGS-B) | Vol smile + term structure |
 | VPIN | Tick-rule buckets | Toxic order-flow score [0, 1] |
 
-### 12.2 Feature Engineering (150+ features, TA-Lib backed)
+### 13.2 Feature Engineering (150+ features, TA-Lib backed)
 
 - **Technical** — RSI, MACD, ADX, ATR, Bollinger, EMA stack (8/13/21/55/200), Stochastic RSI, CCI, MFI, OBV, Supertrend; 6 candlestick patterns (CDLENGULFING, CDLHAMMER, CDLDOJI...); HT_TRENDLINE deviation
 - **Volume** — Relative volume, VWAP distance, volume profile, VPIN order-flow score
@@ -713,7 +793,7 @@ Institutional-grade NSE F&O backtester. Parallel to the existing strategy backte
 - **Market Structure** — FVG, Order Blocks, BOS/CHoCH, liquidity sweeps
 - **Macro** — Market breadth, A/D ratio, sector rotation, VIX regime, time-of-day, expiry effects
 
-### 12.3 Meta Decision Engine (`ml-service/src/meta/`)
+### 13.3 Meta Decision Engine (`ml-service/src/meta/`)
 
 | Module | Purpose |
 |---|---|
@@ -723,7 +803,7 @@ Institutional-grade NSE F&O backtester. Parallel to the existing strategy backte
 | `decision_policy.py` | 5-component `ConfidenceDecomposition`; `ReasonCode` audit trail |
 | `meta_model.py` | End-to-end: parallel model calls → calibration → ensemble → abstention → decision |
 
-### 12.4 ML Validation Framework (`ml-service/src/validation/`)
+### 13.4 ML Validation Framework (`ml-service/src/validation/`)
 
 Replaces all random train/test splits with López de Prado methodology:
 
@@ -735,7 +815,7 @@ Replaces all random train/test splits with López de Prado methodology:
 | `combinatorial_cv.py` | CPCV — all C(N,k) purged+embargoed folds |
 | `metrics.py` | Sharpe, Sortino, Calmar, SQN, PSR, **DSR (Deflated Sharpe Ratio)** |
 
-### 12.5 Model Monitoring (`ml-service/src/monitoring/`)
+### 13.5 Model Monitoring (`ml-service/src/monitoring/`)
 
 16 FastAPI endpoints under `/monitoring/*`:
 
@@ -747,7 +827,7 @@ Replaces all random train/test splits with López de Prado methodology:
 | `model_registry.py` | HEALTHY → WARNING → DEGRADED → DISABLED; ensemble weights auto-adjusted |
 | `alerts.py` | Structured alerts (structlog); `dispatch_external()` hook; severity/category filtering |
 
-### 12.6 Training Data Pipeline
+### 13.6 Training Data Pipeline
 
 Three-tier `MarketDataClient` (`ml-service/src/training/market_data_client.py`):
 1. **AlphaForge API** (`ALPHAFORGE_API_BASE_URL`) — canonical first-party source (Angel One + Upstox backed)
@@ -772,9 +852,9 @@ python -m src.training.train_all
 
 ---
 
-## 13. Strategy Catalogue
+## 14. Strategy Catalogue
 
-### 13.1 Crypto Scalping Strategies (10)
+### 14.1 Crypto Scalping Strategies (10)
 
 | ID | Name | Trigger | ATR Stop | ATR Target |
 |---|---|---|---|---|
@@ -789,7 +869,7 @@ python -m src.training.train_all
 | `INSTITUTIONAL_SMC` | Institutional SMC | 9-component score ≥ 7 + trend + VWAP + sweep + BOS all present | 0.25× | 2× |
 | `AI_INSTITUTIONAL_PRO` | AI Institutional Pro v5 | Hard gates (EMA trend + HTF + RSI + cooldown) + 8-factor score ≥ min; mode preset adapts to timeframe | Per preset | Per preset |
 
-### 13.2 India NSE F&O Strategies (9)
+### 14.2 India NSE F&O Strategies (9)
 
 | ID | Category | Trigger | Source |
 |---|---|---|---|
@@ -803,7 +883,7 @@ python -m src.training.train_all
 | `MAX_PAIN_GRAVITY` | Liquidity | IMPG-Pine port: max-pain gravity + OI-wall fade + pinning zone reversion + gap-fill toward PDC | Positioning |
 | `OPENING_BREAKOUT` | Breakout | First 5-min candle ORB; entry on retest; PCR/OI/max-pain confirmation; 2R target | Standalone |
 
-### 13.3 Super Confluence Engine
+### 14.3 Super Confluence Engine
 
 Port of the "Super Confluence Engine" Pine Script. Four gates must all agree:
 1. **UT Bot ATR Trailing Stop** — keyValue=1, atrPeriod=10 (LuxAlgo port)
@@ -813,7 +893,7 @@ Port of the "Super Confluence Engine" Pine Script. Four gates must all agree:
 
 Score ∈ [−1, 1]: full 4-way confluence = ±1.0, 3/4 = ±0.75, 2/4 = ±0.5. Used as a confidence factor (weight 0.10) in the India AI signal engine. Accessible via the `🔥 SC` toolbar button on the price chart.
 
-### 13.4 FnO Trend Scanners (14-condition Chartink port)
+### 14.4 FnO Trend Scanners (14-condition Chartink port)
 
 Bullish conditions: EMA(5) > SMA(20), WMA(10) > SMA(20), ADX DI+(14) > 20, ADX(14) > 20, Volume > 1L, MACD Line > 0, Close > prior/2d close, Close > SMA(50), Close > ₹150, DI+ > DI−, RSI > 50, MACD > Signal, SMA(20) > SMA(40). Bearish = exact mirror.
 
@@ -821,7 +901,7 @@ ATR(14)-based entry/SL/TP1/TP2/TP3 on every hit (intraday profile: SL = 1.4×ATR
 
 ---
 
-## 14. Worker Jobs
+## 15. Worker Jobs
 
 All 13 jobs in `worker/src/jobs/`:
 
@@ -845,7 +925,7 @@ Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-ov
 
 ---
 
-## 15. Database Schema
+## 16. Database Schema
 
 18 Prisma models:
 
@@ -872,7 +952,7 @@ Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-ov
 
 ---
 
-## 16. API Surface
+## 17. API Surface
 
 ### Crypto API
 
@@ -919,7 +999,7 @@ Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-ov
 
 ---
 
-## 17. Folder Structure
+## 18. Folder Structure
 
 ```
 src/
@@ -1007,7 +1087,7 @@ docker-compose.yml                Postgres 17 + Redis 7 + ML service
 
 ---
 
-## 18. Environment Variables
+## 19. Environment Variables
 
 ### Required
 
@@ -1074,7 +1154,7 @@ ENABLE_PORTFOLIO_OPTIMIZER=false
 
 ---
 
-## 19. Testing & TDD Policy
+## 20. Testing & TDD Policy
 
 Test-Driven Development is mandatory. Write failing tests first. The `prebuild` hook enforces a green suite before every `next build`.
 
@@ -1134,7 +1214,7 @@ npm run test:coverage    # v8 coverage report
 
 ---
 
-## 20. Coding Standards
+## 21. Coding Standards
 
 ### TypeScript
 

@@ -31,6 +31,7 @@ The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep
 | Database | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern) |
 | Realtime | Active broker WebSocket (Delta Exchange India or Binance) |
 | ML Engine | **Python 3.11** + FastAPI + XGBoost + LightGBM + CatBoost + PPO (SB3) + SHAP + Riskfolio-Lib + TA-Lib + mibian |
+| Data Service | **Python 3.11** + FastAPI + Scrapling 0.4.x (Playwright / Chromium) + httpx — credential-free NSE market data, port 8200 |
 
 ---
 
@@ -68,6 +69,8 @@ Or use the one-shot setup:
 npm run setup   # npm install + docker compose up + prisma migrate dev
 ```
 
+# 7. (Optional) Start the data service — credential-free NSE data + tick publisher
+docker compose up data-service -d
 Open [http://localhost:3000](http://localhost:3000) and create an account at `/signup`.
 
 ---
@@ -147,6 +150,34 @@ A separate Node process (`worker/src/`) runs 13 background jobs:
 | `alerts` | Evaluate user-configured alerts |
 | `liquidations` | Crypto liquidation WebSocket feed |
 | `strategy-lab` | Background runner for user-saved strategy lab rules |
+
+### Data Service
+
+A standalone Python / FastAPI microservice (`data-service/`, port 8200) that delivers NSE market data without any broker credentials:
+
+- **Live quotes** — Fetches real-time NSE equity and index prices via `httpx` against the new NSE `NextApi` endpoints (no browser required for quotes).
+- **Tick publisher** — Polls all configured symbols every 5 seconds and publishes `LiveTick` payloads to Redis pub/sub (`af:ticks:{SYMBOL}`). The Next.js `useLiveQuotes` hook subscribes to these channels.
+- **Option chain** — Scrapes the NSE option-chain page using a headless Chromium browser via Scrapling, captures the `api/option-chain` XHR, and computes PCR, max pain, ATM IV, and OI walls.
+- **Historical OHLCV** — Daily candles from the NSE Bhavcopy CDN; intraday candles from the NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings for `from`/`to` parameters.
+- **Instrument master** — Full NSE/BSE instrument list for token-to-symbol resolution.
+
+```bash
+# Start
+docker compose up data-service --build
+
+# Health check
+curl http://localhost:8200/health
+
+# Live quotes
+curl "http://localhost:8200/scraping/quotes?symbols=NIFTY,BANKNIFTY,RELIANCE"
+
+# Historical (datetime strings accepted)
+curl "http://localhost:8200/scraping/historical?symbol=RELIANCE&exchange=NSE&interval=1d&from=2026-08-01T00:00:00Z&to=2026-09-03T00:00:00Z"
+```
+
+> The service requires `dns: [8.8.8.8, 8.8.4.4]` in `docker-compose.yml` because Chromium's built-in DNS resolver rejects Docker's loopback nameserver `127.0.0.11`.
+
+> Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)
 
 ### ML Microservice
 
@@ -251,6 +282,7 @@ All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE` — th
 
 | Priority | Provider | Capabilities | Activation |
 |---|---|---|---|
+| 0 | **Data Service** (`data-service/`) | Live quotes, tick stream, option chain, historical, instrument master — no credentials | `docker compose up data-service` |
 | 1 | **Angel One SmartAPI** | Quotes, historical, option chain, live stream, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
 | 2 | **Upstox Analytics v2** | Quotes, historical, option chain | `UPSTOX_ANALYTICS_TOKEN` |
 | 3 | **NSE direct** | Option chain, quotes (cookie-warmed scraper) | Always available |
@@ -469,3 +501,4 @@ Close extra Electron apps and Cursor windows. Avoid running dev server + worker 
 
 > Full product spec and architecture deep-dive: [ALPHAFORGE.md](./ALPHAFORGE.md)
 > Chronological changelog: [CHANGES.md](./CHANGES.md)
+> Data service reference: [DATA_SERVICE.md](./DATA_SERVICE.md)
