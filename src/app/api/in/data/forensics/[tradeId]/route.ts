@@ -254,7 +254,7 @@ function buildForensicsChain(
     {
       step: 4,
       layer: "Risk Decision",
-      description: `Entry: ${trade.meta && (trade.meta as Record<string, unknown>).triggeredAtPrice ?? "N/A"}. ` +
+      description: `Entry: ${((trade.meta as Record<string, unknown>)?.triggeredAtPrice) ?? "N/A"}. ` +
         "Risk decision implicit in paper entry (no explicit risk engine record for this trade).",
       evidence: "TRADE_RECORD",
     },

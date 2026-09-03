@@ -194,7 +194,11 @@ class StreamPublisher:
                 if symbol
                 else _STREAM_KEY
             )
-            entries = await self._redis.xrange(key, min=last_stream_id, count=max_count)
+            # Use exclusive range when last_stream_id is not "0" or "$"
+            # Redis XRANGE min=(id means strictly after that ID (exclusive lower bound)
+            # This prevents re-delivering the last-seen event on reconnect
+            range_min = f"({last_stream_id}" if last_stream_id not in ("0", "$", "-") else last_stream_id
+            entries = await self._redis.xrange(key, min=range_min, count=max_count)
             return [
                 {"stream_id": entry_id, **{k: v for k, v in fields.items()}}
                 for entry_id, fields in entries

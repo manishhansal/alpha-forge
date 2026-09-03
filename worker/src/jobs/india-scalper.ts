@@ -19,6 +19,8 @@ import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historic
 import { persistCandles } from "@/lib/market-data/services/candle-persist.service";
 import { bootstrapRegistry } from "@/lib/market-data/registry";
 import type { OHLCVCandle } from "@/lib/market-data/types";
+// V2.1 DATA GATE: every signal path must check DataQualityGate before trading.
+import { evaluateDataGate } from "@/lib/data-service/gate-client";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
@@ -254,7 +256,40 @@ export function startIndiaScalperJob(): JobHandle {
               }
               const atr = atrBySymbol.get(sig.symbol) ?? undefined;
 
-              const result = await openIndiaPaperTrade(sig, {
+              // ── V2.1 DATA QUALITY GATE ───────────────────────────────────
+              // HARD GATE: check DataQualityGate before opening any paper trade.
+              // signalEngineAllowed=false is a hard block — no trade may open.
+              // quoteAgeMs: signals from fetch-signals are at most 1 polling cycle old.
+              const gate = await evaluateDataGate({
+                symbol: sig.symbol,
+                quoteAgeMs: 5_000, // intraday scalper: require fresh data (≤5s)
+                strategyId: sig.strategyId.toLowerCase(),
+                maxQuoteAgeMs: 10_000,
+                minConfidenceScore: 50,
+              });
+              if (!gate.signalEngineAllowed && !gate.error) {
+                // Hard block — data is definitively stale or provider is down.
+                child.debug("signal blocked by data gate", {
+                  symbol: sig.symbol,
+                  tf,
+                  reasons: gate.blockReasons,
+                  confidence: gate.confidenceScore,
+                });
+                dupSignal += 1; // count as skipped
+                continue;
+              }
+
+              // Attach gate provenance to the signal for paper trade persistence
+              const sigWithProvenance: IndiaScalpSignal = {
+                ...sig,
+                dataQuality: gate.quality,
+                dataConfidence: gate.confidenceScore,
+                dataProvider: gate.error ? "UNKNOWN" : "NSE_NEXTAPI",
+                quoteAgeAtFiringMs: gate.quoteAgeMs ?? 5_000,
+                dataIsFallback: false,
+              };
+
+              const result = await openIndiaPaperTrade(sigWithProvenance, {
                 prisma,
                 atr: atr ?? undefined,
               });

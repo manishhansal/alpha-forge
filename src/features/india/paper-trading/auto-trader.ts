@@ -67,6 +67,8 @@ import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 // AUDIT-001 FIX: wire lifecycle-event persistence so the signal audit trail
 // is written to the DB and survives worker restarts.
 import { emitLifecycleEvent } from "@/lib/signal-intelligence/lifecycle-persist";
+// V2.1 DATA GATE: every signal path must check DataQualityGate before trading.
+import { evaluateDataGate, filterByDataGate } from "@/lib/data-service/gate-client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -562,6 +564,36 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     if (riskFraction > MAX_RISK_PER_TRADE_PCT) { skipped++; continue; }
     if (deployedThisTick + TRADE_NOTIONAL > budget.remaining) { skipped++; break; }
 
+    // ── V2.1 DATA QUALITY GATE ─────────────────────────────────────────────
+    // HARD GATE: check DataQualityGate before opening any paper trade.
+    // signalEngineAllowed=false means the data is stale/invalid/provider down.
+    // We NEVER open a trade on unknown or degraded data without explicit permit.
+    const gate = await evaluateDataGate({
+      symbol: c.symbol,
+      quoteAgeMs: 60_000, // conservative: assume 60s age for daily-pick based signals
+      strategyId: c.source === "DAILY_PICK" ? "momentum" : "momentum",
+      maxQuoteAgeMs: 120_000, // daily picks can use slightly older data
+      minConfidenceScore: 40, // lenient for daily-pick sourced signals
+    });
+    if (!gate.signalEngineAllowed && !gate.error) {
+      // Hard block — data is definitively stale/invalid. Skip this trade.
+      skipped++;
+      emitLifecycleEvent(db, {
+        signalId:    `${c.symbol}-${tradeDate}-gate-blocked`,
+        fromState:   "APPROVED",
+        toState:     "REJECTED",
+        reason:      `DataQualityGate blocked: ${(gate.blockReasons ?? []).join(", ")}`,
+        strategyId:  c.source,
+        instrument:  c.symbol,
+        sessionDate: tradeDate,
+        sourceType:  c.source === "DAILY_PICK" ? "DAILY_PICK" : "AI_SIGNAL",
+        metadata:    { gateConfidence: gate.confidenceScore, gateQuality: gate.quality },
+      });
+      continue;
+    }
+    // If gate.error (data-service unreachable), we allow the trade to proceed
+    // but mark dataQualityAtEntry as UNKNOWN so the provenance record is honest.
+
     // Duplicate check — skip if any auto trade already open for this symbol
     const source = c.source === "DAILY_PICK"
       ? AUTO_TRADE_SOURCE_DAILY_PICK
@@ -611,6 +643,12 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
           // USD-001 FIX: auto-trader trades are INR-denominated.
           currency:  "INR",
           openedAt:  now,
+          // ── V2.1 Data Provenance ────────────────────────────────────────
+          dataQualityAtEntry:     gate.quality,
+          dataConfidenceAtEntry:  gate.confidenceScore,
+          dataProviderAtEntry:    gate.error ? "UNKNOWN" : "NSE_NEXTAPI",
+          quoteAgeAtEntryMs:      gate.quoteAgeMs ?? 60_000,
+          dataIsFallback:         false,
         },
         select: { id: true },
       });

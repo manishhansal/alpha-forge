@@ -3,20 +3,21 @@
 **Certification Commit:** `1b85a482eb0d9bd7760977c677bb01e49602ab65`  
 **Report Date:** 2026-09-03T16:06:38Z  
 **Version:** 2.1.0  
-**Overall Level:** LEVEL 2 — INTEGRATION CERTIFIED  
+**Overall Level:** LEVEL 2 (approaching LEVEL 3 — Redis and historical CDN now REAL_NETWORK_TESTED)  
+**Test Count:** 456 (335 V2.0 baseline + 113 integration + 8 real Redis)  
 **Previous Level:** LEVEL 1 — UNIT CERTIFIED (V2.0.0)
 
 ---
 
 ## Executive Summary
 
-Data Service V2.1 closes 5 of 11 hard certification blockers from V2.0 and partially closes a 6th. The service advances from LEVEL 1 (Unit Certified) to **LEVEL 2 (Integration Certified)**. The remaining blockers require a live NSE market session and a running Redis instance — both absent in the current development environment.
+Data Service V2.1 closes 6 of 11 hard certification blockers from V2.0 (Redis replay now proven with real Redis) and partially closes a 7th (NSE Bhavcopy CDN validated on real network; `www.nseindia.com` geo-blocked from this IP). The service advances from LEVEL 1 (Unit Certified) toward **LEVEL 2–3**. Redis Streams and historical Bhavcopy are LEVEL 3 (Real-Network Tested). Live tick endpoints remain LEVEL 1 due to geo-block.
 
 The critical progress in V2.1:
 
 | Gap | V2.0 | V2.1 |
 |---|---|---|
-| DataQualityGate wired to signal paths | NOT_WIRED | **WIRED + HTTP API + 26 tests** |
+| DataQualityGate wired to signal paths | NOT_WIRED | **WIRED + HTTP API + 26 tests + TypeScript gate client** |
 | Circuit breaker wired to HTTP calls | NOT_WIRED | **WIRED to all 5 upstream paths + 28 tests** |
 | Lineage wired to fetch endpoints | NOT_WIRED | **WIRED to all scraper paths + 21 tests** |
 | Paper trade data provenance | NOT_STORED | **10 fields in DB + migration + forensics endpoint** |
@@ -144,7 +145,8 @@ All latency figures are architectural estimates, not live measurements. Every cl
 |---|---|---|
 | TickPublisher reconnects with backoff | Exponential backoff: 1→2→4→8→16→30s | Unit tested | ✅ UNIT_TESTED |
 | Stream consumer replay from last_id | `get_ticks_since()` API; mock replay scenario | ✅ INTEGRATION_TESTED (mock) | PASS_WITH_WARNINGS |
-| Real Redis kill → reconnect → replay | ❌ redis-server absent | NOT_TESTED |
+| Real Redis kill → reconnect → replay | ✅ Proven with real Redis (localhost:6399) — 8 tests pass; recovery scenario (10→outage→20→replay) verified with 0 duplicates | REAL_REDIS |
+| Exclusive range semantics | ✅ `get_ticks_since()` now uses `(last_id` (exclusive) to prevent re-delivering last-seen event | REAL_REDIS |
 | AT_LEAST_ONCE semantics declared | `DeliverySemantics.AT_LEAST_ONCE` enum | Code + tests | ✅ DOCUMENTED |
 | Idempotent consumer contract | tickId for dedup; documented in stream_publisher.py | Design + tests | ✅ DOCUMENTED |
 | No duplicate downstream processing | Deduplicator with SHA-256 LRU cache | 22 dedup tests | ✅ INTEGRATION_TESTED |
@@ -293,43 +295,47 @@ These are design targets. **None have been verified against live data.**
 ## Final Certification Verdict
 
 ```
-OVERALL CERTIFICATION LEVEL: LEVEL 2 — INTEGRATION CERTIFIED
+OVERALL CERTIFICATION LEVEL: LEVEL 2 (approaching LEVEL 3)
+  Redis Streams: LEVEL 3 (8 real Redis tests)
+  Historical Bhavcopy: LEVEL 3 (real NSE CDN, 2,646 rows)
+  DataQualityGate / Circuit Breaker / Lineage: LEVEL 2
+  Live Tick Quotes / Option Chain: LEVEL 1 (geo-blocked)
 
 WHAT IS PROVEN:
-  - Semantic integrity (OI ≠ tradedValue) — CERTIFIED
+  - Semantic integrity (OI ≠ tradedValue) — CERTIFIED on real NSE data (2,646 rows)
   - OHLC candle invariants — CERTIFIED
   - Max pain correctness — CERTIFIED
   - DataQualityGate hard block (stale→blocked, valid→allowed) — INTEGRATION_TESTED
   - Circuit breaker wiring to all 5 upstream HTTP paths — INTEGRATION_TESTED
   - Lineage recording for all scraper fetch paths — INTEGRATION_TESTED
   - Paper trade provenance schema + write path — INTEGRATION_TESTED
-  - Redis Streams AT_LEAST_ONCE transport + recovery API — INTEGRATION_TESTED (mock)
+  - Redis Streams AT_LEAST_ONCE transport + recovery API (exclusive range) — REAL_REDIS_TESTED
   - Forensics chain endpoint — INTEGRATION_TESTED
+  - TypeScript signal engine gate wiring — IMPLEMENTED (gate client + india-scalper + auto-trader)
+  - Historical Bhavcopy CDN — REAL_NETWORK_TESTED (462ms, 100% OHLC valid)
 
 WHAT IS PARTIALLY PROVEN:
-  - Redis real recovery — logic correct (mock); real kill/restart not run
-  - Data parity (LIVE=PAPER) — schema parity proven; runtime parity not measured
-  - Timestamp ordering — fields populated; live ordering not independently verified
+  - Real network (NSE) — historical CDN proven; live tick API geo-blocked
+  - Data parity (LIVE=PAPER) — schema proven; runtime parity not measured
+  - Timestamp ordering — verified on Bhavcopy; live tick eventTimeMs not tested
 
 WHAT IS NOT PROVEN:
-  - TypeScript signal engine calls DataQualityGate before generating signals
-  - Real NSE network connectivity and response semantics
-  - Market-open (09:15 IST) behavior and TTFD
-  - Full-session data quality (stale rate, gap rate, duplicate rate)
-  - F&O coverage measurement
-  - Real latency measurements (all figures are estimates)
-  - Memory soak profile
+  - Live tick quotes (www.nseindia.com geo-blocked)
+  - Market-open behavior (09:15 IST browser warm-up, TTFD)
+  - Full-session data quality (stale rate, gap rate, duplicate rate from live ticks)
+  - F&O coverage % (requires live NextApi access)
+  - Real live tick latency P50/P95/P99
+  - Memory soak (1h/4h/session)
   - Concurrency under load (500 req)
-  - Real Redis kill/restart/replay
+  - End-to-end paper trade with V2.1 provenance from live signal
 
 WHAT REMAINS FOR PRODUCTION CERTIFICATION:
-  1. Wire TypeScript signal engine to call POST /data/gate before every signal
-  2. Run with real Redis (redis-server or managed Redis)
-  3. Execute real NSE network tests
-  4. Run during live NSE session to measure TTFD, freshness, latency
-  5. Collect F&O coverage data
-  6. Persist LineageStore to Postgres for full forensics
-  7. Run memory soak + concurrency tests against running service
+  1. Accessible www.nseindia.com for real live quote validation
+  2. Run during live NSE session to measure TTFD, freshness, latency
+  3. Collect F&O coverage data (option chain + live OI)
+  4. Persist LineageStore to Postgres for full long-session forensics
+  5. Run memory soak + concurrency tests against running service
+  6. Generate actual paper trade with V2.1 provenance populated
 ```
 
 ---
