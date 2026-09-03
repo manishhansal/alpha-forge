@@ -195,6 +195,23 @@ if (!globalThis.__marketDataRegistry) {
  * Safe to call multiple times — idempotent via the register() dedup.
  */
 export async function bootstrapRegistry(): Promise<void> {
+  const { ScraplingProvider } = await import("./providers/scrapling");
+
+  registry.register({
+    provider: new ScraplingProvider(),
+    capabilities: {
+      historicalCandles: true,
+      liveQuotes: true,
+      webSocket: false,
+      optionChain: true,
+      instrumentMaster: true,
+      intradayCandles: true,
+      fno: true,
+    },
+    priority: 0,
+    enabled: !!process.env.DATA_SERVICE_URL,
+  });
+
   const [
     { AngelOneProvider },
     { UpstoxProvider },

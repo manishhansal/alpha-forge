@@ -10,9 +10,10 @@
 
 // ── Provider Identity ────────────────────────────────────────────────────────
 
-export type ProviderId = "angel_one" | "upstox" | "nse" | "yahoo";
+export type ProviderId = "scrapling" | "angel_one" | "upstox" | "nse" | "yahoo";
 
 export const PROVIDER_PRIORITY: readonly ProviderId[] = [
+  "scrapling",
   "angel_one",
   "upstox",
   "nse",

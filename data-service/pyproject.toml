@@ -1,0 +1,11 @@
+[project]
+name = "data-service"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Credential-free market data microservice using Scrapling"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests (deselect with -m 'not integration')",
+]

@@ -4,6 +4,84 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Data Service: Production Hardening & NSE API Migration
+
+**Service:** `data-service` (Python 3.11 / FastAPI / Scrapling)
+**New doc:** `DATA_SERVICE.md`
+**Modified files:** `data-service/requirements.txt`, `data-service/src/server.py`, `data-service/src/scrapers/live_quotes.py`, `data-service/src/scrapers/option_chain.py`, `data-service/src/anti_ban/session_warmer.py`, `data-service/src/publisher/tick_publisher.py`, `data-service/src/scrapers/historical.py`, `docker-compose.yml`
+
+Six production bugs found and fixed during the first real deployment run. Service now starts fully healthy, publishes live ticks for all 20 configured symbols, and serves accurate historical data.
+
+### BUG-01 — Redis `duplicate base class TimeoutError` (startup failure)
+
+`aioredis==2.0.1` defines an exception class that inherits from both `asyncio.TimeoutError` and the built-in `TimeoutError`. In Python 3.11 these are the same class, causing a `TypeError` on import. The service started in degraded mode on every boot.
+
+**Fix:** Replaced `aioredis==2.0.1` with `redis[hiredis]==5.0.8` in `requirements.txt`. Updated `server.py` to `import redis.asyncio as aioredis` (identical API). Shutdown path updated: `_redis_client.close()` → `_redis_client.aclose()`.
+
+### BUG-02 — `Context manager has been closed` on every fetch
+
+`get_quote_session()` and `get_chain_session()` instantiated `AsyncDynamicSession` but never called `__aenter__()`. Scrapling marks the session closed until the context manager is entered; every `fetch()` call raised `RuntimeError: Context manager has been closed`.
+
+**Fix:** After construction, call `await raw.__aenter__()` and store both the raw instance (for `__aexit__` on reset) and the entered session (for `fetch()`). `reset_*_session()` functions updated to call `__aexit__` instead of `.close()`. `session_warmer._warm_session()` converted to `async with DynamicSession(...) as session:`.
+
+### BUG-03 — `ERR_NAME_NOT_RESOLVED` in Playwright (Docker DNS)
+
+Python's `libc`-based resolver works fine with Docker's embedded DNS at `127.0.0.11`. Chromium's built-in async DNS resolver explicitly rejects loopback nameserver addresses (RFC 5735). Every `page.goto()` in Playwright failed with `net::ERR_NAME_NOT_RESOLVED` despite `socket.getaddrinfo()` succeeding.
+
+**Fix:** Added `dns: [8.8.8.8, 8.8.4.4]` to the `data-service` service in `docker-compose.yml`.
+
+### BUG-04 — `batch_xhr_not_captured` / `single_xhr_not_captured` (NSE API migration + `capture_xhr` misuse)
+
+Three compounded root causes:
+
+1. **`capture_xhr` is session-level, not per-fetch.** Scrapling 0.4.x requires `capture_xhr` to be passed to the `AsyncDynamicSession` constructor. Passing it to `session.fetch(capture_xhr=...)` is silently discarded — it is not in `PlaywrightFetchParams`. The response handler always looked at `self._config.capture_xhr` which was `None`.
+
+2. **NSE migrated their frontend to Next.js (mid-2026).** The old `equity-stockIndices` and `api/quote/equity` XHR endpoints no longer exist. The new endpoints live under `api/NextApi/`:
+   - `api/NextApi/apiClient?functionName=getIndexData&&type=All` — index quotes
+   - `api/NextApi/apiClient/marketWatchApi?functionName=getIndicesData&symbol=NIFTY%20200` — equity constituents
+   These endpoints return JSON via plain HTTP — no browser or cookies required.
+
+3. **`network_idle=True` hangs forever on NSE pages.** NSE's SPA background-polls continuously. Playwright's `networkidle` state (no requests for 500ms) never arrives. Every `fetch()` call with `network_idle=True` hung until the Playwright timeout.
+
+**Fix:**
+- Replaced the entire browser-based live-quote scraper with `httpx` calls to the new `NextApi` endpoints.
+- Added `_fetch_index_quotes()` for NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY using `getIndexData&&type=All`.
+- `_fetch_batch_quotes()` now calls `getIndicesData?symbol=NIFTY%20200` (201 constituents, matches NIFTY_200_SYMBOLS set).
+- `_fetch_single_quote()` falls back to `getIndicesData?symbol=NIFTY%20500` for non-constituent equities.
+- For option chain (still browser-based): moved `capture_xhr` to the constructor, replaced `network_idle=True` with `network_idle=False, wait=4000`.
+- Added NSE homepage pre-warm (`https://www.nseindia.com`, `wait=2000`) immediately after `__aenter__` to establish session cookies before any data XHR is attempted.
+- Tick publisher `_fetch_quotes()` updated to route index symbols through `_fetch_index_quotes()`.
+
+### BUG-05 — `GET /scraping/historical` → HTTP 400 for all frontend requests
+
+The frontend sends full ISO 8601 datetime strings (`2025-09-03T13:20:52.952Z`). The `_parse_iso_date()` helper called `date.fromisoformat(value)` directly, which rejects anything beyond `YYYY-MM-DD`.
+
+**Fix:** Strip the time component before parsing — `value.split("T")[0]` — so both `YYYY-MM-DD` and `YYYY-MM-DDThh:mm:ssZ` are accepted.
+
+### BUG-06 — `single_xhr_not_captured symbol=^NSEI` flooding logs
+
+The Next.js app queries `^NSEI` (a Yahoo Finance-style ticker). This symbol reached the NIFTY 500 lookup, failed silently, and logged a `warning` every few seconds.
+
+**Fix:** Added an early guard in `_fetch_single_quote()` — symbols starting with `^` or containing `.` are rejected at `debug` level without hitting any external endpoint. Also downgraded the "symbol not found in NIFTY 500" log from `warning` to `debug`.
+
+---
+
+### Final startup state after all fixes
+
+```
+redis_connected          ✅
+chromium_warmed          ✅
+quote_session_homepage_warmed  ✅
+quote_session_created    ✅
+anti_ban_started         ✅
+tick_publisher_started   ✅
+data-service started healthy  ✅
+```
+
+Live quotes verified via `GET /scraping/quotes?symbols=NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,RELIANCE,HDFCBANK,TCS,INFY,WIPRO` — all symbols return real prices.
+
+---
+
 ## [Unreleased] — Opportunity Engine & Production-Day Validation
 
 **New source files:** `src/lib/opportunity-engine/` (pipeline + types + API routes)

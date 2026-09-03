@@ -4,13 +4,16 @@ AlphaForge Normalized Indian Market Data Client.
 Retrieves canonical OHLCV + derivative data for the ML training pipeline from
 the AlphaForge normalized data layer:
 
-  Primary source  → AlphaForge Next.js API  (/api/in/historical, /api/in/option-chain)
-                    which is backed by Angel One SmartAPI + Upstox Analytics API
-  Secondary source → PostgreSQL historical snapshots (OptionChainSnapshot table +
-                     instruments canonical store)
-  Fallback source  → Yahoo Finance / yfinance (Indian indices + OHLCV only)
+  Tier 0 (primary) → data-service Scrapling (/scraping/historical)
+                      exchange-official NSE/BSE Bhavcopy; no broker credentials required
+  Tier 1           → AlphaForge Next.js API  (/api/in/historical, /api/in/option-chain)
+                      backed by Angel One SmartAPI + Upstox Analytics API
+  Tier 2           → PostgreSQL historical snapshots (OptionChainSnapshot table +
+                      instruments canonical store)
+  Tier 3 (fallback)→ Yahoo Finance / yfinance (Indian indices + OHLCV only)
 
 Priority chain per symbol:
+  0. data-service Scrapling  (credential-free, exchange-official Bhavcopy — always tried first)
   1. AlphaForge API  (Angel One primary, Upstox failover — already normalised server-side)
   2. PostgreSQL direct query (stored snapshots already in the database)
   3. yfinance (OHLCV only, no OI / derivatives — used when offline or API key absent)
@@ -38,6 +41,10 @@ import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# ─── Tier 0 data-service URL ──────────────────────────────────────────────────
+
+DATA_SERVICE_URL: str = os.getenv("DATA_SERVICE_URL", "").rstrip("/")
 
 # ─── Data-quality sentinel ─────────────────────────────────────────────────────
 
@@ -231,6 +238,147 @@ def classify_oi_buildup(price_chg_pct: float, oi_chg_pct: float) -> str:
     if price_chg_pct >= 0 and oi_chg_pct < 0:
         return "SHORT_COVERING"
     return "LONG_UNWINDING"
+
+
+# ─── Scrapling data-service client (Tier 0) ───────────────────────────────────
+
+
+class ScraplingDataClient:
+    """
+    HTTP client for the AlphaForge data-service Scrapling layer (Tier 0).
+
+    Fetches exchange-official NSE/BSE Bhavcopy OHLCV from the credential-free
+    data-service microservice at DATA_SERVICE_URL.  This is always the first
+    source attempted; any failure (HTTP error, timeout, connection error, or
+    empty response) falls through silently to Tier 1 so the downstream
+    pipeline is never disrupted.
+
+    The client is synchronous (uses httpx) to match the rest of the file.
+    Timeout is fixed at 10 seconds per Requirement 11.3.
+    """
+
+    TIMEOUT: float = 10.0
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1d",
+    ) -> pd.DataFrame | None:
+        """
+        Fetch OHLCV candles from the data-service Scrapling endpoint.
+
+        Endpoint:
+          GET /scraping/historical?symbol=...&exchange=NSE&interval=1d&from=...&to=...
+
+        Returns a normalised DataFrame on success (non-empty candles array),
+        or None when:
+          - The candles array is empty (HTTP 200 with no data) — caller proceeds
+            to Tier 1 silently without any warning being logged here.
+          - HTTP 5xx / connection error / timeout — caller logs a warning.
+
+        The caller is responsible for distinguishing the two cases via the
+        return value (None) and whether an error was already logged.
+        """
+        try:
+            with httpx.Client(timeout=self.TIMEOUT) as client:
+                resp = client.get(
+                    f"{self.base_url}/scraping/historical",
+                    params={
+                        "symbol": symbol,
+                        "exchange": "NSE",
+                        "interval": interval,
+                        "from": start_date,
+                        "to": end_date,
+                    },
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+
+            candles: list[dict] = payload.get("candles") or []
+            if not candles:
+                # HTTP 200 but empty array — proceed to Tier 1 silently
+                return None
+
+            # Normalise candle list → DataFrame matching the canonical OHLCV shape
+            df = pd.DataFrame(candles)
+
+            # Map OHLCVCandle field names → internal column names
+            col_map = {
+                "time": "timestamp",   # UTC epoch seconds
+                "open": "open",
+                "high": "high",
+                "low": "low",
+                "close": "close",
+                "volume": "volume",
+                "oi": "open_interest",
+            }
+            df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+            # Build DatetimeIndex from UTC epoch seconds
+            if "timestamp" in df.columns:
+                df["date"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+                df = df.drop(columns=["timestamp"])
+            elif "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+            else:
+                logger.warning("scrapling_no_timestamp_column", symbol=symbol)
+                return None
+
+            df = df.set_index("date").sort_index()
+
+            # Ensure numeric types for required columns
+            for col in ["open", "high", "low", "close", "volume"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            if "open_interest" in df.columns:
+                df["open_interest"] = pd.to_numeric(df["open_interest"], errors="coerce")
+
+            required = ["open", "high", "low", "close", "volume"]
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                logger.warning(
+                    "scrapling_missing_columns", symbol=symbol, cols=missing
+                )
+                return None
+
+            df = df.dropna(subset=required)
+            if df.empty:
+                return None
+
+            # Tag all rows as Tier 0 provenance — quality is GOOD (exchange-official data)
+            df["_quality"] = DataQuality.GOOD
+            df["_source"] = "scrapling_bhavcopy"
+
+            return df
+
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "scrapling_fetch_failed",
+                symbol=symbol,
+                status=exc.response.status_code,
+                error=str(exc),
+            )
+            return None
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            logger.warning(
+                "scrapling_fetch_failed",
+                symbol=symbol,
+                error=str(exc),
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "scrapling_fetch_failed",
+                symbol=symbol,
+                error=str(exc),
+            )
+            return None
 
 
 # ─── AlphaForge API client ─────────────────────────────────────────────────────
@@ -758,6 +906,9 @@ class MarketDataClient:
         database_url: str | None = None,
         request_delay_s: float = 0.2,
     ):
+        self._scrapling = (
+            ScraplingDataClient(DATA_SERVICE_URL) if DATA_SERVICE_URL else None
+        )
         self._api = (
             AlphaForgeAPIClient(api_base_url) if api_base_url else None
         )
@@ -796,8 +947,15 @@ class MarketDataClient:
         df: pd.DataFrame | None = None
         source_used = "none"
 
+        # 0. Scrapling data-service (exchange-official Bhavcopy — Requirement 11.1–11.5)
+        if self._scrapling is not None:
+            df = self._scrapling.fetch_ohlcv(symbol, start_date, end_date)
+            if df is not None and not df.empty:
+                source_used = "scrapling_bhavcopy"
+                logger.debug("ohlcv_source", symbol=symbol, source=source_used)
+
         # 1. AlphaForge API
-        if self._api is not None:
+        if (df is None or df.empty) and self._api is not None:
             df = self._api.fetch_ohlcv(symbol, start_date, end_date)
             if df is not None and not df.empty:
                 source_used = "alphaforge_api"
@@ -974,11 +1132,14 @@ def create_client_from_env() -> MarketDataClient:
     Build a MarketDataClient from environment variables.
 
     Environment variables read:
+      DATA_SERVICE_URL         — AlphaForge data-service base URL (Tier 0 Scrapling)
+                                 When set, Bhavcopy data is used as the primary source.
       ALPHAFORGE_API_BASE_URL  — AlphaForge Next.js API base URL
                                  (default: http://localhost:3000/api/in)
       DATABASE_URL             — PostgreSQL connection string
       ML_DATA_REQUEST_DELAY    — seconds between requests (default: 0.2)
 
+    When DATA_SERVICE_URL is unset, Tier 0 is skipped and Tier 1 (AlphaForge API) is used first.
     When ALPHAFORGE_API_BASE_URL is unset, the API tier is skipped.
     When DATABASE_URL is unset, the PostgreSQL tier is skipped.
     yfinance fallback is always available (requires yfinance package).
@@ -997,6 +1158,7 @@ def create_client_from_env() -> MarketDataClient:
     )
     logger.info(
         "market_data_client_created",
+        scrapling_configured=bool(DATA_SERVICE_URL),
         api_configured=api_url is not None,
         pg_configured=db_url is not None,
         yfinance_fallback=True,

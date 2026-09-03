@@ -8,6 +8,7 @@ import { OptionChainTable } from "@/components/india/options/option-chain-table"
 import { UnderlyingFlow } from "@/components/india/options/underlying-flow";
 import { VolSurface } from "@/components/india/options/vol-surface";
 import { Button } from "@/components/india/ui/button";
+import { DataSourceBadge } from "@/components/india/DataSourceBadge";
 import { useIndiaOptionChainStore } from "@/store/india/optionChainStore";
 import { useOptionChain } from "@/hooks/india/useOptionChain";
 import { useFetchPoll, getJson } from "@/hooks/india/useFetchPoll";
@@ -99,6 +100,9 @@ function OptionsInner() {
             </p>
           </div>
         </div>
+
+        {/* Requirement 12.8: visible in page header without scrolling at ≥1280px */}
+        <DataSourceBadge />
 
         <form onSubmit={onSubmit} className="flex gap-2">
           <input

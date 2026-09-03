@@ -66,6 +66,18 @@ ml-service/data/*.pkl
 ml-service/data/*.npz
 ml-service/catboost_info/
 
+# Data Service
+data-service/__pycache__/
+data-service/**/__pycache__/
+data-service/*.pyc
+data-service/.venv/
+data-service/venv/
+data-service/.mypy_cache/
+data-service/.ruff_cache/
+data-service/.hypothesis/
+data-service/tests/.hypothesis/
+data-service/data/
+
 # Phase 2 additions
 ml-service/artifacts/*.npz
 ml-service/nifty_5m.npz

@@ -142,6 +142,19 @@ export const workerConfig = {
       process.env.WHATSAPP_EVOLUTION_API_URL && process.env.WHATSAPP_INSTANCE,
     ),
   },
+
+  /**
+   * Scrapling tick listener — subscribes to `af:ticks:*` Redis pub/sub
+   * channels published by the Python data-service.
+   * Enabled when `DATA_SERVICE_URL` is set (data-service is reachable) or
+   * when `SCRAPING_TICK_LISTEN=true` is explicitly set.
+   */
+  scrapingTicks: {
+    enabled: Boolean(
+      process.env.DATA_SERVICE_URL ||
+        process.env.SCRAPING_TICK_LISTEN === "true",
+    ),
+  },
 } as const;
 
 export type WorkerConfig = typeof workerConfig;

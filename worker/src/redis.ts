@@ -36,6 +36,26 @@ export function getRedis(): RedisLike {
   return client;
 }
 
+/**
+ * Creates a dedicated ioredis client for subscriber mode.
+ * Subscriber clients must NOT share a connection with regular command clients —
+ * ioredis requires `maxRetriesPerRequest: null` and `enableReadyCheck: false`
+ * in subscriber mode.
+ */
+export function createSubscriberClient(): Redis {
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    throw new Error(
+      "[worker:redis] REDIS_URL is not set. Start Redis (`npm run docker:up`) and put REDIS_URL in .env.local.",
+    );
+  }
+  return new Redis(url, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    lazyConnect: false,
+  });
+}
+
 export async function closeRedis(): Promise<void> {
   if (!rawClient) return;
   try {
