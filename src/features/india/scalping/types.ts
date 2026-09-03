@@ -79,6 +79,21 @@ export interface IndiaScalpSignal {
   triggeredAt: number;
   /** Free-form strategy-specific metadata for the journal / replay. */
   extras?: Record<string, number | string | boolean | null>;
+  // ── Data Provenance (V2.1) ────────────────────────────────────────────────
+  /** Data Service observation ID that produced this signal. */
+  dataObservationId?: string;
+  /** Age of the quote used to generate this signal at firing time (ms). */
+  quoteAgeAtFiringMs?: number;
+  /** DataQualityGate confidence score at signal generation time (0–95). */
+  dataConfidence?: number;
+  /** DataQuality classification: VALID, DEGRADED, INVALID, UNKNOWN. */
+  dataQuality?: string;
+  /** Data provider: NSE_NEXTAPI, NSE_XHR, CACHE, UNKNOWN. */
+  dataProvider?: string;
+  /** Whether fallback/stale data was used. */
+  dataIsFallback?: boolean;
+  /** ISO-8601 UTC time of the market observation used. */
+  observationEventTime?: string;
 }
 
 export interface IndiaScalpSignalsResponse {

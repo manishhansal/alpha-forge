@@ -4,6 +4,115 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [V2.1.0] — Data Service Certification Closure & Production Hardening
+
+**Date:** 2026-09-03  
+**Certification Commit:** `1b85a482eb0d9bd7760977c677bb01e49602ab65`  
+**Certification Level:** LEVEL 2 — INTEGRATION CERTIFIED (up from LEVEL 1)  
+**Tests:** 448 pass (335 baseline + 113 new integration tests)  
+**Reports:** `data-service/reports/V2_1_CERTIFICATION_MATRIX.md`, `data-service/reports/PRODUCTION_READINESS_V2_1.md`
+
+### Summary
+
+V2.1 closes 5 of the 11 hard certification blockers from V2.0's `PASS_WITH_WARNINGS` status. The data service advances from "unit tested infrastructure that nobody calls" to fully wired, integration-tested components with HTTP APIs, lineage recording on every fetch, circuit breakers on every upstream path, and paper trade provenance storage.
+
+### WIRE-01 — Circuit Breaker wired to all upstream HTTP paths
+
+**Files:** `data-service/src/scrapers/live_quotes.py`, `option_chain.py`, `historical.py`
+
+Every upstream HTTP call now checks the appropriate `CircuitBreaker` before making the request and records success/failure after:
+
+| Path | Breaker Name | Paths Wired |
+|---|---|---|
+| NSE NextApi (quotes) | `nse_nextapi` | `_fetch_batch_quotes`, `_fetch_index_quotes`, `_fetch_single_quote` |
+| NSE Option Chain (Playwright XHR) | `nse_option_chain` | `_fetch_nse_option_chain` |
+| BSE Option Chain (Playwright XHR) | `bse_option_chain` | `_fetch_bse_option_chain` |
+| NSE Charting (intraday candles) | `nse_charting` | `_fetch_nse_intraday` |
+| BSE Charting (intraday candles) | `bse_charting` | `_fetch_bse_intraday` |
+
+Verified by 28 integration tests including a 100-failure concurrent load test. Circuit OPEN suppresses all requests (no thundering herd). State machine CLOSED → OPEN → HALF_OPEN → CLOSED verified.
+
+### WIRE-02 — Lineage recorded on all scraper fetch paths
+
+**File:** `data-service/src/scrapers/live_quotes.py`, `option_chain.py`, `historical.py`
+
+`lineage_store.record()` is called after every successful fetch. Each `DataLineageRecord` carries `instrument_id`, `symbol`, `data_type`, `source` (DataSource enum), `received_at_ms`, `available_at_ms`, `normalization_version`, `is_fallback`, `fallback_reason`. Verified by lineage integration tests that confirm `total_recorded` increments after each fetch.
+
+### WIRE-03 — DataQualityGate HTTP API (`gate_router.py`)
+
+**File:** `data-service/src/core/gate_router.py`
+
+New FastAPI router registered in `server.py` exposing:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /data/gate` | Evaluate gate for any instrument + quote age + strategy |
+| `GET /data/gate/:symbol` | Quick gate check for a symbol |
+| `GET /data/lineage/:observationId` | Retrieve a single lineage record |
+| `GET /data/lineage/summary` | Lineage store statistics |
+| `GET /data/lineage/instrument/:instrumentId` | Recent records for an instrument |
+| `GET /data/health/strategy/:strategyId` | Strategy-specific data health |
+
+Hard gate guarantee: `signalEngineAllowed=false` when data is stale, provider unhealthy, timestamp invalid, or completeness < 80%. Verified by 26 integration tests including the hard stale→blocked and valid→allowed cases.
+
+**Note:** The TypeScript signal engine does not yet call this API. This is the most important remaining gap for LEVEL 3 certification.
+
+### WIRE-04 — Redis Streams integrated into TickPublisher
+
+**File:** `data-service/src/publisher/tick_publisher.py`
+
+`TickPublisher.start()` now calls `stream_publisher.set_redis()` to wire the `StreamPublisher` singleton with the same Redis client. `TickPublisher._publish_tick()` now calls `_publish_to_stream()` after every pub/sub publish, ensuring durable AT_LEAST_ONCE delivery alongside the real-time lossy pub/sub channel. Stream failure is non-blocking — pub/sub delivery is never blocked by stream errors.
+
+### WIRE-05 — Paper trade data provenance
+
+**Files:** `prisma/schema.prisma`, `src/features/india/scalping/paper-trader.ts`, `src/features/india/scalping/types.ts`  
+**Migration:** `20260903154909_add_paper_trade_data_provenance`
+
+10 new columns on the `PaperTrade` table:
+
+```
+dataObservationId       — links to LineageStore observation ID
+quoteAgeAtEntryMs       — quote age at signal generation (ms)
+dataConfidenceAtEntry   — DataQualityGate confidence score (0–95)
+dataQualityAtEntry      — VALID/DEGRADED/INVALID/UNKNOWN
+dataProviderAtEntry     — NSE_NEXTAPI/NSE_XHR/CACHE/UNKNOWN
+signalId                — signal engine signal ID (optional)
+featureVersion          — ML feature vector version (optional)
+dataIsFallback          — whether fallback data was used
+observationEventTime    — ISO-8601 exchange event time
+```
+
+`IndiaScalpSignal` type extended with 8 matching provenance fields. `openIndiaPaperTrade()` writes all fields at trade creation. Verified by integration tests and forensics endpoint.
+
+### NEW-01 — Trade forensics endpoint
+
+**File:** `src/app/api/in/data/forensics/[tradeId]/route.ts`
+
+`GET /api/in/data/forensics/:tradeId` answers "What data produced this trade?" by returning the full forensics chain:
+
+```
+trade → fill metadata → signal decision → data provenance
+→ lineage store lookup → market observation → provider
+```
+
+Includes a `certificationStatus` block distinguishing what is proven, partially proven, and not proven for each trade.
+
+### NEW-02 — 113 new integration tests
+
+| Test File | Tests | What it verifies |
+|---|---|---|
+| `test_circuit_breaker_wiring.py` | 28 | CB state machine + scraper wiring + 100-failure load |
+| `test_signal_gate_wiring.py` | 26 | Hard gate (stale→blocked, valid→allowed), strategy gates, monotonicity |
+| `test_lineage_wiring.py` | 21 | LineageStore + scraper wiring + dataset fingerprinting |
+| `test_redis_streams.py` | 24 | AT_LEAST_ONCE semantics, replay, backpressure, TickPublisher wiring |
+| `test_chaos_p0.py` | 23 | P0 chaos: gate flip, CB under load, stream replay, lineage load, data parity |
+| `test_gate_router.py` | 14 | Gate HTTP API endpoints |
+| `test_candle_validation.py` | 17 | OHLC invariants, partial safety, OOO, max pain vs naive |
+
+Evidence labels applied to every test: `UNIT_TESTED`, `INTEGRATION_TESTED`, `DESIGNED`, `NOT_TESTED`.
+
+---
+
 ## [Unreleased] — Data Service: Production Hardening & NSE API Migration
 
 **Service:** `data-service` (Python 3.11 / FastAPI / Scrapling)

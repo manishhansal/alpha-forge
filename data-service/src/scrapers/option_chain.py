@@ -52,6 +52,9 @@ from src.schemas import (
     OptionChainRow,
     OptionContract,
 )
+from src.core.circuit_breaker import get_breaker
+from src.core.lineage import lineage_store
+from src.core.schemas_v2 import DataSource
 
 logger = structlog.get_logger(__name__)
 
@@ -613,6 +616,12 @@ async def _fetch_nse_option_chain(
     # both are captured by the 'api/option-chain' substring match.
     url = _NSE_OPTION_CHAIN_URL
 
+    import time as _time
+    breaker = get_breaker("nse_option_chain")
+    if not breaker.allow_request():
+        raise RuntimeError("NSE option chain circuit breaker OPEN — request suppressed")
+    received_at_ms = int(_time.time() * 1000)
+
     logger.info("nse_chain_fetch_start", underlying=underlying, url=url)
 
     # Serialize: only one fetch() at a time on the shared Playwright session
@@ -644,6 +653,7 @@ async def _fetch_nse_option_chain(
                         logger.warning("nse_xhr_json_parse_error", error=str(exc))
 
     if chain_data is None:
+        breaker.record_failure("xhr_not_captured")
         raise RuntimeError(
             "NSE option chain XHR not captured — no matching xhr response found"
         )
@@ -704,6 +714,22 @@ async def _fetch_nse_option_chain(
         spot=underlying_value,
     )
 
+    breaker.record_success()
+    available_at_ms = int(_time.time() * 1000)
+    lineage_store.record(
+        instrument_id=underlying,
+        symbol=underlying,
+        data_type="OPTION_CHAIN",
+        source=DataSource.NSE_XHR,
+        event_time_ms=None,
+        received_at_ms=received_at_ms,
+        available_at_ms=available_at_ms,
+        normalization_version="2.0.0",
+        validation_applied=True,
+        is_fallback=False,
+        extra={"expiry": selected_expiry_iso, "strike_count": len(rows)},
+    )
+
     return OptionChain(
         underlying=underlying,
         spot=underlying_value,
@@ -750,6 +776,12 @@ async def _fetch_bse_option_chain(
     fetched_at = _utc_now_iso()
     url = _BSE_OPTION_CHAIN_URL
 
+    import time as _time
+    breaker = get_breaker("bse_option_chain")
+    if not breaker.allow_request():
+        raise RuntimeError("BSE option chain circuit breaker OPEN — request suppressed")
+    received_at_ms = int(_time.time() * 1000)
+
     logger.info("bse_chain_fetch_start", underlying=underlying, url=url)
 
     # Serialize: only one fetch() at a time on the shared Playwright session
@@ -772,6 +804,7 @@ async def _fetch_bse_option_chain(
                         logger.warning("bse_xhr_json_parse_error", error=str(exc))
 
     if chain_data is None:
+        breaker.record_failure("xhr_not_captured")
         raise RuntimeError(
             "BSE option chain XHR not captured — no matching xhr response found"
         )
@@ -831,6 +864,22 @@ async def _fetch_bse_option_chain(
         expiry=selected_expiry_iso,
         row_count=len(rows),
         spot=spot,
+    )
+
+    breaker.record_success()
+    available_at_ms = int(_time.time() * 1000)
+    lineage_store.record(
+        instrument_id=underlying,
+        symbol=underlying,
+        data_type="OPTION_CHAIN",
+        source=DataSource.BSE_XHR,
+        event_time_ms=None,
+        received_at_ms=received_at_ms,
+        available_at_ms=available_at_ms,
+        normalization_version="2.0.0",
+        validation_applied=True,
+        is_fallback=False,
+        extra={"expiry": selected_expiry_iso, "strike_count": len(rows)},
     )
 
     return OptionChain(

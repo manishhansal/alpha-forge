@@ -197,6 +197,16 @@ export async function openIndiaPaperTrade(
       // layers format values correctly without inspecting the source prefix.
       currency: "INR",
       openedAt: new Date(signal.triggeredAt),
+      // ── Data Provenance (V2.1) ────────────────────────────────────────
+      // Persist the exact data conditions at signal generation time.
+      // This enables full forensics: trade → signal → market observation.
+      dataObservationId: signal.dataObservationId ?? null,
+      quoteAgeAtEntryMs: signal.quoteAgeAtFiringMs ?? null,
+      dataConfidenceAtEntry: signal.dataConfidence ?? null,
+      dataQualityAtEntry: signal.dataQuality ?? "UNKNOWN",
+      dataProviderAtEntry: signal.dataProvider ?? "UNKNOWN",
+      dataIsFallback: signal.dataIsFallback ?? false,
+      observationEventTime: signal.observationEventTime ?? null,
     },
     select: { id: true },
   });

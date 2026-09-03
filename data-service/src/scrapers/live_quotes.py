@@ -60,6 +60,9 @@ from fastapi.responses import JSONResponse
 from src.config import settings
 from src.schemas import MDQuote
 from src.core.symbol_normalizer import symbol_normalizer
+from src.core.circuit_breaker import get_breaker
+from src.core.lineage import lineage_store
+from src.core.schemas_v2 import DataSource
 
 logger = structlog.get_logger(__name__)
 
@@ -383,18 +386,27 @@ async def _fetch_batch_quotes(session: Any, symbols: list[str]) -> dict[str, MDQ
         except (TypeError, ValueError):
             return None
 
+    import time as _time
     url = _NSE_INDICES_DATA_URL.replace("{{index}}", "NIFTY%20200")
+    breaker = get_breaker("nse_nextapi")
+    if not breaker.allow_request():
+        logger.warning("batch_fetch_circuit_open", symbols=symbols)
+        return results
+    received_at_ms = int(_time.time() * 1000)
     try:
         client = await get_http_client()
         resp = await client.get(url)
         resp.raise_for_status()
+        available_at_ms = int(_time.time() * 1000)
         payload = resp.json()
 
         items: list[dict] = payload.get("data", {}).get("data", [])
         if not items:
             logger.warning("batch_xhr_not_captured", symbols=symbols)
+            breaker.record_failure("empty_response")
             return results
 
+        breaker.record_success()
         requested_upper = {s.upper() for s in symbols}
         fetched_at = _utc_now_iso()
 
@@ -426,10 +438,24 @@ async def _fetch_batch_quotes(session: Any, symbols: list[str]) -> dict[str, MDQ
                     fetchedAt=fetched_at,
                 )
                 results[sym] = quote
+                # Record lineage for every successfully parsed quote
+                lineage_store.record(
+                    instrument_id=sym,
+                    symbol=sym,
+                    data_type="QUOTE",
+                    source=DataSource.NSE_NEXTAPI,
+                    event_time_ms=None,  # NSE batch endpoint does not expose event time
+                    received_at_ms=received_at_ms,
+                    available_at_ms=available_at_ms,
+                    normalization_version="2.0.0",
+                    validation_applied=True,
+                    is_fallback=False,
+                )
             except Exception as exc:
                 logger.warning("batch_quote_parse_error", symbol=sym, error=str(exc))
 
     except Exception as exc:
+        breaker.record_failure(str(exc))
         logger.error("batch_fetch_error", symbols=symbols, error=str(exc))
 
     return results
@@ -463,10 +489,18 @@ async def _fetch_index_quotes(symbols: list[str]) -> dict[str, MDQuote]:
 
     wanted_names = {_INDEX_NAME_MAP.get(s.upper(), s.upper()) for s in symbols}
 
+    import time as _time
+    breaker = get_breaker("nse_nextapi")
+    if not breaker.allow_request():
+        logger.warning("index_fetch_circuit_open", symbols=symbols)
+        return results
+    received_at_ms = int(_time.time() * 1000)
     try:
         client = await get_http_client()
         resp = await client.get(_NSE_INDEX_LIST_URL)
         resp.raise_for_status()
+        available_at_ms = int(_time.time() * 1000)
+        breaker.record_success()
         payload = resp.json()
 
         items: list[dict] = payload.get("data", [])
@@ -499,10 +533,23 @@ async def _fetch_index_quotes(symbols: list[str]) -> dict[str, MDQuote]:
                     fetchedAt=fetched_at,
                 )
                 results[sym] = quote
+                lineage_store.record(
+                    instrument_id=sym,
+                    symbol=sym,
+                    data_type="QUOTE",
+                    source=DataSource.NSE_NEXTAPI,
+                    event_time_ms=None,
+                    received_at_ms=received_at_ms,
+                    available_at_ms=available_at_ms,
+                    normalization_version="2.0.0",
+                    validation_applied=True,
+                    is_fallback=False,
+                )
             except Exception as exc:
                 logger.warning("index_quote_parse_error", symbol=sym, error=str(exc))
 
     except Exception as exc:
+        breaker.record_failure(str(exc))
         logger.error("index_fetch_error", symbols=symbols, error=str(exc))
 
     return results
@@ -541,10 +588,17 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
             return None
 
     url = _NSE_INDICES_DATA_URL.replace("{{index}}", "NIFTY%20500")
+    import time as _time
+    breaker = get_breaker("nse_nextapi")
+    if not breaker.allow_request():
+        logger.warning("single_fetch_circuit_open", symbol=symbol)
+        return None
+    received_at_ms = int(_time.time() * 1000)
     try:
         client = await get_http_client()
         resp = await client.get(url)
         resp.raise_for_status()
+        available_at_ms = int(_time.time() * 1000)
         payload = resp.json()
 
         items: list[dict] = payload.get("data", {}).get("data", [])
@@ -554,7 +608,7 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
         for item in items:
             if str(item.get("symbol", "")).upper() != sym_upper:
                 continue
-            return MDQuote(
+            quote = MDQuote(
                 symbol=sym_upper,
                 token=sym_upper,
                 exchange="NSE",
@@ -575,11 +629,27 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
                 provider="scrapling",
                 fetchedAt=fetched_at,
             )
+            breaker.record_success()
+            lineage_store.record(
+                instrument_id=sym_upper,
+                symbol=sym_upper,
+                data_type="QUOTE",
+                source=DataSource.NSE_NEXTAPI,
+                event_time_ms=None,
+                received_at_ms=received_at_ms,
+                available_at_ms=available_at_ms,
+                normalization_version="2.0.0",
+                validation_applied=True,
+                is_fallback=False,
+            )
+            return quote
 
+        breaker.record_success()  # successful HTTP, just not in NIFTY 500
         logger.debug("single_quote_not_in_nifty500", symbol=symbol)
         return None
 
     except Exception as exc:
+        breaker.record_failure(str(exc))
         logger.error("single_fetch_error", symbol=symbol, error=str(exc))
         return None
 

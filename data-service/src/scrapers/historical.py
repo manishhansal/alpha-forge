@@ -38,6 +38,9 @@ from fastapi.responses import JSONResponse
 from src.config import settings
 from src.schemas import OHLCVCandle
 from src.anti_ban.rate_limiter import create_domain_limiters
+from src.core.circuit_breaker import get_breaker
+from src.core.lineage import lineage_store
+from src.core.schemas_v2 import DataSource
 
 logger = structlog.get_logger(__name__)
 
@@ -232,6 +235,17 @@ async def _fetch_nse_daily(
 
     if candles:
         await _write_disk_cache("NSE", symbol, from_date, candles)
+        lineage_store.record(
+            instrument_id=symbol,
+            symbol=symbol,
+            data_type="CANDLE",
+            source=DataSource.NSE_BHAVCOPY,
+            event_time_ms=None,
+            normalization_version="2.0.0",
+            validation_applied=True,
+            is_fallback=False,
+            extra={"interval": "1d", "candle_count": len(candles)},
+        )
 
     return candles
 
@@ -582,19 +596,26 @@ async def _fetch_nse_intraday(
         try:
             # Rate-limit NSE charting API
             await _get_limiters()["nseindia.com"].acquire()
+            _breaker = get_breaker("nse_charting")
+            if not _breaker.allow_request():
+                raise RuntimeError("NSE charting circuit breaker OPEN")
             response = await client.get(
                 _NSE_CHARTING_URL,
                 params=params,
                 headers=_NSE_CHARTING_HEADERS,
             )
             response.raise_for_status()
+            _breaker.record_success()
         except httpx.TimeoutException as exc:
+            get_breaker("nse_charting").record_failure("timeout")
             raise TimeoutError(f"NSE charting API timed out: {exc}") from exc
         except httpx.HTTPStatusError as exc:
+            get_breaker("nse_charting").record_failure(f"http_{exc.response.status_code}")
             raise RuntimeError(
                 f"NSE charting API returned HTTP {exc.response.status_code}"
             ) from exc
         except httpx.RequestError as exc:
+            get_breaker("nse_charting").record_failure(str(exc))
             raise RuntimeError(f"NSE charting API request failed: {exc}") from exc
 
     try:
@@ -616,6 +637,18 @@ async def _fetch_nse_intraday(
 
     candles.sort(key=lambda c: c.time)
     log.info("nse_intraday_fetched", count=len(candles), skipped=len(raw_rows) - len(candles))
+    if candles:
+        lineage_store.record(
+            instrument_id=symbol,
+            symbol=symbol,
+            data_type="CANDLE",
+            source=DataSource.NSE_CHARTING,
+            event_time_ms=None,
+            normalization_version="2.0.0",
+            validation_applied=True,
+            is_fallback=False,
+            extra={"interval": interval, "candle_count": len(candles)},
+        )
     return candles
 
 
@@ -689,19 +722,26 @@ async def _fetch_bse_intraday(
         try:
             # Rate-limit BSE charting API
             await _get_limiters()["bseindia.com"].acquire()
+            _breaker = get_breaker("bse_charting")
+            if not _breaker.allow_request():
+                raise RuntimeError("BSE charting circuit breaker OPEN")
             response = await client.get(
                 _BSE_CHARTING_URL,
                 params=params,
                 headers=_BSE_CHARTING_HEADERS,
             )
             response.raise_for_status()
+            _breaker.record_success()
         except httpx.TimeoutException as exc:
+            get_breaker("bse_charting").record_failure("timeout")
             raise TimeoutError(f"BSE charting API timed out: {exc}") from exc
         except httpx.HTTPStatusError as exc:
+            get_breaker("bse_charting").record_failure(f"http_{exc.response.status_code}")
             raise RuntimeError(
                 f"BSE charting API returned HTTP {exc.response.status_code}"
             ) from exc
         except httpx.RequestError as exc:
+            get_breaker("bse_charting").record_failure(str(exc))
             raise RuntimeError(f"BSE charting API request failed: {exc}") from exc
 
     try:
@@ -722,6 +762,18 @@ async def _fetch_bse_intraday(
 
     candles.sort(key=lambda c: c.time)
     log.info("bse_intraday_fetched", count=len(candles), skipped=len(raw_rows) - len(candles))
+    if candles:
+        lineage_store.record(
+            instrument_id=symbol,
+            symbol=symbol,
+            data_type="CANDLE",
+            source=DataSource.BSE_CHARTING,
+            event_time_ms=None,
+            normalization_version="2.0.0",
+            validation_applied=True,
+            is_fallback=False,
+            extra={"interval": interval, "candle_count": len(candles)},
+        )
     return candles
 
 
