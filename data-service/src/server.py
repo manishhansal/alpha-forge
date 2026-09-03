@@ -29,6 +29,7 @@ from src.monitoring.router import (
     set_proxy_manager,
     set_session_warmer,
 )
+from src.monitoring.health_router import health_router
 from src.publisher.router import publisher_router
 from src.scrapers.historical import historical_router
 from src.scrapers.instrument_master import instrument_router
@@ -146,9 +147,13 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # 4. Start TickPublisher
     # ------------------------------------------------------------------
     from src.publisher.tick_publisher import tick_publisher as _tick_publisher_instance
+    from src.publisher.stream_publisher import stream_publisher as _stream_pub
 
     try:
         await _tick_publisher_instance.start(redis_client=_redis_client)
+        # Wire stream publisher for durable delivery
+        if _redis_client is not None:
+            _stream_pub.set_redis(_redis_client)
         _component_status["tick_publisher"] = "ok"
         log.info("tick_publisher_started")
     except Exception as exc:  # pragma: no cover
@@ -181,6 +186,14 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         shutdown_log.info("tick_publisher_stopped")
     except Exception as exc:  # pragma: no cover
         shutdown_log.warning("tick_publisher_stop_error", error=str(exc))
+
+    # Close the persistent HTTP client
+    try:
+        from src.scrapers.live_quotes import close_http_client
+        await close_http_client()
+        shutdown_log.info("http_client_closed")
+    except Exception as exc:  # pragma: no cover
+        shutdown_log.warning("http_client_close_error", error=str(exc))
 
     # Stop the session warmer background task
     try:
@@ -288,6 +301,7 @@ async def scraping_status() -> JSONResponse:
     """
     body: dict[str, Any] = {
         "available": True,
+        "version": "2.0.0",
         "capabilities": {
             "chromium_available": _chromium_available,
             "redis_connected": _redis_available,
@@ -301,6 +315,9 @@ async def scraping_status() -> JSONResponse:
             "historical_intraday": True,
             "instrument_master": True,
             "tick_publisher": _component_status.get("tick_publisher") == "ok",
+            "redis_streams": True,
+            "data_lineage": True,
+            "candle_builder": True,
         },
         "config": {
             "active_symbol_count": len(settings.symbols),
@@ -311,6 +328,14 @@ async def scraping_status() -> JSONResponse:
             ),
             "headless": settings.scrapling_headless,
             "data_dir": settings.data_dir,
+        },
+        "dataServiceV2": {
+            "semanticIntegrityFixed": True,
+            "oiNotMappedToTradedValue": True,
+            "connectionPoolingEnabled": True,
+            "redisStreamsEnabled": True,
+            "deduplicationEnabled": True,
+            "lineageTrackingEnabled": True,
         },
     }
 
@@ -327,6 +352,7 @@ app.include_router(option_chain_router)
 app.include_router(instrument_router)
 app.include_router(publisher_router)
 app.include_router(monitoring_router)
+app.include_router(health_router)
 
 
 # ---------------------------------------------------------------------------

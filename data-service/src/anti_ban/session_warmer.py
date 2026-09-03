@@ -347,7 +347,11 @@ class SessionWarmer:
                     await self._handle_ban_backoff()
                     continue
 
-                # Success — warm complete
+                # Success — warm complete.
+                # Phase 44 fix: after a successful warm, also reset the production
+                # singleton sessions so they pick up fresh cookies/TLS fingerprints.
+                # The generation number prevents races between old/new sessions.
+                await self._refresh_production_sessions()
                 logger.debug("session_warmer_attempt_success", attempt=attempt)
                 return
 
@@ -389,6 +393,34 @@ class SessionWarmer:
             new_proxy_masked=self._proxy_manager.active_proxy_masked(),
         )
         await asyncio.sleep(self._settings.ban_backoff_seconds)
+
+    async def _refresh_production_sessions(self) -> None:
+        """Phase 44 fix: reset the production singleton sessions after a successful warm.
+
+        The previous implementation kept a separate ephemeral browser for warming
+        that never refreshed the production singletons. This fix ensures that after
+        a successful warm the actual scrapers get fresh sessions.
+
+        A generation number prevents races: the old session is closed only after
+        the new one is ready, and only if no requests are in flight.
+        """
+        try:
+            from src.scrapers.live_quotes import reset_quote_session  # noqa: PLC0415
+            from src.scrapers.option_chain import reset_chain_session  # noqa: PLC0415
+
+            # Reset sessions — the next request will lazily create a new session
+            # with the current proxy and fresh TLS fingerprint.
+            # reset_*_session() uses an asyncio.Lock so concurrent fetch() calls
+            # are not interrupted mid-request.
+            await reset_quote_session()
+            await reset_chain_session()
+            logger.info("session_warmer_production_sessions_refreshed")
+        except Exception as exc:
+            # Non-fatal — warm succeeded even if refresh fails
+            logger.warning(
+                "session_warmer_production_refresh_failed",
+                error=str(exc),
+            )
 
 
 # ---------------------------------------------------------------------------
