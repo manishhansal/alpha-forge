@@ -1,0 +1,1011 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create `data-service/` directory with `Dockerfile`, `requirements.txt`, and `pyproject.toml`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976511
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419989592
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420067343
+      }
+    ],
+    "1.2 Create `data-service/src/__init__.py`, `data-service/src/config.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976542
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419990368
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420068032
+      }
+    ],
+    "1.3 Create `data-service/src/server.py` with FastAPI app, lifespan, and CORS middleware": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976566
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420076649
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421533777
+      }
+    ],
+    "1.4 Add `data-service` service to `docker-compose.yml`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976591
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420077209
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421534453
+      }
+    ],
+    "2.1 Create `data-service/src/schemas.py` with all canonical Pydantic models": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976630
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420077851
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421535185
+      }
+    ],
+    "2.2 Create `data-service/src/scrapers/__init__.py`, `data-service/src/anti_ban/__init__.py`, `data-service/src/publisher/__init__.py`, `data-service/src/monitoring/__init__.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976651
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788420078684
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421536058
+      }
+    ],
+    "3.1 Implement `data-service/src/anti_ban/rate_limiter.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976672
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421544055
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422536172
+      }
+    ],
+    "3.2 Implement `data-service/src/anti_ban/ban_detector.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976703
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421544712
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422536671
+      }
+    ],
+    "3.3 Implement `data-service/src/anti_ban/proxy_manager.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976725
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421545319
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422537341
+      }
+    ],
+    "3.4 Implement `data-service/src/anti_ban/session_warmer.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976746
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422544957
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423181636
+      }
+    ],
+    "4.1 Implement `data-service/src/scrapers/historical.py` — request validation and routing": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976773
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422545641
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423182447
+      }
+    ],
+    "4.2 Implement NSE daily Bhavcopy fetch (`FetcherSession`, disk cache) and BSE daily ZIP fetch": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976795
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423190719
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423631115
+      }
+    ],
+    "4.3 Implement NSE and BSE intraday fetch (charting APIs) with IST-to-UTC conversion": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976814
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423191813
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423628572
+      }
+    ],
+    "5.1 Implement `data-service/src/scrapers/live_quotes.py` — singleton session management": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976838
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423191108
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423629974
+      }
+    ],
+    "5.2 Implement batch and single-symbol fetch paths + MDQuote normalization": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976860
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423965835
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424362108
+      }
+    ],
+    "6.1 Implement `data-service/src/scrapers/option_chain.py` — NSE and BSE fetch paths": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976909
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423966284
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424364827
+      }
+    ],
+    "6.2 Implement analytics pure functions: PCR, max pain, ATM IV, OI walls": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976934
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424371786
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424832467
+      }
+    ],
+    "6.3 Wire analytics into OptionChain response and validate field compatibility": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976962
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424842368
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425232863
+      }
+    ],
+    "7.1 Implement `data-service/src/scrapers/instrument_master.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419976985
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422546266
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423183029
+      }
+    ],
+    "7.2 Implement NSE F&O lot size CSV fetch and BSE scrip master ZIP fetch": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977010
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423194975
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423627616
+      }
+    ],
+    "8.1 Implement `data-service/src/publisher/tick_publisher.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977040
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423966987
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424365510
+      }
+    ],
+    "8.2 Implement `data-service/src/publisher/router.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977059
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424372368
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424833396
+      }
+    ],
+    "9.1 Implement `RollingWindowStats` in `data-service/src/monitoring/router.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977081
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423967620
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424362831
+      }
+    ],
+    "9.2 Implement `/monitoring/health`, `/monitoring/scraping-stats`, `/monitoring/proxy-status`, `/monitoring/session-status` routes": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977105
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424373141
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424834073
+      }
+    ],
+    "10.1 Extend `src/lib/market-data/types.ts` — add `\"scrapling\"` to `ProviderId` and `PROVIDER_PRIORITY`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977175
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421546090
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422538191
+      }
+    ],
+    "10.2 Update `src/lib/market-data/health.ts` — add `\"scrapling\"` to `getAllProviderHealth`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977219
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421546801
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422539059
+      }
+    ],
+    "10.3 Create `src/lib/market-data/providers/scrapling.ts` — implement `MarketDataProvider`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977242
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423968336
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424363978
+      }
+    ],
+    "10.4 Register `ScraplingProvider` in `bootstrapRegistry()` in `src/lib/market-data/registry.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977276
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424373828
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424834861
+      }
+    ],
+    "11.1 Add `createSubscriberClient()` to `worker/src/redis.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977301
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422546930
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423183660
+      }
+    ],
+    "11.2 Add `scrapingTicks` config to `worker/src/config.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977325
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788422547692
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423184349
+      }
+    ],
+    "11.3 Create `worker/src/jobs/scraping-tick-listener.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977358
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423192537
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423629238
+      }
+    ],
+    "12.1 Add `ScraplingDataClient` and Tier 0 to `ml-service/src/training/market_data_client.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977382
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424374547
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424835990
+      }
+    ],
+    "12.2 Update `docker-compose.yml` `ml-service` entry for data-service dependency": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977402
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424843012
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425233160
+      }
+    ],
+    "13.1 Create `src/app/api/in/provider-health/route.ts` — Next.js API route": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977426
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424843690
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425233942
+      }
+    ],
+    "13.2 Create `src/components/india/DataSourceBadge.tsx`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977446
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425241664
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425638631
+      }
+    ],
+    "14.1 Create `data-service/tests/pbt/test_conversion_properties.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977480
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425242390
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425637040
+      }
+    ],
+    "14.2 Create `data-service/tests/pbt/test_analytics_properties.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977520
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425241840
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425640009
+      }
+    ],
+    "14.3 Create `data-service/tests/pbt/test_rate_limiter_properties.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977539
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424844342
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425233178
+      }
+    ],
+    "14.4 Create property tests for server-level and integration properties": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977564
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425242991
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425639374
+      }
+    ],
+    "14.5 Create `tests/components/india/DataSourceBadge.pbt.test.tsx` — Property 17": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977589
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426432133
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426745846
+      }
+    ],
+    "14.6 Create `tests/worker/scraping-tick-listener.pbt.test.ts` — Property 13": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977618
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426432797
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426744614
+      }
+    ],
+    "15.1 Create `data-service/tests/conftest.py` and `data-service/tests/test_server.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977636
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425243726
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425637829
+      }
+    ],
+    "15.2 Create `data-service/tests/scrapers/test_historical.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977656
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425647702
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426113672
+      }
+    ],
+    "15.3 Create `data-service/tests/scrapers/test_live_quotes.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977676
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425648341
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426116457
+      }
+    ],
+    "15.4 Create `data-service/tests/scrapers/test_option_chain.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977696
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425649831
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426114261
+      }
+    ],
+    "15.5 Create `data-service/tests/scrapers/test_instrument_master.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977716
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426124171
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426424371
+      }
+    ],
+    "15.6 Create `data-service/tests/publisher/test_tick_publisher.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977736
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425650518
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426114878
+      }
+    ],
+    "15.7 Create `data-service/tests/anti_ban/test_ban_detector.py` and `data-service/tests/anti_ban/test_rate_limiter.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977754
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425649135
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426115804
+      }
+    ],
+    "15.8 Create `data-service/tests/monitoring/test_health_route.py`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977776
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426124824
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426423681
+      }
+    ],
+    "15.9 Create `tests/lib/market-data/providers/scrapling.test.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977817
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423643535
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423959451
+      }
+    ],
+    "15.10 Create `tests/worker/scraping-tick-listener.test.ts`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977837
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423644228
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423960072
+      }
+    ],
+    "15.11 Create `tests/components/india/DataSourceBadge.test.tsx`": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977857
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426433535
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426745153
+      }
+    ],
+    "16. Final checkpoint — ensure all tests pass": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788419977881
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426754269
+      },
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426970593
+      }
+    ],
+    "1. Service scaffold, Dockerfile, and Docker integration": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421534479
+      }
+    ],
+    "2. Pydantic schemas": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788421536081
+      }
+    ],
+    "3. Anti-ban layer": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423181675
+      }
+    ],
+    "7. InstrumentMaster (NSE lot sizes + BSE scrip master)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423627651
+      }
+    ],
+    "11. Worker TickListener + redis.ts subscriber + config.ts update": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423629269
+      }
+    ],
+    "4. BhavcopyScraper (historical OHLCV)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788423631150
+      }
+    ],
+    "5. LiveQuoteScraper (capture_xhr, singleton DynamicSession)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424362139
+      }
+    ],
+    "8. TickPublisher (asyncio 5s poll → Redis PUBLISH)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424833446
+      }
+    ],
+    "9. Monitoring endpoints (RollingWindowStats + /monitoring/* routes)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424834109
+      }
+    ],
+    "10. TypeScript ScraplingProvider + types.ts + registry.ts changes": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788424834892
+      }
+    ],
+    "6. OptionChainScraper (capture_xhr + analytics pure functions)": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425232895
+      }
+    ],
+    "12. ML training pipeline upgrade": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425233216
+      }
+    ],
+    "13. DataSourceBadge React component + /api/in/provider-health route": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788425638657
+      }
+    ],
+    "15. Unit tests (pytest + Vitest) — all components": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426745183
+      }
+    ],
+    "14. Property-based tests (hypothesis) — all 17 correctness properties": [
+      {
+        "executionId": "aad26a90-4ddf-4b13-99b7-48c4794f7af6",
+        "chatSessionId": "sess_87754c6a-244f-4055-81b2-a68ab4e8ae18",
+        "timestamp": 1788426745932
+      }
+    ]
+  }
+}
