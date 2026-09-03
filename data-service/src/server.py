@@ -35,6 +35,7 @@ from src.scrapers.historical import historical_router
 from src.scrapers.instrument_master import instrument_router
 from src.scrapers.live_quotes import quotes_router
 from src.scrapers.option_chain import option_chain_router
+from src.core.gate_router import gate_router
 
 logger = structlog.get_logger(__name__)
 
@@ -353,6 +354,7 @@ app.include_router(instrument_router)
 app.include_router(publisher_router)
 app.include_router(monitoring_router)
 app.include_router(health_router)
+app.include_router(gate_router)
 
 
 # ---------------------------------------------------------------------------

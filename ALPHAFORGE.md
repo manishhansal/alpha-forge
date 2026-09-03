@@ -334,18 +334,24 @@ Beyond the data layer, the Angel One adapter (`services/india/angelone/`) provid
 
 `data-service/` — a standalone Python 3.11 / FastAPI microservice that provides NSE market data without any broker credentials. It runs at port **8200** alongside the Next.js app and ML service.
 
-> Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)
+> Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)  
+> Certification: [`data-service/reports/V2_1_CERTIFICATION_MATRIX.md`](./data-service/reports/V2_1_CERTIFICATION_MATRIX.md)
+
+**Current Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED  
+448 tests pass (335 V2.0 baseline + 113 new integration tests)
 
 ### 6.1 What it provides
 
-| Capability | Implementation |
-|---|---|
-| Live quotes (equities + indices) | `httpx` → NSE `api/NextApi` endpoints (no browser) |
-| Live tick publishing | 5 s poll → Redis pub/sub `af:ticks:{SYMBOL}` |
-| Option chain | Playwright / Scrapling `AsyncDynamicSession` → XHR capture |
-| Daily OHLCV | `httpx` → NSE Bhavcopy CDN (`nsearchives.nseindia.com`) |
-| Intraday OHLCV | `httpx` → NSE charting API (`charting.nseindia.com`) |
-| Instrument master | `httpx` → NSE instrument CSV |
+| Capability | Implementation | V2.1 Status |
+|---|---|---|
+| Live quotes (equities + indices) | `httpx` → NSE `api/NextApi` endpoints (no browser) | Circuit breaker + lineage wired |
+| Live tick publishing | 5 s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams | AT_LEAST_ONCE delivery |
+| Option chain | Playwright / Scrapling `AsyncDynamicSession` → XHR capture | Circuit breaker + lineage wired |
+| Daily OHLCV | `httpx` → NSE Bhavcopy CDN (`nsearchives.nseindia.com`) | Lineage wired |
+| Intraday OHLCV | `httpx` → NSE charting API (`charting.nseindia.com`) | Circuit breaker + lineage wired |
+| Instrument master | `httpx` → NSE instrument CSV | — |
+| **DataQualityGate** | `POST /data/gate` — evaluates freshness, completeness, provider health | **V2.1 NEW** |
+| **Lineage API** | `GET /data/lineage/*` — records and retrieves observation provenance | **V2.1 NEW** |
 
 ### 6.2 NSE NextApi (live quotes)
 
@@ -389,7 +395,9 @@ data-service:
 
 | Key | Type | TTL | Purpose |
 |---|---|---|---|
-| `af:ticks:{SYMBOL}` | Pub/Sub | — | Live tick stream |
+| `af:ticks:{SYMBOL}` | Pub/Sub | — | Live tick stream (lossy, real-time) |
+| `af:stream:ticks` | Stream | ~10k entries | Durable tick stream (AT_LEAST_ONCE) |
+| `af:stream:ticks:{SYMBOL}` | Stream | ~500 entries | Per-symbol durable tick stream |
 | `scraping:quote:{exchange}:{symbol}` | String (JSON) | 5 s | Quote cache |
 | `scraping:chain:{underlying}:{expiry}:{exchange}` | String (JSON) | 20 s | Option chain cache |
 | `scraping:hist:{exchange}:{symbol}:{interval}:{from}:{to}` | String (JSON) | 3600 s | Intraday candle cache |
@@ -397,15 +405,51 @@ data-service:
 ### 6.6 API surface
 
 ```
+# Health / Data Quality
 GET  /health                                    always 200; degraded flag
+GET  /health/live                               liveness probe
+GET  /health/ready                              readiness probe
+GET  /health/data                               data quality + circuit breaker states
+
+# DataQualityGate (V2.1) — signal engine MUST call before generating signals
+POST /data/gate                                 evaluate gate; returns signalEngineAllowed
+GET  /data/gate/:symbol                         quick gate check for symbol
+GET  /data/health/strategy/:strategyId          strategy-specific data health
+GET  /data/lineage/summary                      lineage store statistics
+GET  /data/lineage/:observationId               retrieve observation record
+GET  /data/lineage/instrument/:instrumentId     recent records for instrument
+
+# Market Data
 GET  /scraping/status                           capability flags
 GET  /scraping/quotes?symbols=A,B&exchange=NSE  live quotes (httpx)
 GET  /scraping/historical?symbol=...            OHLCV candles (daily + intraday)
 GET  /scraping/option-chain?underlying=NIFTY    option chain (browser)
 GET  /scraping/instruments?exchange=NSE         instrument master
+
+# Publisher / Monitoring
 GET  /publisher/status                          tick publisher stats
 POST /publisher/symbols                         add symbols to tick publisher
+GET  /monitoring/health                         rolling window stats
+
+# Forensics (Next.js — V2.1)
+GET  /api/in/data/forensics/:tradeId            full data-to-trade forensics chain
 ```
+
+### 6.7 DataQualityGate contract (V2.1)
+
+**Every signal generation path MUST check `signalEngineAllowed` before proceeding.**
+
+```typescript
+// TypeScript signal engine — required pattern (not yet wired)
+const gate = await fetch(`${DATA_SERVICE_URL}/data/gate`, {
+  method: "POST",
+  body: JSON.stringify({ symbol, quoteAgeMs, strategyId, requiresOI }),
+});
+const { signalEngineAllowed } = await gate.json();
+if (!signalEngineAllowed) return; // HARD BLOCK — no exceptions
+```
+
+The gate evaluates: freshness · completeness · provider health (circuit breaker) · timestamp validity · semantic integrity · strategy-specific requirements.
 
 ---
 

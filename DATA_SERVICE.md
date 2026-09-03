@@ -1,10 +1,12 @@
 # AlphaForge Data Service
 
-**Version: 2.0.0** (V2 upgrade completed September 2026)
+**Version: 2.1.0** (V2.1 certification closure completed September 2026)
 
 Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency market-data foundation for AlphaForge.
 
-> **V2 Summary:** The V2 upgrade fixed a critical silent semantic corruption (OI was being mapped from INR traded value), added institutional-grade data quality infrastructure (timestamp engine, freshness engine, market session engine, deduplication, gap detection, circuit breakers, data lineage, candle builder), and increased test coverage from 112 to 307 tests. See `data-service/reports/DATA_SERVICE_V2_CERTIFICATION.md` for full status.
+> **V2.1 Summary:** V2.1 closes the wiring gaps identified in V2.0's `PASS_WITH_WARNINGS` audit. Circuit breakers are now wired to all 5 upstream HTTP paths. Lineage is recorded on every successful fetch. The DataQualityGate is exposed as an HTTP API. Redis Streams are integrated into the TickPublisher. Paper trades now persist full data provenance. A trade forensics endpoint reconstructs the data→signal→trade chain. 448 tests pass (335 V2.0 baseline + 113 new integration tests). Certification level: **LEVEL 2 — INTEGRATION CERTIFIED**. See `data-service/reports/V2_1_CERTIFICATION_MATRIX.md` and `PRODUCTION_READINESS_V2_1.md` for full status.
+>
+> **V2.0 Summary:** The V2 upgrade fixed a critical silent semantic corruption (OI was being mapped from INR traded value), added institutional-grade data quality infrastructure (timestamp engine, freshness engine, market session engine, deduplication, gap detection, circuit breakers, data lineage, candle builder), and increased test coverage from 112 to 335 tests. See `data-service/reports/DATA_SERVICE_V2_CERTIFICATION.md` for full status.
 
 ---
 
@@ -173,7 +175,28 @@ Chromium is downloaded at **image build time** (`scrapling install` runs during 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | Always HTTP 200. `status: "healthy"` or `"degraded"` with component map. |
+| `GET` | `/health/live` | Liveness probe — always 200 if process running. |
+| `GET` | `/health/ready` | Readiness probe — checks Redis + publisher. |
+| `GET` | `/health/data` | Data quality health — freshness, gaps, circuit breaker states. |
 | `GET` | `/scraping/status` | Capability flags (chromium, redis, proxy, each scraper path). |
+
+### DataQualityGate (V2.1)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/data/gate` | Evaluate DataQualityGate for an instrument. Body: `GateRequest`. Returns `signalEngineAllowed`, `confidenceScore`, all gate conditions, circuit breaker states. |
+| `GET` | `/data/gate/:symbol` | Quick gate check for a symbol. Query: `quote_age_ms`, `strategy_id`. |
+| `GET` | `/data/health/strategy/:strategyId` | Strategy-specific data health (OI, chain, candle requirements). |
+
+**The signal engine MUST call `POST /data/gate` before generating any signal. `signalEngineAllowed=false` must hard-block signal generation.**
+
+### Lineage (V2.1)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/data/lineage/summary` | Lineage store statistics (size, utilization). |
+| `GET` | `/data/lineage/:observationId` | Retrieve a single lineage record by observation ID. |
+| `GET` | `/data/lineage/instrument/:instrumentId` | Recent lineage records for an instrument. Query: `limit` (1–100). |
 
 ### Quotes
 
@@ -220,6 +243,12 @@ Response:
 | `DELETE` | `/publisher/symbols/{symbol}` | Remove a symbol |
 | `GET` | `/monitoring/status` | Full component health map |
 | `GET` | `/monitoring/session-warmer` | Session warmer schedule (last warm, next warm) |
+
+### Forensics (Next.js — V2.1)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/in/data/forensics/:tradeId` | Full forensics chain for a paper trade: data provenance → lineage → signal decision |
 
 ---
 

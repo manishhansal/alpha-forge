@@ -138,6 +138,29 @@ model PaperTrade {
   openedAt   DateTime             @default(now())
   closedAt   DateTime?
 
+  // ── Data Provenance (V2.1 — certification requirement) ─────────────────
+  // Every paper trade must carry the full data provenance at entry so that
+  // any future forensics audit can reconstruct exactly what the system knew
+  // when the decision was made.
+  /// Data Service observation ID at entry — links to LineageStore record.
+  dataObservationId   String?
+  /// Age of the quote used to generate this signal (ms at entry).
+  quoteAgeAtEntryMs   Int?
+  /// DataQualityGate confidence score at entry (0–95).
+  dataConfidenceAtEntry Int?
+  /// DataQuality classification at entry: VALID, DEGRADED, INVALID, UNKNOWN.
+  dataQualityAtEntry  String?
+  /// Data provider at entry: NSE_NEXTAPI, NSE_XHR, CACHE, etc.
+  dataProviderAtEntry String?
+  /// Signal ID from the signal engine that produced this trade (if available).
+  signalId            String?
+  /// Feature vector version used by the signal engine.
+  featureVersion      String?
+  /// Whether the entry used fallback/stale data.
+  dataIsFallback      Boolean?
+  /// ISO-8601 UTC time of the market observation used at entry.
+  observationEventTime String?
+
   @@index([symbol, openedAt])
   @@index([status, openedAt])
   @@index([source, openedAt])

@@ -168,6 +168,15 @@ class TickPublisher:
         if self._redis is None:
             self._redis = await self._resolve_server_redis()
 
+        # Wire stream publisher with the same Redis client for durable delivery
+        if self._redis is not None:
+            try:
+                from src.publisher.stream_publisher import stream_publisher as _sp
+                _sp.set_redis(self._redis)
+                logger.info("stream_publisher_wired")
+            except Exception as exc:
+                logger.warning("stream_publisher_wire_failed", error=str(exc))
+
         self._running = True
         self._task = asyncio.create_task(self._tick_loop(), name="tick_publisher_loop")
         logger.info("tick_publisher_started")
@@ -316,10 +325,12 @@ class TickPublisher:
             return []
 
     async def _publish_tick(self, tick: LiveTick) -> bool:
-        """Publish a single tick to ``af:ticks:{SYMBOL}``.
+        """Publish a single tick to ``af:ticks:{SYMBOL}`` and Redis Streams.
 
         Handles Redis connection loss with exponential backoff reconnection.
-        Returns ``True`` when the message was published successfully.
+        Returns ``True`` when the pub/sub message was published successfully.
+
+        Phase 22-24: Also publishes to Redis Stream for durable AT_LEAST_ONCE delivery.
         """
         channel = f"af:ticks:{tick.symbol.upper()}"
         payload = tick.model_dump_json()
@@ -328,6 +339,8 @@ class TickPublisher:
         if self._redis is not None:
             try:
                 await self._redis.publish(channel, payload)
+                # Also publish to Redis Stream for durable delivery
+                await self._publish_to_stream(tick)
                 return True
             except Exception as exc:
                 logger.warning(
@@ -344,10 +357,41 @@ class TickPublisher:
 
         try:
             await self._redis.publish(channel, payload)
+            await self._publish_to_stream(tick)
             return True
         except Exception as exc:
             logger.error("redis_publish_after_reconnect_failed", error=str(exc))
             return False
+
+    async def _publish_to_stream(self, tick: LiveTick) -> None:
+        """Publish tick to Redis Stream for durable at-least-once delivery.
+
+        Phase 22: Stream provides recovery path; pub/sub is real-time/lossy.
+        This is fire-and-forget — stream failure does NOT block pub/sub.
+        """
+        try:
+            from src.publisher.stream_publisher import stream_publisher
+            if stream_publisher._redis is not None:
+                # Build a minimal LiveTickV2 for the stream publisher
+                from src.core.schemas_v2 import LiveTickV2
+                import time as _time
+                now_ms = int(_time.time() * 1000)
+                tick_v2 = LiveTickV2(
+                    instrumentId=tick.symbol.upper(),
+                    symbol=tick.symbol.upper(),
+                    exchange=tick.exchange or "NSE",
+                    eventTimeMs=tick.exchangeTimestampMs or now_ms,
+                    receivedAtMs=tick.receivedAtMs or now_ms,
+                    ltp=tick.ltp,
+                    change=tick.change,
+                    changePct=tick.changePct,
+                    volume=tick.volume,
+                    oi=tick.oi,
+                )
+                await stream_publisher.publish_tick(tick_v2)
+        except Exception as exc:
+            # Non-fatal: stream publish failure should never block pub/sub
+            logger.debug("stream_publish_error", symbol=tick.symbol, error=str(exc))
 
     # ------------------------------------------------------------------
     # Redis reconnection with exponential backoff

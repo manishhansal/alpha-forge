@@ -10,7 +10,7 @@ import {
   executeExactlyOnce,
   buildTradeGuardKey,
 } from "@/lib/india/atomic-trade-guard";
-import { getRedis } from "@/lib/redis";
+import { redis as redisClient } from "@/lib/redis";
 
 import {
   INDIA_DEFAULT_NOTIONAL,
@@ -90,8 +90,8 @@ export async function openIndiaPaperTrade(
   // Build a 5-minute-bucketed idempotency key. The atomic SET NX EX ensures
   // exactly one worker among any number of concurrent ticks can proceed.
   // When Redis is unavailable the DB dedup queries below act as the fallback.
-  let redis: ReturnType<typeof getRedis> | undefined;
-  try { redis = getRedis(); } catch { /* Redis unavailable — DB dedup covers it */ }
+  let redis: typeof redisClient | undefined;
+  try { redis = redisClient; } catch { /* Redis unavailable — DB dedup covers it */ }
 
   const guardKey = buildTradeGuardKey({
     symbol: signal.symbol,
@@ -197,6 +197,16 @@ export async function openIndiaPaperTrade(
       // layers format values correctly without inspecting the source prefix.
       currency: "INR",
       openedAt: new Date(signal.triggeredAt),
+      // ── Data Provenance (V2.1) ────────────────────────────────────────
+      // Persist the exact data conditions at signal generation time.
+      // This enables full forensics: trade → signal → market observation.
+      dataObservationId: signal.dataObservationId ?? null,
+      quoteAgeAtEntryMs: signal.quoteAgeAtFiringMs ?? null,
+      dataConfidenceAtEntry: signal.dataConfidence ?? null,
+      dataQualityAtEntry: signal.dataQuality ?? "UNKNOWN",
+      dataProviderAtEntry: signal.dataProvider ?? "UNKNOWN",
+      dataIsFallback: signal.dataIsFallback ?? false,
+      observationEventTime: signal.observationEventTime ?? null,
     },
     select: { id: true },
   });
@@ -292,7 +302,7 @@ export async function resolveIndiaOpenTrades(
   const now = Date.now();
 
   for (const t of open) {
-    let candles;
+    let candles: Awaited<ReturnType<typeof getHistoricalCandlesByRange>> | undefined;
     try {
       // Use "1d" range for the resolver — it's sufficient for intraday trades
       // and uses a distinct cache key from the ATR fetch ("5d"), preventing
@@ -321,7 +331,7 @@ export async function resolveIndiaOpenTrades(
     // close overlaps with the trade's open (bar_open + 5min > openedAt) so
     // a target/SL hit within the opening partial bar is never missed.
     const BAR_SEC = 5 * 60;
-    const relevant = candles.filter((c) => c.time + BAR_SEC > openedAtSec);
+    const relevant = (candles ?? []).filter((c) => c.time + BAR_SEC > openedAtSec);
     const isLong = t.direction === "LONG";
 
     const resolvedOutcome = resolveAgainstCandles(relevant, {
