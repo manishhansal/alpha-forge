@@ -1,7 +1,29 @@
 # AlphaForge Data-Service — Reliability Assessment
 
-**Version:** Post-audit (September 2026)  
+**Version:** V2.0.0 (September 2026)  
+**Status:** PASS_WITH_WARNINGS  
 **Scope:** Can AlphaForge replace NSE direct scraper and Yahoo Finance with the data-service?
+
+> **V2 Update:** Major reliability improvements across the board. The most critical fix was the OI semantic corruption where `totalTradedValue` (INR) was silently mapped to `oi` — producing nonsensical open interest values for all equity quotes. This corrupted every OI-dependent strategy. Fixed in V2 with regression tests. See `data-service/reports/DATA_SERVICE_V2_CERTIFICATION.md` for full certification status.
+
+---
+
+## V2 Reliability Summary
+
+| Capability | V1 | V2 |
+|-----------|----|----|
+| OI semantic correctness | ❌ CORRUPT | ✅ FIXED |
+| HTTP connection pooling | ❌ Per-request | ✅ Pooled |
+| Timestamp handling | ⚠️ Ad hoc | ✅ UTC/IST engine |
+| Data freshness tracking | ❌ None | ✅ Tiered |
+| Signal safety gate | ❌ None | ✅ DataQualityGate |
+| Market session awareness | ⚠️ Weekday-only | ✅ Holiday calendar |
+| Session warmer effectiveness | ❌ Didn't refresh prod | ✅ Refreshes prod |
+| Max pain complexity | ❌ O(N²) | ✅ O(N log N) |
+| Redis recovery | ⚠️ Pub/Sub only | ✅ Pub/Sub + Streams |
+| Deduplication | ❌ None | ✅ SHA-256 event IDs |
+| Data lineage | ❌ None | ✅ LineageStore |
+| Test coverage | 112 tests | 307 tests |
 
 ---
 
@@ -254,3 +276,31 @@ Priority 4: Yahoo Finance — no credentials
    show artificial gaps at corporate action dates.
    *Workaround:* Use Yahoo Finance for adjusted historical data; use data-service
    for current-day OHLCV validation only.
+
+---
+
+## V2 New Issues Fixed
+
+The following issues from the original "Known Remaining Issues" section have been addressed:
+
+| Issue | V1 Status | V2 Status |
+|-------|-----------|-----------|
+| `compute_max_pain` is O(N²) | OPEN | ✅ FIXED — O(N log N) with prefix sums |
+| Session warmer doesn't reset live sessions | OPEN | ✅ FIXED — `_refresh_production_sessions()` added |
+| `_evict()` ordering assumption | LOW | NOTED — monitoring only, acceptable |
+| BSE option chain field name mapping | OPEN | MONITORED — documented |
+| No adjusted prices for historical data | BY DESIGN | DOCUMENTED — use Yahoo for adjusted |
+
+---
+
+## V2 Remaining Known Issues
+
+1. **Circuit breaker not wired to HTTP calls** — CircuitBreaker is implemented and tested but not yet called inside `_fetch_batch_quotes`, `_fetch_index_quotes`, `_fetch_single_quote`. The architecture is in place for Phase 2.
+
+2. **CandleBuilderV2 not wired to TickPublisher** — CandleBuilderV2 is fully implemented and tested but the TickPublisher doesn't yet feed ticks into it. Integration is the next step.
+
+3. **Data lineage not wired to every endpoint** — LineageStore is implemented but routes don't yet create lineage records. Wire in per-endpoint `lineage_store.record()` calls.
+
+4. **No real-network soak test run** — All tests use mocks. A complete 1-day live paper soak is required before full production certification.
+
+5. **Redis Streams not tested against real Redis** — The `StreamPublisher` passes all unit tests with mocked Redis. Real-Redis integration testing is needed before claiming durable replay in production.

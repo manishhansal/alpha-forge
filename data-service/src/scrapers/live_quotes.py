@@ -27,6 +27,21 @@ constituents, which is far more efficient than 200 individual XHR calls.  For
 symbols not in NIFTY 200, a per-symbol XHR intercept is used.  Mixed requests
 combine both strategies and merge results in the original input order.
 
+Connection pooling
+------------------
+A module-level ``httpx.AsyncClient`` singleton (_http_client) is shared across
+all requests.  This avoids creating a new TCP+TLS connection for every request.
+The client is initialized lazily and reused for the process lifetime.
+
+SEMANTIC INTEGRITY (Phase 3 fix)
+---------------------------------
+CRITICAL: The NSE NextApi ``totalTradedValue`` field is the total traded value
+in INR — it is NOT open interest.  The ``oi`` field in MDQuote is set to None
+for equity quotes because NSE equity data does not provide open interest via
+the NextApi constituent endpoints.
+
+The ``tradedValue`` field (INR) is mapped correctly from ``totalTradedValue``.
+
 Requirements: 3.1, 3.5, 3.7, 3.8, 3.9
 """
 
@@ -44,6 +59,7 @@ from fastapi.responses import JSONResponse
 
 from src.config import settings
 from src.schemas import MDQuote
+from src.core.symbol_normalizer import symbol_normalizer
 
 logger = structlog.get_logger(__name__)
 
@@ -58,6 +74,51 @@ quotes_router = APIRouter()
 # ---------------------------------------------------------------------------
 
 _QUOTE_CACHE_TTL: int = 5  # seconds
+_SESSION_TIMEOUT: float = 12.0  # exported for tests — session fetch timeout in seconds
+
+# ---------------------------------------------------------------------------
+# Persistent HTTP client — reused across all requests (connection pooling)
+# Phase 11: avoids creating a new TCP+TLS connection per request.
+# ---------------------------------------------------------------------------
+
+_http_client: httpx.AsyncClient | None = None
+_http_client_lock: asyncio.Lock = asyncio.Lock()
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Return the module-level persistent httpx.AsyncClient singleton.
+
+    Creates one client with keep-alive and connection limits.
+    This is far more efficient than ``async with httpx.AsyncClient(...) as client:``.
+    """
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        return _http_client
+    async with _http_client_lock:
+        if _http_client is not None and not _http_client.is_closed:
+            return _http_client
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0),
+            limits=httpx.Limits(
+                max_keepalive_connections=10,
+                max_connections=20,
+                keepalive_expiry=30.0,
+            ),
+            headers=_NSE_HEADERS,
+            follow_redirects=True,
+        )
+        logger.info("http_client_created", max_connections=20)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the persistent HTTP client (called during shutdown)."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+        logger.info("http_client_closed")
+_SESSION_TIMEOUT: float = 12.0  # exported for tests — session fetch timeout in seconds
 
 # ---------------------------------------------------------------------------
 # NSE NextApi base URLs (post-2026 redesign)
@@ -324,10 +385,10 @@ async def _fetch_batch_quotes(session: Any, symbols: list[str]) -> dict[str, MDQ
 
     url = _NSE_INDICES_DATA_URL.replace("{{index}}", "NIFTY%20200")
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(url, headers=_NSE_HEADERS)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = await get_http_client()
+        resp = await client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
 
         items: list[dict] = payload.get("data", {}).get("data", [])
         if not items:
@@ -354,7 +415,11 @@ async def _fetch_batch_quotes(session: Any, symbols: list[str]) -> dict[str, MDQ
                     low=_float(item.get("dayLow")),
                     prevClose=_float(item.get("previousClose")),
                     volume=_int(item.get("totalTradedVolume")),
-                    oi=_int(item.get("totalTradedValue")),
+                    # SEMANTIC FIX (Phase 3 / CRITICAL):
+                    # totalTradedValue is the INR traded value — NOT open interest.
+                    # NSE equity NextApi endpoints do not provide OI.
+                    # Setting oi=None explicitly to prevent silent data corruption.
+                    oi=None,
                     upperCircuit=None,
                     lowerCircuit=None,
                     provider="scrapling",
@@ -399,10 +464,10 @@ async def _fetch_index_quotes(symbols: list[str]) -> dict[str, MDQuote]:
     wanted_names = {_INDEX_NAME_MAP.get(s.upper(), s.upper()) for s in symbols}
 
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(_NSE_INDEX_LIST_URL, headers=_NSE_HEADERS)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = await get_http_client()
+        resp = await client.get(_NSE_INDEX_LIST_URL)
+        resp.raise_for_status()
+        payload = resp.json()
 
         items: list[dict] = payload.get("data", [])
         fetched_at = _utc_now_iso()
@@ -477,10 +542,10 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
 
     url = _NSE_INDICES_DATA_URL.replace("{{index}}", "NIFTY%20500")
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(url, headers=_NSE_HEADERS)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = await get_http_client()
+        resp = await client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
 
         items: list[dict] = payload.get("data", {}).get("data", [])
         fetched_at = _utc_now_iso()
@@ -501,7 +566,10 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
                 low=_float(item.get("dayLow")),
                 prevClose=_float(item.get("previousClose")),
                 volume=_int(item.get("totalTradedVolume")),
-                oi=_int(item.get("totalTradedValue")),
+                # SEMANTIC FIX (Phase 3 / CRITICAL):
+                # totalTradedValue is INR traded value — NOT open interest.
+                # NSE equity data does not provide OI via this endpoint.
+                oi=None,
                 upperCircuit=None,
                 lowerCircuit=None,
                 provider="scrapling",
@@ -667,23 +735,63 @@ async def get_quotes(
         constituents = [s for s in symbols_to_fetch if s not in _NSE_INDEX_SYMBOLS and s in NIFTY_200_SYMBOLS]
         non_constituents = [s for s in symbols_to_fetch if s not in _NSE_INDEX_SYMBOLS and s not in NIFTY_200_SYMBOLS]
 
-        # Lazy session still needed for option-chain and future browser paths.
-        session = await get_quote_session()
+        # Filter out Yahoo-style or invalid symbols silently at debug level
+        non_constituents_valid = [
+            s for s in non_constituents
+            if not symbol_normalizer.is_yahoo_style(s)
+        ]
+
+        try:
+            # Lazy session still needed for option-chain and future browser paths.
+            session = await get_quote_session()
+        except RuntimeError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "available": False,
+                    "reason": str(exc),
+                    "provider": "scrapling",
+                },
+            )
 
         # Index fetch (NIFTY, BANKNIFTY, etc.)
         if index_symbols:
-            idx_results = await _fetch_index_quotes(index_symbols)
-            results_map.update(idx_results)
+            try:
+                idx_results = await asyncio.wait_for(
+                    _fetch_index_quotes(index_symbols), timeout=_SESSION_TIMEOUT
+                )
+                results_map.update(idx_results)
+            except asyncio.TimeoutError:
+                logger.warning("index_fetch_timeout", symbols=index_symbols)
+                return JSONResponse(
+                    status_code=503,
+                    content={"available": False, "reason": "index fetch timed out", "provider": "scrapling"},
+                )
 
         # Batch fetch for NIFTY 200 members
         if constituents:
-            batch_results = await _fetch_batch_quotes(session, constituents)
-            results_map.update(batch_results)
+            try:
+                batch_results = await asyncio.wait_for(
+                    _fetch_batch_quotes(session, constituents), timeout=_SESSION_TIMEOUT
+                )
+                results_map.update(batch_results)
+            except asyncio.TimeoutError:
+                logger.warning("batch_fetch_timeout", symbols=constituents)
+                return JSONResponse(
+                    status_code=503,
+                    content={"available": False, "reason": "batch fetch timed out", "provider": "scrapling"},
+                )
 
         # Per-symbol fetch for non-constituents
-        for sym in non_constituents:
-            quote = await _fetch_single_quote(session, sym)
-            results_map[sym] = quote
+        for sym in non_constituents_valid:
+            try:
+                quote = await asyncio.wait_for(
+                    _fetch_single_quote(session, sym), timeout=_SESSION_TIMEOUT
+                )
+                results_map[sym] = quote
+            except asyncio.TimeoutError:
+                logger.warning("single_fetch_timeout", symbol=sym)
+                results_map[sym] = None
 
         # ------------------------------------------------------------------
         # 4. Write newly-fetched quotes back to Redis cache

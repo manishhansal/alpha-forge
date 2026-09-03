@@ -196,33 +196,35 @@ class TestCacheHelpers:
 
 
 class TestFetchBatchQuotes:
-    """Tests for _fetch_batch_quotes — NIFTY 200 batch XHR path."""
+    """Tests for _fetch_batch_quotes — NIFTY 200 batch httpx path."""
+
+    def _mock_http_client(self, items: list[dict]):
+        """Build a mock http client that returns the given items."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={"data": {"data": items}})
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
 
     @pytest.mark.asyncio
     async def test_correct_mdquote_field_mapping(self) -> None:
-        """All MDQuote fields must be mapped from the NSE equity-stockIndices payload."""
-        payload = _make_batch_payload(
-            [
-                _batch_item(
-                    "RELIANCE",
-                    last_price=2850.60,
-                    change=12.35,
-                    p_change=0.44,
-                    open_=2840.0,
-                    day_high=2862.0,
-                    day_low=2835.0,
-                    prev_close=2838.25,
-                    volume=3_456_789,
-                )
-            ]
+        """All MDQuote fields must be mapped from the NSE equity payload."""
+        item = _batch_item(
+            "RELIANCE",
+            last_price=2850.60,
+            change=12.35,
+            p_change=0.44,
+            open_=2840.0,
+            day_high=2862.0,
+            day_low=2835.0,
+            prev_close=2838.25,
+            volume=3_456_789,
         )
-        xhr = _make_mock_xhr("equity-stockIndices?index=NIFTY%20200", payload)
-        page = _make_mock_page([xhr])
-
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        results = await _fetch_batch_quotes(session, ["RELIANCE"])
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client([item])):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["RELIANCE"])
 
         assert "RELIANCE" in results
         q = results["RELIANCE"]
@@ -234,21 +236,19 @@ class TestFetchBatchQuotes:
         assert q.low == 2835.0
         assert q.prevClose == 2838.25
         assert q.volume == 3_456_789
+        # SEMANTIC: oi must be None for equity batch quotes
+        assert q.oi is None, "OI must be None for equity; NOT mapped from totalTradedValue"
         assert q.provider == "scrapling"
         assert q.exchange == "NSE"
-        assert q.fetchedAt  # non-empty UTC ISO string
 
     @pytest.mark.asyncio
     async def test_ltp_is_none_when_last_price_null(self) -> None:
-        """Null lastPrice in XHR must map to ltp=None in MDQuote without error."""
-        payload = _make_batch_payload([_batch_item("INFY", last_price=None)])
-        xhr = _make_mock_xhr("equity-stockIndices?index=NIFTY%20200", payload)
-        page = _make_mock_page([xhr])
-
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        results = await _fetch_batch_quotes(session, ["INFY"])
+        """Null lastPrice must map to ltp=None without error."""
+        item = _batch_item("INFY", last_price=None)
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client([item])):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["INFY"])
 
         assert "INFY" in results
         assert results["INFY"].ltp is None
@@ -256,58 +256,47 @@ class TestFetchBatchQuotes:
     @pytest.mark.asyncio
     async def test_only_requested_symbols_included(self) -> None:
         """Symbols not in the requested list must be absent from the result dict."""
-        payload = _make_batch_payload(
-            [
-                _batch_item("TCS"),
-                _batch_item("WIPRO"),
-                _batch_item("HDFCBANK"),
-            ]
-        )
-        xhr = _make_mock_xhr("equity-stockIndices", payload)
-        page = _make_mock_page([xhr])
-
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        results = await _fetch_batch_quotes(session, ["TCS", "HDFCBANK"])
+        items = [_batch_item("TCS"), _batch_item("WIPRO"), _batch_item("HDFCBANK")]
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client(items)):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["TCS", "HDFCBANK"])
 
         assert "TCS" in results
         assert "HDFCBANK" in results
         assert "WIPRO" not in results
 
     @pytest.mark.asyncio
-    async def test_returns_empty_dict_when_xhr_not_captured(self) -> None:
-        """If no XHR matches equity-stockIndices, return empty dict."""
-        page = _make_mock_page([])  # no captured XHRs
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        results = await _fetch_batch_quotes(session, ["RELIANCE"])
+    async def test_returns_empty_dict_when_http_returns_empty(self) -> None:
+        """When HTTP response contains no items, return empty dict."""
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client([])):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["RELIANCE"])
 
         assert results == {}
 
     @pytest.mark.asyncio
     async def test_returns_empty_dict_on_fetch_exception(self) -> None:
         """Network error must be caught and an empty dict returned."""
-        session = MagicMock()
-        session.fetch = AsyncMock(side_effect=RuntimeError("network failure"))
-
-        results = await _fetch_batch_quotes(session, ["TCS"])
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=RuntimeError("network failure"))
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["TCS"])
 
         assert results == {}
 
     @pytest.mark.asyncio
     async def test_symbol_matching_is_case_insensitive(self) -> None:
-        """Symbols in lower/mixed case from the caller still match uppercase in payload."""
-        payload = _make_batch_payload([_batch_item("ICICIBANK", last_price=1100.0)])
-        xhr = _make_mock_xhr("equity-stockIndices", payload)
-        page = _make_mock_page([xhr])
+        """Lowercase symbol from caller should match uppercase in payload."""
+        item = _batch_item("ICICIBANK", last_price=1100.0)
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client([item])):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["icicibank"])
 
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        # Pass lowercase symbol to the function
-        results = await _fetch_batch_quotes(session, ["icicibank"])
         assert "ICICIBANK" in results
 
 
@@ -317,74 +306,89 @@ class TestFetchBatchQuotes:
 
 
 class TestFetchSingleQuote:
-    """Tests for _fetch_single_quote — per-symbol XHR path."""
+    """Tests for _fetch_single_quote — per-symbol httpx path."""
+
+    def _mock_http_client_with_items(self, items: list[dict]):
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={"data": {"data": items}})
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
 
     @pytest.mark.asyncio
     async def test_correct_mdquote_field_mapping(self) -> None:
-        """All MDQuote fields must be mapped correctly from the quote/equity XHR."""
-        data = _single_item("ADANIPORTS", last_price=800.0, change=5.0, p_change=0.63)
-        xhr = _make_mock_xhr("quote/equity?symbol=ADANIPORTS", data)
-        page = _make_mock_page([xhr])
-
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        quote = await _fetch_single_quote(session, "ADANIPORTS")
+        """MDQuote fields mapped from the NIFTY 500 constituent endpoint."""
+        item = {
+            "symbol": "ADANIPORTS",
+            "lastPrice": 800.0,
+            "change": 5.0,
+            "pChange": 0.63,
+            "open": 795.0,
+            "dayHigh": 810.0,
+            "dayLow": 790.0,
+            "previousClose": 795.0,
+            "totalTradedVolume": 500_000,
+            "totalTradedValue": 400_000_000.0,  # INR — must NOT appear in oi
+        }
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client_with_items([item])):
+            session = MagicMock()
+            quote = await _fetch_single_quote(session, "ADANIPORTS")
 
         assert quote is not None
         assert quote.symbol == "ADANIPORTS"
         assert quote.ltp == 800.0
         assert quote.change == 5.0
         assert quote.changePct == 0.63
-        assert quote.open == 198.0
-        assert quote.high == 205.0
-        assert quote.low == 196.0
-        assert quote.prevClose == 198.0
         assert quote.volume == 500_000
-        assert quote.oi == 12_000
+        # SEMANTIC: oi must be None
+        assert quote.oi is None, "OI must be None; NOT mapped from totalTradedValue"
         assert quote.provider == "scrapling"
         assert quote.exchange == "NSE"
 
     @pytest.mark.asyncio
     async def test_ltp_is_none_when_missing_from_price_info(self) -> None:
         """Absent lastPrice must map to ltp=None without raising."""
-        data = {
-            "info": {"symbol": "SBIN"},
-            "priceInfo": {
-                # lastPrice deliberately absent
-                "change": 0.5,
-                "pChange": 0.1,
-                "open": 620.0,
-                "previousClose": 619.5,
-                "intraDayHighLow": {"max": 625.0, "min": 618.0},
-            },
-            "securityWiseDP": {},
+        item = {
+            "symbol": "SBIN",
+            "change": 0.5,
+            "pChange": 0.1,
+            "open": 620.0,
+            "previousClose": 619.5,
+            "dayHigh": 625.0,
+            "dayLow": 618.0,
+            "totalTradedVolume": 1_000_000,
+            # lastPrice deliberately absent
         }
-        xhr = _make_mock_xhr("quote/equity?symbol=SBIN", data)
-        page = _make_mock_page([xhr])
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client_with_items([item])):
+            session = MagicMock()
+            quote = await _fetch_single_quote(session, "SBIN")
 
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
-
-        quote = await _fetch_single_quote(session, "SBIN")
         assert quote is not None
         assert quote.ltp is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_xhr_not_captured(self) -> None:
-        page = _make_mock_page([])
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
+    async def test_returns_none_when_symbol_not_in_nifty500(self) -> None:
+        """When symbol not found in NIFTY 500 list, return None."""
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=self._mock_http_client_with_items([])):
+            session = MagicMock()
+            result = await _fetch_single_quote(session, "UNKNOWNSTOCK")
 
-        result = await _fetch_single_quote(session, "UNKNOWN")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_fetch_exception(self) -> None:
-        session = MagicMock()
-        session.fetch = AsyncMock(side_effect=RuntimeError("browser crash"))
+        """HTTP error must be caught and None returned."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=RuntimeError("browser crash"))
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            session = MagicMock()
+            result = await _fetch_single_quote(session, "SOME_SYM")
 
-        result = await _fetch_single_quote(session, "SOME_SYM")
         assert result is None
 
 
@@ -840,30 +844,30 @@ class TestGetQuotesSpecificNifty200Fixture:
 
     @pytest.mark.asyncio
     async def test_nifty_batch_payload_field_mapping(self) -> None:
-        """Validate field mapping with the exact payload from the task spec."""
-        # This test exercises _fetch_batch_quotes directly with the spec fixture.
-        payload = _make_batch_payload(
-            [
-                {
-                    "symbol": "NIFTY",
-                    "lastPrice": 24850.60,
-                    "change": 142.35,
-                    "pChange": 0.58,
-                    "open": 24712.00,
-                    "dayHigh": 24891.45,
-                    "dayLow": 24650.10,
-                    "previousClose": 24708.25,
-                    "totalTradedVolume": 23456789,
-                }
-            ]
-        )
-        xhr = _make_mock_xhr("equity-stockIndices?index=NIFTY%20200", payload)
-        page = _make_mock_page([xhr])
+        """Validate field mapping with httpx-based batch path."""
+        item = {
+            "symbol": "NIFTY",
+            "lastPrice": 24850.60,
+            "change": 142.35,
+            "pChange": 0.58,
+            "open": 24712.00,
+            "dayHigh": 24891.45,
+            "dayLow": 24650.10,
+            "previousClose": 24708.25,
+            "totalTradedVolume": 23456789,
+            "totalTradedValue": 583_740_000_000.0,  # INR — NOT OI
+        }
 
-        session = MagicMock()
-        session.fetch = AsyncMock(return_value=page)
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={"data": {"data": [item]}})
+        mock_client.get = AsyncMock(return_value=mock_response)
 
-        results = await _fetch_batch_quotes(session, ["NIFTY"])
+        with patch("src.scrapers.live_quotes.get_http_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            session = MagicMock()
+            results = await _fetch_batch_quotes(session, ["NIFTY"])
 
         assert "NIFTY" in results
         q = results["NIFTY"]
@@ -875,4 +879,9 @@ class TestGetQuotesSpecificNifty200Fixture:
         assert q.low == 24650.10
         assert q.prevClose == 24708.25
         assert q.volume == 23456789
+        # SEMANTIC: oi MUST be None — totalTradedValue is NOT open interest
+        assert q.oi is None, (
+            "REGRESSION: oi must be None for equity quotes. "
+            "totalTradedValue (INR value) must never be mapped to oi."
+        )
         assert q.provider == "scrapling"

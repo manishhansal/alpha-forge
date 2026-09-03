@@ -408,52 +408,74 @@ def compute_pcr_volume(rows: list[OptionChainRow]) -> float | None:
 
 
 def compute_max_pain(rows: list[OptionChainRow]) -> float | None:
-    """Compute the max pain strike price.
+    """Compute the max pain strike price using an efficient O(N log N) algorithm.
 
-    For each candidate strike ``S``, the total ITM option value (pain) is:
+    Phase 39 fix: replaces the previous O(N²) implementation.
 
-        pain(S) = Σ_k [ max(0, S - k) × CE_OI_k  +  max(0, k - S) × PE_OI_k ]
+    The max pain strike is the price at which the maximum number of options
+    expire worthless (minimum total option value / "pain" to holders).
 
-    Returns the strike ``S*`` that minimises ``pain(S*)``.  When multiple
-    strikes share the minimum pain value, the one with the highest CE OI is
-    returned (tie-break by highest CE OI; if still tied, the lowest strike wins
-    because ``rows`` is sorted ascending by strike).
+    For each candidate strike S:
+        pain(S) = Σ_k [ max(0, S-k) × CE_OI_k + max(0, k-S) × PE_OI_k ]
 
-    Returns ``None`` when ``rows`` is empty.
+    Efficient approach using prefix sums:
+    - CE pain at S: sum of (S - k) * CE_OI_k for all k < S
+      = S * cumulative_CE_OI_below_S - cumulative_CE_value_below_S
+    - PE pain at S: sum of (k - S) * PE_OI_k for all k > S
+      = cumulative_PE_value_above_S - S * cumulative_PE_OI_above_S
 
-    **Validates: Requirements 4.6**
+    This reduces from O(N²) to O(N log N) (sort) + O(N) (prefix sums).
+
+    Returns the strike S* that minimises total pain.
+    Returns None when rows is empty.
     """
     if not rows:
         return None
 
-    strikes = [r.strike for r in rows]
+    # Sort strikes ascending
+    sorted_rows = sorted(rows, key=lambda r: r.strike)
+    n = len(sorted_rows)
+    strikes = [r.strike for r in sorted_rows]
 
-    def pain_at(s: float) -> float:
-        total = 0.0
-        for r in rows:
-            ce_oi = r.ce.oi if r.ce else 0
-            pe_oi = r.pe.oi if r.pe else 0
-            total += max(0.0, s - r.strike) * ce_oi
-            total += max(0.0, r.strike - s) * pe_oi
-        return total
+    # Extract OI arrays (0 when contract absent)
+    ce_oi = [r.ce.oi if r.ce else 0 for r in sorted_rows]
+    pe_oi = [r.pe.oi if r.pe else 0 for r in sorted_rows]
 
-    min_pain = min(pain_at(s) for s in strikes)
-    candidates = [s for s in strikes if pain_at(s) == min_pain]
+    # Build prefix sums for CE (left-to-right)
+    # cumCeOi[i]  = sum of ce_oi[0..i-1]
+    # cumCeVal[i] = sum of ce_oi[j] * strikes[j] for j in 0..i-1
+    cum_ce_oi = [0.0] * (n + 1)
+    cum_ce_val = [0.0] * (n + 1)
+    for i in range(n):
+        cum_ce_oi[i + 1] = cum_ce_oi[i] + ce_oi[i]
+        cum_ce_val[i + 1] = cum_ce_val[i] + ce_oi[i] * strikes[i]
 
-    if len(candidates) == 1:
-        return candidates[0]
+    # Build suffix sums for PE (right-to-left)
+    # sfxPeOi[i]  = sum of pe_oi[i..n-1]
+    # sfxPeVal[i] = sum of pe_oi[j] * strikes[j] for j in i..n-1
+    sfx_pe_oi = [0.0] * (n + 1)
+    sfx_pe_val = [0.0] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        sfx_pe_oi[i] = sfx_pe_oi[i + 1] + pe_oi[i]
+        sfx_pe_val[i] = sfx_pe_val[i + 1] + pe_oi[i] * strikes[i]
 
-    # Tie-break: highest CE OI; secondary tie-break (lowest strike) falls
-    # out naturally because ``strikes`` (and thus ``candidates``) is sorted
-    # ascending — ``max`` with a stable sort picks the first (lowest) when
-    # CE OI values are equal.
-    def ce_oi_at(s: float) -> int:
-        row = next((r for r in rows if r.strike == s), None)
-        return row.ce.oi if row and row.ce else 0
+    # Compute pain for each strike using prefix/suffix sums
+    # pain(S[i]) = CE_pain(S[i]) + PE_pain(S[i])
+    # CE_pain(S[i]) = S[i] * cum_ce_oi[i] - cum_ce_val[i]  (all strikes < S[i])
+    # PE_pain(S[i]) = sfx_pe_val[i+1] - S[i] * sfx_pe_oi[i+1]  (all strikes > S[i])
+    min_pain = float("inf")
+    min_pain_strike = strikes[0]
 
-    # Sort candidates descending by CE OI, then ascending by strike (lowest wins)
-    candidates.sort(key=lambda s: (-ce_oi_at(s), s))
-    return candidates[0]
+    for i in range(n):
+        s = strikes[i]
+        ce_pain = s * cum_ce_oi[i] - cum_ce_val[i]
+        pe_pain = sfx_pe_val[i + 1] - s * sfx_pe_oi[i + 1]
+        total_pain = ce_pain + pe_pain
+        if total_pain < min_pain:
+            min_pain = total_pain
+            min_pain_strike = s
+
+    return min_pain_strike
 
 
 def compute_atm_iv(rows: list[OptionChainRow], spot: float | None) -> float | None:

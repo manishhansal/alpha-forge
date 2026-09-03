@@ -70,6 +70,7 @@ ml-service/catboost_info/
 data-service/__pycache__/
 data-service/**/__pycache__/
 data-service/*.pyc
+data-service/**/*.pyc
 data-service/.venv/
 data-service/venv/
 data-service/.mypy_cache/

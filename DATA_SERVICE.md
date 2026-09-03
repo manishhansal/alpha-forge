@@ -1,13 +1,17 @@
 # AlphaForge Data Service
 
-Standalone reference for the `data-service` Python microservice — the credential-free Indian market data layer that scrapes NSE and publishes live ticks to Redis.
+**Version: 2.0.0** (V2 upgrade completed September 2026)
+
+Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency market-data foundation for AlphaForge.
+
+> **V2 Summary:** The V2 upgrade fixed a critical silent semantic corruption (OI was being mapped from INR traded value), added institutional-grade data quality infrastructure (timestamp engine, freshness engine, market session engine, deduplication, gap detection, circuit breakers, data lineage, candle builder), and increased test coverage from 112 to 307 tests. See `data-service/reports/DATA_SERVICE_V2_CERTIFICATION.md` for full status.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Architecture](#2-architecture)
+2. [V2 Architecture](#2-v2-architecture)
 3. [Configuration](#3-configuration)
 4. [Docker & Networking](#4-docker--networking)
 5. [API Endpoints](#5-api-endpoints)
@@ -18,9 +22,10 @@ Standalone reference for the `data-service` Python microservice — the credenti
 10. [Tick Publisher](#10-tick-publisher)
 11. [Anti-Ban Layer](#11-anti-ban-layer)
 12. [Redis Schema](#12-redis-schema)
-13. [Bug-Fix Log](#13-bug-fix-log)
-14. [Known Limitations](#14-known-limitations)
-15. [Development Guide](#15-development-guide)
+13. [Data Quality Infrastructure](#13-data-quality-infrastructure)
+14. [V2 Bug-Fix Log](#14-v2-bug-fix-log)
+15. [Known Limitations](#15-known-limitations)
+16. [Development Guide](#16-development-guide)
 
 ---
 
@@ -700,4 +705,182 @@ redis-cli SUBSCRIBE af:ticks:NIFTY
 
 # List all tick channels
 redis-cli KEYS "af:ticks:*"
+```
+
+---
+
+## 13. Data Quality Infrastructure (V2)
+
+### Semantic Integrity (Phase 3 — CRITICAL FIX)
+
+**The most important V2 fix:** `oi` was previously mapped from `totalTradedValue` (INR amount), not from actual open interest. This is now fixed.
+
+| Field | Meaning | NSE Source |
+|-------|---------|-----------|
+| `oi` | Open interest (contracts) | `openInterest` — F&O only; `null` for equity |
+| `tradedValue` | INR traded value | `totalTradedValue` — NEVER mapped to OI |
+| `volume` | Share/contract count | `totalTradedVolume` |
+
+### V2 New Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health/live` | Process liveness — always 200 |
+| `GET` | `/health/ready` | Dependency readiness (Redis, publisher) |
+| `GET` | `/health/data` | Data quality status (freshness, gaps) |
+
+### Data Quality Gate
+
+The signal engine should check `DataQualityGate.signalEngineAllowed` before using any data:
+
+```python
+from src.core.data_quality import build_quality_gate
+
+gate = build_quality_gate(
+    quote_age_ms=quote_age,
+    symbol="NIFTY",
+    provider_healthy=True,
+)
+if gate.signalEngineAllowed:
+    # proceed with signal generation
+```
+
+### Data Confidence Score
+
+Every observation carries a confidence score (0–95). Never 100.
+
+```
+FRESH data + COMPLETE + HEALTHY provider + VALID timestamp ≈ 92
+STALE data (45s) + COMPLETE + HEALTHY provider ≈ 57
+HTTP 200 alone: NOT reported as 100
+```
+
+### Freshness Tiers
+
+| Tier | Symbols | FRESH threshold |
+|------|---------|----------------|
+| INDEX | NIFTY, BANKNIFTY, etc. | <10s |
+| FNO_LIQUID | RELIANCE, HDFCBANK, etc. | <10s |
+| FNO_NORMAL | Other F&O | <15s |
+| EQUITY | Non-F&O | <30s |
+| OFFMARKET | Outside session | <300s |
+
+### Candle Builder V2
+
+Intraday candles are anchored to NSE session open (09:15 IST):
+
+```python
+from src.engines.candle_builder import CandleBuilderV2
+
+builder = CandleBuilderV2("NSE:NIFTY", "5m", symbol="NIFTY")
+closed_candle, partial_candle = builder.update(ltp=24850.0, event_time_ms=ts_ms)
+# closed_candle is None until slot advances
+# partial_candle.isComplete = False (signal engine must not use as confirmed)
+```
+
+### Symbol Normalization
+
+```python
+from src.core.symbol_normalizer import symbol_normalizer
+
+symbol_normalizer.normalize("NSE:RELIANCE")  # → "RELIANCE"
+symbol_normalizer.normalize("^NSEI")          # → "NIFTY"
+symbol_normalizer.normalize("RELIANCE.NS")    # → "RELIANCE"
+symbol_normalizer.normalize("NIFTY 50")       # → "NIFTY"
+```
+
+---
+
+## 14. V2 Bug-Fix Log
+
+### BUG-SEMANTIC-01 — `oi` mapped to `totalTradedValue` [P0, FIXED in V2]
+
+`oi=_int(item.get("totalTradedValue"))` → produces OI = 4,275,000,000 for RELIANCE (INR amount, not contracts). **Fixed to `oi=None` for all equity quotes.**
+
+### BUG-SESSION-WARMER-01 — Warmer didn't refresh production sessions [HIGH, FIXED in V2]
+
+Session warmer created an ephemeral browser; production singletons were never refreshed. **Fixed: warmer now calls `reset_quote_session()` and `reset_chain_session()` after successful warm.**
+
+### BUG-HTTP-POOL-01 — New TCP connection per request [MEDIUM, FIXED in V2]
+
+`async with httpx.AsyncClient() as client:` inside every fetch created a new TLS connection per call. **Fixed: persistent `AsyncClient` singleton with keep-alive.**
+
+### BUG-MAXPAIN-01 — O(N²) max pain computation [MEDIUM, FIXED in V2]
+
+`compute_max_pain()` called `pain_at(s)` twice per candidate strike, each iterating all N rows. **Fixed to O(N log N) using prefix/suffix sums. 200 strikes: <2ms measured.**
+
+*(For V1 bug fixes BUG-01 through BUG-06, see the original Bug-Fix Log section.)*
+
+---
+
+## 15. Known Limitations (Updated V2)
+
+| Limitation | Detail | V2 Status |
+|-----------|--------|-----------|
+| Equity OI unavailable | NSE NextApi does not expose equity OI | `oi=null` (correct behavior) |
+| No Greeks from NSE | NSE public option chain has no delta/gamma/theta/vega | `null` fields — not zero |
+| Index volume unavailable | `getIndexData&&type=All` doesn't expose volume | `volume=null` |
+| NIFTY 500+ symbols slower | Single-symbol path, one HTTP request each | Known limitation |
+| `grapthData` typo in NSE charting API | NSE-side typo preserved intentionally | Monitored |
+| No adjusted historical prices | NSE Bhavcopy is raw exchange prices | Use Yahoo for adjusted |
+| 5s polling = near-real-time | Not exchange tick-by-tick | Documented |
+| BSE daily is slow (per-day downloads) | ~260s for 5 years on one symbol | Use Yahoo for BSE history |
+
+---
+
+## 16. Development Guide
+
+### Running Tests
+
+```bash
+cd data-service
+# Fast suite (no live network)
+python3 -m pytest tests/ --ignore=tests/scrapers/test_historical.py \
+  --ignore=tests/scrapers/test_instrument_master.py \
+  --ignore=tests/scrapers/test_option_chain.py \
+  --ignore=tests/publisher/ --ignore=tests/pbt/ -q
+
+# Full suite (some tests may need live network)
+python3 -m pytest tests/ -q
+```
+
+### Key V2 Modules
+
+```bash
+# Test semantic integrity (critical — must always pass)
+python3 -m pytest tests/core/test_semantic_integrity.py -v
+
+# Test max pain performance
+python3 -m pytest tests/scrapers/test_max_pain_performance.py -v
+
+# Test timestamp engine
+python3 -m pytest tests/engines/test_timestamp_engine.py -v
+```
+
+### V2 Data Flow Verification
+
+```bash
+# Check health
+curl http://localhost:8200/health/live
+curl http://localhost:8200/health/ready
+curl http://localhost:8200/health/data
+
+# Verify OI is null for equity (semantic fix)
+curl "http://localhost:8200/scraping/quotes?symbols=RELIANCE" | python3 -m json.tool | grep '"oi"'
+# Expected: "oi": null
+# If "oi": <large_number> — semantic regression has occurred
+```
+
+### Checking Data Quality
+
+```python
+from src.engines.freshness_engine import freshness_engine
+from src.core.data_quality import build_quality_gate
+
+# Check if a quote is fresh enough for signals
+quote_age_ms = 5000  # 5 seconds
+gate = build_quality_gate(quote_age_ms, symbol="NIFTY")
+print(gate.signalEngineAllowed)  # True if all gates pass
+print(gate.confidenceScore)      # 0–95
+print(gate.blockReason)          # None or explanation
 ```
