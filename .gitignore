@@ -93,3 +93,7 @@ ml-service/artifacts/vol_surface*
 ml-service/.hypothesis/
 tests/.hypothesis/
 ml-service/tests/.hypothesis/
+data-service/reports/FNO_COVERAGE_*.json
+data-service/reports/LATENCY_MEASUREMENT_*.json
+data-service/reports/MARKET_OPEN_SOAK_*.json
+data-service/reports/MEMORY_SOAK_*.json

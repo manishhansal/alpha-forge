@@ -37,13 +37,28 @@ REDIS_URL = "redis://localhost:6399/15"  # DB 15 — test isolation
 @pytest.fixture
 async def redis_client():
     """Live redis.asyncio client connected to test instance."""
-    redis = pytest.importorskip("redis.asyncio", reason="redis package required")
-    client = await redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-    # Flush test DB before each test
-    await client.flushdb()
+    try:
+        import redis.asyncio as aioredis
+    except ImportError:
+        pytest.skip("redis package not installed")
+    try:
+        client = await aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+        await client.ping()
+    except Exception as exc:
+        pytest.skip(
+            f"Redis not available at {REDIS_URL}: {exc}. "
+            "Start with: redis-server --port 6399. Evidence: NOT_TESTED"
+        )
+    try:
+        await client.flushdb()
+    except Exception:
+        pass
     yield client
-    await client.flushdb()
-    await client.aclose()
+    try:
+        await client.flushdb()
+        await client.aclose()
+    except Exception:
+        pass
 
 
 @pytest.fixture
