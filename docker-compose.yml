@@ -56,6 +56,8 @@ services:
       FEATURE_CACHE_TTL: "60"
       # The ML service can call the Next.js app for data if needed
       NEXTJS_API_BASE_URL: "http://host.docker.internal:3000/api/in"
+      # Scrapling data service — Tier 0 OHLCV source for ML training pipeline
+      DATA_SERVICE_URL: "http://data-service:8200"
     ports:
       - "8100:8100"
     volumes:
@@ -81,6 +83,52 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      data-service:
+        condition: service_started
+
+  # ─── Data Service (Python Scrapling-based market data scraper) ──────────────
+  data-service:
+    build:
+      context: ./data-service
+      dockerfile: Dockerfile
+    container_name: alpha-forge-data
+    restart: unless-stopped
+    # Chromium's built-in async DNS resolver refuses loopback addresses, so it
+    # cannot use Docker's default 127.0.0.11 nameserver.  Override with Google's
+    # public DNS so Playwright can resolve external hostnames.
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      DATA_SERVICE_PORT: "8200"
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+      SCRAPLING_HEADLESS: "true"
+      NSE_RATE_LIMIT: "3"
+      BSE_RATE_LIMIT: "2"
+      BAN_BACKOFF_SECONDS: "60"
+      SCRAPLING_PROXY_URL: ""
+    ports:
+      - "8200:8200"
+    volumes:
+      - data_service_cache:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8200/health'); r.raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - alphaforge
+    depends_on:
       redis:
         condition: service_healthy
 
@@ -149,6 +197,7 @@ volumes:
   postgres_data:
   redis_data:
   ml_artifacts:
+  data_service_cache:
 
 networks:
   alphaforge:
