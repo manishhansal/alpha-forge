@@ -43,6 +43,7 @@ import { DEFAULT_SELECTIONS } from "@/features/settings/data-sources-shared";
 import type { AiMarketContext } from "@/types/ai-signals";
 import type { AiSignal } from "@/types/ai-signals";
 import type { OptionChain } from "@/types/india";
+import { cache as indiaCache } from "@/services/india/cache";
 
 import {
   buildDailyPicks,
@@ -80,6 +81,21 @@ const OPENING_BREAKOUT_PICKS = 3;
 
 /** Spec target: every bucket carries up to N picks. Used by the top-up freeze. */
 const TARGET_PER_BUCKET = 3;
+
+/**
+ * How long the fully-assembled DailyPicksResponse is kept in the
+ * shared India cache. This wraps the *entire* board (DB reads, option chain
+ * re-pricing, sector watch, ORB signals) — not just the candidate scoring.
+ *
+ * 15 s is short enough that live P&L tracking stays near-real-time, but
+ * long enough to collapse the flood of concurrent requests that arrive when
+ * a user navigates to the page (SSR render + client hydration poll +
+ * Signal Center fan-out all hit the same cold path within the same second).
+ *
+ * The key is scoped to the IST trade-date so it naturally evicts at midnight
+ * without any explicit purge: a new day always misses.
+ */
+const BOARD_CACHE_TTL_MS = 15_000;
 
 const isExternalBucket = (bucket: string): boolean =>
   (EXTERNAL_BUCKETS as readonly string[]).includes(bucket);
@@ -872,12 +888,48 @@ function computeMissingRanks(existing: number[], target: number): number[] {
 /**
  * Build today's Daily Picks board — frozen + live-tracked when Postgres is
  * reachable, ephemeral otherwise.
+ *
+ * The assembled response is memoised for BOARD_CACHE_TTL_MS (15 s) in the
+ * shared India cache. This collapses concurrent page renders, Signal Center
+ * fan-outs and client-poll requests that all arrive within the same second
+ * onto a single execution, eliminating redundant DB reads and option-chain
+ * refetches between requests.
+ *
+ * When a `prisma` instance is explicitly supplied (worker path) the memo is
+ * bypassed — the worker owns its own tick cadence and must always run fresh.
  */
 export async function getIndiaDailyPicks(
   prisma?: PrismaClient,
 ): Promise<DailyPicksResponse> {
   const now = Date.now();
   const tradeDate = istDateKey(new Date(now));
+
+  // Worker callers pass their own prisma instance — skip the cache so the
+  // worker's 60s tick always persists fresh tracking data.
+  if (prisma) {
+    return _buildDailyPicksResponse(prisma, tradeDate, now);
+  }
+
+  // All API-route / page callers share the same 15s window so that:
+  //   • SSR render + client hydration poll + Signal Center fan-out that all
+  //     arrive within the same second share ONE execution.
+  //   • The cache key is scoped to tradeDate so it evicts naturally at midnight.
+  return indiaCache.memo(
+    `daily-picks:board:v1:${tradeDate}`,
+    BOARD_CACHE_TTL_MS,
+    () => _buildDailyPicksResponse(undefined, tradeDate, now),
+  );
+}
+
+/**
+ * Core implementation — separated from the public function so it can be
+ * called directly (worker, bypassing cache) or via the memo wrapper.
+ */
+async function _buildDailyPicksResponse(
+  prisma: PrismaClient | undefined,
+  tradeDate: string,
+  now: number,
+): Promise<DailyPicksResponse> {
 
   // INDICES_SCALP picks need live option chains both at freeze time (to pick
   // the ATM strike + entry premium) and on every refresh (to re-price the

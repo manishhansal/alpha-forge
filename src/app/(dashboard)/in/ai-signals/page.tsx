@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { unstable_cache } from "next/cache";
 
 import { AiSignalsBoard } from "@/components/ai-signals/ai-signals-board";
 import { IndiaBestTimeBanner } from "@/components/india/best-time/india-best-time-banner";
@@ -20,8 +21,31 @@ export const metadata = {
     "Multi-confluence AI trading signals for NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY and high-liquidity F&O leaders — PCR, IV, OI build-up, max-pain, scanner agreement, session quality, all rolled into a confidence-scored trade plan.",
 };
 
+/**
+ * Next.js Data Cache wrapper for the AI signals SSR fetch.
+ *
+ * Without this, every page navigation calls getIndiaAiSignals() on the
+ * server — a 15–25s cold-path that blocks the entire page render until
+ * all 29 symbols' historical candles and option chains resolve.
+ *
+ * unstable_cache stores the result in Next.js's Data Cache (file-system in
+ * dev, edge-optimised in prod). A cache hit returns in <5ms.
+ *
+ * Staleness budget: this cache (20s) wraps the inner indiaCache.memo (60s),
+ * so worst-case a user sees data that is 20s (outer TTL) + up to 60s
+ * (inner TTL at the time the outer cache was populated) = up to 80s stale.
+ * This is acceptable for a daily-bar AI signal that updates once per minute.
+ * Setting the outer TTL below 60s ensures it expires more frequently than
+ * the inner memo, preventing them from expiring simultaneously (double-miss).
+ */
+const getCachedIndiaAiSignals = unstable_cache(
+  () => getIndiaAiSignals(),
+  ["india-ai-signals-ssr"],
+  { revalidate: 20 },
+);
+
 async function IndiaAiSignalsSection() {
-  const data = await getIndiaAiSignals();
+  const data = await getCachedIndiaAiSignals();
 
   // Map signals → AiRadarRow for the Quick Scan radar table
   const radarRows = data.signals.map((signal, i) =>
