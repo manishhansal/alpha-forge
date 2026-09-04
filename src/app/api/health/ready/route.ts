@@ -160,9 +160,8 @@ async function checkMlService(): Promise<DepResult> {
 async function checkMarketData(): Promise<DepResult> {
   const t0 = Date.now();
   try {
-    const { getProviderRegistry } = await import("@/lib/market-data/registry");
-    const registry = getProviderRegistry();
-    const providers = registry.getEnabledProviders();
+    const { registry } = await import("@/lib/market-data/registry");
+    const providers = registry.enabled();
     const healthyCount = providers.filter((p) => {
       const h = p.provider.getProviderHealth?.();
       return h ? !h.circuitOpen : true;

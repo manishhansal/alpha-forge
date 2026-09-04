@@ -4,6 +4,152 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [V3.0.0] — India Market Data Fabric + Unified Signal Intelligence
+
+**Date:** 2026-09-03  
+**Certification Level:** LEVEL 2 — ARCHITECTURE CERTIFIED (NSE-free, provider-independent)  
+**Tests:** 3059 pass (3059 total — all existing + 12 new NSE elimination guard tests)  
+**Branch:** master (post-transformation)  
+**Reports:** `reports/INDIA_ARCHITECTURE_AUDIT_2026-09-03.md`, `reports/INDIA_PRODUCTION_READINESS_2026-09-03.md`
+
+### Summary
+
+Major architectural transformation of the Indian market data and signal intelligence subsystem. This release establishes a clean, provider-independent data fabric with strict hierarchy enforcement, complete NSE removal, secure Upstox OAuth, and a unified signal center.
+
+### NSE-001 — Direct NSE Data Acquisition Removed
+
+**Impact:** CRITICAL architectural fix  
+**Files:** `src/lib/market-data/providers/nse.ts`, `src/services/india/nse/index.ts`, `src/lib/market-data/registry.ts`, `src/lib/market-data/types.ts`, `src/lib/market-data/health.ts`, `src/lib/market-data/index.ts`, `package.json`
+
+All direct NSE data acquisition has been eliminated from production code:
+
+- `NseProvider` class replaced with tombstone (`NSE_PROVIDER_REMOVED_REASON` constant)
+- `stock-nse-india` npm package removed from `package.json`
+- `src/services/india/nse/index.ts` replaced with throwing stubs (forces migration)
+- `NseProvider` unregistered from `bootstrapRegistry()` — no longer in provider chain
+- `ProviderId` type union updated: `"nse"` removed
+- `PROVIDER_PRIORITY` constant updated: `["scrapling", "angel_one", "upstox", "yahoo"]`
+- `scanner/engine.ts` `indexChains()` migrated from `nse.getOptionChain()` → `registry.getOptionChain()`
+- `broker/factory.ts` — `getBrokerById("nse")` now returns `null`; `INDIA_BROKER=nse` falls back to yahoo
+
+**Why removed:**
+1. NSE anti-bot / shadow-banning causes silent data failures
+2. Automating NSE scraping violates their Terms of Service
+3. Cookie/session management is fragile and expensive
+4. Angel One SmartAPI and Upstox provide equivalent data via legitimate broker APIs with SLAs
+5. Option chain with live Greeks is only available from broker APIs (NSE provides none)
+
+**New provider chain:** `DATA_SERVICE (0) → ANGEL_ONE (1) → UPSTOX (2) → YAHOO (3)`
+
+### NSE-002 — NSE Elimination Architectural Guard Tests
+
+**Files:** `tests/lib/market-data/nse-elimination.test.ts` (NEW — 12 tests)
+
+Automated guard tests that fail immediately if production code re-introduces direct NSE acquisition:
+- `PROVIDER_PRIORITY` excludes `"nse"`
+- `ProviderId` type excludes `"nse"`
+- `nse.ts` exports no executable provider
+- `nse.getOptionChain()` throws
+- `getBrokerById("nse")` returns null
+- `bootstrapRegistry()` registers no NSE provider
+
+### UPSTOX-001 — Secure Upstox OAuth BFF
+
+**Impact:** HIGH security improvement  
+**Files:** `src/app/api/in/providers/upstox/connect/route.ts`, `src/app/api/in/providers/upstox/callback/route.ts`, `src/app/api/in/providers/upstox/disconnect/route.ts`, `src/app/api/in/providers/upstox/status/route.ts`, `src/lib/market-data/providers/upstox-token-state.ts` (all NEW)
+
+Complete server-side OAuth BFF for Upstox integration:
+
+- `/api/in/providers/upstox/connect` — initiates OAuth, returns authorization URL only (no secrets)
+- `/api/in/providers/upstox/callback` — server-side token exchange (UPSTOX_CLIENT_SECRET never leaves server)
+- `/api/in/providers/upstox/disconnect` — clears server-side token state
+- `/api/in/providers/upstox/status` — returns lifecycle state without any credentials
+
+**Token lifecycle states:** `DISCONNECTED → AUTHORIZING → CONNECTED → TOKEN_EXPIRING → TOKEN_EXPIRED → REAUTH_REQUIRED → ERROR`
+
+**Security invariants enforced:**
+- `UPSTOX_CLIENT_SECRET` used only in callback route (server-side)
+- Access token stored in Node.js process memory only (`_oauthState`)
+- No `NEXT_PUBLIC_UPSTOX_*` variables — confirmed by grep
+- Token values never in URL, logs, localStorage, or browser state
+- Frontend receives only: lifecycle state + timestamps (not token values)
+
+### SIGNAL-001 — Unified Indian Signal Center
+
+**Impact:** Major UX + deduplication fix  
+**Files:** `src/lib/india-signal-center/types.ts`, `src/lib/india-signal-center/aggregator.ts`, `src/app/api/in/signal-center/route.ts`, `src/app/(dashboard)/in/signal-center/page.tsx`, `src/components/india/signal-center/india-signal-center.tsx` (all NEW)
+
+One canonical signal envelope (`UnifiedIndiaSignal`) for all signal families with:
+- Explicit `signalFamily` (9 families) and `strategy` (33 strategies)
+- Mandatory `sourceAttribution` (format: `FAMILY:STRATEGY` — never "technical")
+- Full data quality metadata and lineage fields
+- Outcome tracking (MFE, MAE, pnlR)
+
+`OpportunityCluster` deduplication:
+- Same instrument + direction within 30-min window → one cluster
+- `independentConfirmations` = count of unique families (not signal count)
+- NIFTY LONG confirmed by AI + 2 scanners + Daily Pick = 1 opportunity, 4 confirmations
+
+New `/api/in/signal-center` endpoint aggregates all signal families with deduplication.  
+New `/in/signal-center` frontend page with expandable cluster cards.  
+Signal Center added to sidebar navigation.
+
+### DUP-001 — Cross-Timeframe Signal Duplication Fix
+
+**Impact:** Prevents ~3× inflation of paper trade counts  
+**File:** `src/features/india/scalping/paper-trader.ts`
+
+`existingOpenAnyTf` guard: if ANY timeframe for this strategy+symbol is already open, skip opening a new trade. Prevents 1m + 5m + 15m all opening independent trades for the same signal.
+
+### CONFIG-001 — Environment Variable Cleanup
+
+**Files:** `src/lib/env.ts`, `.env.example`
+
+- Added `UPSTOX_REDIRECT_URI`, `UPSTOX_ACCESS_TOKEN`, `INDIA_DATA_PROVIDER`, `SMARTAPI_*` to env schema
+- Added clear comment block documenting provider hierarchy
+- `INDIA_DATA_PROVIDER=auto` new variable (valid values: `"auto"` only — no `"nse"`)
+- `.env.example` updated with secure Upstox credential documentation
+
+### BROKER-001 — Broker API Client for Data Service
+
+**File:** `data-service/src/brokers/upstox_client.py` (NEW)
+
+New Python broker API client for the data-service that provides:
+- `get_quotes()` via Upstox `/v2/market-quote/quotes`
+- `get_historical_candles()` via Upstox `/v2/historical-candle/`
+- Full lineage recording per observation
+- Circuit breaker integration
+
+### SCAN-001 — Scanner Engine NSE Migration
+
+**File:** `src/services/india/scanner/engine.ts`
+
+`indexChains()` migrated from direct `nse.getOptionChain()` call to `registry.getOptionChain()`. Option chain now routes through: Data Service → Angel One → Upstox → (error if all unavailable). No direct NSE calls remain in the scanner engine.
+
+### REPORTS-001 — India Market Fabric Reports
+
+New reports generated in `reports/`:
+- `INDIA_ARCHITECTURE_AUDIT_2026-09-03.md` — complete pre-transformation baseline
+- `INDIA_DATA_ARCHITECTURE_2026-09-03.md` — target architecture specification
+- `PROVIDER_VALIDATION_2026-09-03.md` — provider validation results
+- `PROVIDER_HISTORICAL_PARITY_2026-09-03.md` — historical parity framework
+- `INDIA_DATA_COVERAGE_2026-09-03.md` — coverage framework
+- `INDIA_SIGNAL_INVENTORY_2026-09-03.md` — complete signal family registry
+- `INDIA_SIGNAL_UNIFICATION_2026-09-03.md` — unification design
+- `INDIA_SIGNAL_TODAY_2026-09-03.md` — today's session (NOT_TESTED, honest)
+- `INDIA_SIGNAL_PERFORMANCE_2026-09-03.md` — performance framework
+- `INDIA_SIGNAL_FALSE_POSITIVE_ANALYSIS_2026-09-03.md`
+- `INDIA_SIGNAL_FALSE_NEGATIVE_ANALYSIS_2026-09-03.md`
+- `INDIA_PAPER_TRADING_RECONCILIATION_2026-09-03.md`
+- `INDIA_DATA_FAILOVER_TEST_2026-09-03.md`
+- `INDIA_PRODUCTION_READINESS_2026-09-03.md` — certification matrix
+
+### Known Remaining Gaps (GATE-001)
+
+The DataQualityGate (`POST /data/gate`) is implemented in the Python data-service but is NOT yet called by the TypeScript signal engine before generating signals. This is the primary blocker for LEVEL 3 (Production Ready) certification. Wire `src/lib/data-service/gate-client.ts` → `POST /data/gate` in the signal engine to close this.
+
+---
+
 ## [V2.1.0] — Data Service Certification Closure & Production Hardening
 
 **Date:** 2026-09-03  

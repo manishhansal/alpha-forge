@@ -218,7 +218,7 @@ export function getProviderHealth(id: ProviderId): ProviderHealth {
 
 /** Return health snapshots for all known providers. */
 export function getAllProviderHealth(): ProviderHealth[] {
-  const allIds: ProviderId[] = ["scrapling", "angel_one", "upstox", "nse", "yahoo"];
+  const allIds: ProviderId[] = ["scrapling", "angel_one", "upstox", "yahoo"];
   return allIds.map(getProviderHealth);
 }
 

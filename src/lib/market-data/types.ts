@@ -10,13 +10,22 @@
 
 // ── Provider Identity ────────────────────────────────────────────────────────
 
-export type ProviderId = "scrapling" | "angel_one" | "upstox" | "nse" | "yahoo";
+/**
+ * Provider IDs in priority order:
+ *   0. scrapling  — Data Service canonical gateway (credential-free Bhavcopy + broker APIs)
+ *   1. angel_one  — Angel One SmartAPI (primary broker, live quotes, WS, option chain)
+ *   2. upstox     — Upstox v2/v3 (secondary broker, live quotes, WS, option chain)
+ *   3. yahoo      — Yahoo Finance (last-resort fallback, delayed, equity only)
+ *
+ * There is NO "nse" provider. Direct NSE data acquisition is prohibited in production.
+ * NSE exchange identifiers (NSE_EQ, NSE_FO, Exchange="NSE") are legitimate and remain.
+ */
+export type ProviderId = "scrapling" | "angel_one" | "upstox" | "yahoo";
 
 export const PROVIDER_PRIORITY: readonly ProviderId[] = [
   "scrapling",
   "angel_one",
   "upstox",
-  "nse",
   "yahoo",
 ];
 

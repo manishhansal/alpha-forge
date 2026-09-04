@@ -40,7 +40,7 @@ describe("services/india/broker/factory", () => {
 
   describe("pickBroker()", () => {
     it("prefers Angel One when it is among the selected sources", () => {
-      expect(pickBroker(["yahoo", "nse", "angel"]).id).toBe("angel");
+      expect(pickBroker(["yahoo", "angel"]).id).toBe("angel");
       expect(pickBroker(["groww", "angel"]).id).toBe("angel");
     });
 
@@ -48,9 +48,11 @@ describe("services/india/broker/factory", () => {
       expect(pickBroker(["yahoo", "groww"]).id).toBe("groww");
     });
 
-    it("preserves the existing order among equal-priority public sources", () => {
-      expect(pickBroker(["yahoo", "nse"]).id).toBe("yahoo");
-      expect(pickBroker(["nse", "yahoo"]).id).toBe("nse");
+    it("nse is no longer a valid broker — falls back to yahoo", () => {
+      // NSE direct acquisition removed 2026-09-03
+      // getBrokerById("nse") returns null; pickBroker skips null adapters
+      expect(pickBroker(["nse", "yahoo"]).id).toBe("yahoo");
+      expect(pickBroker(["nse"]).id).toBe("yahoo");
     });
 
     it("falls back to yahoo for empty / undefined selections", () => {
@@ -61,10 +63,11 @@ describe("services/india/broker/factory", () => {
 
   describe("pickBrokerChain()", () => {
     it("orders the chain by live-data preference, primary first", () => {
+      // nse is no longer a valid adapter; it is dropped from the chain
       expect(pickBrokerChain(["yahoo", "nse", "angel"]).map((b) => b.id)).toEqual([
         "angel",
         "yahoo",
-        "nse",
+        // "nse" is dropped — getBrokerById returns null
       ]);
     });
 
@@ -75,8 +78,10 @@ describe("services/india/broker/factory", () => {
       ]);
     });
 
-    it("drops unwired ids (bse / zerodha)", () => {
+    it("drops unwired ids (bse / zerodha / nse)", () => {
       expect(pickBrokerChain(["bse", "angel"]).map((b) => b.id)).toEqual(["angel"]);
+      // nse is now also unwired (removed 2026-09-03)
+      expect(pickBrokerChain(["nse", "angel"]).map((b) => b.id)).toEqual(["angel"]);
     });
 
     it("falls back to a yahoo-only chain for empty / undefined selections", () => {

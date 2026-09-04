@@ -1,7 +1,8 @@
 /**
- * Upstox API v2 — SECONDARY Indian Market Data Provider
+ * Upstox API — SECONDARY Indian Market Data Provider
  *
- * Role in the provider chain:  ANGEL_ONE → UPSTOX → NSE → YAHOO
+ * Role in the provider chain:  DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO
+ * NSE is NOT in the chain. Direct NSE data acquisition is prohibited.
  *
  * This file is the complete, self-contained Upstox adapter.  It implements
  * every method of MarketDataProvider and never leaks Upstox-specific types
@@ -15,19 +16,17 @@
  *   ✓ Instrument resolution (NSE symbol → Upstox instrument key)
  *   ✗ Instrument master   (Upstox has no full dump; Angel One owns this)
  *
- * Authentication strategy (server-side only — tokens never reach the browser):
- *   1. UPSTOX_ANALYTICS_TOKEN  — long-lived read-only token; used for all
+ * Authentication strategy (server-side only — tokens NEVER reach the browser):
+ *   1. UPSTOX_ANALYTICS_TOKEN  — long-lived read-only token; preferred for all
  *      non-trading data paths (candles, quotes, option chain).  Rotate via
  *      the Upstox Developer Console independently of OAuth.
- *   2. UPSTOX_CLIENT_ID + UPSTOX_CLIENT_SECRET  — OAuth2 client credentials
- *      used to exchange an authorization code or refresh token for a short-
- *      lived access token.  The access token is stored in memory and refreshed
- *      automatically when it expires.
+ *   2. In-memory OAuth2 access token  — from /api/in/providers/upstox/callback BFF.
+ *      Exchanged server-side; stored in server memory only via upstox-token-state.ts.
  *   3. Legacy fallback: UPSTOX_ACCESS_TOKEN  — accepted for backward compat
  *      with deployments that already set this value directly.
  *
  * When none of the above are configured the provider is silently unconfigured.
- * All methods return empty / null and the failover engine routes to NSE/Yahoo.
+ * All methods return empty / null and the failover engine routes to Yahoo.
  *
  * Cache keys (Redis via market-cache facade):
  *   md:candles:upstox:{exchange}:{symbol}:{interval}:{from}:{to}  TTL 30s / 4h
@@ -43,7 +42,8 @@
  *   JSON frames instead of Protobuf, avoiding the need for a generated proto
  *   schema at runtime.
  *
- * Do NOT import from this file outside of src/lib/market-data/providers/.
+ * SECURITY: Do NOT add NEXT_PUBLIC_ environment variables for any Upstox credential.
+ * Do NOT import from this file in client components or client-side code.
  */
 
 import WebSocket from "ws";

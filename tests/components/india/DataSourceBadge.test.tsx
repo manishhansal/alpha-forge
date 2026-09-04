@@ -21,7 +21,7 @@ function makeHealthMap(
   activeProvider: string,
   latency_ms: number,
 ): Record<string, { available: boolean; latency_ms: number }> {
-  const allProviders = ["scrapling", "angel_one", "upstox", "nse", "yahoo"];
+  const allProviders = ["scrapling", "angel_one", "upstox", "yahoo"];
   const map: Record<string, { available: boolean; latency_ms: number }> = {};
   for (const id of allProviders) {
     map[id] = { available: id === activeProvider, latency_ms: id === activeProvider ? latency_ms : 0 };
@@ -128,7 +128,7 @@ describe("DataSourceBadge", () => {
       scrapling: { available: false, latency_ms: 0 },
       angel_one: { available: false, latency_ms: 0 },
       upstox:    { available: false, latency_ms: 0 },
-      nse:       { available: false, latency_ms: 0 },
+      
       yahoo:     { available: false, latency_ms: 0 },
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(mockFetchResolves(noProviders));
@@ -236,13 +236,13 @@ describe("DataSourceBadge", () => {
   // ── Requirement 12.1: data-provider attribute correctness ────────────────
   it("sets data-provider attribute matching the active provider id", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
-      mockFetchResolves(makeHealthMap("nse", 30)),
+      mockFetchResolves(makeHealthMap("yahoo", 30)),
     );
 
     render(<DataSourceBadge />);
 
     const badge = await screen.findByTestId("data-source-badge");
-    expect(badge).toHaveAttribute("data-provider", "nse");
+    expect(badge).toHaveAttribute("data-provider", "yahoo");
   });
 
   // ── Requirement 12.1: latency_ms floored to non-negative integer ─────────
@@ -252,7 +252,7 @@ describe("DataSourceBadge", () => {
         scrapling: { available: true, latency_ms: 123.9 },
         angel_one: { available: false, latency_ms: 0 },
         upstox:    { available: false, latency_ms: 0 },
-        nse:       { available: false, latency_ms: 0 },
+        
         yahoo:     { available: false, latency_ms: 0 },
       }),
     );
@@ -271,7 +271,7 @@ describe("DataSourceBadge", () => {
         scrapling: { available: false, latency_ms: 0 },
         angel_one: { available: true,  latency_ms: 40 },
         upstox:    { available: true,  latency_ms: 80 },
-        nse:       { available: false, latency_ms: 0 },
+        
         yahoo:     { available: false, latency_ms: 0 },
       }),
     );

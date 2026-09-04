@@ -54,7 +54,6 @@ function buildHealthMap(activeProvider: string, latency_ms: number): HealthMap {
     "scrapling",
     "angel_one",
     "upstox",
-    "nse",
     "yahoo",
   ];
   const map: HealthMap = {};
@@ -135,11 +134,6 @@ const KNOWN_PROVIDERS: Array<{
   {
     id: "upstox",
     expectedTitle: "Upstox",
-    expectedColor: "var(--color-data-neutral)",
-  },
-  {
-    id: "nse",
-    expectedTitle: "Nse",
     expectedColor: "var(--color-data-neutral)",
   },
   {
@@ -234,7 +228,6 @@ describe("Property 17 — DataSourceBadge display format", () => {
         "scrapling",
         "angel_one",
         "upstox",
-        "nse",
         "yahoo",
       ]);
 
@@ -280,7 +273,6 @@ describe("Property 17 — DataSourceBadge display format", () => {
               "scrapling",
               "angel_one",
               "upstox",
-              "nse",
               "yahoo",
             ),
             rawLatency: fc.float({ min: 0, max: 50_000, noNaN: true }),

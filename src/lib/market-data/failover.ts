@@ -8,7 +8,8 @@
  *   - A cooldown period prevents oscillating between providers rapidly.
  *   - Structured logs are emitted for every significant event.
  *
- * Provider priority: ANGEL_ONE → UPSTOX → NSE → YAHOO
+ * Provider priority: DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO
+ * NSE is NOT in the chain. Direct NSE data acquisition is forbidden in production.
  */
 
 import type { MarketDataProvider, RegisteredProvider } from "./provider";

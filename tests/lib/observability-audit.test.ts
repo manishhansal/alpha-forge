@@ -50,11 +50,11 @@ describe("mdLog — structured JSON observability", () => {
   it("mdLog emits provider_circuit_open when circuit opens", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { recordFailure, resetHealth } = await import("@/lib/market-data/health");
-    resetHealth("nse");
+    resetHealth("yahoo");
 
     // Trigger circuit open
     for (let i = 0; i < 8; i++) {
-      recordFailure("nse", "api_error");
+      recordFailure("yahoo", "api_error");
     }
 
     const circuitOpenEvent = consoleSpy.mock.calls
@@ -64,8 +64,8 @@ describe("mdLog — structured JSON observability", () => {
       .find((parsed) => parsed?.event === "provider_circuit_open");
 
     expect(circuitOpenEvent).toBeDefined();
-    expect(circuitOpenEvent.providerId).toBe("nse");
-    resetHealth("nse");
+    expect(circuitOpenEvent.providerId).toBe("yahoo");
+    resetHealth("yahoo");
   });
 
   it("mdLog emits provider_recovery when circuit closes", async () => {

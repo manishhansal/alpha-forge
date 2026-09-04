@@ -320,10 +320,10 @@ describe("Phase 4 — NSE fallback provider certification", () => {
 
   it("NSE provider is registered in the default registry", async () => {
     try {
-      const { getProviderRegistry } = await import("@/lib/market-data/registry");
-      const registry = getProviderRegistry();
-      const providers = registry.getEnabledProviders();
-      const hasNse = providers.some((p) => p.provider.id === "nse" || p.provider.id === "yahoo");
+      const { registry } = await import("@/lib/market-data/registry");
+      
+      const providers = registry.enabled();
+      const hasNse = providers.some((p) => p.provider.id === "yahoo");
       result.notes.push(`Registry providers: ${providers.map((p) => p.provider.id).join(", ")}`);
       // At least one fallback provider should be present
       expect(providers.length).toBeGreaterThan(0);

@@ -175,9 +175,16 @@ const INDEX_UNDERLYINGS = FNO_INDICES.map((i) => i.underlying);
 
 async function indexChains() {
   return cache.memo("scanner:index-chains", 20_000, async () => {
+    // Use ProviderRegistry to route option chain requests through
+    // DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO (no direct NSE acquisition)
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+
     const out = await Promise.allSettled(
-      INDEX_UNDERLYINGS.map((u) => nse.getOptionChain(u)),
+      INDEX_UNDERLYINGS.map((u) => registry.getOptionChain(u)),
     );
+
+    type LegacyChain = Awaited<ReturnType<typeof registry.getOptionChain>>;
     return out
       .map((r, i) =>
         r.status === "fulfilled"
@@ -186,7 +193,7 @@ async function indexChains() {
       )
       .filter(Boolean) as {
       underlying: string;
-      chain: Awaited<ReturnType<typeof nse.getOptionChain>>;
+      chain: LegacyChain;
     }[];
   });
 }

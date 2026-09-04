@@ -58,6 +58,7 @@ export const CRYPTO_NAV: NavItem[] = [
 export const INDIA_NAV: NavItem[] = [
   { href: "/in/dashboard",           label: "Overview",           icon: LayoutDashboard, public: true },
   { href: "/in/best-time",           label: "Best Time",          icon: Clock3 },
+  { href: "/in/signal-center",       label: "Signal Center",      icon: Layers },
   { href: "/in/options",             label: "Options",            icon: Gauge },
   { href: "/in/signals",             label: "Signals",            icon: Sparkles },
   { href: "/in/ai-signals",          label: "AI Signals",         icon: Brain },

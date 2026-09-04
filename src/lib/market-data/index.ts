@@ -216,5 +216,6 @@ export { TTL } from "./cache/market-cache";
 // ── Provider constructors (for custom registry setup) ─────────────────────────
 export { AngelOneProvider } from "./providers/angel-one";
 export { UpstoxProvider, isUpstoxConfigured } from "./providers/upstox";
-export { NseProvider, nseProvider } from "./providers/nse";
+// NSE provider removed 2026-09-03. Export only the removal notice for documentation.
+export { NSE_PROVIDER_REMOVED_REASON } from "./providers/nse";
 export { YahooProvider, yahooProvider } from "./providers/yahoo";

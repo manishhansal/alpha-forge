@@ -1,10 +1,14 @@
 import type { BrokerAdapter } from "./types";
 import type { DataSourceId } from "@/features/settings/data-sources-shared";
 import { yahoo } from "../yahoo";
-import { nse } from "../nse";
 import { groww } from "../groww";
 import { angel, isAngelConfigured } from "../angelone";
 import { OpenAlgoAdapter } from "./openalgo-adapter";
+
+// NOTE: The `nse` adapter was removed 2026-09-03.
+// Direct NSE data acquisition is prohibited. Use ProviderRegistry instead.
+// The stub below prevents compile errors in code not yet migrated.
+import { nse } from "../nse";
 
 /**
  * Lazily construct the OpenAlgo adapter from environment variables.
@@ -18,21 +22,18 @@ function getOpenAlgoAdapter(): BrokerAdapter | null {
 }
 
 /**
- * Returns the active broker adapter, picked from the BROKER env var. Used as
- * the fallback resolver when no per-user selection is available:
- *   - "yahoo"  → public Yahoo Finance (default)
- *   - "groww"  → Groww Trade API (transparent fallback to Yahoo if no keys)
- *   - "nse"    → NSE direct (only useful for option-chain via getOptionChain)
+ * Returns the active broker adapter.
  *
- * Future adapters (Zerodha, Upstox, Angel One, Shoonya) plug in here.
+ * Valid values for INDIA_BROKER: yahoo (default) | groww | angel | openalgo
+ *
+ * "nse" is no longer a valid INDIA_BROKER value. Direct NSE data acquisition
+ * was removed 2026-09-03. Passing "nse" falls through to yahoo.
  */
 export function getBroker(): BrokerAdapter {
   const id = (process.env.INDIA_BROKER ?? process.env.BROKER ?? "yahoo").toLowerCase();
   switch (id) {
     case "groww":
       return groww;
-    case "nse":
-      return nse;
     case "angel":
       return angel;
     case "openalgo": {
@@ -40,6 +41,10 @@ export function getBroker(): BrokerAdapter {
       if (!adapter) throw new Error("OPENALGO_BASE_URL and OPENALGO_API_KEY must be set when INDIA_BROKER=openalgo");
       return adapter;
     }
+    case "nse":
+      // NSE direct acquisition removed. Fallthrough to yahoo.
+      console.warn("[broker/factory] INDIA_BROKER=nse is no longer supported. Falling back to yahoo.");
+      return yahoo;
     case "yahoo":
     default:
       return yahoo;
@@ -51,11 +56,11 @@ export function getBroker(): BrokerAdapter {
  * Preference order:
  *   1. The user's explicit `id` if it resolves to a real adapter.
  *   2. Angel One SmartAPI if its env credentials are present (most reliable
- *      free option-chain source — first-party API, no scraping).
- *   3. NSE library (`stock-nse-india`) as the universal fallback.
+ *      first-party API, no scraping required).
+ *   3. Yahoo Finance (no option chain support — will throw; failover runs).
  *
- * The `/api/in/option-chain` route still iterates the user's wider selection
- * list after the primary fails, so this just sets the first attempt.
+ * For production option chain access, use ProviderRegistry.getOptionChain()
+ * which routes through DATA_SERVICE → ANGEL_ONE → UPSTOX.
  */
 export function getOptionChainBroker(id?: DataSourceId): BrokerAdapter {
   if (id) {
@@ -63,12 +68,12 @@ export function getOptionChainBroker(id?: DataSourceId): BrokerAdapter {
     if (explicit) return explicit;
   }
   if (isAngelConfigured()) return angel;
-  return nse;
+  return yahoo;
 }
 
 /**
  * Resolve any catalog id to a concrete adapter. Unknown / not-yet-wired ids
- * (bse, zerodha…) return `null` so callers can fall through to whatever
+ * (bse, zerodha, nse) return `null` so callers can fall through to whatever
  * default makes sense for their use case rather than swallow the request.
  */
 export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
@@ -76,7 +81,8 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
     case "yahoo":
       return yahoo;
     case "nse":
-      return nse;
+      // NSE direct adapter removed — return null so callers fall back to yahoo/angel
+      return null;
     case "groww":
       return groww;
     case "angel":
@@ -91,14 +97,7 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
 }
 
 /**
- * Live-data preference weight for the quote/history/feed routes. First-party
- * broker adapters (Angel One, Groww) serve real-time data straight from the
- * exchange, so when a user keeps them selected alongside the public defaults
- * we auto-prefer them — no need to manually uncheck Yahoo/NSE to prioritise
- * a broker. Equal-weight sources keep their selected order (stable sort), so
- * the historical "first selected wins" behaviour is preserved for the public
- * pair (yahoo/nse). Unconfigured brokers degrade gracefully to Yahoo inside
- * their own adapter, so preferring a keyless broker is harmless.
+ * Live-data preference weight for the quote/history/feed routes.
  */
 const INDIA_PICK_WEIGHT: Partial<Record<DataSourceId, number>> = {
   angel: 3,
@@ -111,8 +110,8 @@ function pickWeight(id: DataSourceId): number {
 
 /**
  * Walk a user's selection list and return the highest-priority adapter that's
- * actually wired up (see {@link INDIA_PICK_WEIGHT}). Falls back to Yahoo so a
- * brand-new user (no selections) still gets a working dashboard.
+ * actually wired up. Falls back to Yahoo so a brand-new user (no selections)
+ * still gets a working dashboard.
  */
 export function pickBroker(
   ids: readonly DataSourceId[] | undefined,
@@ -129,10 +128,7 @@ export function pickBroker(
 
 /**
  * Resolve a user's selection list into the ordered, de-duped chain of wired-up
- * adapters (highest {@link INDIA_PICK_WEIGHT} first). The selected-source-only
- * resolver walks this chain, so backfill only ever uses sources the user
- * actually picked. Falls back to a Yahoo-only chain when nothing is selected
- * so a brand-new user still gets data.
+ * adapters (highest weight first). Falls back to Yahoo-only chain.
  */
 export function pickBrokerChain(
   ids: readonly DataSourceId[] | undefined,
