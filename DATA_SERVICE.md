@@ -1,7 +1,8 @@
 # AlphaForge Data Service
 
 **Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED (certification completed 2026-09-03)  
-**Role: Tier-0 market data provider** for the TypeScript layer (V3.0.0, 2026-09-04)
+**Role: Tier-0 market data provider** for the TypeScript layer (V3.0.0, 2026-09-04)  
+**Last updated:** 2026-09-04, commit `c8d80a1` (double-publish fix)
 
 Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency NSE market-data foundation for AlphaForge.
 
@@ -930,6 +931,15 @@ Session warmer created an ephemeral browser; production singletons were never re
 ### BUG-MAXPAIN-01 — O(N²) max pain computation [MEDIUM, FIXED in V2]
 
 `compute_max_pain()` called `pain_at(s)` twice per candidate strike, each iterating all N rows. **Fixed to O(N log N) using prefix/suffix sums. 200 strikes: <2ms measured.**
+
+### BUG-DOUBLE-PUBLISH-01 — Double pub/sub publish on every tick [MEDIUM, FIXED post-V2.1]
+
+**Commit:** `c8d80a1`  
+**Files:** `data-service/src/publisher/tick_publisher.py`, `data-service/src/publisher/stream_publisher.py`
+
+`_publish_to_stream()` in `TickPublisher` called `stream_publisher.publish_tick(tick_v2)`. `publish_tick` does two things: (1) publishes to the Redis pub/sub channel **and** (2) appends to the Redis Stream. Since `tick_publisher` had already published to the pub/sub channel directly above, every tick was appearing twice on the pub/sub channel and the stream was being written twice.
+
+**Fix:** Changed `_publish_to_stream()` to call `stream_publisher._stream_append(tick_v2, payload, "NORMAL")` directly — this appends to the durable Stream only, without re-publishing to pub/sub. The pub/sub publish path remains solely in `TickPublisher._publish_tick()`. A code comment was added to `stream_publisher.publish_tick()` clarifying that callers who have already published to pub/sub should use `_stream_append` directly.
 
 *(For V1 deployment sprint bugs BUG-01 through BUG-06, see §14 Bug-Fix Log above.)*
 

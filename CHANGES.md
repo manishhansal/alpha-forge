@@ -4,6 +4,49 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — API Key Max Length Fix & Logo
+
+**Date:** 2026-09-04  
+**Commits:** `b650249`, `9422229`  
+**Files changed:** 7  
+**Tests:** 0 regressions — all type checks pass
+
+### Summary
+
+Two small independent improvements: (1) the API key input now accepts JWTs up to 2048 characters so Upstox Analytics Tokens (which are JWTs of 500–1500 chars) are no longer rejected at save time; (2) the AlphaForge logo is now present in every surface that users see — browser tab, auth screen header, and the sidebar.
+
+---
+
+### APIKEY-001 — Raise `apiKey` max length from 256 to 2048 for JWT bearer tokens
+
+**Severity:** 🔴 Bug — Upstox Analytics Token silently rejected on save  
+**Commit:** `b650249`  
+**File:** `src/features/settings/api-keys-shared.ts`
+
+The `SAVE_INPUT_SCHEMA` Zod validator capped `apiKey` at 256 characters. Upstox Analytics Tokens are JWTs and typically run 500–1500 characters, so any attempt to save one produced a validation error ("API key looks too long") without a clear explanation.
+
+**Fix:** Raised `apiKey` max length from `256` to `2048`. This accommodates any standard JWT bearer token across all supported exchanges (Upstox, Angel One, etc.) while still blocking obviously malformed input.
+
+---
+
+### LOGO-001 — AlphaForge logo added across all user-facing surfaces
+
+**Commit:** `9422229`  
+**Files:** `public/logo.png` (new), `src/app/icon.png` (new), `src/app/favicon.ico` (updated), `src/app/(auth)/layout.tsx`, `src/app/layout.tsx`, `src/components/dashboard/sidebar.tsx`
+
+The app previously had no logo — just text labels and the generic Vercel favicon.
+
+**What was added:**
+
+- `public/logo.png` — master logo asset (PNG)
+- `src/app/icon.png` — Next.js App Router icon (auto-served at `/icon.png`)
+- `src/app/favicon.ico` — updated to the new logo (was the default Next.js icon)
+- `src/app/(auth)/layout.tsx` — logo image added to the auth page header (login / signup screens)
+- `src/app/layout.tsx` — `<link rel="icon">` metadata updated; root layout logo wiring
+- `src/components/dashboard/sidebar.tsx` — logo rendered at the top of the sidebar above the market switcher; collapses to icon-only when the sidebar is in its 56px rail mode
+
+---
+
 ## [Unreleased] — India Market Bug Fixes, NSE Removal Completion & Upstox Credentials UI
 
 **Date:** 2026-09-04  

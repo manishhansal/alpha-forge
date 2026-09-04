@@ -2,7 +2,7 @@
 
 A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js 16, a Python ML microservice, and an institutional-grade research platform.
 
-**Current state (2026-09-04, commit `e574c16`):** 3059 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
+**Current state (2026-09-04, commit `b650249`):** 3059 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
 
 ---
 
@@ -11,7 +11,7 @@ A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** 
 AlphaForge runs two fully independent trading surfaces in one shell, toggled by a sidebar switcher:
 
 - **Crypto** — BTC · ETH · SOL via Delta Exchange India (default) or Binance. Futures analytics, options chain, AI signals, 10 scalping strategies, strategy backtest, conversational strategy lab, and paper trading.
-- **Indian F&O (NSE)** — Full sidebar parity with the crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, AI signals with real-time derivatives context, Daily Picks, FnO trend scanners, intelligent auto paper-trading engine, trade history, Signal Center, WhatsApp notifications, and an evidence-driven quant research platform.
+- **Indian F&O (NSE)** — Full sidebar parity with the crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, AI signals with real-time derivatives context, Daily Picks, FnO trend scanners, intelligent auto paper-trading engine, trade history, Signal Center, WhatsApp notifications, an evidence-driven quant research platform, and per-user Upstox Analytics API credential configuration.
 
 The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep links, browser back/forward, and shared links always land in the right mode.
 
@@ -319,7 +319,7 @@ All Indian market data flows through a **provider-agnostic data layer** (`src/li
 | 2 | **Upstox Analytics v2** | Quotes, historical, option chain. Full OAuth BFF at `/api/in/providers/upstox/*` | `UPSTOX_ANALYTICS_TOKEN` (data-only) or `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` (full OAuth) |
 | 3 | **Yahoo Finance** | Historical OHLCV, quotes | Always available (last resort) |
 
-`INDIA_BROKER=nse` is no longer valid — it falls back to yahoo. The `"nse"` `ProviderId` has been removed from the TypeScript type system entirely. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
+`INDIA_BROKER=nse` is no longer valid — it falls back to yahoo. The `"nse"` `ProviderId` has been removed from the TypeScript type system entirely. The `"nse"` `DataSourceId` has also been removed from the settings UI, type system, and broker factory — `DataSourceId` no longer includes `"nse"` anywhere. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
 
 ---
 
@@ -343,12 +343,12 @@ SMARTAPI_PIN=
 SMARTAPI_TOTP_SECRET=
 
 # Upstox (secondary data source)
-# Data-only: set UPSTOX_ANALYTICS_TOKEN only.
+# Data-only: set UPSTOX_ANALYTICS_TOKEN only (max 2048 chars — JWT bearer token).
 # Full OAuth BFF: set all four.
 UPSTOX_CLIENT_ID=
 UPSTOX_CLIENT_SECRET=    # server-side only — never in NEXT_PUBLIC_*
 UPSTOX_REDIRECT_URI=
-UPSTOX_ANALYTICS_TOKEN=
+UPSTOX_ANALYTICS_TOKEN=  # configure via Profile → API Keys in the UI, or set here
 
 # Data provider (V3.0)
 INDIA_DATA_PROVIDER=auto  # "auto" is the only valid value; "nse" is no longer accepted
@@ -462,7 +462,7 @@ src/
           data/forensics/    V2.1 — trade forensics endpoint
   components/
     ai-signals/              AiSignalCard, AiSignalsBoard, AiMarketContextBanner
-    dashboard/               Sidebar (market-aware), Topbar, MarketTickerBar
+    dashboard/               Sidebar (logo at top, icon rail when collapsed), Topbar, MarketTickerBar
     india/                   All India UI (msb-dashboard, option-chain, ticker, ...)
       signal-center/         NEW (V3.0) — india-signal-center.tsx
       DataSourceBadge.tsx    NEW (V3.0) — shows which provider served data
@@ -475,6 +475,8 @@ src/
     scalping/                10 crypto scalping strategies + journal + backtest
     whatsapp/                NEW (V3.0) — phone.ts, types.ts, preferences.ts,
                              formatters.ts, notifier.ts, index.ts
+    settings/                api-keys-shared.ts, api-keys.ts,
+                             upstox-credentials.ts (NEW — per-user Upstox token resolver)
     india/
       best-time/             NSE-anchored session engine (7 windows)
       daily-picks/           Top-3-per-bucket engine + freeze/track/history
@@ -500,6 +502,8 @@ src/
                              nse/ — throwing stubs only (V3.0)
   store/                     Zustand stores (UIStore + market-scoped stores)
   hooks/india/               useFetchPoll, useOptionChain, useScanner, ...
+public/
+  logo.png                   NEW — master logo asset (favicon, auth header, sidebar)
 worker/
   src/jobs/                  14 background jobs (+ india-whatsapp-scanner)
   src/index.ts               Graceful shutdown + job registry
@@ -561,6 +565,16 @@ npm run dev
 
 **Windows fork exhaustion** (`STATUS_COMMITMENT_LIMIT` / code `127`)
 Close extra Electron apps and Cursor windows. Avoid running dev server + worker + `vitest --watch` simultaneously. Use `npm run worker:dev` (no watcher) rather than `worker:watch`. Restart Docker before the dev server if the fork pool is depleted.
+
+### Upstox Analytics API Credential Configuration
+
+Users can configure their Upstox Analytics Token directly in the UI without requiring server-side environment variable access:
+
+- Navigate to **Profile → API Keys → Upstox Analytics API**
+- Paste the Analytics Token from the Upstox Developer Console
+- Token is encrypted with AES-256-GCM at rest and used for all subsequent Upstox data requests
+- Token-only exchanges (Upstox) skip the `apiSecret` field — the form adapts automatically
+- Tokens can be up to 2048 characters (JWT bearer token length)
 
 ---
 

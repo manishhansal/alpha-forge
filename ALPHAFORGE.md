@@ -283,7 +283,7 @@ Auth.js v5 with Credentials provider + JWT sessions. `src/proxy.ts` protects rou
 Data Service / Scrapling (0)  →  Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  Yahoo Finance (3)
 ```
 
-**NSE direct (`"nse"`) was removed in V3.0.0.** The `stock-nse-india` npm package has been removed. `ProviderId` no longer includes `"nse"`. All NSE scraping now runs exclusively inside the `data-service` Python microservice, which acts as the tier-0 provider for the TypeScript layer via `ScraplingProvider`.
+**NSE direct (`"nse"`) was removed in V3.0.0.** The `stock-nse-india` npm package has been removed. `ProviderId` no longer includes `"nse"`. The `DataSourceId` union type (settings UI) also no longer includes `"nse"` — the NSE card was removed from the data sources settings page. `INDIA_DATA_PROVIDER=auto` is the only valid value (the old `"nse"` fallback now routes to yahoo). All NSE scraping now runs exclusively inside the `data-service` Python microservice, which acts as the tier-0 provider for the TypeScript layer via `ScraplingProvider`.
 
 | Priority | Provider | File | Capabilities |
 |---|---|---|---|
@@ -300,6 +300,7 @@ When a provider's env vars are absent it is silently registered as `enabled: fal
 
 - `PROVIDER_PRIORITY` excludes `"nse"`
 - `ProviderId` type union excludes `"nse"`
+- `DataSourceId` union type excludes `"nse"` (settings UI guard)
 - `nse.ts` exports no executable provider (tombstone only)
 - `nse.getOptionChain()` throws
 - `getBrokerById("nse")` returns null
@@ -377,6 +378,19 @@ Complete server-side OAuth Backend-for-Frontend for Upstox:
 - No `NEXT_PUBLIC_UPSTOX_*` env vars — confirmed by grep at build time
 - Token values never appear in URLs, logs, browser devtools, or client responses
 - Frontend receives only: lifecycle state + timestamps (not token values)
+
+### 5.9 Upstox Analytics API Credentials UI
+
+**Files:** `src/features/settings/api-keys-shared.ts`, `src/features/settings/api-keys.ts`, `src/features/settings/upstox-credentials.ts`, `src/lib/market-data/providers/upstox.ts`, `src/services/india/broker/factory.ts`, `src/components/settings/api-keys-form.tsx`
+
+Users who cannot set server-side environment variables (shared deployments, cloud hosting) can configure their Upstox Analytics Token directly in the settings UI:
+
+- **Entry point:** Profile → API Keys → select "Upstox Analytics API"
+- **Token-only flow:** Upstox uses a single bearer token, not an `apiKey`/`apiSecret` pair. The form detects this via `TOKEN_ONLY_EXCHANGES = ["upstox"]` and renders a single "Analytics Token" field with no secret field.
+- **Storage:** Token is encrypted with AES-256-GCM via `src/lib/crypto.ts` and stored in `UserSetting.apiKeysEncrypted`. Read by `getUpstoxTokenForRequest()` in a request-scoped resolver.
+- **Fallback chain:** `resolveReadToken()` in `upstox.ts` checks: env `UPSTOX_ANALYTICS_TOKEN` → in-memory OAuth token → legacy env → DB per-user token.
+- **Max length:** `apiKey` input accepts up to 2048 characters (JWT bearer tokens run 500–1500 chars).
+- **Worker safety:** `upstox-credentials.ts` does not use `import "server-only"` — `auth()` returns `null` outside request context so the worker process is safe.
 
 ---
 
@@ -1154,7 +1168,7 @@ src/
         data/forensics/           V2.1 — trade forensics endpoint
   components/
     ai-signals/                   AiSignalCard, AiSignalsBoard, AiMarketContextBanner
-    dashboard/                    Sidebar (market-aware), Topbar, MarketTickerBar, MarketSwitcher
+    dashboard/                    Sidebar (market-aware; logo at top, icon-only in rail mode), Topbar, MarketTickerBar, MarketSwitcher
     india/                        All India UI — no cross-imports from Crypto
       msb-dashboard, charts/price-chart, options/, daily-picks/
       paper-trading/, signal-quality/, strategies/, ticker/
@@ -1172,6 +1186,8 @@ src/
     strategy-lab/                 Parser + backtest engine + live worker
     whatsapp/                     NEW (V3.0) — phone.ts, types.ts, preferences.ts,
                                   formatters.ts, notifier.ts, index.ts
+    settings/                     api-keys-shared.ts, api-keys.ts,
+                                  upstox-credentials.ts (NEW — per-user Upstox token resolver)
     india/
       best-time/                  NSE session engine
       daily-picks/                Freeze/track/history engine + builder
@@ -1256,7 +1272,8 @@ SMARTAPI_PIN=
 SMARTAPI_TOTP_SECRET=    # base32 TOTP secret
 
 # Upstox Analytics v2 (secondary broker)
-# For data-only use, UPSTOX_ANALYTICS_TOKEN is sufficient.
+# For data-only use, UPSTOX_ANALYTICS_TOKEN is sufficient (max 2048 chars — JWT bearer).
+# Configure via Profile → API Keys in the UI, or set via env.
 # For full OAuth BFF (V3.0), set all four:
 UPSTOX_CLIENT_ID=
 UPSTOX_CLIENT_SECRET=    # NEVER in NEXT_PUBLIC_* — server-side only
@@ -1314,7 +1331,7 @@ ENABLE_PORTFOLIO_OPTIMIZER=false
 
 Test-Driven Development is mandatory. Write failing tests first. The `prebuild` hook enforces a green suite before every `next build`.
 
-**Current test count: 3059 passing, 0 failures (as of 2026-09-04, commit `e574c16`).**
+**Current test count: 3059 passing, 0 failures (as of 2026-09-04, commit `b650249`).**
 
 ### Tooling
 

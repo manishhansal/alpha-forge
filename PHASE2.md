@@ -545,6 +545,12 @@ Phase 2 established the expert quant foundation. Subsequent releases built on to
 | **V2.1 Data Service** | Circuit breakers wired, lineage API, DataQualityGate HTTP API, Redis Streams, paper trade provenance, 448 tests total | 2026-09-03 |
 | **V3.0 — India Data Fabric** | NSE removal from TS layer, Scrapling as tier-0 provider, Upstox OAuth BFF, Unified Signal Center (`/in/signal-center`), 12 NSE elimination guard tests, cross-timeframe dedup (DUP-001) | 2026-09-04 |
 | **V3.0.1 — TS Zero-Error Gate** | 52 pre-existing TypeScript errors resolved, 3059/3059 tests passing | 2026-09-04 |
+| **India Data Fabric hardening** | India API shared-cache headers (14 routes), DB index tuning (`IndiaDailyPick(status,tradeDate)`, drop redundant `CandleBar` index), Daily Picks builder last `nse.*` call migrated to registry, volume breakout scanner thundering-herd fix (`pmap` concurrency cap) | 2026-09-04 |
+| **NSE DataSourceId removal** | `"nse"` removed from `DataSourceId` union, `DATA_SOURCES` catalog, `BrokerAdapter.id`, broker factory, and option-chain route — no NSE ID anywhere in UI or type system | 2026-09-04 |
+| **Upstox Analytics credentials UI** | Per-user Upstox Analytics Token configuration via Profile → API Keys; AES-256-GCM storage; token-only form branch; `resolveReadToken()` fallback chain; worker-safe (no `server-only` guard) | 2026-09-04 |
+| **India perf improvements** | Historical candle concurrency 8→16, option chain concurrency 4→8, Daily Picks result-level cache (15s), `unstable_cache` SSR wrappers for AI Signals (20s) and Daily Picks (10s) | 2026-09-04 |
+| **India bug fixes (BUG-001–007)** | Worker crash from `server-only` in `upstox-credentials.ts`, Signal Center `revalidate=0` overwriting `s-maxage`, option chain fallback skipping Upstox, new-user 502 from `"angel"` default, OI picker silent broken save, stale UI copy | 2026-09-04 |
+| **Logo & API key max length** | AlphaForge logo across favicon, auth header, and sidebar; `apiKey` max length raised 256→2048 for JWT bearer tokens (Upstox Analytics Token) | 2026-09-04 |
 
 ---
 
