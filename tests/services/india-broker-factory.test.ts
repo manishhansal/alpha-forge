@@ -51,8 +51,9 @@ describe("services/india/broker/factory", () => {
     it("nse is no longer a valid broker — falls back to yahoo", () => {
       // NSE direct acquisition removed 2026-09-03
       // getBrokerById("nse") returns null; pickBroker skips null adapters
-      expect(pickBroker(["nse", "yahoo"]).id).toBe("yahoo");
-      expect(pickBroker(["nse"]).id).toBe("yahoo");
+      // Cast through unknown since "nse" is no longer in the DataSourceId union.
+      expect(pickBroker(["nse" as unknown as "yahoo", "yahoo"]).id).toBe("yahoo");
+      expect(pickBroker(["nse" as unknown as "yahoo"]).id).toBe("yahoo");
     });
 
     it("falls back to yahoo for empty / undefined selections", () => {
@@ -64,7 +65,7 @@ describe("services/india/broker/factory", () => {
   describe("pickBrokerChain()", () => {
     it("orders the chain by live-data preference, primary first", () => {
       // nse is no longer a valid adapter; it is dropped from the chain
-      expect(pickBrokerChain(["yahoo", "nse", "angel"]).map((b) => b.id)).toEqual([
+      expect(pickBrokerChain(["yahoo", "nse" as unknown as "yahoo", "angel"]).map((b) => b.id)).toEqual([
         "angel",
         "yahoo",
         // "nse" is dropped — getBrokerById returns null
@@ -81,7 +82,7 @@ describe("services/india/broker/factory", () => {
     it("drops unwired ids (bse / zerodha / nse)", () => {
       expect(pickBrokerChain(["bse", "angel"]).map((b) => b.id)).toEqual(["angel"]);
       // nse is now also unwired (removed 2026-09-03)
-      expect(pickBrokerChain(["nse", "angel"]).map((b) => b.id)).toEqual(["angel"]);
+      expect(pickBrokerChain(["nse" as unknown as "yahoo", "angel"]).map((b) => b.id)).toEqual(["angel"]);
     });
 
     it("falls back to a yahoo-only chain for empty / undefined selections", () => {

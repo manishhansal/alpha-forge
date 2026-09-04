@@ -48,13 +48,17 @@ export async function saveDataSourcesAction(
   // We rely on `normalizeSelections` to enforce per-field invariants
   // (drop unknown ids, ensure a sensible default when a list is empty,
   // pin crypto.primary to a member of crypto.selected, …).
+  //
+  // When no OI-capable source is selected the form renders no picker and
+  // posts no indiaOptionChain field. We pass undefined so normalizeSelections
+  // keeps whatever valid value is already stored (or uses DEFAULT_SELECTIONS).
   const next = normalizeSelections({
     india: {
       selected: indiaSelected,
       optionChain:
         typeof indiaOi === "string" && (INDIA_OI_SOURCES as readonly string[]).includes(indiaOi)
           ? indiaOi
-          : "nse",
+          : undefined,
     },
     crypto: {
       selected: cryptoSelected,

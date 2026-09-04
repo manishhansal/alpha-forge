@@ -48,11 +48,12 @@ export function DataSourcesForm({ initial, credentialedIds }: Props) {
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   };
 
-  // OI picker should only offer sources actually selected for India + always
-  // valid OI providers (NSE is the global default fallback).
+  // OI picker should only offer sources actually selected for India that are
+  // capable of publishing OI/option-chain data. When no OI-capable source is
+  // selected the picker is hidden — there's nothing valid to show and anything
+  // we default to would be saved silently as a broken configuration.
   const oiOptions = useMemo<DataSourceId[]>(() => {
-    const inUse = INDIA_OI_SOURCES.filter((id) => india.includes(id));
-    return inUse.length > 0 ? inUse : ["nse"];
+    return INDIA_OI_SOURCES.filter((id) => india.includes(id));
   }, [india]);
 
   // Same for the crypto primary feed picker.
@@ -68,9 +69,11 @@ export function DataSourcesForm({ initial, credentialedIds }: Props) {
   // <select> always shows a valid option, and the form submit reads the
   // displayed value straight off the DOM — so the user's stored
   // preference can stay stale until they actively pick a new one.
-  const effectiveIndiaOi: DataSourceId = oiOptions.includes(indiaOi)
-    ? indiaOi
-    : oiOptions[0];
+  const effectiveIndiaOi: DataSourceId | null = oiOptions.length === 0
+    ? null
+    : oiOptions.includes(indiaOi)
+      ? indiaOi
+      : oiOptions[0];
   const effectiveCryptoPrimary: DataSourceId = primaryOptions.includes(
     cryptoPrimary,
   )
@@ -82,7 +85,7 @@ export function DataSourcesForm({ initial, credentialedIds }: Props) {
       <Section
         market="india"
         title="Indian Market"
-        description="Pick one or more brokers for NSE F&O quotes, history, and OI. OI / option-chain calls always use a broker that actually publishes the chain (NSE, BSE or Groww)."
+        description="Pick one or more brokers for NSE F&O quotes, history, and OI. For option chain data, select Angel One or Upstox — the ProviderRegistry routes through DATA_SERVICE → Angel One → Upstox automatically."
         selected={india}
         onToggle={(id) => toggle(india, setIndia, id)}
         credSet={credSet}
@@ -94,22 +97,31 @@ export function DataSourcesForm({ initial, credentialedIds }: Props) {
           >
             Option chain / OI source
           </label>
-          <select
-            id="india-oc"
-            name="indiaOptionChain"
-            value={effectiveIndiaOi}
-            onChange={(e) => setIndiaOi(e.target.value as DataSourceId)}
-            className="h-8 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-xs text-[var(--color-fg)] focus:border-[var(--color-border-strong)] focus:outline-none"
-          >
-            {oiOptions.map((id) => (
-              <option key={id} value={id}>
-                {DATA_SOURCES_BY_ID[id].label}
-              </option>
-            ))}
-          </select>
-          <span className="text-[11px] text-[var(--color-fg-subtle)]">
-            Yahoo never publishes OI — these three are the only valid choices.
-          </span>
+          {oiOptions.length === 0 ? (
+            <span className="text-[11px] text-[var(--color-warning)]">
+              No OI-capable source selected — enable Angel One or Upstox above to use option chain data.
+              The ProviderRegistry will still serve option chains automatically in the background.
+            </span>
+          ) : (
+            <>
+              <select
+                id="india-oc"
+                name="indiaOptionChain"
+                value={effectiveIndiaOi ?? oiOptions[0]}
+                onChange={(e) => setIndiaOi(e.target.value as DataSourceId)}
+                className="h-8 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-xs text-[var(--color-fg)] focus:border-[var(--color-border-strong)] focus:outline-none"
+              >
+                {oiOptions.map((id) => (
+                  <option key={id} value={id}>
+                    {DATA_SOURCES_BY_ID[id].label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[11px] text-[var(--color-fg-subtle)]">
+                Yahoo has no live OI — select Angel One or Upstox for option chain data.
+              </span>
+            </>
+          )}
         </div>
       </Section>
 

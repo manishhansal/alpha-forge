@@ -5,11 +5,6 @@ import { groww } from "../groww";
 import { angel, isAngelConfigured } from "../angelone";
 import { OpenAlgoAdapter } from "./openalgo-adapter";
 
-// NOTE: The `nse` adapter was removed 2026-09-03.
-// Direct NSE data acquisition is prohibited. Use ProviderRegistry instead.
-// The stub below prevents compile errors in code not yet migrated.
-import { nse } from "../nse";
-
 /**
  * Lazily construct the OpenAlgo adapter from environment variables.
  * Returns null when OPENALGO_BASE_URL or OPENALGO_API_KEY are not set.
@@ -22,12 +17,9 @@ function getOpenAlgoAdapter(): BrokerAdapter | null {
 }
 
 /**
- * Returns the active broker adapter.
+ * Returns the active broker adapter from INDIA_BROKER env var.
  *
  * Valid values for INDIA_BROKER: yahoo (default) | groww | angel | openalgo
- *
- * "nse" is no longer a valid INDIA_BROKER value. Direct NSE data acquisition
- * was removed 2026-09-03. Passing "nse" falls through to yahoo.
  */
 export function getBroker(): BrokerAdapter {
   const id = (process.env.INDIA_BROKER ?? process.env.BROKER ?? "yahoo").toLowerCase();
@@ -41,10 +33,6 @@ export function getBroker(): BrokerAdapter {
       if (!adapter) throw new Error("OPENALGO_BASE_URL and OPENALGO_API_KEY must be set when INDIA_BROKER=openalgo");
       return adapter;
     }
-    case "nse":
-      // NSE direct acquisition removed. Fallthrough to yahoo.
-      console.warn("[broker/factory] INDIA_BROKER=nse is no longer supported. Falling back to yahoo.");
-      return yahoo;
     case "yahoo":
     default:
       return yahoo;
@@ -72,25 +60,34 @@ export function getOptionChainBroker(id?: DataSourceId): BrokerAdapter {
 }
 
 /**
- * Resolve any catalog id to a concrete adapter. Unknown / not-yet-wired ids
- * (bse, zerodha, nse) return `null` so callers can fall through to whatever
- * default makes sense for their use case rather than swallow the request.
+ * Resolve any catalog id to a concrete adapter. Returns `null` for ids that
+ * have no BrokerAdapter implementation (bse, zerodha, upstox) so callers can
+ * fall through to whatever default makes sense rather than swallow the request.
+ *
+ * Note: Upstox is fully implemented in the ProviderRegistry layer
+ * (src/lib/market-data/providers/upstox.ts) which handles candles, quotes,
+ * option chain, and WebSocket feed. It does NOT have a legacy BrokerAdapter
+ * wrapper, so this function returns `null` for "upstox" — route handlers that
+ * need Upstox data should use `registry.getQuotes()` / `registry.getOptionChain()`
+ * rather than the adapter chain. The ProviderRegistry picks up the user's
+ * Upstox Analytics Token automatically (env or DB credentials via Profile → API Keys).
  */
 export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
   switch (id) {
     case "yahoo":
       return yahoo;
-    case "nse":
-      // NSE direct adapter removed — return null so callers fall back to yahoo/angel
-      return null;
     case "groww":
       return groww;
     case "angel":
       return angel;
     case "openalgo":
       return getOpenAlgoAdapter();
-    // bse + zerodha are catalogued in the UI but not yet implemented; the
-    // resolver returns null so the caller can fall back to a default.
+    case "upstox":
+      // Upstox is served by the ProviderRegistry (MarketDataProvider interface),
+      // not the legacy BrokerAdapter interface. Return null here so pickBrokerChain
+      // skips it — all Upstox data flows through registry.getQuotes() / getOptionChain().
+      return null;
+    // bse + zerodha are catalogued in the UI but not yet implemented.
     default:
       return null;
   }
@@ -98,10 +95,12 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
 
 /**
  * Live-data preference weight for the quote/history/feed routes.
+ * Higher = tried first in pickBrokerChain.
  */
 const INDIA_PICK_WEIGHT: Partial<Record<DataSourceId, number>> = {
-  angel: 3,
-  groww: 2,
+  angel:   3,
+  upstox:  2, // ProviderRegistry handles Upstox — weight kept so user selection order is respected
+  groww:   1,
 };
 
 function pickWeight(id: DataSourceId): number {
@@ -147,4 +146,4 @@ export function pickBrokerChain(
   return out.length > 0 ? out : [yahoo];
 }
 
-export { yahoo, nse, groww, angel };
+export { yahoo, groww, angel };

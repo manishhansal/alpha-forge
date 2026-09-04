@@ -153,7 +153,9 @@ describe("NSE service adapter is a stub that throws", () => {
 describe("broker factory does not serve NSE adapter", () => {
   it("getBrokerById('nse') returns null", async () => {
     const { getBrokerById } = await import("@/services/india/broker/factory");
-    const adapter = getBrokerById("nse");
+    // "nse" is no longer in the DataSourceId union — cast through unknown to test
+    // the runtime behaviour of passing a removed/unknown id.
+    const adapter = getBrokerById("nse" as unknown as "yahoo");
     expect(adapter).toBeNull();
   });
 
