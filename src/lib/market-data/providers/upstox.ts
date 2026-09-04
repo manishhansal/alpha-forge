@@ -137,6 +137,39 @@ function getReadToken(): string | null {
   );
 }
 
+/**
+ * Async token resolver — extends the sync {@link getReadToken} with a 4th
+ * fallback tier that reads the signed-in user's Analytics Token from the
+ * encrypted `UserSetting.apiKeysEncrypted` store (entered via Profile → API
+ * Keys → "Upstox Analytics API").
+ *
+ * Priority:
+ *   1. UPSTOX_ANALYTICS_TOKEN  (env — fastest, zero I/O)
+ *   2. In-memory OAuth2 access token
+ *   3. UPSTOX_ACCESS_TOKEN     (env legacy)
+ *   4. Per-user DB token       (loaded lazily via upstox-credentials.ts)
+ *
+ * Returns null when no token source is available; callers must handle the
+ * null case (provider returns empty / null and the registry fails over to
+ * Yahoo Finance).
+ */
+async function resolveReadToken(): Promise<string | null> {
+  // Fast path — check env vars first (synchronous, no I/O).
+  const envToken = getReadToken();
+  if (envToken) return envToken;
+
+  // Slow path — load the per-user DB token only when env vars are absent.
+  // The lazy import avoids pulling NextAuth + Prisma into every code path
+  // that imports this provider module (e.g. worker, data-service scripts).
+  try {
+    const mod = await import("@/features/settings/upstox-credentials");
+    const creds = await mod.getUpstoxTokenForRequest();
+    return creds?.analyticsToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function isUpstoxConfigured(): boolean {
   return Boolean(
     process.env.UPSTOX_ANALYTICS_TOKEN ??
@@ -228,9 +261,9 @@ async function upstoxGet<T>(
   signal?: AbortSignal,
   token?: string,
 ): Promise<T> {
-  const bearerToken = token ?? getReadToken();
+  const bearerToken = token ?? await resolveReadToken();
   if (!bearerToken) {
-    throw new Error("Upstox: no bearer token available (configure UPSTOX_ANALYTICS_TOKEN)");
+    throw new Error("Upstox: no bearer token available (set UPSTOX_ANALYTICS_TOKEN or configure via Profile → API Keys)");
   }
 
   const url = new URL(`${UPSTOX_BASE}${path}`);
@@ -550,8 +583,8 @@ export class UpstoxWsManager {
   }
 
   private async fetchWsUrl(): Promise<string> {
-    const token = getReadToken();
-    if (!token) throw new Error("Upstox WebSocket: no auth token");
+    const token = await resolveReadToken();
+    if (!token) throw new Error("Upstox WebSocket: no auth token — set UPSTOX_ANALYTICS_TOKEN or configure via Profile → API Keys");
 
     const res = await fetch(UPSTOX_WS_AUTH_URL, {
       method:  "GET",

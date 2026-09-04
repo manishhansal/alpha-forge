@@ -26,6 +26,7 @@ export {
 import {
   SUPPORTED_EXCHANGES,
   usesSmartApiAuth,
+  usesTokenOnlyAuth,
   type Exchange,
   type SaveApiKeyInput,
   type StoredKeySummary,
@@ -136,7 +137,9 @@ export async function saveApiKey(userId: string, input: SaveApiKeyInput): Promis
     entry.clientCode = encrypt(input.clientCode);
     entry.pin = encrypt(input.pin);
     entry.totpSecret = encrypt(input.totpSecret);
-  } else {
+  } else if (!usesTokenOnlyAuth(input.exchange)) {
+    // Standard key+secret pair (Binance, Groww, etc.).
+    // Token-only exchanges (Upstox) store only apiKey — no apiSecret.
     entry.apiSecret = encrypt(input.apiSecret);
   }
   await writeStoredMap(userId, { ...current, [input.exchange]: entry });
@@ -209,6 +212,36 @@ export async function readAngelCredentials(
     };
   } catch (err) {
     console.warn(`[api-keys] failed to decrypt Angel One creds:`, (err as Error).message);
+    return null;
+  }
+}
+
+/**
+ * Plaintext Upstox Analytics Token for a user.
+ *
+ * Returns `null` when no Upstox key is stored. The token is persisted in the
+ * `apiKey` slot of the stored entry (Upstox is a token-only exchange — no
+ * separate apiSecret). Never expose the return value to the client.
+ */
+export interface UpstoxStoredCredentials {
+  /** The long-lived Analytics Token from the Upstox Developer Console. */
+  analyticsToken: string;
+}
+
+export async function readUpstoxCredentials(
+  userId: string,
+): Promise<UpstoxStoredCredentials | null> {
+  const prisma = getPrisma();
+  const row = await prisma.userSetting.findUnique({
+    where: { userId },
+    select: { apiKeysEncrypted: true },
+  });
+  const entry = parseStored(row?.apiKeysEncrypted).upstox;
+  if (!entry) return null;
+  try {
+    return { analyticsToken: decrypt(entry.apiKey) };
+  } catch (err) {
+    console.warn(`[api-keys] failed to decrypt Upstox creds:`, (err as Error).message);
     return null;
   }
 }

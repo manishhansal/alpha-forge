@@ -18,6 +18,7 @@ export const SUPPORTED_EXCHANGES = [
   "groww",
   "zerodha",
   "angel",
+  "upstox",
 ] as const;
 export type Exchange = (typeof SUPPORTED_EXCHANGES)[number];
 
@@ -29,6 +30,7 @@ export const EXCHANGE_LABELS: Record<Exchange, string> = {
   groww: "Groww",
   zerodha: "Zerodha Kite",
   angel: "Angel One SmartAPI",
+  upstox: "Upstox Analytics API",
 };
 
 /** Which market surface a stored credential belongs to. Drives the
@@ -41,6 +43,7 @@ export const EXCHANGE_MARKET: Record<Exchange, "crypto" | "india"> = {
   groww: "india",
   zerodha: "india",
   angel: "india",
+  upstox: "india",
 };
 
 /**
@@ -54,6 +57,21 @@ export const SMARTAPI_EXCHANGES = ["angel"] as const;
 
 export function usesSmartApiAuth(exchange: Exchange): boolean {
   return (SMARTAPI_EXCHANGES as readonly string[]).includes(exchange);
+}
+
+/**
+ * Exchanges that authenticate with a single bearer / access token rather than
+ * an `apiKey` + `apiSecret` pair. For these the `apiSecret` field in the form
+ * is hidden and the token is stored in the `apiKey` slot.
+ *
+ * Upstox uses a long-lived read-only Analytics Token (from the Upstox Developer
+ * Console → "Analytics Token") which gives full read access to market data
+ * without needing OAuth2 client credentials.
+ */
+export const TOKEN_ONLY_EXCHANGES = ["upstox"] as const;
+
+export function usesTokenOnlyAuth(exchange: Exchange): boolean {
+  return (TOKEN_ONLY_EXCHANGES as readonly string[]).includes(exchange);
 }
 
 /** Public, redacted view of one exchange's stored credentials. */
@@ -105,7 +123,9 @@ export const SAVE_INPUT_SCHEMA = z
           message: "TOTP secret is required (the base32 string from 2FA setup)",
         });
       }
-    } else if (val.apiSecret.length < 8) {
+    } else if (!usesTokenOnlyAuth(val.exchange) && val.apiSecret.length < 8) {
+      // Token-only exchanges (Upstox) store a single bearer token in apiKey —
+      // they don't have a separate apiSecret, so skip this check for them.
       ctx.addIssue({ code: "custom", path: ["apiSecret"], message: "API secret looks too short" });
     }
   });
