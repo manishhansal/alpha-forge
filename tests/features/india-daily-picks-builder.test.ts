@@ -5,7 +5,7 @@ import type { IndiaScalpSignal } from "@/features/india/scalping/types";
 
 const getCandidatesMock = vi.fn();
 const getOrbMock = vi.fn();
-const nseGetOptionChainMock = vi.fn();
+const registryGetOptionChainMock = vi.fn();
 
 vi.mock("@/features/ai-signals/india-builder", () => ({
   getIndiaDailyPickCandidates: () => getCandidatesMock(),
@@ -15,15 +15,18 @@ vi.mock("@/features/india/scalping/strategies/opening-breakout", () => ({
   getIndiaOpeningBreakoutSignals: (...args: unknown[]) => getOrbMock(...args),
 }));
 
-// Mock the NSE service surface used by the builder for INDICES_SCALP option
-// projection + live tracking. Default behaviour: chain unavailable (null) so
-// existing tests that don't surface any index symbols behave exactly as
+// Mock the registry surface used by the builder for INDICES_SCALP option
+// projection + live tracking. Default behaviour: chain unavailable (rejects)
+// so existing tests that don't surface any index symbols behave exactly as
 // before. Tests that exercise the option-projection path stub this to return
 // a controlled chain.
-vi.mock("@/services/india/nse", () => ({
-  nse: {
-    getOptionChain: (...args: unknown[]) => nseGetOptionChainMock(...args),
+vi.mock("@/lib/market-data/registry", () => ({
+  registry: {
+    getOptionChain: (...args: unknown[]) => registryGetOptionChainMock(...args),
+    getQuotes: vi.fn().mockResolvedValue([]),
+    getLatestQuote: vi.fn().mockResolvedValue(null),
   },
+  bootstrapRegistry: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {
@@ -210,7 +213,7 @@ function fakePrisma() {
     ),
   };
   return {
-    client: { indiaDailyPick: model } as never,
+    client: { indiaDailyPick: model, $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)) } as never,
     model,
     seed: (rows: Record<string, unknown>[]) => {
       store = rows.map((r) => ({
@@ -234,13 +237,13 @@ beforeEach(() => {
   vi.setSystemTime(new Date(FAKE_NOW_MS));
   getCandidatesMock.mockReset();
   getOrbMock.mockReset();
-  nseGetOptionChainMock.mockReset();
+  registryGetOptionChainMock.mockReset();
   // Default: no Opening Breakout signals (the opening candle hasn't broken /
   // retested yet) so the AI-bucket assertions stay deterministic.
   getOrbMock.mockResolvedValue([]);
   // Default: option chains unavailable — the builder fail-softs to dropping
   // any INDICES_SCALP picks rather than fabricating premiums.
-  nseGetOptionChainMock.mockRejectedValue(new Error("no chain (test default)"));
+  registryGetOptionChainMock.mockRejectedValue(new Error("no chain (test default)"));
 });
 
 afterEach(() => {
@@ -530,7 +533,7 @@ describe("getIndiaDailyPicks", () => {
     });
     // Stub the chain so the projection has an ATM strike with a quotable
     // premium. Per-symbol behaviour keyed off the requested underlying.
-    nseGetOptionChainMock.mockImplementation(async (sym: string) => {
+    registryGetOptionChainMock.mockImplementation(async (sym: string) => {
       if (sym !== "NIFTY") throw new Error(`no chain for ${sym}`);
       return {
         symbol: "NIFTY",

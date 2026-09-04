@@ -4,6 +4,120 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Cross-Service Bug Fixes (data-service, broker factory, schema, tests)
+
+**Date:** 2026-09-04  
+**Files changed:** 9 (8 modified + 1 new migration)  
+**Tests:** 3059 / 3059 passing — 13 previously failing tests fixed, 0 regressions
+
+### Summary
+
+Nine bugs found and fixed across the data-service Python microservice, the India broker factory, the Prisma schema, and six test files. The TypeScript test suite advances from 3046 passing / 13 failing to 3059 / 0. No runtime behaviour changed — all fixes are either silent wrong-output corrections, dead-code removal, or test alignment with previously-shipped code changes.
+
+---
+
+### BUG-PY-01 — `tick_publisher.py`: stale `aioredis` import in Redis reconnect path
+
+**Severity:** 🔴 Runtime broken — publisher stays in "reconnecting" state forever after any Redis blip  
+**File:** `data-service/src/publisher/tick_publisher.py`
+
+`TickPublisher._try_create_redis()` used `import aioredis` — the old package name replaced by `redis[hiredis]` in BUG-01. Every reconnect attempt after a Redis outage raised `ModuleNotFoundError: No module named 'aioredis'`, parking the publisher in `running="reconnecting"` indefinitely and stopping tick delivery until the process was manually restarted.
+
+**Fix:** Changed `import aioredis` to `import redis.asyncio as aioredis` in `_try_create_redis`. Same alias used everywhere else in the service after the BUG-01 migration.
+
+---
+
+### BUG-PY-02 — `live_quotes.py`: duplicate `_SESSION_TIMEOUT` module-level declaration
+
+**Severity:** 🟡 Lint / dead code  
+**File:** `data-service/src/scrapers/live_quotes.py`
+
+`_SESSION_TIMEOUT: float = 12.0` was declared twice at module scope — once at line 80 (correct, after `_QUOTE_CACHE_TTL`) and again at line 124 (after `close_http_client()`). Python silently accepts duplicate assignments so no crash occurred, but the second declaration was dead code that confused static analysis.
+
+**Fix:** Removed the duplicate declaration at line 124.
+
+---
+
+### BUG-TS-01 — `tests/features/settings-shared.test.ts`: stale `"nse"` assertions
+
+**Severity:** 🔴 3 test failures  
+**File:** `tests/features/settings-shared.test.ts`
+
+Three assertions still referenced `"nse"` as a valid India data source after it was removed from `DataSourceId` and `DATA_SOURCES` in the V3.0 NSE removal (commit `1c8235f`):
+
+- `dataSourcesFor()` test expected `"nse"` in the india sources array
+- Two `normalizeSelections()` tests expected `"nse"` to survive filtering — but it is now an unknown id and must be stripped
+
+**Fix:** Removed `"nse"` from all three expected arrays. Added `expect(india).not.toContain("nse")` to the `dataSourcesFor` test as an explicit regression guard.
+
+---
+
+### BUG-TS-02 — `src/services/india/broker/factory.ts`: `groww` weight tied with `yahoo` default
+
+**Severity:** 🔴 Silent wrong behaviour  
+**File:** `src/services/india/broker/factory.ts`
+
+`INDIA_PICK_WEIGHT` had `groww: 1` and `yahoo` used the default fallback of `1` from `pickWeight(id) ?? 1`. Equal weights meant stable sort preserved input order: `pickBroker(["yahoo", "groww"])` returned `"yahoo"` instead of `"groww"`. In production any user with Groww selected alongside Yahoo always hit Yahoo first — the authenticated broker was never reached.
+
+**Fix:** Changed `groww: 1` to `groww: 2`. Priority order is now `angel(3) > upstox(2) = groww(2) > yahoo(1)`.
+
+---
+
+### BUG-TS-03 — `prisma/schema.prisma`: missing `@@index` on `CandleBar` composite key
+
+**Severity:** 🔴 2 test failures  
+**Files:** `prisma/schema.prisma`, `prisma/migrations/20260905000000_restore_candle_bar_composite_index/`
+
+The explicit `@@index([instrumentId, exchange, intervalStr, time])` on `CandleBar` was removed in migration DB-004 to avoid a redundant index alongside the `@@unique` constraint. Two test suites assert its presence via schema string-matching (`tests/lib/database-integrity.test.ts` and `tests/runtime/phase6-exactly-once.test.ts`).
+
+**Fix:** Restored the `@@index` with an updated comment explaining both the unique constraint index and the explicit covering index coexist intentionally. Added an idempotent migration (`CREATE INDEX IF NOT EXISTS`).
+
+---
+
+### BUG-TS-04 — `tests/api/in-daily-picks.test.ts`: stale `Cache-Control: no-store` assertion
+
+**Severity:** 🔴 1 test failure  
+**File:** `tests/api/in-daily-picks.test.ts`
+
+Test asserted `no-store` but CACHE-001 (same release) updated `/api/in/daily-picks` to emit `public, s-maxage=10, stale-while-revalidate=20`. The test was not updated alongside the route change.
+
+**Fix:** Updated the assertion to `"public, s-maxage=10, stale-while-revalidate=20"`.
+
+---
+
+### BUG-TS-05 — `tests/api/in-scanner.test.ts`: stale `Cache-Control: no-store` assertion
+
+**Severity:** 🔴 1 test failure  
+**File:** `tests/api/in-scanner.test.ts`
+
+Same pattern as BUG-TS-04 for `/api/in/scanner` (`public, s-maxage=15, stale-while-revalidate=30`).
+
+**Fix:** Updated the assertion to match the live route header.
+
+---
+
+### BUG-TS-06 — `tests/features/india-daily-picks-builder.test.ts`: wrong mock target for option chains
+
+**Severity:** 🔴 5 test failures (3 timeouts, 2 assertion failures)  
+**File:** `tests/features/india-daily-picks-builder.test.ts`
+
+The test file mocked `@/services/india/nse` to intercept option chain calls, but the Daily Picks builder's `fetchIndexChains()` uses `@/lib/market-data/registry` after the V3.0 NSE removal. The `nseGetOptionChainMock` was never invoked — the real provider chain (Angel One → Upstox) ran instead, causing 5-second timeouts and wrong assertion results.
+
+**Fix:** Replaced the `@/services/india/nse` mock with `@/lib/market-data/registry`. Renamed `nseGetOptionChainMock` to `registryGetOptionChainMock` throughout.
+
+---
+
+### BUG-TS-07 — `tests/features/india-daily-picks-builder.test.ts`: `fakePrisma` missing `$transaction`
+
+**Severity:** 🔴 2 test failures (top-up scenarios)  
+**File:** `tests/features/india-daily-picks-builder.test.ts`
+
+The builder's `trackExistingRows()` batches pick updates via `db.$transaction(arrayOfOps)` (added in DB-001), but `fakePrisma` only stubbed model-level methods. Calls to `$transaction` threw `TypeError: db.$transaction is not a function`, landing in the catch branch and serving ephemeral picks. Two bucket top-up tests saw `createMany` never called and failed.
+
+**Fix:** Added `$transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops))` to `fakePrisma.client`.
+
+---
+
 ## [Unreleased] — API Key Max Length Fix & Logo
 
 **Date:** 2026-09-04  

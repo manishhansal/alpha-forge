@@ -2,7 +2,7 @@
 
 **Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED (certification completed 2026-09-03)  
 **Role: Tier-0 market data provider** for the TypeScript layer (V3.0.0, 2026-09-04)  
-**Last updated:** 2026-09-04, commit `c8d80a1` (double-publish fix)
+**Last updated:** 2026-09-04, commit `<pending>` (reconnect + duplicate-const fixes)
 
 Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency NSE market-data foundation for AlphaForge.
 
@@ -942,6 +942,22 @@ Session warmer created an ephemeral browser; production singletons were never re
 **Fix:** Changed `_publish_to_stream()` to call `stream_publisher._stream_append(tick_v2, payload, "NORMAL")` directly — this appends to the durable Stream only, without re-publishing to pub/sub. The pub/sub publish path remains solely in `TickPublisher._publish_tick()`. A code comment was added to `stream_publisher.publish_tick()` clarifying that callers who have already published to pub/sub should use `_stream_append` directly.
 
 *(For V1 deployment sprint bugs BUG-01 through BUG-06, see §14 Bug-Fix Log above.)*
+
+### BUG-RECONNECT-01 — `tick_publisher.py` reconnect uses stale `aioredis` import [HIGH, FIXED 2026-09-04]
+
+`TickPublisher._try_create_redis()` called `import aioredis`. The `aioredis` package was replaced by `redis[hiredis]` in BUG-01 and is no longer installed. After any Redis blip, every reconnect attempt raised `ModuleNotFoundError: No module named 'aioredis'`, parking the publisher in `running="reconnecting"` indefinitely. Tick delivery stopped until the container was restarted.
+
+**Fix:** Changed `import aioredis` → `import redis.asyncio as aioredis` in `_try_create_redis`. Consistent with the rest of the module.
+
+**Files changed:** `data-service/src/publisher/tick_publisher.py`
+
+### BUG-DUPLICATE-CONST-01 — `live_quotes.py` duplicate `_SESSION_TIMEOUT` constant [LOW, FIXED 2026-09-04]
+
+`_SESSION_TIMEOUT: float = 12.0` was declared twice at module scope (lines 80 and 124). The duplicate was dead code introduced by a merge conflict resolution. No runtime impact but flagged by static analysis.
+
+**Fix:** Removed the duplicate declaration at line 124.
+
+**Files changed:** `data-service/src/scrapers/live_quotes.py`
 
 ---
 

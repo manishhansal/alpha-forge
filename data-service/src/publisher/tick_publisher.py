@@ -454,7 +454,7 @@ class TickPublisher:
     async def _try_create_redis(self) -> Any:
         """Attempt to create a new Redis connection. Returns ``None`` on failure."""
         try:
-            import aioredis  # type: ignore[import]
+            import redis.asyncio as aioredis  # type: ignore[import]
 
             client = await aioredis.from_url(
                 settings.redis_url,

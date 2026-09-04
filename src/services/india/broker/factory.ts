@@ -100,7 +100,7 @@ export function getBrokerById(id?: DataSourceId | null): BrokerAdapter | null {
 const INDIA_PICK_WEIGHT: Partial<Record<DataSourceId, number>> = {
   angel:   3,
   upstox:  2, // ProviderRegistry handles Upstox — weight kept so user selection order is respected
-  groww:   1,
+  groww:   2,
 };
 
 function pickWeight(id: DataSourceId): number {

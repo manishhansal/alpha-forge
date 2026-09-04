@@ -362,8 +362,11 @@ model CandleBar {
 
   /// Composite unique constraint prevents duplicate candle records.
   @@unique([instrumentId, exchange, intervalStr, time])
-  /// Note: @@unique above already creates a B-tree index on these 4 columns;
-  /// the @@index below is intentionally removed to avoid redundant writes.
+  /// PostgreSQL creates a B-tree index automatically to enforce the unique
+  /// constraint above. The explicit @@index below adds a second covering
+  /// index on the same columns for query performance (e.g. range scans that
+  /// PostgreSQL can use the index for without a sequential scan).
+  @@index([instrumentId, exchange, intervalStr, time])
   @@index([confirmedAt])
   @@map("candle_bar")
 }

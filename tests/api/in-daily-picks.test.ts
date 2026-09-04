@@ -12,7 +12,7 @@ import { GET as getPicks } from "@/app/api/in/daily-picks/route";
 import { GET as getHistory } from "@/app/api/in/daily-picks/history/route";
 
 describe("api/in/daily-picks", () => {
-  it("returns the board payload with no-store caching", async () => {
+  it("returns the board payload with shared-cache headers", async () => {
     getPicksMock.mockReset();
     getPicksMock.mockResolvedValueOnce({
       market: "india",
@@ -23,7 +23,9 @@ describe("api/in/daily-picks", () => {
 
     const res = await getPicks();
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("cache-control")).toBe(
+      "public, s-maxage=10, stale-while-revalidate=20"
+    );
     const body = (await res.json()) as { tradeDate: string };
     expect(body.tradeDate).toBe("2026-06-15");
   });
