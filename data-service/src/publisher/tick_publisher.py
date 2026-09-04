@@ -364,10 +364,14 @@ class TickPublisher:
             return False
 
     async def _publish_to_stream(self, tick: LiveTick) -> None:
-        """Publish tick to Redis Stream for durable at-least-once delivery.
+        """Append tick to Redis Stream for durable at-least-once delivery.
 
         Phase 22: Stream provides recovery path; pub/sub is real-time/lossy.
         This is fire-and-forget — stream failure does NOT block pub/sub.
+
+        Uses _stream_append directly (not publish_tick) to avoid a double
+        pub/sub publish — tick_publisher already published to the pub/sub
+        channel above; we only need the durable stream entry here.
         """
         try:
             from src.publisher.stream_publisher import stream_publisher
@@ -388,7 +392,11 @@ class TickPublisher:
                     volume=tick.volume,
                     oi=tick.oi,
                 )
-                await stream_publisher.publish_tick(tick_v2)
+                # Call _stream_append directly — publish_tick would re-publish
+                # to the pub/sub channel, causing every tick to appear twice
+                # in the channel and double-filling the Redis Stream.
+                payload = tick_v2.model_dump_json()
+                await stream_publisher._stream_append(tick_v2, payload, "NORMAL")
         except Exception as exc:
             # Non-fatal: stream publish failure should never block pub/sub
             logger.debug("stream_publish_error", symbol=tick.symbol, error=str(exc))

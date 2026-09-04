@@ -323,6 +323,9 @@ model IndiaDailyPick {
   @@unique([tradeDate, bucket, rank])
   @@index([tradeDate])
   @@index([symbol, tradeDate])
+  /// Speeds up the worker's OPEN-pick tracking query which filters by
+  /// status = 'OPEN' for today — avoids a full table scan on every tick.
+  @@index([status, tradeDate])
 }
 
 /// One confirmed OHLCV candle bar produced by the real-time candle builder.
@@ -359,7 +362,8 @@ model CandleBar {
 
   /// Composite unique constraint prevents duplicate candle records.
   @@unique([instrumentId, exchange, intervalStr, time])
-  @@index([instrumentId, exchange, intervalStr, time])
+  /// Note: @@unique above already creates a B-tree index on these 4 columns;
+  /// the @@index below is intentionally removed to avoid redundant writes.
   @@index([confirmedAt])
   @@map("candle_bar")
 }

@@ -88,6 +88,11 @@ class StreamPublisher:
 
         Returns True when the pub/sub publish succeeded.
         The stream publish is best-effort (failure does not block pub/sub).
+
+        NOTE: If you have already published to pub/sub yourself (e.g. from
+        tick_publisher), call _stream_append directly to avoid a double
+        pub/sub publish. This method is for callers that want the full
+        pub/sub + stream dual-write.
         """
         if self._redis is None:
             return False

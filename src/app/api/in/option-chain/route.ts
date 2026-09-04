@@ -105,7 +105,14 @@ export async function GET(req: Request) {
       iv_regime,
     };
 
-    return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(payload, {
+      // 20s shared-cache: option chain + ML greeks are the same for every user
+      // requesting the same symbol. 20s matches the broker-layer cache TTL so
+      // we don't return stale data beyond the upstream window. The ML
+      // enrichment (greeks + IV regime) is the most expensive part — caching
+      // at the HTTP layer means concurrent users share one ML call per 20s.
+      headers: { "Cache-Control": "public, s-maxage=20, stale-while-revalidate=30" },
+    });
   }
 
   try {

@@ -171,6 +171,10 @@ export async function GET(req: Request): Promise<NextResponse<TopPicksResponse>>
 
   return NextResponse.json(
     { picks, universe: rows.length, fetchedAt: new Date().toISOString() },
-    { headers: { "Cache-Control": "no-store" } },
+    {
+      // 15s shared-cache: top-picks queries the entire sector universe on
+      // every call. All users get the same rankings within a 15s window.
+      headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" },
+    },
   );
 }

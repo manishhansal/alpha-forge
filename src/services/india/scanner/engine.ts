@@ -130,12 +130,14 @@ async function runVolumeBreakout(limit: number): Promise<ScannerResult> {
     .sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0))
     .slice(0, 50);
 
-  const ratios = await Promise.all(
-    candidates.map(async (q) => {
+  const ratios = await pmap(
+    candidates,
+    async (q) => {
       const avg = await avgVolume(q.symbol);
       const ratio = avg && avg > 0 && q.volume ? q.volume / avg : null;
       return { q, avg, ratio };
-    }),
+    },
+    8, // cap at 8 concurrent Yahoo historical fetches — same as FnO trend scanners
   );
 
   const sorted = ratios

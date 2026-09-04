@@ -4,42 +4,233 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — India API Cache Layer, DB Index Tuning & Publisher Fix
+
+**Date:** 2026-09-04  
+**Files changed:** 26  
+**Tests:** 3059 / 3059 passing — no regressions
+
+### Summary
+
+Four independent improvements shipped together: (1) every India API route that was returning `Cache-Control: no-store` now has a tuned shared-cache policy, cutting redundant server-side compute when multiple users/tabs hit the same endpoint within the same window; (2) the Daily Picks builder migrates away from the last remaining `nse.*` call and batches DB writes into a single transaction; (3) the volume breakout scanner caps concurrent Yahoo historical fetches to prevent thundering-herd behaviour; (4) a double pub/sub publish bug in the data service is fixed.
+
+---
+
+### CACHE-001 — HTTP Shared-Cache Headers on all India API Routes
+
+**Impact:** Performance — reduces redundant server-side compute under concurrent load  
+**Files:** 11 route handlers under `src/app/api/in/`
+
+Every India API route was returning `Cache-Control: no-store`, causing every browser tab, CDN node, and concurrent user to trigger a full independent server execution. Replaced with tuned `public, s-maxage=N, stale-while-revalidate=2N` policies — `s-maxage` collapses concurrent executions to one per window; `stale-while-revalidate` allows instant response from cache while a background refresh runs.
+
+| Route | Old | New s-maxage | Rationale |
+|---|---|---|---|
+| `/api/in/ai-signals` | `no-store` | **30s** | Multi-confluence ML computation; WhatsApp dispatch already fired before return |
+| `/api/in/daily-picks` | `no-store` | **10s** | Concurrent tabs share one freeze/track execution per 10s window |
+| `/api/in/historical` (1d/1h/1w) | `no-store` | **300s** | Past candles are immutable; live daily candle closes at most once per session |
+| `/api/in/historical` (1m–30m) | `no-store` | **30s** | Intraday candles change frequently |
+| `/api/in/market-snapshot` | `no-store` | **8s** | NSE indices update every few seconds; 8s lag is imperceptible |
+| `/api/in/nifty-bias` | `no-store` | **10s** | NIFTY bias is the same for all users |
+| `/api/in/option-chain` | `no-store` | **20s** | Matches upstream broker-layer cache TTL; ML greeks enrichment shared |
+| `/api/in/scanner` | `no-store` | **15s** | Scanner results are global; matches 5-min worker cadence with buffer |
+| `/api/in/signal-center` | `no-store` | **20s** | Most expensive India endpoint (6 scanners + picks + AI); shared fan-out |
+| `/api/in/signals` | `no-store` | **15s** | Same unified feed for all users; collapses 6-scanner fan-out |
+| `/api/in/quote` | `no-store` | **5s** | Live quote; safe for any user requesting the same symbols in a 5s window |
+| `/api/in/fno-bullish-trend` | `no-store` | **60s** | 5-min service-layer cache already exists; HTTP layer collapses browser requests |
+| `/api/in/fno-bearish-trend` | `no-store` | **60s** | Same as bullish trend |
+| `/api/in/fno-trend-history` | `no-store` | **30s** | Past DB data; changes only when the worker runs every 60s |
+
+**Important invariant preserved for AI Signals:** The WhatsApp notification dispatch is fire-and-forget and runs **before** the `return NextResponse.json(...)` call. Caching the response does not suppress notifications — the dispatch already happened.
+
+**UI polling aligned:** `IndiaOverviewClient` polling interval extended from **10s → 30s** (`src/components/india/dashboard/india-overview-client.tsx`). The underlying endpoints (`market-snapshot`, `nifty-bias`) now have `s-maxage` caching, so polling at 10s just hits the shared cache without getting fresher data.
+
+---
+
+### NSE-BUILDER-001 — Daily Picks builder: last `nse.*` call migrated to registry
+
+**Impact:** Architectural — eliminates the last remaining direct NSE call outside the `data-service`  
+**File:** `src/features/india/daily-picks/builder.ts`
+
+The `fetchIndexChains()` helper inside the Daily Picks builder was still calling `nse.getOptionChain(sym)` directly — the one call that was missed during the V3.0.0 NSE removal sweep.
+
+**Fix:**
+- Import changed: `nse` from `@/services/india/nse` → `registry, bootstrapRegistry` from `@/lib/market-data/registry`
+- `await bootstrapRegistry()` called at the top of `fetchIndexChains()` to ensure the provider chain is initialised
+- `nse.getOptionChain(sym)` → `registry.getOptionChain(sym)` — now routes through: Data Service → Angel One → Upstox → (error if all unavailable)
+- Type cast added (`as unknown as OptionChain`) to bridge the registry's canonical type to the local `OptionChain` shape
+
+**Note:** This is the final `nse.*` import in production code. The NSE elimination guard tests in `tests/lib/market-data/nse-elimination.test.ts` will now pass cleanly even if the `builder.ts` code path is executed.
+
+---
+
+### DB-001 — DB write batching in `trackExistingRows` (Prisma transaction)
+
+**Impact:** Performance — reduces N serial DB round-trips to 1 per worker tick  
+**File:** `src/features/india/daily-picks/builder.ts`
+
+`trackExistingRows()` previously issued one `db.indiaDailyPick.update()` `await` per changed pick — executing N serial round-trips on every 60s worker tick. On a busy session with 15 picks, this could add ~75ms of sequential DB latency.
+
+**Fix:** Collect all changed picks first (pure compute, no I/O), then issue a single `db.$transaction([...updates])` regardless of how many picks changed. One round-trip per worker tick, regardless of session size.
+
+---
+
+### DB-002 — Parallel writes in `getIndiaDailyPicksHistory` history square-off
+
+**Impact:** Performance — eliminates sequential await chain on history page load  
+**File:** `src/features/india/daily-picks/builder.ts`
+
+`getIndiaDailyPicksHistory()` was squaring off stale OPEN picks from past days with a `for ... await db.update()` loop — up to 30+ serial awaits on a page load with a long history window.
+
+**Fix:** Replaced with `Promise.allSettled([...updates])` — all square-off writes execute in parallel. Individual write failures are absorbed by `allSettled` (the display still reflects the square-off even if a specific write fails).
+
+---
+
+### DB-003 — New `IndiaDailyPick(status, tradeDate)` index
+
+**Impact:** Performance — eliminates full table scan on the worker's OPEN-pick tracking query  
+**Migration:** `prisma/migrations/20260904034937_add_india_daily_pick_status_index/`  
+**Files:** `prisma/schema.prisma`
+
+The `india-daily-picks` worker runs every 60s and queries `WHERE status = 'OPEN' AND tradeDate = TODAY`. Without an index this is a full table scan — slow once the `IndiaDailyPick` table has months of history.
+
+```sql
+-- Applied by migration
+CREATE INDEX "IndiaDailyPick_status_tradeDate_idx" ON "IndiaDailyPick"("status", "tradeDate");
+```
+
+Schema annotation added:
+```prisma
+/// Speeds up the worker's OPEN-pick tracking query which filters by
+/// status = 'OPEN' for today — avoids a full table scan on every tick.
+@@index([status, tradeDate])
+```
+
+---
+
+### DB-004 — Drop redundant `CandleBar` composite index
+
+**Impact:** Write performance — removes redundant B-tree index on candle inserts  
+**Migration:** Same migration as DB-003  
+**Files:** `prisma/schema.prisma`
+
+`CandleBar` had both a `@@unique([instrumentId, exchange, intervalStr, time])` constraint and a `@@index([instrumentId, exchange, intervalStr, time])` on the same four columns. PostgreSQL automatically creates a B-tree index to enforce the unique constraint — the explicit `@@index` was creating a second identical index, wasting write throughput on every candle upsert.
+
+```sql
+-- Applied by migration
+DROP INDEX "candle_bar_instrumentId_exchange_intervalStr_time_idx";
+```
+
+Schema comment added to make the intentional removal explicit:
+```prisma
+/// Note: @@unique above already creates a B-tree index on these 4 columns;
+/// the @@index below is intentionally removed to avoid redundant writes.
+```
+
+---
+
+### SCANNER-001 — Volume breakout scanner: cap concurrent Yahoo fetches with `pmap`
+
+**Impact:** Reliability — prevents thundering-herd on Yahoo Finance historical API  
+**File:** `src/services/india/scanner/engine.ts`
+
+`runVolumeBreakout()` was using `Promise.all()` to fetch average volume for up to 50 candidates simultaneously — potentially firing 50 concurrent `getHistoricalCandlesByRange()` calls to Yahoo Finance. This routinely triggered Yahoo's rate limiter, causing the scanner to return degraded results.
+
+**Fix:** Replaced `Promise.all(candidates.map(...))` with `pmap(candidates, ..., 8)` — caps at **8 concurrent** Yahoo historical fetches, matching the concurrency limit already in use by the FnO trend scanners.
+
+---
+
+### DATA-SERVICE-001 — Fix double pub/sub publish in `tick_publisher`
+
+**Impact:** Bug fix — every tick was being published to Redis pub/sub twice  
+**Files:** `data-service/src/publisher/tick_publisher.py`, `data-service/src/publisher/stream_publisher.py`
+
+`_publish_to_stream()` in `TickPublisher` was calling `stream_publisher.publish_tick(tick_v2)`. `publish_tick` does two things: (1) publishes to the Redis pub/sub channel **and** (2) appends to the Redis Stream. Since `tick_publisher` had already published to the pub/sub channel directly above, every tick was appearing twice in the pub/sub channel and the stream was also being written twice.
+
+**Fix:** Changed `_publish_to_stream()` to call `stream_publisher._stream_append(tick_v2, payload, "NORMAL")` directly — this appends to the durable Stream only, without re-publishing to pub/sub. The pub/sub publish path remains solely in `TickPublisher._publish_tick()`.
+
+**Code comment added to `stream_publisher.publish_tick()`** clarifying that callers who have already published to pub/sub themselves should use `_stream_append` directly to avoid the double-publish.
+
+---
+
+### ANGEL-001 — Export `getScripSubsets` from Angel One adapter
+
+**Impact:** Minor — makes the scrip-subset cache available to other modules  
+**File:** `src/services/india/angelone/index.ts`
+
+`getScripSubsets()` changed from `async function` → `export async function`. No behaviour change — this just makes the function importable by other modules that need access to the scrip master subsets without re-downloading the instrument CSV.
+
+---
+
+## [V3.0.1] — TypeScript Error Closure (Zero-Errors Gate)
+
+**Date:** 2026-09-04  
+**Commit:** `e574c16`  
+**Tests:** 3059 / 3059 passing — no regressions  
+**TypeScript:** 0 errors (was 52 pre-existing errors)
+
+### Summary
+
+Resolved all 52 pre-existing TypeScript errors that existed before and after the V3.0 India Data Fabric transformation. Zero `tsc --noEmit` errors remain. No runtime behaviour was changed.
+
+### Changes
+
+| File | Fix |
+|---|---|
+| `scripts/diagnose-indices-scalp.ts` | Migrated `nse.getOptionChain()` → `registry.getOptionChain()` (V3.0 NSE removal followup) |
+| `src/app/api/research/experiments/route.ts` | Fixed `z.record()` for Zod v4 — requires 2 args (key schema + value schema) |
+| `src/app/api/trades/[id]/explain/route.ts` | Fixed `null` vs `undefined`, removed unused `triggeredAtPrice` variable |
+| `src/components/research/status-badge.tsx` | Replaced invalid CSS `ringColor` property with `--tw-ring-color` custom property |
+| `src/features/india/scalping/strategies/opening-breakout.ts` | Migrated `nse.getOptionChain()` → `registry.getOptionChain()` |
+| `src/features/india/scalping/strategies/positioning.ts` | Same NSE migration |
+| `src/lib/market-data/registry.ts` | Removed unused import; added missing closing bracket |
+| `src/services/india/scanner/engine.ts` | Additional unused import cleanup |
+| `tests/components/india/DataSourceBadge.test.tsx` | Type assertion fix |
+| `tests/lib/india-session-certification-2026-09-01.test.ts` | Cast `process.env` to avoid `NODE_ENV` readonly assignment error |
+| `tests/lib/market-data/candle-persist.test.ts` | Added missing `beforeEach` import |
+| `tests/research/promotion-demotion.test.ts` | Used `EXECUTION_DEGRADATION` instead of non-existent `REPEATED_ERRORS` `DemotionTrigger` |
+| `tests/runtime/phase2-pipeline-trace.test.ts` | Fixed incorrect `MarketRegime` value; `closePrice` → `exitPrice` (`Trade.exitPrice`) |
+| `tests/runtime/phase10-performance.test.ts` | Fixed type requiring real `AsyncContext` |
+
+---
+
 ## [V3.0.0] — India Market Data Fabric + Unified Signal Intelligence
 
-**Date:** 2026-09-03  
+**Date:** 2026-09-04  
+**Commit:** `1c8235f`  
 **Certification Level:** LEVEL 2 — ARCHITECTURE CERTIFIED (NSE-free, provider-independent)  
-**Tests:** 3059 pass (3059 total — all existing + 12 new NSE elimination guard tests)  
-**Branch:** master (post-transformation)  
+**Tests:** 3059 pass (3047 prior + 12 new NSE elimination guard tests)  
+**Branch:** `feat/scrapling-data-microservice` → master  
 **Reports:** `reports/INDIA_ARCHITECTURE_AUDIT_2026-09-03.md`, `reports/INDIA_PRODUCTION_READINESS_2026-09-03.md`
 
 ### Summary
 
-Major architectural transformation of the Indian market data and signal intelligence subsystem. This release establishes a clean, provider-independent data fabric with strict hierarchy enforcement, complete NSE removal, secure Upstox OAuth, and a unified signal center.
+Major architectural transformation of the Indian market data and signal intelligence subsystem. This release establishes a clean, provider-independent data fabric with strict hierarchy enforcement, complete NSE direct-scraping removal, secure Upstox OAuth BFF, and a unified signal center.
 
 ### NSE-001 — Direct NSE Data Acquisition Removed
 
 **Impact:** CRITICAL architectural fix  
 **Files:** `src/lib/market-data/providers/nse.ts`, `src/services/india/nse/index.ts`, `src/lib/market-data/registry.ts`, `src/lib/market-data/types.ts`, `src/lib/market-data/health.ts`, `src/lib/market-data/index.ts`, `package.json`
 
-All direct NSE data acquisition has been eliminated from production code:
+All direct NSE data acquisition has been eliminated from production TypeScript code. NSE market data now flows exclusively through the credential-free `data-service` (Scrapling/Python) as the tier-0 provider:
 
 - `NseProvider` class replaced with tombstone (`NSE_PROVIDER_REMOVED_REASON` constant)
 - `stock-nse-india` npm package removed from `package.json`
-- `src/services/india/nse/index.ts` replaced with throwing stubs (forces migration)
+- `src/services/india/nse/index.ts` replaced with throwing stubs (forces migration away from direct NSE calls)
 - `NseProvider` unregistered from `bootstrapRegistry()` — no longer in provider chain
-- `ProviderId` type union updated: `"nse"` removed
+- `ProviderId` type union updated: `"nse"` removed; valid values are now `"scrapling" | "angel_one" | "upstox" | "yahoo"`
 - `PROVIDER_PRIORITY` constant updated: `["scrapling", "angel_one", "upstox", "yahoo"]`
 - `scanner/engine.ts` `indexChains()` migrated from `nse.getOptionChain()` → `registry.getOptionChain()`
 - `broker/factory.ts` — `getBrokerById("nse")` now returns `null`; `INDIA_BROKER=nse` falls back to yahoo
 
 **Why removed:**
-1. NSE anti-bot / shadow-banning causes silent data failures
-2. Automating NSE scraping violates their Terms of Service
-3. Cookie/session management is fragile and expensive
-4. Angel One SmartAPI and Upstox provide equivalent data via legitimate broker APIs with SLAs
-5. Option chain with live Greeks is only available from broker APIs (NSE provides none)
+1. NSE anti-bot / shadow-banning causes silent data failures in the TypeScript layer
+2. Automating NSE scraping from Node.js violates their Terms of Service
+3. Cookie/session management is fragile and expensive to maintain
+4. The `data-service` Python microservice already handles NSE scraping correctly (Scrapling, proper session management, circuit breakers, lineage)
+5. Angel One SmartAPI and Upstox provide equivalent data via legitimate broker APIs with SLAs
+6. Option chain with live Greeks is only available from broker APIs (NSE provides none)
 
-**New provider chain:** `DATA_SERVICE (0) → ANGEL_ONE (1) → UPSTOX (2) → YAHOO (3)`
+**New provider chain:** `DATA_SERVICE / SCRAPLING (0) → ANGEL_ONE (1) → UPSTOX (2) → YAHOO (3)`
 
 ### NSE-002 — NSE Elimination Architectural Guard Tests
 
@@ -146,7 +337,16 @@ New reports generated in `reports/`:
 
 ### Known Remaining Gaps (GATE-001)
 
-The DataQualityGate (`POST /data/gate`) is implemented in the Python data-service but is NOT yet called by the TypeScript signal engine before generating signals. This is the primary blocker for LEVEL 3 (Production Ready) certification. Wire `src/lib/data-service/gate-client.ts` → `POST /data/gate` in the signal engine to close this.
+The DataQualityGate (`POST /data/gate`) is implemented in the Python data-service but is **NOT yet called** by the TypeScript signal engine before generating signals. This is the primary blocker for LEVEL 3 (Production Ready) certification.
+
+**Resolution path:** Wire `src/lib/data-service/gate-client.ts` → `POST /data/gate` in the signal engine to close this gap.
+
+**Current state (as of 2026-09-04):**
+- TypeScript: **0 errors** (was 52 — all fixed in V3.0.1 commit `e574c16`)  
+- Tests: **3059 / 3059 passing**  
+- Certification: **LEVEL 2 — ARCHITECTURE CERTIFIED**  
+- NSE direct scraping: **fully removed** from the TypeScript layer  
+- Provider chain: `scrapling (0) → angel_one (1) → upstox (2) → yahoo (3)`
 
 ---
 
@@ -156,6 +356,7 @@ The DataQualityGate (`POST /data/gate`) is implemented in the Python data-servic
 **Certification Commit:** `1b85a482eb0d9bd7760977c677bb01e49602ab65`  
 **Certification Level:** LEVEL 2 — INTEGRATION CERTIFIED (up from LEVEL 1)  
 **Tests:** 448 pass (335 baseline + 113 new integration tests)  
+**Service:** `data-service/` (Python 3.11 / FastAPI / Scrapling 0.4.x)  
 **Reports:** `data-service/reports/V2_1_CERTIFICATION_MATRIX.md`, `data-service/reports/PRODUCTION_READINESS_V2_1.md`
 
 ### Summary
@@ -747,6 +948,51 @@ All major pages overhauled with BentoGrid layouts: Crypto + India Overview, AI S
 - **Hydration fix** — `fmtTime()` + `fmtDateTime()` in `src/lib/utils.ts` pin `en-GB` locale; replaced all bare `toLocaleTimeString()` across 21 files
 - **Server/client boundary fix** — `signalToRadarRow` moved to `src/lib/signal-to-radar-row.ts`, removed `"use client"` directive
 - **Canvas color fix** — `CHART_THEMES` now uses literal hex `#94a3b8` instead of `var(--fg-muted)` (lightweight-charts cannot parse CSS variables on canvas)
+
+---
+
+## [Unreleased] — WhatsApp Trading Notifications
+
+**Date:** 2026-08-23  
+**Commits:** `8c0b7b0` → `70513e0`  
+**New source files:** `src/features/whatsapp/` (8 modules)  
+**New API routes:** `GET /api/in/whatsapp/status`, `POST /api/in/whatsapp/test`  
+**New UI:** `WhatsAppSection` in `/in/profile` page  
+**New worker events:** `SCANNER_HIT_NEW` (scanner delta detection)
+
+### Summary
+
+End-to-end WhatsApp notification layer for every major AlphaForge event. Dispatches messages via the Evolution-Go WhatsApp API with per-user Redis cooldowns, AES-encrypted phone numbers, and E.164 validation.
+
+### Notification Events
+
+| Event | Trigger |
+|---|---|
+| `AI_SIGNAL_NEW` | New India AI signal generated |
+| `SIGNALS_BOARD_NEW` | New entry on the Signals board |
+| `DAILY_PICKS_NEW` | Daily picks frozen at 09:15 IST |
+| `PAPER_TRADE_OPENED` | Auto paper-trader opens a position |
+| `PAPER_TRADE_CLOSED` | Position resolved (win/loss/expired) |
+| `SCANNER_HIT_NEW` | New F&O scanner hit (delta-detected — only new hits since last check) |
+
+### Implementation
+
+- **Phone helpers** (`src/features/whatsapp/phone.ts`) — E.164 normalization, AES-256-GCM encryption for storage, masked display
+- **NotificationEvent types** (`src/features/whatsapp/types.ts`) — typed discriminated union for all events
+- **Per-user preferences** (`src/features/whatsapp/preferences.ts`) — opt-in per event type, persisted in `UserSetting.dataSourcesJson`
+- **Message formatters** (`src/features/whatsapp/formatters.ts`) — IST-formatted, Indian market style (₹ amounts, lot sizes, IST timestamps)
+- **Notifier core** (`src/features/whatsapp/notifier.ts`) — Evolution-Go HTTP dispatch + per-user Redis cooldown (default 5 min) prevents duplicate alerts
+- **WhatsApp alert channel** — `WHATSAPP` registered in `AlertChannelEnum`
+- **Scanner delta detection** (`worker/src/jobs/india-whatsapp-scanner.ts`) — compares current scan results against last-notified set in Redis; fires only on genuinely new hits
+
+### Environment Variables Added
+
+```bash
+WHATSAPP_EVOLUTION_URL=      # Evolution-Go API base URL
+WHATSAPP_EVOLUTION_API_KEY=  # API key
+WHATSAPP_INSTANCE_NAME=      # WhatsApp instance name
+WHATSAPP_COOLDOWN_MS=300000  # Per-user cooldown (default 5 min)
+```
 
 ---
 

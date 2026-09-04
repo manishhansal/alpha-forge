@@ -76,6 +76,9 @@ export async function GET() {
   };
 
   return NextResponse.json(snapshot, {
-    headers: { "Cache-Control": "no-store" },
+    // 8s shared-cache: market snapshot is the same for every user.
+    // s-maxage=8 means up to 8s of stale data — acceptable for index quotes
+    // that themselves only update every few seconds on NSE.
+    headers: { "Cache-Control": "public, s-maxage=8, stale-while-revalidate=15" },
   });
 }

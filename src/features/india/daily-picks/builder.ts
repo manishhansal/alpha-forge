@@ -32,7 +32,7 @@ import {
 } from "@/lib/india/market-hours";
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { pickBrokerChain } from "@/services/india/broker/factory";
-import { nse } from "@/services/india/nse";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { resolveQuotes } from "@/services/india/resolve";
 // NOTE: deliberately importing the *shared* defaults (zero auth / server-only
 // deps) rather than `getActiveSelections` — Daily Picks is a background-ish
@@ -244,13 +244,14 @@ function priceMap(signals: AiSignal[]): Map<string, number> {
 async function fetchIndexChains(
   symbols: Iterable<string>,
 ): Promise<Map<string, OptionChain | null>> {
+  await bootstrapRegistry();
   const out = new Map<string, OptionChain | null>();
   const unique = Array.from(new Set(symbols));
   await Promise.all(
     unique.map(async (sym) => {
       try {
-        const chain = await nse.getOptionChain(sym);
-        out.set(sym, chain);
+        const chain = await registry.getOptionChain(sym);
+        out.set(sym, chain as unknown as OptionChain);
       } catch (err) {
         console.warn(
           `[daily-picks] option chain for ${sym} unavailable:`,
@@ -667,6 +668,14 @@ async function trackExistingRows(
   sessionEnded: boolean,
 ): Promise<DailyPick[]> {
   const updated: DailyPick[] = [];
+
+  // Collect all changed picks first (pure compute — no DB I/O yet).
+  type PendingUpdate = {
+    pick: DailyPick;
+    next: DailyPick;
+  };
+  const pendingUpdates: PendingUpdate[] = [];
+
   for (const row of rows) {
     const pick = rowToPick(row);
     const price = livePriceFor(pick, prices, chains);
@@ -681,24 +690,36 @@ async function trackExistingRows(
       next.achievedPct !== pick.achievedPct ||
       next.resolvedAt !== pick.resolvedAt;
     if (changed) {
-      await db.indiaDailyPick.update({
-        where: {
-          tradeDate_bucket_rank: {
-            tradeDate,
-            bucket: pick.bucket,
-            rank: pick.rank,
-          },
-        },
-        data: {
-          status: next.status,
-          lastPrice: next.lastPrice,
-          pnlPct: next.pnlPct,
-          achievedPct: next.achievedPct,
-          resolvedAt: next.resolvedAt != null ? new Date(next.resolvedAt) : null,
-        },
-      });
+      pendingUpdates.push({ pick, next });
     }
   }
+
+  // Batch all updates in a single Prisma transaction instead of N serial awaits.
+  // This reduces N round-trips (one per pick) to one round-trip regardless of
+  // how many picks changed — critical for the 60s worker cadence.
+  if (pendingUpdates.length > 0) {
+    await db.$transaction(
+      pendingUpdates.map(({ pick, next }) =>
+        db.indiaDailyPick.update({
+          where: {
+            tradeDate_bucket_rank: {
+              tradeDate,
+              bucket: pick.bucket,
+              rank: pick.rank,
+            },
+          },
+          data: {
+            status: next.status,
+            lastPrice: next.lastPrice,
+            pnlPct: next.pnlPct,
+            achievedPct: next.achievedPct,
+            resolvedAt: next.resolvedAt != null ? new Date(next.resolvedAt) : null,
+          },
+        }),
+      ),
+    );
+  }
+
   return updated;
 }
 
@@ -1100,26 +1121,30 @@ export async function getIndiaDailyPicksHistory(
       byDate.set(pick.tradeDate, bucket);
     }
 
-    // Persist the flips so the track record stays honest on future reads. Each
-    // day closes at its own instant, so these are per-pick updates.
-    for (const s of squaredOff) {
-      try {
-        await db.indiaDailyPick.update({
-          where: {
-            tradeDate_bucket_rank: {
-              tradeDate: s.tradeDate,
-              bucket: s.bucket,
-              rank: s.rank,
+    // Persist the flips so the track record stays honest on future reads.
+    // Use parallel writes instead of serial awaits — history loads can have
+    // 30+ picks to square off at once, and each serial await added ~5ms of
+    // DB round-trip latency to a read-mostly page.
+    if (squaredOff.length > 0) {
+      await Promise.allSettled(
+        squaredOff.map((s) =>
+          db.indiaDailyPick.update({
+            where: {
+              tradeDate_bucket_rank: {
+                tradeDate: s.tradeDate,
+                bucket: s.bucket,
+                rank: s.rank,
+              },
             },
-          },
-          data: {
-            status: "CLOSED",
-            resolvedAt: s.resolvedAt != null ? new Date(s.resolvedAt) : null,
-          },
-        });
-      } catch {
-        // Display still reflects the square-off even if the write fails.
-      }
+            data: {
+              status: "CLOSED",
+              resolvedAt: s.resolvedAt != null ? new Date(s.resolvedAt) : null,
+            },
+          }),
+        ),
+      );
+      // Display still reflects the square-off even when individual writes fail
+      // (Promise.allSettled absorbs individual rejections).
     }
 
     const out: DailyPicksHistoryDay[] = dates

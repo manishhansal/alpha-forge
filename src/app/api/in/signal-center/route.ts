@@ -339,7 +339,11 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
 
     return NextResponse.json(response, {
-      headers: { "Cache-Control": "no-store" },
+      // 20s shared-cache: signal-center aggregates 6 scanners + daily-picks
+      // + AI signals — by far the most expensive India endpoint. A 20s
+      // shared cache means concurrent users share one heavy execution per
+      // 20s window instead of each triggering their own fan-out.
+      headers: { "Cache-Control": "public, s-maxage=20, stale-while-revalidate=40" },
     });
   } catch (err) {
     console.error("[/api/in/signal-center] error:", err);

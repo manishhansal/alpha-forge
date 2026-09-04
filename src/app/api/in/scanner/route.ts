@@ -33,7 +33,10 @@ export async function GET(req: Request) {
   try {
     const result = await runScanner(type, limit);
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      // 15s shared-cache — scanner results are identical for all users.
+      // Matches the worker's 5-minute cadence but provides an intermediate
+      // buffer for concurrent UI requests within the same 15s window.
+      headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" },
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Scanner failed";

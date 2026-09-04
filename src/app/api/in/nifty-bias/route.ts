@@ -26,10 +26,16 @@ export async function GET() {
         ? (quote.changePct > 0 ? "BULLISH" : "BEARISH")
         : "-";
 
-    return NextResponse.json({
-      bias,
-      price: ltp ? Number(ltp).toFixed(2) : "-",
-    });
+    return NextResponse.json(
+      {
+        bias,
+        price: ltp ? Number(ltp).toFixed(2) : "-",
+      },
+      {
+        // 10s shared-cache — NIFTY bias is the same for all users.
+        headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" },
+      },
+    );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("Nifty bias API Error:", msg);

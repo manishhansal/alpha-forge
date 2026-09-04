@@ -268,7 +268,12 @@ export async function GET() {
     // ── 5. Return the unified feed to the client ──────────────────────────
     return NextResponse.json(
       { entries, fetchedAt: new Date().toISOString() },
-      { headers: { "Cache-Control": "no-store" } },
+      {
+        // 15s shared-cache: all users see the same unified scanner feed.
+        // Short enough to catch intraday moves; long enough to collapse
+        // the fan-out (6 scanners × N users → 6 scanners per 15s window).
+        headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" },
+      },
     );
   } catch (err) {
     console.error("[/api/in/signals] error:", err);
