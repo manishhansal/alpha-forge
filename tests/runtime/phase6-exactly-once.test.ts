@@ -337,8 +337,8 @@ describe("Exactly-Once EO-8: Backtest deterministic replay", () => {
     expect(b.totalBarsProcessed).toBe(c.totalBarsProcessed);
     expect(a.portfolio.closedTrades().length).toBe(b.portfolio.closedTrades().length);
     expect(b.portfolio.closedTrades().length).toBe(c.portfolio.closedTrades().length);
-    expect(a.portfolio.capital).toBe(b.portfolio.capital);
-    expect(b.portfolio.capital).toBe(c.portfolio.capital);
+    expect(a.portfolio.equity).toBe(b.portfolio.equity);
+    expect(b.portfolio.equity).toBe(c.portfolio.equity);
   });
 });
 

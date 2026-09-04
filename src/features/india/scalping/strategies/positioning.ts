@@ -2,7 +2,6 @@ import "server-only";
 
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
-import { nse } from "@/services/india/nse";
 import { yahoo } from "@/services/india/yahoo";
 
 import {
@@ -91,8 +90,11 @@ async function loadPositioningInputs(
   return cache.memo(`scalp:positioning-inputs:${timeframe}`, 15_000, async () => {
     const quoteBySymbol = await loadIndexQuotes();
 
+    // Route through ProviderRegistry instead of direct NSE calls
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
     const settled = await Promise.allSettled(
-      FNO_INDICES.map((i) => nse.getOptionChain(i.underlying)),
+      FNO_INDICES.map((i) => registry.getOptionChain(i.underlying)),
     );
 
     const inputs: PositioningInput[] = [];
@@ -100,12 +102,12 @@ async function loadPositioningInputs(
       if (res.status !== "fulfilled") {
         console.warn(
           "[india/scalping/positioning]",
-          FNO_INDICES[idx].underlying,
+          FNO_INDICES[idx]!.underlying,
           res.reason,
         );
         return;
       }
-      const meta = FNO_INDICES[idx];
+      const meta = FNO_INDICES[idx]!;
       const chain = res.value;
       const quote = quoteBySymbol.get(meta.symbol);
       const spot = chain.spot ?? quote?.price ?? null;
@@ -118,7 +120,8 @@ async function loadPositioningInputs(
         spot,
         changePct: quote?.changePct ?? null,
         prevClose: quote?.prevClose ?? null,
-        analytics: chain.analytics,
+        // Cast analytics from canonical OptionChainAnalytics to legacy OptionChainAnalytics
+        analytics: chain.analytics as unknown as PositioningInput["analytics"],
         triggeredAt: Date.parse(chain.fetchedAt) || Date.now(),
       });
     });

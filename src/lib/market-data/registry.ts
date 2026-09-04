@@ -21,7 +21,6 @@ import type {
   SubscribeRequest,
 } from "./types";
 import type {
-  MarketDataProvider,
   ProviderCallOptions,
   RegisteredProvider,
 } from "./provider";
@@ -177,8 +176,7 @@ export class ProviderRegistry {
 // ── Global registry singleton ─────────────────────────────────────────────────
 
 declare global {
-  // eslint-disable-next-line no-var
-  var __marketDataRegistry: ProviderRegistry | undefined;
+  var __marketDataRegistry: ProviderRegistry | undefined; // eslint-disable-line no-var
 }
 
 export const registry: ProviderRegistry =

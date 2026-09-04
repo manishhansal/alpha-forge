@@ -30,16 +30,19 @@ function makeHealthMap(
 }
 
 /** Create a mock fetch that resolves with the given JSON body. */
-function mockFetchResolves(body: unknown): ReturnType<typeof vi.fn> {
+function mockFetchResolves(body: unknown): typeof fetch {
   return vi.fn().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve(body),
-  });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
 }
 
 /** Create a mock fetch that never resolves (simulates in-flight request). */
-function mockFetchPending(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockReturnValue(new Promise(() => { /* intentionally never resolves */ }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockFetchPending(): typeof fetch {
+  return vi.fn().mockReturnValue(new Promise(() => { /* intentionally never resolves */ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  })) as any;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

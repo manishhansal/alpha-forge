@@ -11,7 +11,7 @@ import type {
 } from "@/types/india/scanner";
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { yahoo } from "@/services/india/yahoo";
-import { nse } from "@/services/india/nse";
+// nse import kept for backward compatibility (throws on all methods — do not call directly)
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 

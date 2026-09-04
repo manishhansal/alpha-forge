@@ -479,13 +479,13 @@ describe("Paper soak safety — no live orders", () => {
     delete process.env.LIVE_TRADING_ENABLED;
     // Set NODE_ENV to development to avoid the production check
     const origNode = process.env.NODE_ENV;
-    process.env.NODE_ENV = "development";
+    (process.env as Record<string, string>)["NODE_ENV"] = "development";
 
     const { assertPaperSoakSafe } = await import("@/lib/india/paper-soak-mode");
     expect(() => assertPaperSoakSafe()).not.toThrow();
 
     if (orig !== undefined) process.env.LIVE_TRADING_ENABLED = orig;
-    if (origNode !== undefined) process.env.NODE_ENV = origNode;
+    if (origNode !== undefined) (process.env as Record<string, string | undefined>)["NODE_ENV"] = origNode;
   });
 
   it("assertPaperSoakSafe throws when LIVE_TRADING_ENABLED=true", async () => {

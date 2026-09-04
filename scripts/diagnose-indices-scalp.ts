@@ -6,7 +6,7 @@
  * Usage:
  *   npx tsx --env-file=.env.local scripts/diagnose-indices-scalp.ts
  */
-import { nse } from "@/services/india/nse";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { getIndiaDailyPickCandidates } from "@/features/ai-signals/india-builder";
 import {
   passesBucketGate,
@@ -18,6 +18,8 @@ import {
 import { FNO_INDEX_UNDERLYINGS } from "@/lib/india/fno-symbols";
 
 async function main(): Promise<void> {
+  await bootstrapRegistry();
+
   console.log("[diagnose] fetching candidate universe...");
   const { signals, context } = await getIndiaDailyPickCandidates();
   console.log(
@@ -37,7 +39,8 @@ async function main(): Promise<void> {
   console.log("\n[diagnose] fetching index option chains...");
   for (const sym of ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]) {
     try {
-      const chain = await nse.getOptionChain(sym);
+      // Route through ProviderRegistry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
+      const chain = await registry.getOptionChain(sym);
       const atmRow =
         chain.rows.find(
           (r) =>
@@ -61,8 +64,19 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      const chain = await nse.getOptionChain(s.symbol);
-      const proj = projectIndexScalpToOption(s, chain, s.symbol);
+      const chain = await registry.getOptionChain(s.symbol);
+      // Convert canonical OptionChain to legacy shape for projectIndexScalpToOption
+      const legacyChain = {
+        ...chain,
+        // Map canonical rows to legacy row shape
+        rows: chain.rows.map((r) => ({
+          strike: r.strike,
+          ce: r.ce ? { ltp: r.ce.ltp, oi: r.ce.oi, volume: r.ce.volume, iv: r.ce.greeks?.iv, changeInOi: r.ce.oiChange } : null,
+          pe: r.pe ? { ltp: r.pe.ltp, oi: r.pe.oi, volume: r.pe.volume, iv: r.pe.greeks?.iv, changeInOi: r.pe.oiChange } : null,
+        })),
+        analytics: chain.analytics,
+      };
+      const proj = projectIndexScalpToOption(s, legacyChain as never, s.symbol);
       if (!proj) {
         console.log(`  ${s.symbol}: projection returned null`);
       } else {

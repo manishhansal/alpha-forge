@@ -29,7 +29,8 @@ export function StatusBadge({ status, className }: { status: StrategyLifecycleSt
       style={{
         color: cfg.color,
         backgroundColor: `${cfg.color}18`,
-        ringColor: `${cfg.color}40`,
+        // ringColor is not a standard CSS property; use --tw-ring-color custom prop
+        ["--tw-ring-color" as string]: `${cfg.color}40`,
       }}
     >
       {cfg.label}

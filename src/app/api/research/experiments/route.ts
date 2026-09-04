@@ -41,7 +41,7 @@ const createSchema = z.object({
   strategyId: z.string().min(1).max(64),
   strategyVersion: z.string().min(1).max(64),
   datasetVersion: z.string().min(1).max(128),
-  parameterSet: z.record(z.union([z.number(), z.string(), z.boolean()])),
+  parameterSet: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
   marketUniverse: z.array(z.string()).min(1).max(200),
   dateRange: z.object({
     start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
