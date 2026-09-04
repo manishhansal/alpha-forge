@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Activity,
   BarChart3,
   Beaker,
   Brain,
@@ -24,6 +23,7 @@ import {
   Trophy,
   TrendingUp,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -93,10 +93,16 @@ function BrandHeader({ market, collapsed }: { market: Market; collapsed: boolean
 
   return (
     <Link href={href} className="mb-5 flex items-center gap-3 px-1">
-      {/* Logo mark — always visible */}
-      <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[var(--color-brand)] via-[oklch(0.70_0.20_200)] to-[var(--color-info)] shadow-lg">
-        <Activity className="h-4 w-4 text-white" />
-        <span className="absolute inset-0 rounded-xl ring-2 ring-white/10" />
+      {/* Logo mark — always visible, even when collapsed */}
+      <div className="relative h-9 w-9 shrink-0">
+        <Image
+          src="/logo.png"
+          alt="Alphaforge logo"
+          width={36}
+          height={36}
+          className="rounded-xl shadow-lg"
+          priority
+        />
       </div>
 
       <AnimatePresence initial={false}>

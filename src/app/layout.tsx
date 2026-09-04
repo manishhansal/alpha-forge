@@ -25,6 +25,10 @@ export const metadata: Metadata = {
     "Alphaforge is a multi-market trading desk: live crypto + NSE F&O prices, futures and options analytics, AI signals, multi-strategy scalping, conversational strategy lab, and 5-year backtests — all in one screen.",
   applicationName: "Alphaforge",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Alphaforge" },
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export const viewport: Viewport = {
