@@ -168,7 +168,7 @@ export async function trackOpenFnoTrendScans(prisma?: PrismaClient): Promise<voi
 
   // Fetch quotes in one batch
   const symbols = [...new Set(openRows.map((r) => r.symbol))];
-  let quoteMap: Map<string, number> = new Map();
+  const quoteMap: Map<string, number> = new Map();
   try {
     const quotes = await yahoo.getQuotes(symbols);
     for (const q of quotes) {
