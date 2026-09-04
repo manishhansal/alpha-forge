@@ -101,7 +101,7 @@ export const SAVE_INPUT_SCHEMA = z
       .string()
       .trim()
       .min(8, "API key looks too short")
-      .max(256, "API key looks too long"),
+      .max(2048, "API key looks too long"),
     apiSecret: z.string().trim().max(512, "API secret looks too long").optional().default(""),
     clientCode: z.string().trim().max(64, "Client code looks too long").optional().default(""),
     pin: z.string().trim().max(64, "PIN looks too long").optional().default(""),
