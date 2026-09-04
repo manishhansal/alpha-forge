@@ -4,6 +4,195 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — India Market Bug Fixes, NSE Removal Completion & Upstox Credentials UI
+
+**Date:** 2026-09-04  
+**Files changed:** 21 (20 modified + 1 new)  
+**Tests:** 0 regressions — all type checks pass
+
+### Summary
+
+Four independent workstreams shipped together: (1) complete removal of the NSE `DataSourceId` from all UI, types, and logic (the last remnants after the V3.0 NSE data-acquisition removal); (2) Upstox Analytics API credentials can now be configured in the UI under Profile → API Keys, with the token wired end-to-end into the Upstox ProviderRegistry adapter; (3) fifteen bugs found across the Indian market sections are fixed — two were runtime-breaking (signal center cache header, Upstox worker crash), two caused silent 502 errors for new users, and the remainder were silent wrong behaviour or stale UI copy; (4) India market performance improvements from parallel caching (historical candle concurrency, result-level board cache, `unstable_cache` SSR wrappers) reduce cold-path latency from 50–70s to ~10s with warm cache.
+
+---
+
+### NSE-REMOVAL-001 — Complete removal of `"nse"` as a `DataSourceId`
+
+**Impact:** Architectural cleanup — NSE no longer appears anywhere in UI, type system, or logic  
+**Files:** `src/features/settings/data-sources-shared.ts`, `src/services/india/broker/types.ts`, `src/services/india/broker/factory.ts`, `src/app/api/in/option-chain/route.ts`, `src/services/india/groww/index.ts`, `src/features/settings/data-sources-actions.ts`, `src/components/settings/data-sources-form.tsx`, `tests/lib/market-data/nse-elimination.test.ts`, `tests/services/india-broker-factory.test.ts`
+
+Direct NSE data acquisition was removed in V3.0 (2026-09-03) — option chain data now routes entirely through the ProviderRegistry (DATA_SERVICE → Angel One → Upstox). This change removes the last runtime traces of `"nse"` as a data source identifier.
+
+**What changed:**
+
+- `DataSourceId` union type: removed `| "nse"` — the ID is no longer valid anywhere in the type system
+- `DATA_SOURCES` catalog array: removed the `{ id: "nse", ... }` entry — NSE no longer appears as a card in the UI settings page (previously shown as "Coming soon" after being disabled)
+- `BrokerAdapter.id` union in `broker/types.ts`: removed `"nse" |`
+- `broker/factory.ts`: removed `import { nse }`, both `case "nse"` branches in `getBroker()` and `getBrokerById()`, and `nse` from the barrel re-export
+- `option-chain/route.ts`: removed `import { nse }` and the line that forced the throwing NSE stub onto the fallback array as a "last resort"
+- `groww/index.ts`: removed `import { nse }` and replaced `return nse.getOptionChain(...)` (which always threw) with a proper not-implemented error that directs callers to `registry.getOptionChain()`
+- `data-sources-actions.ts`: replaced hardcoded `"nse"` fallback with `"yahoo"` (now `undefined` — see BUG-004 fix below)
+- `INDIA_OI_SOURCES`: removed `"nse"` — it never served OI data via the ProviderRegistry path
+- `DEFAULT_SELECTIONS.india.selected`: removed `"nse"` from the default list
+- JSDoc and comments cleaned up in factory.ts, groww/index.ts, and option-chain/route.ts
+- Test files updated: `"nse"` cast through `unknown` where tests verify the runtime behaviour of a removed ID (type assertion prevents TS errors while preserving the test semantics)
+
+---
+
+### UPSTOX-CREDS-001 — Upstox Analytics API credentials configuration in the UI
+
+**Impact:** Feature — users can now configure Upstox credentials via Profile → API Keys  
+**Files:** `src/features/settings/api-keys-shared.ts`, `src/features/settings/api-keys.ts`, `src/features/settings/upstox-credentials.ts` (new), `src/lib/market-data/providers/upstox.ts`, `src/services/india/broker/factory.ts`, `src/components/settings/api-keys-form.tsx`
+
+Upstox Analytics API was fully implemented in the ProviderRegistry (`src/lib/market-data/providers/upstox.ts`) but had no way to store credentials per-user — it could only read `UPSTOX_ANALYTICS_TOKEN` from environment variables. Users on shared deployments or without server-side env access had no way to configure it.
+
+**What changed:**
+
+- `api-keys-shared.ts`: added `"upstox"` to `SUPPORTED_EXCHANGES`, `EXCHANGE_LABELS` ("Upstox Analytics API"), and `EXCHANGE_MARKET` (india). Added `TOKEN_ONLY_EXCHANGES = ["upstox"]` and `usesTokenOnlyAuth()` helper — Upstox uses a single bearer token, no `apiSecret` needed
+- `SAVE_INPUT_SCHEMA` validation: updated to skip the `apiSecret` minimum-length check for token-only exchanges
+- `api-keys.ts`: added `UpstoxStoredCredentials` interface and `readUpstoxCredentials(userId)` — reads and decrypts the stored analytics token from `UserSetting.apiKeysEncrypted`. Updated `saveApiKey` to skip encrypting `apiSecret` for token-only exchanges
+- `upstox-credentials.ts` (new): `getUpstoxTokenForRequest()` — request-scoped resolver that auth-guards the call, reads from the signed-in user's stored key, returns `null` for anonymous or unconfigured requests
+- `upstox.ts`: added async `resolveReadToken()` with a 4th fallback tier (env → in-memory OAuth → legacy env → DB). Updated `upstoxFetch` and `fetchWsUrl` to use `await resolveReadToken()` instead of the synchronous `getReadToken()`. Updated error messages to mention the Profile → API Keys path
+- `api-keys-form.tsx`: imported `usesTokenOnlyAuth`, added `isTokenOnly` flag, added a third form branch for token-only exchanges — shows the `apiKey` field labelled "Analytics Token" with a link to the Upstox Developer Console and no `apiSecret` field
+- `broker/factory.ts`: added explicit `case "upstox"` to `getBrokerById` with routing comment; set `upstox` weight = 2 in `INDIA_PICK_WEIGHT`
+
+**User flow:** Profile → API Keys → select "Upstox Analytics API" → paste Analytics Token from the Upstox Developer Console → Save. The token is encrypted with AES-256-GCM and used for all subsequent Upstox data requests.
+
+---
+
+### PERF-001 — India historical candle concurrency: 8 → 16; option chain: 4 → 8
+
+**Impact:** Performance — halves cold-path latency for Daily Picks and AI Signals  
+**File:** `src/features/ai-signals/india-builder.ts`
+
+`computeIndiaUniverse()` fetches 1-year daily candles for ~170 symbols (Daily Picks) and option chains for 29 symbols. The concurrency caps were 8 and 4 respectively — causing 22 serial candle batches and 8 serial chain batches on a cold cache.
+
+- `YAHOO_HIST_CONCURRENCY`: **8 → 16** — reduces Daily Picks candle batches from 22 → 11 (~50% reduction)
+- Option chain concurrency (`mapWithConcurrency` Phase 2): **4 → 8** — reduces chain batches from 8 → 4
+
+---
+
+### PERF-002 — Daily Picks result-level cache (15s, keyed by trade date)
+
+**Impact:** Performance — eliminates redundant DB reads, option chain refetches, and soft-field recomputes between requests  
+**File:** `src/features/india/daily-picks/builder.ts`
+
+`getIndiaDailyPickCandidates()` (the 170-symbol AI scoring) was cached, but `getIndiaDailyPicks()` itself (DB reads, `loadOrCreateAndTrack`, index chains, ORB signals, sector watch, soft-field recompute) ran on every call. With the Signal Center, the daily-picks page, and the worker all calling it concurrently, this was expensive.
+
+**Fix:** `getIndiaDailyPicks()` now wraps its full response in `indiaCache.memo("daily-picks:board:v1:{tradeDate}", 15_000)`. Worker callers passing an explicit `prisma` instance bypass the cache (they own their own tracking cadence). The inner implementation is moved to `_buildDailyPicksResponse()`.
+
+---
+
+### PERF-003 — `unstable_cache` SSR wrappers for AI Signals and Daily Picks pages
+
+**Impact:** Performance — SSR cold-path cost reduced from 15–70s to <5ms on cache hit  
+**Files:** `src/app/(dashboard)/in/ai-signals/page.tsx`, `src/app/(dashboard)/in/daily-picks/page.tsx`
+
+Both pages called their respective data functions directly during server-side render, blocking the entire page render on the full cold path. Added `unstable_cache` wrappers:
+
+- AI Signals: `getCachedIndiaAiSignals` with **20s** revalidate (inner `indiaCache.memo` is 60s — outer TTL is shorter to prevent simultaneous double-miss expiry). Worst-case staleness: 80s, acceptable for daily-bar AI signals.
+- Daily Picks: `getCachedDailyPicks` with **10s** revalidate (inner `BOARD_CACHE_TTL_MS` is 15s — outer expires slightly earlier to stagger cache misses and avoid the full cold path on simultaneous expiry).
+
+---
+
+### BUG-001 — `upstox-credentials.ts`: `server-only` guard crashes worker process
+
+**Severity:** 🔴 Runtime crash  
+**File:** `src/features/settings/upstox-credentials.ts`
+
+The original `upstox-credentials.ts` had `import "server-only"` at the top. The Upstox provider lazily imports this module when env-var tokens are absent. `server-only` throws unconditionally at module load time in non-Next.js contexts — crashing the worker process for any deployment relying on per-user DB Upstox credentials.
+
+**Fix:** Removed `import "server-only"`. Security is preserved — `auth()` returns `null` outside a request context (worker, unauthenticated requests), so `getUpstoxTokenForRequest()` returns `null` safely in all non-request contexts. The token is used server-side only and never forwarded to the client.
+
+---
+
+### BUG-002 — Signal Center `revalidate=0` silently overwrites `s-maxage=20`
+
+**Severity:** 🔴 Runtime broken (silent performance regression)  
+**File:** `src/app/api/in/signal-center/route.ts`
+
+`export const revalidate = 0` was set alongside `s-maxage=20` in the response header. Next.js rewrites `Cache-Control` to `no-store, must-revalidate` when `revalidate=0`, silently discarding the intended `s-maxage=20`. The signal center was running the full fan-out (6 scanners + daily picks + AI signals) on every single request instead of sharing one execution per 20s window.
+
+**Fix:** Removed `export const revalidate = 0`. `force-dynamic` (already present) handles the "don't pre-render" requirement. The `s-maxage=20` header now reaches clients and CDN nodes correctly.
+
+---
+
+### BUG-003 — Option chain fallback silently skips Upstox; returns 502 unnecessarily
+
+**Severity:** 🔴 Runtime broken  
+**File:** `src/app/api/in/option-chain/route.ts`
+
+The fallback loop after primary broker failure used `getBrokerById(id)` to build the fallback chain. `getBrokerById("upstox")` returns `null` (Upstox has no `BrokerAdapter` — it lives in the ProviderRegistry). Upstox was silently excluded from the fallback, causing unnecessary 502 responses when angel failed and upstox was selected.
+
+**Fix:** Added a ProviderRegistry fallback after the `BrokerAdapter` loop. When all `BrokerAdapter` paths fail, the route tries `registry.getOptionChain()` which routes `DATA_SERVICE → Angel One → Upstox`. This is the last-resort safety net and covers all ProviderRegistry-only sources.
+
+---
+
+### BUG-004 — `DEFAULT_SELECTIONS.optionChain: "angel"` causes 502 for new users
+
+**Severity:** 🔴 Runtime broken for all new users  
+**Files:** `src/features/settings/data-sources-shared.ts`, `src/features/settings/data-sources-actions.ts`
+
+The default `optionChain` was set to `"angel"` after removing `"nse"`. Angel One requires SmartAPI credentials. New users with no credentials saw `getOptionChainBroker("angel")` return the angel adapter, which threw an auth error. The fallback array (only `["yahoo"]`) also threw. Result: 502 on every new user's first option chain request.
+
+**Fix:** `DEFAULT_SELECTIONS.india.optionChain` changed from `"angel"` to `"yahoo"`. Yahoo's `getOptionChain` throws, but BUG-003's fix adds the ProviderRegistry as a final fallback — so the effective path is: yahoo fails → ProviderRegistry → DATA_SERVICE/Angel/Upstox. New users get a working chain without any credentials. The fallback in `data-sources-actions.ts` also updated from `"angel"` → `undefined` (lets `normalizeSelections` keep the stored value rather than overwriting with a silent default when the form has no valid OI source).
+
+---
+
+### BUG-005 — OI picker silently saves `"angel"` as broken optionChain default
+
+**Severity:** 🟠 Silent wrong behaviour  
+**Files:** `src/components/settings/data-sources-form.tsx`
+
+When no OI-capable source (Angel One, Upstox, Groww, BSE) was selected, the `oiOptions` fallback was `["angel"]`. The picker rendered "Angel One SmartAPI" as the only option and submitted it on save — silently locking the user into a broken configuration with no feedback.
+
+**Fix:** `oiOptions` now returns an empty array when no OI-capable source is selected. The picker is replaced with an explanatory warning: "No OI-capable source selected — enable Angel One or Upstox above to use option chain data. The ProviderRegistry will still serve option chains automatically in the background." The server action now passes `undefined` instead of a fallback ID when no valid OI source is submitted, preserving the existing stored value instead of overwriting.
+
+---
+
+### BUG-006 — Dual-cache composition: simultaneous expiry causes avoidable cold-path hits
+
+**Severity:** 🟠 Silent wrong behaviour  
+**Files:** `src/app/(dashboard)/in/ai-signals/page.tsx`, `src/app/(dashboard)/in/daily-picks/page.tsx`
+
+Both `unstable_cache` wrappers had TTLs equal to the inner `indiaCache.memo` TTL (30s outer / 60s inner for AI, 15s/15s for Daily Picks). When both caches expire at the same wall-clock time, a request hits both simultaneously — the outer misses, calls the inner, which also misses, and the full cold path runs instead of one of the two caches absorbing the cost.
+
+**Fix:**  
+- AI Signals: outer TTL **30s → 20s** (inner is 60s). Comment updated: worst-case staleness is 80s (20 outer + up to 60 inner).  
+- Daily Picks: outer TTL **15s → 10s** (inner `BOARD_CACHE_TTL_MS` is 15s). Outer expires first and warms the inner before it also expires.
+
+---
+
+### BUG-007 — ESLint `prefer-const` error in `fno-trend-history/service.ts`
+
+**Severity:** 🟡 Lint error  
+**File:** `src/features/india/fno-trend-history/service.ts` (line 171)
+
+`let quoteMap: Map<string, number> = new Map()` was declared with `let` but never reassigned (the `.set()` calls mutate the object in place).
+
+**Fix:** Changed to `const`.
+
+---
+
+### DOC-001 — Stale UI copy referencing NSE proxy, wrong broker list
+
+**Severity:** 🟡 Stale text  
+**Files:** `src/app/(dashboard)/in/profile/page.tsx`, `src/components/settings/data-sources-form.tsx`, `src/services/india/broker/factory.ts`, `src/services/india/groww/index.ts`
+
+Multiple strings were left referencing the removed NSE proxy and the old broker list:
+
+- `profile/page.tsx` header: "Yahoo / NSE / Groww" → "Yahoo / Angel One / Upstox"
+- `profile/page.tsx` data sources description: removed "cookie-warmed NSE proxy (option chains)" — replaced with accurate description of the ProviderRegistry chain
+- `profile/page.tsx` API keys description: removed "only Groww requires a key; Yahoo and the NSE proxy are public" — replaced with accurate Angel One / Upstox key requirements
+- `data-sources-form.tsx` section description: removed "NSE, BSE or Groww" — updated to reflect Angel One / Upstox / ProviderRegistry
+- `factory.ts` `getBrokerById` JSDoc: removed "nse" from the "unknown ids" example list
+- `factory.ts` `getBroker()` JSDoc: removed stale note about "nse falls through to yahoo"
+- `groww/index.ts` class JSDoc: replaced "transparently delegates to Yahoo+NSE adapters" with accurate description
+
+---
+
+---
+
 ## [Unreleased] — India API Cache Layer, DB Index Tuning & Publisher Fix
 
 **Date:** 2026-09-04  

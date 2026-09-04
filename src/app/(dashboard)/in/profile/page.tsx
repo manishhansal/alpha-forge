@@ -59,7 +59,7 @@ export default async function IndiaProfilePage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Profile · NSE F&amp;O</h1>
         <p className="text-sm text-[var(--color-fg-muted)]">
-          Identity, India-broker selection (Yahoo / NSE / Groww), API keys
+          Identity, India-broker selection (Yahoo / Angel One / Upstox), API keys
           and alerts. Profile is user-scoped and shared across the crypto
           and NSE F&amp;O surfaces.
         </p>
@@ -102,10 +102,11 @@ export default async function IndiaProfilePage() {
               </CardTitle>
               <CardDescription>
                 For NSE F&amp;O the dashboard supports Yahoo Finance
-                (default, no-key), the cookie-warmed NSE proxy (option
-                chains), and Groww REST (opt-in via API key). Pick one or
-                many — the primary source serves the live feed and the
-                others act as fallbacks.
+                (default, no-key), Angel One SmartAPI and Upstox Analytics
+                API (opt-in via API keys). Pick one or many — the primary
+                source serves quotes and history; option chain data routes
+                through the ProviderRegistry (Data Service → Angel One →
+                Upstox) automatically regardless of selection.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -126,8 +127,9 @@ export default async function IndiaProfilePage() {
                 <CardDescription>
                   Encrypted at rest with AES-256-GCM. Read-only keys are
                   strongly recommended — the dashboard never needs
-                  withdrawal or order permissions. India-side, only Groww
-                  requires a key; Yahoo and the NSE proxy are public.
+                  withdrawal or order permissions. India-side, Angel One
+                  SmartAPI and Upstox Analytics API each require a key;
+                  Yahoo Finance is always available without credentials.
                 </CardDescription>
               </div>
               <Badge variant={storedKeys.length > 0 ? "bull" : "outline"}>
