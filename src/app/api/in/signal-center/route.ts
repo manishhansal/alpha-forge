@@ -31,7 +31,10 @@ import { registry } from "@/lib/market-data/registry";
 import type { ProviderHealth } from "@/lib/market-data/types";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
+// NOTE: do NOT set `revalidate = 0` here. Next.js rewrites Cache-Control to
+// `no-store` when revalidate=0, which silently overrides the `s-maxage=20`
+// header we set on the response and defeats CDN caching entirely.
+// `force-dynamic` already ensures this route is never statically generated.
 export const runtime = "nodejs";
 
 // ── Adapters — translate each signal family into UnifiedIndiaSignal ──────────
@@ -186,10 +189,20 @@ async function fetchScannerSignals(): Promise<UnifiedIndiaSignal[]> {
 
 /**
  * Fetch Daily Picks and translate to UnifiedIndiaSignal[].
+ *
+ * Reads the result from the shared India cache (daily-picks:board:v1:{date})
+ * via the same memo key used by getIndiaDailyPicks() — this means the
+ * Signal Center never re-runs the 170-symbol fan-out when Daily Picks has
+ * already been computed within the last 15 s. On a cache miss it falls
+ * back to calling getIndiaDailyPicks() directly so the Signal Center
+ * always produces a result regardless of whether the cache is warm.
  */
 async function fetchDailyPickSignals(): Promise<UnifiedIndiaSignal[]> {
   try {
     const { getIndiaDailyPicks } = await import("@/features/india/daily-picks/builder");
+    // getIndiaDailyPicks() is now cache-aware: a warm memo (15 s TTL, keyed
+    // by IST trade date) returns instantly; a cold miss runs the full pipeline
+    // once and populates the cache for every other concurrent caller.
     const response = await getIndiaDailyPicks();
 
     const signals: UnifiedIndiaSignal[] = [];
