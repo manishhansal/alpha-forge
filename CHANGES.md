@@ -4,6 +4,43 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Proxy auth CSRF crypto crash fix (`Failed to fetch` on all /api/in/* routes)
+
+**Date:** 2026-09-04  
+**Files changed:** 3 (1 fix + 1 new test file + 1 new spec)  
+**Tests:** 3090 / 3090 passing — 31 new tests added, 0 regressions
+
+### Summary
+
+Every request to `/api/in/msb-signals`, `/api/in/nifty-bias`, and `/api/in/market-snapshot` was failing with `Failed to fetch` in the browser. Auth.js v5 (`next-auth@5.0.0-beta.32`) calls `createCSRFToken → createHash → crypto.subtle.digest()` on every request that passes through `auth()`. In the Next.js 16 Turbopack proxy runtime `crypto` is `undefined` at the time that call fires — the `TypeError` closes the TCP connection before any HTTP response is sent. The fix short-circuits all public paths before delegating to `auth()`.
+
+---
+
+### BUG-PROXY-01 — `proxy.ts`: unconditional `auth()` invocation crashes for all public routes
+
+**Severity:** 🔴 Runtime broken — `Failed to fetch` for every `/api/in/*` route  
+**Files:** `src/proxy.ts`  
+**Tests:** `tests/proxy/proxy-auth-csrf-fix.test.ts` (31 new tests)
+
+**Root cause (three compounding factors):**
+
+1. `export { auth as proxy }` delegates **every** request to Auth.js's `auth()` handler unconditionally — including the 100% public `/api/in/*` routes that are already listed in `PUBLIC_API_PREFIXES` and would be allowed by the `authorized` callback in the same tick.
+
+2. Auth.js v5 beta.32 calls `createCSRFToken → createHash → crypto.subtle.digest()` **eagerly** during `init()` on every request entry, before the `authorized` callback is ever reached — there is no lazy or conditional path.
+
+3. In Next.js 16's Turbopack-compiled proxy/middleware runtime, the global `crypto` object is `undefined` when Auth.js's `createHash` fires — causing `TypeError: Cannot read properties of undefined (reading 'digest')`. This unhandled exception closes the TCP connection with no HTTP response, which the browser reports as `Failed to fetch`.
+
+**Fix:** Replaced the one-liner re-export with an explicit `async function proxy(request)` that:
+- Calls `isPublicPath(pathname)` first (already exported from `src/lib/auth.ts`)
+- Returns `NextResponse.next()` immediately for public routes — bypasses `auth()` entirely
+- Delegates to `auth(request)` only for protected routes, preserving all redirect-to-login behaviour unchanged
+
+**New test coverage:**
+- 13 tests (Property 1 — Bug Condition): all public paths (`/api/in/*`, `/api/market`, `/login`, etc.) confirm `auth()` is never called and `NextResponse.next()` is returned without crash
+- 18 tests (Property 2 — Preservation): protected routes (`/scalper`, `/alerts`, `/charts`, `/strategies`, etc.) confirm `auth()` is still called for both unauthenticated (redirect) and authenticated (pass-through) requests
+
+---
+
 ## [Unreleased] — Cross-Service Bug Fixes (data-service, broker factory, schema, tests)
 
 **Date:** 2026-09-04  
