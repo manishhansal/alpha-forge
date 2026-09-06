@@ -2,7 +2,7 @@
 
 A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js 16, a Python ML microservice, and an institutional-grade research platform.
 
-**Current state (2026-09-04, commit `b650249`):** 3059 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
+**Current state (2026-09-04, commit `c551e21`):** 3090 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
 
 ---
 
@@ -63,6 +63,16 @@ npm run dev
 
 # 7. Start the background worker (separate terminal)
 npm run worker:dev
+
+# 8. (Optional) Start the ML service — regime classifier, stock ranker, price forecaster
+docker compose up ml-service -d
+# Or run locally:
+#   cd ml-service && pip install -r requirements.txt
+#   uvicorn src.server:app --host 0.0.0.0 --port 8100 --reload
+# Train models (requires data from Angel One / Upstox or the yfinance fallback):
+#   cd ml-service
+#   python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
+#   python -m src.training.train_all
 ```
 
 Or use the one-shot setup:
@@ -210,6 +220,11 @@ NSE Data → Feature Engineering (150+ features)
 ```
 
 All models have rule-based heuristic fallbacks. When the ML service is down, signals continue without degradation.
+
+**Runtime fixes applied (2026-09-04):**
+- `POST /predict/regime` — all `RegimePredictionRequest` fields are now `Optional[float]`; partial feature bodies return HTTP 200 instead of 422 (BUG-ML-01)
+- `POST /predict/price-regime` — `PriceForecaster` singleton initialised at startup (not lazily per-request); restart `ml-service` if still on old process (BUG-ML-02)
+- `src/services/india/yahoo/index.ts` — `TATAMOTORS` added to `KNOWN_DELISTED` denylist; `console.error` no longer fires for this permanently-renamed symbol (BUG-ML-03)
 
 ---
 
@@ -406,7 +421,7 @@ NEXT_PUBLIC_ACTIVE_BROKER=delta
 AlphaForge is TDD-first. Tests must be written before implementation — no exceptions.
 
 ```bash
-npm test                    # full suite (3059 tests, 0 failures)
+npm test                    # full suite (3090 tests, 0 failures)
 npm run test:features       # feature engines only
 npm run test:api            # API route handlers only
 npm run test:coverage       # v8 coverage → coverage/
@@ -520,7 +535,7 @@ ml-service/
     brokers/                 NEW (V3.0) — upstox_client.py Python broker API client
 prisma/schema.prisma         18 models
 docker-compose.yml           Postgres 17 + Redis 7 + ML service + data-service
-tests/                       Vitest suite — 3059 tests
+tests/                       Vitest suite — 3090 tests
   lib/market-data/nse-elimination.test.ts  NEW (V3.0) — 12 guard tests
 ```
 
