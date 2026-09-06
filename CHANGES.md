@@ -4,6 +4,99 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3I: Alpha Decay, Stability & Concept-Drift Analysis
+
+**Date:** 2026-09-06  
+**Branch:** `refactor/improve-ml-service`  
+**Files changed:** 10 new source files + 1 test file + 14 reports/docs  
+**Tests (Phase 3I):** 65 passed / 0 failed / 0 skipped  
+**Full suite (3C–3I):** 578 passed / 0 failed / 11 skipped (pre-existing)  
+**Static audit:** CLEAN — 0 executable `np.random.*`, 0 `shift(-N)`, 0 `center=True`, 0 `fillna(0)`, 0 survivorship  
+**Phase result:** PHASE_3I_PASS  
+**OOS evidence:** INSUFFICIENT_EVIDENCE (no real dataset loaded)
+
+### Summary
+
+Introduces the alpha decay, stability, and concept-drift analysis layer
+(`src/stability/`). This is a research/evidence phase — it determines *whether*
+AlphaForge's predictive alpha, ranking ability, calibrated probability, EV, and
+portfolio edge persist across time, regimes, sectors, liquidity, and execution
+assumptions. It does NOT manufacture backtest performance and does NOT replace
+models automatically (that is Phase 3J).
+
+### New Package: `src/stability/`
+
+| Module | Purpose |
+|--------|---------|
+| `schemas.py` | `AlphaDecayObservation`, `ICDecayResult`, `SignalHealth`, `SignalHealthRecord`, `ConceptDriftRecord`, `StabilityMatrix`, `DataCoverageReport`; 10 enums (`DecayStatus`, `DriftType`, `DriftSeverity`, `ComponentStatus`, `EvidenceLevel`, `HalfLifeStatus`, `ChangePointStatus`, `MonotonicityState`, `SignalSurvivalClass`, `TemporalPeriod`) |
+| `ic_decay.py` | Pearson/Rank IC decay, rolling ICIR (configurable windows), IC trend slope (linregress), lag-1 autocorrelation, half-life (AR(1)), CUSUM change-point, forward-horizon decay |
+| `quantile_analysis.py` | Quantile/decile temporal stability, monotonicity decay, top-bottom spread (gross + net of cost) |
+| `feature_stability.py` | PSI, KS (`ks_2samp`), Wasserstein (1-D EMD), missingness drift; feature-family aggregation |
+| `prediction_drift.py` | Alpha score / probability / EV distribution drift + CUSUM change-point |
+| `calibration_drift.py` | Brier/ECE/slope drift across temporal folds; `walk_forward_calibrate` integration |
+| `regime_decay.py` | Regime-conditional IC/EV (6 regimes); regime transition analysis; sector IC |
+| `portfolio_decay.py` | Rolling portfolio Sharpe/CVaR/max_dd; concentration/turnover/cost-edge decay |
+| `signal_health.py` | `SignalHealth` classification (6 dimensions); stability matrix; concept-drift records; data coverage |
+
+### Reuse (no duplication)
+
+- `ranking.evaluation.compute_ic` / `compute_rank_ic` / `compute_decile_report`
+- `meta.calibration_engine.compute_calibration_metrics` / `walk_forward_calibrate`
+- `monitoring.drift_detector` PSI/KS/JS conventions
+- `scipy.stats.linregress` / `pearsonr` / `ks_2samp` (no new dependencies)
+
+### Static Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| `np.random.*` in executable code | CLEAN (AST scan; 0) |
+| `shift(-N)` forward-looking | CLEAN (0) |
+| `center=True` rolling | CLEAN (0) |
+| `fillna(0)` | CLEAN (0) |
+| current-universe / survivorship | CLEAN (0) |
+| zero-fallback for missing evidence | CLEAN (fixed `forward_horizon_decay` to use NaN, not 0.0) |
+| automatic model replacement | CLEAN (none) |
+| arbitrary 0–100 health score | CLEAN (decomposed into 6 dimensions) |
+
+### Key Design Decisions
+
+1. **No black-box health score.** `SignalHealth` decomposes into predictive /
+   calibration / feature / regime / execution / capacity, each traceable to
+   diagnostics with stated evidence.
+2. **Six drift types kept separate** (data/feature/prediction/calibration/label/
+   performance) so "model broke" is distinguishable from "market changed".
+3. **INSUFFICIENT_EVIDENCE everywhere.** Small samples return explicit
+   insufficient-evidence status, never a fabricated 0.0.
+4. **PIT enforced.** IC[t] from scores at T vs realized at T+horizon; rolling
+   windows left-aligned; PIT mutation tests prove frozen results are immutable.
+5. **Deterministic.** CUSUM/linregress/pearsonr/PSI all deterministic;
+   reproducibility tests confirm identical input → identical output.
+6. **Half-life never fabricated.** AR(1) β must be in (0,1); otherwise
+   `HALF_LIFE_INSUFFICIENT_EVIDENCE`.
+
+### Tests
+
+`tests/test_phase3i.py` — 65 tests / 14 classes: IC, Decay/half-life, CUSUM
+change-point, FeatureDrift, PredictionDrift, CalibrationDrift, Regime, Quantile,
+PortfolioDecay, PITMutation (5 future-mutation tests), Adversarial (lookahead/
+np.random/determinism static checks), Reproducibility, SignalHealth, BackwardCompat.
+
+### Reports & Docs
+
+`reports/phase-3i-{alpha-decay,feature-stability,calibration-drift,regime-decay,
+capacity-decay,drift}-report.{md,json}` + `phase-3i-current-stability-audit.md`;
+`docs/ml-audit/phase-3i-alpha-stability.md`;
+`docs/ml-research/{alpha-decay-methodology,concept-drift-methodology}.md`.
+
+### OOS Evidence
+
+**INSUFFICIENT_EVIDENCE** — no real Indian equity/F&O dataset is loaded. All IC
+decay, half-life, regime-conditional, calibration-drift, and portfolio-decay
+numbers require a genuine prediction/outcome panel. The framework is
+architecturally complete and verified on synthetic data.
+
+---
+
 ## [Unreleased] — Phase 3H: Portfolio Intelligence, Risk Management & Position Sizing
 
 **Date:** 2026-09-06  

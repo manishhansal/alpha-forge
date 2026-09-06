@@ -1,0 +1,33 @@
+{
+  "report_type": "phase-3i-feature-stability-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "drift_statistics": {
+    "psi": {"method": "reference_percentile_bins", "applies_to": "continuous"},
+    "ks": {"method": "scipy.stats.ks_2samp", "applies_to": "continuous"},
+    "wasserstein": {"method": "1d_sorted_interpolation_emd", "applies_to": "continuous"},
+    "missingness_drift": {"method": "comparison_minus_reference_pct", "applies_to": "all"}
+  },
+  "severity_thresholds": {
+    "psi_none": 0.10,
+    "psi_minor": 0.20,
+    "psi_critical": 0.40,
+    "ks_p_warn": 0.05,
+    "ks_p_critical": 0.01,
+    "missingness_warn": 0.10
+  },
+  "reference_fraction_default": 0.3,
+  "feature_families": [
+    "momentum", "trend", "mean_reversion", "volatility", "volume_liquidity",
+    "market_structure", "cross_sectional", "breadth", "sector", "derivatives",
+    "options_iv", "expiry_contract", "market_regime", "intermarket",
+    "microstructure", "risk_tail", "time_of_day", "overnight_gap"
+  ],
+  "framework_verification": {
+    "distribution_shift_detected": true,
+    "stationary_no_false_positive": true,
+    "missingness_drift_detected": true,
+    "insufficient_sample_handled": true
+  }
+}

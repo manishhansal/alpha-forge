@@ -1,0 +1,31 @@
+{
+  "report_type": "phase-3i-drift-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "drift_types": ["DATA_DRIFT", "FEATURE_DRIFT", "PREDICTION_DRIFT", "CALIBRATION_DRIFT", "LABEL_DRIFT", "PERFORMANCE_DRIFT"],
+  "drift_types_kept_separate": true,
+  "severity_levels": ["NONE", "LOW", "MODERATE", "HIGH", "CRITICAL"],
+  "severity_thresholds": {
+    "psi_moderate": 0.10,
+    "psi_high": 0.20,
+    "psi_critical": 0.40,
+    "ks_p_moderate": 0.05,
+    "ks_p_high": 0.01,
+    "ks_p_critical": 0.001
+  },
+  "thresholds_configurable": true,
+  "change_point_method": "CUSUM",
+  "change_point_deterministic": true,
+  "model_vs_market_drift_separated": true,
+  "multiple_testing": {
+    "p_values_reported": true,
+    "fdr_control": "recommended_not_enforced"
+  },
+  "framework_verification": {
+    "prediction_drift_detected": true,
+    "performance_drift_record": true,
+    "feature_drift_record": true,
+    "cusum_deterministic": true
+  }
+}

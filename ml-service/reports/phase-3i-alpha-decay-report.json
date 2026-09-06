@@ -1,0 +1,45 @@
+{
+  "report_type": "phase-3i-alpha-decay-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "status": "PASS",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "components": [
+    "src/stability/schemas.py",
+    "src/stability/ic_decay.py",
+    "src/stability/quantile_analysis.py",
+    "src/stability/feature_stability.py",
+    "src/stability/prediction_drift.py",
+    "src/stability/calibration_drift.py",
+    "src/stability/regime_decay.py",
+    "src/stability/portfolio_decay.py",
+    "src/stability/signal_health.py"
+  ],
+  "ic_decay_diagnostics": {
+    "ic_trend_slope": "scipy.stats.linregress",
+    "trend_significance": "linregress p-value",
+    "temporal_split": ["EARLY", "MIDDLE", "RECENT"],
+    "lag1_autocorrelation": "scipy.stats.pearsonr",
+    "half_life": "AR(1) fit -log(2)/log(beta), valid only 0<beta<1",
+    "change_point": "CUSUM"
+  },
+  "decay_status_values": ["STABLE", "MILD_DECAY", "SIGNIFICANT_DECAY", "FAILED", "DRIFT_DETECTED", "INSUFFICIENT_EVIDENCE"],
+  "half_life_status_values": ["HALF_LIFE_ESTIMABLE", "HALF_LIFE_INSUFFICIENT_EVIDENCE"],
+  "rolling_windows_default": [20, 60, 120],
+  "min_samples": {
+    "ic_statistic": 10,
+    "half_life": 20,
+    "trend": 15,
+    "changepoint": 20
+  },
+  "evidence_levels": {"STRONG": ">=100", "MODERATE": ">=30", "WEAK": ">=10", "INSUFFICIENT": "<10"},
+  "framework_verification": {
+    "declining_ic_detected": true,
+    "persistent_half_life_estimable": true,
+    "antipersistent_half_life_insufficient": true,
+    "cusum_level_shift_detected": true,
+    "cusum_flat_not_detected": true,
+    "small_sample_insufficient_not_zero": true
+  }
+}
