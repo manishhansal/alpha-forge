@@ -1,0 +1,50 @@
+{
+  "report_type": "phase-3j-lineage-report",
+  "phase": "3J",
+  "generated": "2026-09-06",
+  "model_identity_lineage": [
+    "dataset_version", "dataset_snapshot_id", "universe_version",
+    "feature_version", "label_version", "label_config_hash",
+    "training_config_hash", "hyperparameter_hash", "random_seed", "code_version"
+  ],
+  "calibrator_lineage": {
+    "tracked": true,
+    "fields": ["calibrator_id", "calibrator_version"],
+    "compatibility_enforced": true
+  },
+  "meta_model_lineage": {
+    "tracked": true,
+    "fields": ["meta_model_id", "meta_model_version"],
+    "same_base_model_enforced": true
+  },
+  "portfolio_lineage": {
+    "tracked": true,
+    "fields": ["portfolio_model_version", "risk_model_version", "constraint_set_version", "position_sizing_version"],
+    "compatibility_enforced": true
+  },
+  "execution_lineage": {
+    "tracked": true,
+    "fields": ["execution_model_version", "cost_model_version", "slippage_model_version", "market_calendar_version"]
+  },
+  "promotion_manifest": {
+    "hashed": true,
+    "hash_algorithm": "SHA-256",
+    "fields": [
+      "promotion_id", "model_id", "scope", "previous_champion", "new_champion",
+      "evidence_package_id", "acceptance_gate_version", "promotion_policy_version",
+      "data_snapshot", "feature_version", "label_version", "calibrator_version",
+      "meta_model_version", "portfolio_version", "execution_version",
+      "decision", "reason", "timestamp", "manifest_hash"
+    ]
+  },
+  "reproducible_champion_state": {
+    "champion_at_timestamp": true,
+    "recoverable_from_persisted_artifacts": true
+  },
+  "current_state": {
+    "registered_models": 0,
+    "promotion_manifests": 0,
+    "champion_lineage_entries": 0
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

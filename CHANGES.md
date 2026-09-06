@@ -4,6 +4,73 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3J: Champion/Challenger, Model Registry & Evidence-Gated Promotion
+
+**Date:** 2026-09-06  
+**Branch:** `refactor/improve-ml-service`  
+**Files changed:** 11 new source files + 1 test file + 12 reports/docs  
+**Tests (Phase 3J):** 81 passed / 0 failed / 1 skipped (unrelated sklearn transitive dep missing in env)  
+**Full suite (3C–3J):** 534 passed / 0 failed / 12 skipped (pre-existing)  
+**Static audit:** CLEAN — no `latest.pkl` outside forbidden-reference guard, 0 executable `np.random.*`, no silent/auto promotion, immutable identities/evidence, no hardcoded thresholds in gate logic  
+**Phase result:** PHASE_3J_PASS  
+**Champion state:** NO_PROMOTION — INSUFFICIENT_EVIDENCE (no real dataset loaded; this is the correct, preferred outcome per spec §81)
+
+### Summary
+
+Establishes the model lifecycle, champion/challenger registry, evidence
+packages, and evidence-gated promotion system (`src/lifecycle/`). The system can
+answer: which model is trusted, why, on what evidence, what challengers exist,
+which failed and why, and under exactly what conditions a challenger is promoted
+or rolled back. This is a GOVERNANCE phase — NO auto-retraining, NO deep
+learning, NO reinforcement learning, NO live execution.
+
+### New Package: `src/lifecycle/`
+
+| Module | Purpose |
+|--------|---------|
+| `schemas.py` | Frozen `ModelIdentity`, `ModelProvenance`, `ModelSchemaContract`, `LifecycleState` machine, `PromotionDecision`, `GateResult`, `ModelCard`, `ChampionCard`; enums |
+| `artifact_integrity.py` | SHA-256 artifact hashing (file/dir), fail-closed `verify_artifact_integrity`, `safe_load_guard`, forbidden-reference (`latest.pkl`) blocking |
+| `evidence.py` | Immutable `ModelEvidencePackage` (freeze + SHA-256 evidence hash), evidence hierarchy A/B/C/D |
+| `compatibility.py` | model/feature/label/calibrator/meta/execution/portfolio compatibility checks |
+| `_storage.py` | Atomic JSON writes (temp + `os.replace`), append-only JSONL audit, cross-process `FileLock` (`os.O_CREAT|O_EXCL`, stale recovery) |
+| `registry.py` | Persistent versioned `ModelRegistry`: register/get/list/promote/demote/rollback/retire, immutability, atomic transitions, idempotency, audit log |
+| `champion.py` | Scoped `ChampionIndex`, champion history, historical `champion_at(scope, T)`, atomic promotion, rollback |
+| `challenger.py` | `ChallengerRegistry`, shadow/paper mode, configurable soak periods, selection-bias tracking |
+| `gates.py` | `PromotionGate` (DATA/PREDICTIVE/CALIBRATION/EXECUTION/RISK/STABILITY) returning PASS/FAIL/INSUFFICIENT + configurable `PromotionPolicy` |
+| `comparison.py` | Apples-to-apples comparison on a `FrozenEvalSnapshot`; prediction-correlation surfacing |
+| `promotion.py` | `PromotionOrchestrator`, hashed `PromotionManifest`, rollback, human-review policy, crash-safety (intent markers + recovery), model cards |
+
+### Reuse (no duplication)
+
+- `validation.metrics.ModelAcceptanceGate` / `AcceptanceThresholds` (acceptance ≠ promotion)
+- `meta.calibration_engine.CalibratorArtifact.is_compatible` conventions
+- `monitoring.model_registry` `ModelState` + JSON persistence pattern (health-state; kept separate from versioned registry)
+- `data.dataset_version` snapshot/fingerprint conventions
+- stdlib only — no new dependencies (no `filelock`, no `sqlite`; JSON/JSONL to match convention)
+
+### Static Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| `latest.pkl` / `current_model` reference | CLEAN (only inside forbidden-reference guard) |
+| `np.random.*` in executable code | CLEAN (0; docstrings only) |
+| silent / automatic promotion | CLEAN (human confirmation required) |
+| mutable identity / evidence / manifest | CLEAN (`frozen=True` + freeze + SHA-256) |
+| hardcoded thresholds in gate logic | CLEAN (all from versioned `PromotionPolicy`) |
+
+### Reports & Docs
+
+`reports/phase-3j-current-lifecycle-audit.md`,
+`phase-3j-model-registry-report.{md,json}`,
+`phase-3j-champion-challenger-report.{md,json}`,
+`phase-3j-promotion-gate-report.{md,json}`,
+`phase-3j-lineage-report.{md,json}`;
+`docs/ml-audit/phase-3j-model-lifecycle.md`,
+`docs/ml-research/champion-challenger-methodology.md`,
+`docs/ml-operations/model-promotion-runbook.md`.
+
+---
+
 ## [Unreleased] — Phase 3I: Alpha Decay, Stability & Concept-Drift Analysis
 
 **Date:** 2026-09-06  

@@ -1,0 +1,56 @@
+{
+  "report_type": "phase-3j-promotion-gate-report",
+  "phase": "3J",
+  "generated": "2026-09-06",
+  "acceptance_vs_promotion_separated": true,
+  "acceptance_gate_reused": "validation.metrics.ModelAcceptanceGate",
+  "gates": ["DATA", "PREDICTIVE", "CALIBRATION", "EXECUTION", "RISK", "STABILITY"],
+  "gate_statuses": ["PASS", "FAIL", "INSUFFICIENT_EVIDENCE"],
+  "black_box_score": false,
+  "decision_outcomes": ["PROMOTE", "DO_NOT_PROMOTE", "BLOCKED", "INSUFFICIENT_EVIDENCE", "NO_PROMOTION"],
+  "promotion_policy": {
+    "min_ic_improvement": 0.005,
+    "min_net_ev_improvement": 0.0,
+    "min_calibration_improvement": 0.0,
+    "max_drawdown_degradation": 0.02,
+    "max_turnover_increase": 0.20,
+    "max_cost_increase": 0.20,
+    "min_evidence_level": "LEVEL_B",
+    "require_positive_net_return": true,
+    "min_oos_observations": 60,
+    "high_impact_requires_human": true,
+    "version": "promotion-policy-v1",
+    "hardcoded_in_logic": false
+  },
+  "final_oos_protection": {
+    "flag": "final_oos_used_for_selection",
+    "contaminated_outcome": "BLOCKED",
+    "contaminated_evidence_level": "LEVEL_D"
+  },
+  "evidence_hierarchy_floor": "LEVEL_B",
+  "approval_policy": ["AUTO_APPROVED", "HUMAN_APPROVAL_REQUIRED", "AUTO_REJECTED"],
+  "default_approval": "HUMAN_APPROVAL_REQUIRED",
+  "rollback_triggers": [
+    "severe_performance_degradation", "calibration_failure", "data_incompatibility",
+    "artifact_integrity_failure", "schema_mismatch", "drift_threshold_breach",
+    "execution_incompatibility", "risk_limit_breach"
+  ],
+  "crash_safety": {
+    "intent_markers": true,
+    "recover_pending": true,
+    "fail_closed": true,
+    "no_two_champions": true
+  },
+  "verified_behaviours": {
+    "strong_challenger_promote": true,
+    "ic_below_min_do_not_promote": true,
+    "calibration_degrade_fail": true,
+    "negative_net_fail": true,
+    "ic_decay_fail": true,
+    "insufficient_obs": true,
+    "final_oos_contaminated_blocked": true,
+    "mutated_evidence_blocked": true,
+    "unregistered_challenger_blocked": true
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}
