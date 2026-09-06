@@ -981,7 +981,9 @@ def build_regime_training_data(
                     macro["india_vix"] = float(india_vix[vix_ts])
 
             feats = compute_regime_features(nifty_window, bn_window, macro)
-            feature_vector = [feats.get(f, 0.0) for f in REGIME_FEATURES]
+            # Use NaN for missing features (not 0.0). The NaN filter below
+            # removes rows with missing features from the training set.
+            feature_vector = [feats.get(f, float("nan")) for f in REGIME_FEATURES]
             features_list.append(feature_vector)
             valid_indices.append(i)
         except Exception:
@@ -1092,7 +1094,7 @@ def build_ranking_training_data(
                     index_close=nifty_window,
                     derivatives_data=deriv_dict,
                 )
-                feature_vector = [feats.get(f, 0.0) for f in RANKING_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in RANKING_FEATURES]
 
                 # ── Label: risk-adjusted forward relative return ──────────
                 stock_fwd = float(
@@ -1174,7 +1176,7 @@ def build_strategy_training_data(
                     deriv_dict = _build_derivatives_dict(snap)
 
                 feats = compute_stock_features(window, derivatives_data=deriv_dict)
-                feature_vector = [feats.get(f, 0.0) for f in STRATEGY_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in STRATEGY_FEATURES]
                 all_features.append(feature_vector)
                 all_labels.append(int(strategy_labels.iloc[i]))
             except Exception:
@@ -1250,10 +1252,11 @@ def build_risk_training_data(
                 feats = compute_stock_features(window, derivatives_data=deriv_dict)
                 feats["stop_distance_atr"] = stop_atr_mult
                 feats["target_distance_atr"] = target_atr_mult
-                feats["risk_reward_ratio"] = target_atr_mult / stop_atr_mult
-                feats["trend_alignment"] = feats.get("trend_strength", 0.0)
+                feats["risk_reward_ratio"]   = target_atr_mult / stop_atr_mult
+                # trend_alignment is deprecated; map to ema_stack_score
+                feats["trend_alignment"] = feats.get("ema_stack_score", float("nan"))
 
-                feature_vector = [feats.get(f, 0.0) for f in RISK_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in RISK_FEATURES]
                 all_features.append(feature_vector)
                 y_stop_list.append(int(stop_hit.iloc[i]))
                 y_target_list.append(int(target_hit.iloc[i]))

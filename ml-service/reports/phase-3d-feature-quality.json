@@ -1,0 +1,194 @@
+{
+  "report_id": "phase-3d-feature-quality",
+  "phase": "3D",
+  "title": "India-Native Alpha Feature Engine & Feature Governance — Quality Report",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "feature_engine_version": "fv5",
+  "config_hash": "c73806a856fa4e16",
+
+  "feature_inventory": {
+    "total_registered": 115,
+    "total_active": 109,
+    "total_deprecated": 6,
+    "by_family": {
+      "momentum":         13,
+      "trend":            10,
+      "mean_reversion":    7,
+      "volatility":        7,
+      "volume_liquidity": 15,
+      "market_structure": 13,
+      "cross_sectional":   3,
+      "breadth":           5,
+      "sector":            4,
+      "derivatives":      11,
+      "options_iv":        3,
+      "expiry_contract":   5,
+      "market_regime":     8,
+      "intermarket":       1,
+      "microstructure":    1,
+      "time_of_day":       1,
+      "overnight_gap":     2
+    },
+    "by_promotion": {
+      "RESEARCH": 109,
+      "EXPERIMENTAL": 0,
+      "VALIDATED": 0,
+      "PRODUCTION_CANDIDATE": 0,
+      "DEPRECATED": 6,
+      "BLOCKED": 0
+    },
+    "talib_required": 26,
+    "talib_available_in_test_env": false,
+    "data_unavailable_source_features": 38,
+    "note_on_promotion": "All 109 active features are classified RESEARCH. No features are PRODUCTION_CANDIDATE because no OOS IC experiment has been run on real Indian equity data. This is the correct starting state; promotion requires OOS stability evidence."
+  },
+
+  "leakage_audit": {
+    "verdict": "PASS",
+    "run_at": "2026-09-06T00:00:00Z",
+    "total_features_audited": 109,
+    "causal_features": 109,
+    "invalid_features": 0,
+    "unclassified_features": 0,
+    "label_only_paths": 3,
+    "static_findings_total": 17,
+    "static_findings_by_classification": {
+      "CAUSAL": 1,
+      "LABEL_ONLY": 3,
+      "OUTCOME_ONLY": 3,
+      "INVALID": 0,
+      "UNCLASSIFIED": 10
+    },
+    "unclassified_note": "10 UNCLASSIFIED findings are patterns in test files and non-feature utility code. None are in feature computation paths.",
+    "mutation_tests": {
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "tests": [
+        {"name": "mutation_return_20d_price",       "passed": true},
+        {"name": "mutation_return_20d_volume",      "passed": true},
+        {"name": "mutation_rsi_14_price",           "passed": true},
+        {"name": "mutation_rsi_14_volume",          "passed": true},
+        {"name": "mutation_realized_vol_20_price",  "passed": true},
+        {"name": "mutation_realized_vol_20_volume", "passed": true},
+        {"name": "mutation_relative_volume_price",  "passed": true},
+        {"name": "mutation_relative_volume_volume", "passed": true},
+        {"name": "mutation_trend_strength_price",   "passed": true},
+        {"name": "mutation_trend_strength_volume",  "passed": true},
+        {"name": "mutation_bos_net_price",          "passed": true},
+        {"name": "mutation_bos_net_volume",         "passed": true},
+        {"name": "cross_sectional_universe_mutation", "passed": true}
+      ]
+    },
+    "fillna_zero_audit": {
+      "total_found": 1,
+      "causal_economically_defensible": 1,
+      "invalid": 0,
+      "finding": {
+        "file": "src/features/volume.py",
+        "line": 156,
+        "code": "mf_multiplier = mf_multiplier.fillna(0)",
+        "classification": "CAUSAL",
+        "rationale": "fillna(0) on the Accumulation/Distribution MF multiplier. When HL range = 0 (doji bar), the CLV is undefined; zero is the neutral/no-information value. Economically defensible."
+      }
+    }
+  },
+
+  "silent_default_fixes": {
+    "total_fixed": 20,
+    "severity_breakdown": {
+      "CRITICAL": 1,
+      "HIGH": 9,
+      "MEDIUM": 10
+    },
+    "fixes": [
+      {"id": "FIX-3D-001", "severity": "CRITICAL",  "feature": "all features",         "old": "NaN→0.0 global sweep in compute_stock_features() and compute_regime_features()", "new": "Only inf removed; NaN preserved as DATA_UNAVAILABLE"},
+      {"id": "FIX-3D-002", "severity": "HIGH",      "feature": "relative_strength_vs_nifty", "old": "1.0 (neutral ratio) when index_close absent", "new": "NaN"},
+      {"id": "FIX-3D-003", "severity": "HIGH",      "feature": "sector_momentum",       "old": "0.0 when sector_data absent",     "new": "NaN"},
+      {"id": "FIX-3D-004", "severity": "HIGH",      "feature": "sector_relative_strength", "old": "1.0 (neutral) when sector absent", "new": "NaN"},
+      {"id": "FIX-3D-005", "severity": "HIGH",      "feature": "vix_level",             "old": "15.0 when india_vix absent",      "new": "None"},
+      {"id": "FIX-3D-006", "severity": "HIGH",      "feature": "vix_regime",            "old": "1.0 (moderate) when india_vix absent", "new": "None"},
+      {"id": "FIX-3D-007", "severity": "HIGH",      "feature": "vix_percentile",        "old": "50.0 when insufficient VIX history", "new": "None"},
+      {"id": "FIX-3D-008", "severity": "HIGH",      "feature": "pct_above_sma20/50/200","old": "50.0 when no stock data",         "new": "None"},
+      {"id": "FIX-3D-009", "severity": "HIGH",      "feature": "pcr_oi",                "old": "1.0 when no OI data",             "new": "None"},
+      {"id": "FIX-3D-010", "severity": "HIGH",      "feature": "model feature vectors", "old": "feats.get(f, 0.0) for all 4 model feature lists", "new": "feats.get(f, float('nan'))"},
+      {"id": "FIX-3D-011", "severity": "MEDIUM",    "feature": "atm_iv",                "old": "0.0 when absent (0% IV impossible)", "new": "None"},
+      {"id": "FIX-3D-012", "severity": "MEDIUM",    "feature": "delivery_pct",          "old": "0.0 when absent (unknown ≠ 0% delivery)", "new": "NaN"},
+      {"id": "FIX-3D-013", "severity": "MEDIUM",    "feature": "pcr_score",             "old": "0.0 when PCR None",               "new": "None"},
+      {"id": "FIX-3D-014", "severity": "MEDIUM",    "feature": "pcr_raw",               "old": "1.0 when PCR None",               "new": "NaN"},
+      {"id": "FIX-3D-015", "severity": "MEDIUM",    "feature": "max_pain_distance_pct", "old": "0.0 when max_pain None",          "new": "None"},
+      {"id": "FIX-3D-016", "severity": "MEDIUM",    "feature": "days_to_weekly_expiry", "old": "5 when None (unknown position)", "new": "None"},
+      {"id": "FIX-3D-017", "severity": "MEDIUM",    "feature": "days_to_monthly_expiry","old": "20 when None",                   "new": "None"},
+      {"id": "FIX-3D-018", "severity": "MEDIUM",    "feature": "sector_dispersion",     "old": "0.0 when absent",                "new": "None"},
+      {"id": "FIX-3D-019", "severity": "MEDIUM",    "feature": "rotation_score",        "old": "0.0 when absent",                "new": "None"},
+      {"id": "FIX-3D-020", "severity": "MEDIUM",    "feature": "trend_alignment (RISK)", "old": "feats.get('trend_strength', 0.0) — wrong fallback", "new": "feats.get('ema_stack_score', NaN)"}
+    ]
+  },
+
+  "test_results": {
+    "run_at": "2026-09-06T00:00:00Z",
+    "python_version": "3.14.6",
+    "pytest_version": "9.1.1",
+    "test_phase3d": {
+      "collected": 125,
+      "passed": 125,
+      "failed": 0,
+      "skipped": 0
+    },
+    "test_phase3c": {
+      "passed": 61,
+      "failed": 0,
+      "skipped": 2
+    },
+    "test_vpin": {
+      "passed": 13,
+      "failed": 0
+    },
+    "overall_verdict": "PASS"
+  },
+
+  "data_availability": {
+    "sources_available_in_test_env": [
+      "equity_ohlcv",
+      "nifty_ohlcv",
+      "banknifty_ohlcv"
+    ],
+    "sources_unavailable": [
+      "nse_derivatives (PCR, OI, futures basis)",
+      "nse_options (IV history, PCR, max pain, OI walls)",
+      "nse_bhavcopy (delivery volume, advance/decline)",
+      "nse_expiry_calendar (historical expiry dates)",
+      "india_vix (historical VIX series)",
+      "intermarket_data (US futures, crude, USD/INR)",
+      "sector_master (PIT sector membership)",
+      "historical_universe (PIT F&O universe)",
+      "intraday_ohlcv (sub-daily bars for VPIN, microstructure)",
+      "model_market_regime (market regime model output)"
+    ],
+    "features_returning_nan_for_absent_sources": 38,
+    "note": "All 38 features with unavailable sources correctly return NaN / None with DATA_UNAVAILABLE status. No fabrication."
+  },
+
+  "known_limitations": [
+    "109 active features are RESEARCH state — none are PRODUCTION_CANDIDATE. Promotion requires OOS IC evidence on real Indian equity data.",
+    "talib not installed in test environment — 26 talib-dependent features cannot be verified in this env; they are tested via the talib-free families/momentum.py reference implementations.",
+    "No real dataset loaded — all quality statistics (missingness, constant features, redundancy) are from synthetic data only. Real-data quality analysis deferred.",
+    "F&O / derivatives features (PCR, IV, OI) are DATA_UNAVAILABLE offline — 38 features cannot be exercised without live NSE data feed.",
+    "Cross-sectional and breadth features require historical_universe(t) — this is correctly gated on the Phase 3B HistoricalUniverse; offline tests use mock data.",
+    "OOS IC / Rank IC not computed — no real data available. Deferred to Phase 3E.",
+    "Sector membership PIT correctness depends on the sector_master data store (Phase 3B). Offline: sector features return NaN."
+  ],
+
+  "q_and_a": {
+    "Q1_future_data_alters_feature": "MUST BE NO — verified by 13 mutation tests. PASS.",
+    "Q2_future_stock_alters_cs_rank": "MUST BE NO — caller must pass historical_universe(t). cross_sectional_rank() is deterministic for a fixed universe. PASS.",
+    "Q3_future_sector_alters_sector_feature": "MUST BE NO — sector features use sector_close_map at call time. No rolling window across sector membership. PASS.",
+    "Q4_future_pivot_appears_at_pivot_time": "MUST BE NO — BOS/CHOCH use trailing swing levels only (shift(lookback) of trailing max/min). FVG uses 3-bar window ending at bar i. PASS.",
+    "Q5_missing_iv_becomes_artificial_percentile": "MUST BE NO — compute_iv_rank returns None for None/insufficient history. PASS.",
+    "Q6_missing_pcr_becomes_meaningful_state": "MUST BE NO — compute_pcr_score returns None for None PCR. PASS.",
+    "Q7_feature_without_provenance": "MUST BE NO — all features registered in FEATURE_REGISTRY with version, source, formula_id, missing_policy. PASS.",
+    "Q8_feature_engine_accesses_labels": "MUST BE NO — features/ package does not import labels/. Verified: no import path crosses. PASS.",
+    "Q9_today_fno_universe_for_historical": "MUST BE NO — breadth and CS functions accept stock_close_map parameter, not a global. Caller responsibility enforced. PASS.",
+    "Q10_all_official_features_pass_causal_pit_provenance": "MUST BE YES — 109 features: causal=True, pit_safety=SAFE, missing_policy=RETURN_NAN (for DATA_UNAVAILABLE features). CONDITIONAL: OOS evidence and real-data provenance verification deferred to Phase 3E."
+  }
+}

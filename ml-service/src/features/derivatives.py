@@ -9,16 +9,20 @@ import numpy as np
 import pandas as pd
 
 
-def compute_pcr_score(pcr: float | None) -> float:
+def compute_pcr_score(pcr: float | None) -> float | None:
     """
     Normalize PCR into a [-1, 1] score.
     PCR > 1.3 → bullish (PE writers dominating → market supported)
     PCR < 0.7 → bearish (CE writers dominating → market capped)
+
+    Returns None when pcr is None — NEVER returns 0.0 for missing data.
+    0.0 would imply a neutral PCR=1.0, which is a real market state.
+    Phase 3D fix: removed silent 0.0 default.
     """
     if pcr is None or not np.isfinite(pcr):
-        return 0.0
+        return None
     # Center at 1.0, scale by 0.5
-    return np.clip((pcr - 1.0) / 0.5, -1.0, 1.0)
+    return float(np.clip((pcr - 1.0) / 0.5, -1.0, 1.0))
 
 
 def compute_oi_buildup_score(
@@ -157,14 +161,15 @@ def compute_iv_percentile(current_iv: float, iv_history: list[float], period: in
     return (below / len(history)) * 100
 
 
-def compute_max_pain_distance(spot: float, max_pain: float | None) -> float:
+def compute_max_pain_distance(spot: float, max_pain: float | None) -> float | None:
     """
     % distance from spot to max-pain strike.
     Positive: max pain above spot (bullish pull)
     Negative: max pain below spot (bearish pull)
+    Returns None when max_pain is None — never 0.0.
     """
     if max_pain is None or spot <= 0:
-        return 0.0
+        return None
     return ((max_pain - spot) / spot) * 100
 
 
@@ -205,32 +210,40 @@ def compute_options_flow_features(
     total_ce_oi_change: float | None,
     total_pe_oi_change: float | None,
     atm_iv: float | None,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """
     Compute composite options flow features from chain-level aggregates.
-    """
-    features: dict[str, float] = {}
 
-    # PCR from OI
+    Phase 3D fix: all fields return None when source data is absent.
+    Previously pcr_oi defaulted to 1.0 and atm_iv defaulted to 0.0.
+    """
+    features: dict[str, float | None] = {}
+
+    # PCR from OI — None when OI data is absent
     if total_ce_oi and total_pe_oi and total_ce_oi > 0:
         features["pcr_oi"] = total_pe_oi / total_ce_oi
     else:
-        features["pcr_oi"] = 1.0
+        features["pcr_oi"] = None   # DATA_UNAVAILABLE — not 1.0
 
-    # Delta OI skew: PE OI change - CE OI change (positive = bullish)
-    ce_change = total_ce_oi_change or 0.0
-    pe_change = total_pe_oi_change or 0.0
-    features["oi_delta_skew"] = pe_change - ce_change
-
-    # Normalized OI delta skew
-    total_change = abs(ce_change) + abs(pe_change)
-    if total_change > 0:
-        features["oi_delta_skew_norm"] = (pe_change - ce_change) / total_change
+    # Delta OI skew: PE OI change - CE OI change
+    ce_change = total_ce_oi_change
+    pe_change = total_pe_oi_change
+    if ce_change is not None and pe_change is not None:
+        features["oi_delta_skew"] = pe_change - ce_change
+        total_change = abs(ce_change) + abs(pe_change)
+        if total_change > 0:
+            features["oi_delta_skew_norm"] = (pe_change - ce_change) / total_change
+        else:
+            features["oi_delta_skew_norm"] = 0.0
     else:
-        features["oi_delta_skew_norm"] = 0.0
+        features["oi_delta_skew"]      = None
+        features["oi_delta_skew_norm"] = None
 
-    # ATM IV
-    features["atm_iv"] = atm_iv if atm_iv is not None else 0.0
+    # ATM IV — 0% IV is impossible; None = DATA_UNAVAILABLE
+    if atm_iv is not None and np.isfinite(atm_iv) and atm_iv > 0:
+        features["atm_iv"] = float(atm_iv)
+    else:
+        features["atm_iv"] = None   # DATA_UNAVAILABLE — not 0.0
 
     return features
 

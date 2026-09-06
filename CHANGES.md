@@ -4,6 +4,108 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3D: India-Native Alpha Feature Engine & Feature Governance
+
+**Date:** 2026-09-06
+**Files changed:** 14 new source files + 5 modified source files + 1 test file + 5 docs/reports + 1 script
+**Tests:** 125 passed / 0 failed / 0 skipped (Phase 3D) | Phase 3C: 61 pass / 2 skip | test_vpin: 13 pass
+**Leakage audit:** PASS — 109/109 features CAUSAL, 0 INVALID, 13/13 mutation tests pass
+**Phase result:** PHASE_3D_PASS
+
+### Summary
+
+Transforms the AlphaForge feature layer from an uncontrolled collection of technical indicators into a rigorous, audited, point-in-time–safe feature engine. Introduces a canonical feature registry, 6 talib-free family implementations, explicit missing-data policy (never silent defaults), a leakage validator with PIT mutation tests, and a feature quality gate. Fixes 20 HIGH/CRITICAL silent-default bugs that were silently fabricating neutral market states when source data was absent.
+
+### New Package: `ml-service/src/features/` (governance infrastructure)
+
+| File | Purpose |
+|------|---------|
+| `schemas.py` | `FeatureSpec`, `FeatureValue`, `FeatureRow`, `FeatureSetSpec`, `LeakageCertification`; `FeatureFamily`, `AvailabilityStatus`, `PITSafety`, `FeaturePromotion`, `MissingPolicy`, `NormalizationPolicy` enums |
+| `config.py` | 12 sub-configs (`MomentumConfig`, `VolatilityConfig`, …); `FeatureEngineConfig` with deterministic hash |
+| `registry.py` | 115-feature `FEATURE_REGISTRY`; 4 `FeatureSetSpec` objects (RANKING/REGIME/STRATEGY/RISK) |
+| `quality.py` | `run_quality_gate()`: 10 checks — missingness, constants, infinities, outliers, deprecated, unregistered, PIT safety, redundancy (Pearson union-find) |
+| `availability.py` | `FeatureAvailabilityChecker` (strict PIT enforcement), `MissingDataGuard`, `make_feature_value_from_series` |
+| `leakage_validator.py` | `run_static_leakage_audit()`, `audit_fillna_zero()`, `run_mutation_test()`, `run_full_leakage_audit()` |
+
+### New Package: `ml-service/src/features/families/` (talib-free implementations)
+
+| File | Key functions |
+|------|--------------|
+| `momentum.py` | `compute_returns`, `compute_rsi`, `compute_atr`, `compute_adx`, `compute_macd`, `compute_ema_stack_score`, `compute_bollinger_position`, `compute_cci`, `compute_williams_r`, `compute_trend_strength`, `compute_momentum_t_stat`, `compute_return_consistency`, `compute_breakout_score` |
+| `volatility.py` | `compute_realized_vol`, `compute_parkinson_vol`, `compute_atr_pct`, `compute_vol_percentile`, `compute_vol_regime`, `compute_vol_zscore` |
+| `volume_liquidity.py` | `compute_relative_volume`, `compute_vwap_distance_pct` (corrected rolling mode), `compute_amihud_illiquidity`, `compute_obv_zscore`, `compute_cmf` |
+| `market_structure.py` | `detect_fair_value_gaps` (vectorised), `detect_order_blocks` (causal), `detect_bos_choch` (trailing-swing-only), `detect_liquidity_sweeps` |
+| `cross_sectional.py` | `cross_sectional_rank/zscore`, `compute_breadth_pct_above_sma`, `compute_sector_momentum/relative_strength` (all return NaN not 0/1 when absent) |
+| `derivatives.py` | `compute_pcr_score`, `compute_iv_rank`, `compute_oi_buildup_score`, `compute_vix_features`, `compute_expiry_features` (all return None not defaults when absent) |
+
+### Silent-Default Bugs Fixed (20 total)
+
+| ID | Severity | Feature | Old → Fix |
+|----|----------|---------|-----------|
+| FIX-3D-001 | **CRITICAL** | All features | Global NaN→0 sweep in `compute_stock_features()` → only `inf` removed |
+| FIX-3D-002 | **HIGH** | `relative_strength_vs_nifty` | `1.0` → `NaN` |
+| FIX-3D-003 | **HIGH** | `sector_momentum` | `0.0` → `NaN` |
+| FIX-3D-004 | **HIGH** | `sector_relative_strength` | `1.0` → `NaN` |
+| FIX-3D-005–007 | **HIGH** | `vix_level/regime/percentile` | `15.0/1.0/50.0` → `None` |
+| FIX-3D-008 | **HIGH** | `pct_above_sma20/50/200` | `50.0` → `None` |
+| FIX-3D-009 | **HIGH** | `pcr_oi` | `1.0` → `None` |
+| FIX-3D-010 | **HIGH** | All model vectors | `feats.get(f, 0.0)` → `feats.get(f, nan)` |
+| FIX-3D-011–020 | Medium | `atm_iv`, `delivery_pct`, `pcr_score/raw`, `max_pain`, expiry days, `sector_dispersion`, `rotation_score`, `trend_alignment` | Various silent defaults → `None`/`NaN` |
+
+### Feature Registry Summary
+
+| Metric | Value |
+|--------|-------|
+| Total registered | 115 |
+| Active | 109 |
+| Deprecated | 6 |
+| By promotion: RESEARCH | 109 |
+| talib-required | 26 |
+| DATA_UNAVAILABLE sources | 38 |
+| PIT safety: SAFE | 109 |
+| PIT safety: UNSAFE | 0 |
+
+### Leakage Certification
+
+| Check | Result |
+|-------|--------|
+| shift(-N) in feature code | 0 |
+| center=True in feature code | 0 |
+| INVALID static findings | 0 |
+| Mutation tests (13) | 13 PASS |
+| fillna(0) INVALID | 0 |
+
+### New Test: `ml-service/tests/test_phase3d.py`
+
+125 tests across 20 classes: registry completeness, config hash determinism, schemas, PIT availability checker, 20 silent-default bug fixes, all 6 feature families, cross-sectional rank/zscore monotonicity, breadth/sector NaN policies, derivatives all-None-when-absent, 12 price/volume PIT mutation tests, cross-sectional universe mutation, static leakage audit, quality gate, backward compatibility.
+
+### New Docs / Reports
+
+| File | Type |
+|------|------|
+| `reports/phase-3d-feature-quality.json` | Machine-readable quality report |
+| `reports/phase-3d-feature-quality.md` | Human-readable quality report |
+| `reports/phase-3d-feature-inventory.csv` | 115-row feature inventory |
+| `docs/ml-audit/phase-3d-feature-engine.md` | Audit doc |
+| `docs/ml-research/feature-methodology.md` | Economic rationale and design decisions |
+
+### VWAP Fix
+
+`compute_vwap_distance_pct` in `volume.py` used cumulative sum from bar 0, producing a multi-month average masquerading as a VWAP. The corrected `families/volume_liquidity.py` implementation uses a rolling N-bar trailing window for daily data and session-reset groupby for sub-daily data.
+
+### Backward Compatibility
+
+All existing model APIs (`compute_stock_features`, `compute_regime_features`, `RANKING_FEATURES`, `REGIME_FEATURES`, training pipeline) are unaffected. The change from `0.0` to `NaN` for missing features is handled by the existing `valid_mask = ~np.any(np.isnan(X), axis=1)` filter already present in all training build functions.
+
+### Documented Limitations (RESEARCH state — not PRODUCTION_CANDIDATE)
+
+- No OOS IC / Rank IC computed — requires real Indian equity historical data (Phase 3E)
+- 38 features with DATA_UNAVAILABLE sources return NaN offline (NSE F&O, VIX, breadth, etc.)
+- talib not installed in test env — 26 features tested via talib-free reference implementations
+- All 109 features in RESEARCH state; promotion requires OOS stability evidence
+
+---
+
 ## [Unreleased] — Phase 3C: Label V2 & Event-Based Target Engineering
 
 **Date:** 2026-09-06
