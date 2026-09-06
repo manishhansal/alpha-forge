@@ -2,7 +2,6 @@ import "server-only";
 
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
-import { nse } from "@/services/india/nse";
 import { yahoo } from "@/services/india/yahoo";
 import type { OptionChainAnalytics } from "@/types/india/options";
 
@@ -112,14 +111,20 @@ export async function getIndiaOpeningBreakoutSignals(
           ORB_CHAIN_LEADERS.has(u.symbol),
       );
       const analyticsBySymbol = new Map<string, OptionChainAnalytics>();
+      // Route through ProviderRegistry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
+      // instead of deprecated direct NSE calls.
+      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+      await bootstrapRegistry();
       const chainResults = await Promise.allSettled(
-        chainEntries.map((u) => nse.getOptionChain(u.optionUnderlying)),
+        chainEntries.map((u) => registry.getOptionChain(u.optionUnderlying)),
       );
       chainResults.forEach((res, idx) => {
         if (res.status === "fulfilled") {
+          // registry.getOptionChain returns the canonical OptionChain type
+          // which has an analytics field with the same shape as OptionChainAnalytics
           analyticsBySymbol.set(
-            chainEntries[idx].optionUnderlying,
-            res.value.analytics,
+            chainEntries[idx]!.optionUnderlying,
+            res.value.analytics as unknown as OptionChainAnalytics,
           );
         }
       });

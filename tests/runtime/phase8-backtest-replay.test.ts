@@ -15,7 +15,7 @@
  * And verifies only the expected outputs change.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import crypto from "node:crypto";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
@@ -80,8 +80,8 @@ function serializeResult(r: RunResult): string {
     trades: r.trades.map((t) => ({
       symbol: t.symbol,
       direction: t.direction,
-      openPrice: t.openPrice,
-      closePrice: t.closePrice,
+      openPrice: (t as any).entryPrice ?? (t as any).openPrice,
+      closePrice: (t as any).exitPrice ?? (t as any).closePrice,
       closeReason: t.closeReason,
     })),
   });
@@ -119,7 +119,7 @@ async function runBacktest(
           signalBarIndex: 0,
           atr: 80,
           confidence: 0.85,
-          attribution: { strategyId: "replay-cert", marketRegime: "TRENDING" as const, dataQualityScore: 0.95 },
+          attribution: { strategyId: "replay-cert", marketRegime: "TRENDING_UP" as const, dataQualityScore: 0.95 },
         }));
       }
     },
@@ -129,9 +129,9 @@ async function runBacktest(
   if (slippage === "ideal") {
     fillModel = ExecutionModel.ideal();
   } else if (slippage === "nse_realistic") {
-    fillModel = ExecutionModel.nseRealistic?.() ?? ExecutionModel.ideal();
+    fillModel = ExecutionModel.realistic();
   } else {
-    fillModel = ExecutionModel.withSlippage?.(slippageBps) ?? ExecutionModel.ideal();
+    fillModel = ExecutionModel.conservative();
   }
 
   const engine = new EventEngine({
@@ -157,8 +157,8 @@ async function runBacktest(
     trades: trades.map((t) => ({
       symbol: t.instrument?.symbol ?? "NIFTY",
       direction: t.direction,
-      openPrice: t.openPrice,
-      closePrice: t.closePrice,
+      openPrice: (t as any).entryPrice ?? (t as any).openPrice,
+      closePrice: (t as any).exitPrice ?? (t as any).closePrice,
       closeReason: t.closeReason ?? "UNKNOWN",
     })),
   };

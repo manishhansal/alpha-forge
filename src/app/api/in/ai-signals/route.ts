@@ -48,7 +48,12 @@ export async function GET() {
     }
 
     return NextResponse.json(actionable, {
-      headers: { "Cache-Control": "no-store" },
+      // AI signals are expensive (multi-confluence ML computation). 30s
+      // shared-cache means concurrent users share one computation window.
+      // WhatsApp dispatch (fire-and-forget) already ran above — caching
+      // the response does NOT suppress notifications since the dispatch
+      // already fired before we reach this return.
+      headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" },
     });
   } catch (err) {
     console.error("[/api/in/ai-signals] error:", err);

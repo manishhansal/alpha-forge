@@ -11,7 +11,7 @@ This document is the authoritative reference for AlphaForge's product design, sy
 3. [Design System — IIT](#3-design-system--iit)
 4. [Core Architecture](#4-core-architecture)
 5. [Indian Market Data Layer](#5-indian-market-data-layer)
-6. [Data Service (Credential-Free NSE Scraper)](#6-data-service-credential-free-nse-scraper)
+6. [Data Service (Tier-0 NSE Scraper)](#6-data-service-tier-0-nse-scraper--credential-free)
 7. [AI Signals Engine](#7-ai-signals-engine)
 8. [Daily Picks & Auto Paper-Trading](#8-daily-picks--auto-paper-trading)
 9. [Opportunity Engine (12-Stage Pipeline)](#9-opportunity-engine-12-stage-pipeline)
@@ -74,6 +74,7 @@ Market-specific extras are appended below the shared core. Profile lives on the 
 | Chart | `/in/chart/[symbol]` | Per-symbol lightweight-charts deep-dive |
 | Options Workbench | `/in/options-workbench` | Multi-leg options payoff builder + greeks + GEX strike scan |
 | Portfolio Optimizer | `/in/portfolio` | Riskfolio-Lib HRP + CVaR allocation |
+| **Signal Center** | `/in/signal-center` | **NEW (V3.0)** — Unified signal center: all signal families with `OpportunityCluster` deduplication; expandable cluster cards |
 
 ### 2.3 Auth Gating
 
@@ -256,6 +257,20 @@ Active broker resolved from `ACTIVE_BROKER` env var (`delta` or `binance`). The 
 
 Auth.js v5 with Credentials provider + JWT sessions. `src/proxy.ts` protects routes via the `authorized` callback. API keys stored AES-256-GCM encrypted; `src/lib/crypto.ts` owns the key operations.
 
+### 4.5 WhatsApp Notifications (V3.0)
+
+`src/features/whatsapp/` — end-to-end WhatsApp notification layer for every major trading event.
+
+**Dispatch path:** Worker event → `formatters.ts` (IST + Indian market formatting) → `notifier.ts` → Evolution-Go API → user's WhatsApp.
+
+**Delivery guarantees:**
+- Per-user Redis cooldown key (`whatsapp:cooldown:{userId}:{eventType}`) prevents duplicate alerts within the configured window (default 5 min)
+- Scanner delta detection: only genuinely new scan hits vs last-notified Redis set fire `SCANNER_HIT_NEW`
+- Phone numbers stored AES-256-GCM encrypted in `UserSetting.dataSourcesJson`
+- E.164 validation at opt-in time; masked display in the UI (`+91 98765 *****`)
+
+**User control:** `WhatsAppSection` component on `/in/profile` — per-event type opt-in toggles, phone number with masked preview, connection test button.
+
 ---
 
 ## 5. Indian Market Data Layer
@@ -265,17 +280,31 @@ Auth.js v5 with Credentials provider + JWT sessions. `src/proxy.ts` protects rou
 ### 5.1 Provider Priority Chain
 
 ```
-Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  NSE direct (3)  →  Yahoo Finance (4)
+Data Service / Scrapling (0)  →  Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  Yahoo Finance (3)
 ```
 
-| Provider | File | Capabilities |
-|---|---|---|
-| Angel One SmartAPI | `providers/angel-one.ts` | Quotes, historical, option chain, live stream, instrument master |
-| Upstox Analytics v2 | `providers/upstox.ts` | Quotes, historical, option chain |
-| NSE direct | `providers/nse.ts` | Option chain, quotes (cookie-warmed scraper) |
-| Yahoo Finance | `providers/yahoo.ts` | Historical OHLCV, quotes (no derivatives) |
+**NSE direct (`"nse"`) was removed in V3.0.0.** The `stock-nse-india` npm package has been removed. `ProviderId` no longer includes `"nse"`. The `DataSourceId` union type (settings UI) also no longer includes `"nse"` — the NSE card was removed from the data sources settings page. `INDIA_DATA_PROVIDER=auto` is the only valid value (the old `"nse"` fallback now routes to yahoo). All NSE scraping now runs exclusively inside the `data-service` Python microservice, which acts as the tier-0 provider for the TypeScript layer via `ScraplingProvider`.
 
-When a provider's env vars are absent, it is silently registered as `enabled: false` — no degradation.
+| Priority | Provider | File | Capabilities |
+|---|---|---|---|
+| 0 | Data Service (Scrapling) | `providers/scrapling.ts` | Live quotes, tick stream, option chain, historical, instrument master — no broker credentials required |
+| 1 | Angel One SmartAPI | `providers/angel-one.ts` | Quotes, historical, option chain, live stream, greeks, GEX, instrument master |
+| 2 | Upstox Analytics v2 | `providers/upstox.ts` | Quotes, historical, option chain |
+| 3 | Yahoo Finance | `providers/yahoo.ts` | Historical OHLCV, quotes (no derivatives) |
+
+When a provider's env vars are absent it is silently registered as `enabled: false` — no degradation. `INDIA_BROKER=nse` falls back to yahoo.
+
+#### NSE Elimination Guard Tests
+
+`tests/lib/market-data/nse-elimination.test.ts` — 12 automated tests that fail immediately if production code re-introduces direct NSE acquisition:
+
+- `PROVIDER_PRIORITY` excludes `"nse"`
+- `ProviderId` type union excludes `"nse"`
+- `DataSourceId` union type excludes `"nse"` (settings UI guard)
+- `nse.ts` exports no executable provider (tombstone only)
+- `nse.getOptionChain()` throws
+- `getBrokerById("nse")` returns null
+- `bootstrapRegistry()` registers no NSE provider
 
 ### 5.2 Failover Engine
 
@@ -308,7 +337,7 @@ type LiveTick     // normalized streaming tick: LTP, OI, bid/ask
 - Assembles candles for all 8 NSE-aligned timeframes: `1m`, `3m`, `5m`, `10m`, `15m`, `30m`, `1h`, `1d`
 - All bar boundaries aligned to **09:15 IST** (NSE open), never Unix-epoch midnight
 - Redis-backed active candle state — mid-bar restart recovery
-- Confirmed candles upserted to `CandleBar` table (idempotent)
+- Confirmed candles upserted to `CandleBar` table (idempotent) — **RCA-001 fix**: previously candles were never persisted
 - Configurable late-tick tolerance (default 2s); closed candles never mutated
 - Backfill gap detection on reconnect; caller-supplied `loader` fills gaps
 
@@ -328,11 +357,46 @@ Beyond the data layer, the Angel One adapter (`services/india/angelone/`) provid
 - **Read-only account layer** — funds/margin, holdings, net positions (all number-typed, string-parsed)
 - **BSE (BFO) option chain** — for SENSEX expiry-day Gamma Blast / Hero Zero plays
 
+### 5.8 Upstox OAuth BFF (V3.0)
+
+**Files:** `src/app/api/in/providers/upstox/connect/route.ts`, `src/app/api/in/providers/upstox/callback/route.ts`, `src/app/api/in/providers/upstox/disconnect/route.ts`, `src/app/api/in/providers/upstox/status/route.ts`, `src/lib/market-data/providers/upstox-token-state.ts`
+
+Complete server-side OAuth Backend-for-Frontend for Upstox:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/in/providers/upstox/connect` | Initiates OAuth; returns authorization URL only (no secrets exposed to browser) |
+| `GET /api/in/providers/upstox/callback` | Server-side token exchange (`UPSTOX_CLIENT_SECRET` never leaves server) |
+| `POST /api/in/providers/upstox/disconnect` | Clears server-side token state |
+| `GET /api/in/providers/upstox/status` | Returns lifecycle state without any credential values |
+
+**Token lifecycle states:** `DISCONNECTED → AUTHORIZING → CONNECTED → TOKEN_EXPIRING → TOKEN_EXPIRED → REAUTH_REQUIRED → ERROR`
+
+**Security invariants:**
+- `UPSTOX_CLIENT_SECRET` used only in the callback route (server-side Node.js)
+- Access token stored in Node.js process memory only (`_oauthState`) — never in DB, localStorage, or cookies
+- No `NEXT_PUBLIC_UPSTOX_*` env vars — confirmed by grep at build time
+- Token values never appear in URLs, logs, browser devtools, or client responses
+- Frontend receives only: lifecycle state + timestamps (not token values)
+
+### 5.9 Upstox Analytics API Credentials UI
+
+**Files:** `src/features/settings/api-keys-shared.ts`, `src/features/settings/api-keys.ts`, `src/features/settings/upstox-credentials.ts`, `src/lib/market-data/providers/upstox.ts`, `src/services/india/broker/factory.ts`, `src/components/settings/api-keys-form.tsx`
+
+Users who cannot set server-side environment variables (shared deployments, cloud hosting) can configure their Upstox Analytics Token directly in the settings UI:
+
+- **Entry point:** Profile → API Keys → select "Upstox Analytics API"
+- **Token-only flow:** Upstox uses a single bearer token, not an `apiKey`/`apiSecret` pair. The form detects this via `TOKEN_ONLY_EXCHANGES = ["upstox"]` and renders a single "Analytics Token" field with no secret field.
+- **Storage:** Token is encrypted with AES-256-GCM via `src/lib/crypto.ts` and stored in `UserSetting.apiKeysEncrypted`. Read by `getUpstoxTokenForRequest()` in a request-scoped resolver.
+- **Fallback chain:** `resolveReadToken()` in `upstox.ts` checks: env `UPSTOX_ANALYTICS_TOKEN` → in-memory OAuth token → legacy env → DB per-user token.
+- **Max length:** `apiKey` input accepts up to 2048 characters (JWT bearer tokens run 500–1500 chars).
+- **Worker safety:** `upstox-credentials.ts` does not use `import "server-only"` — `auth()` returns `null` outside request context so the worker process is safe.
+
 ---
 
-## 6. Data Service (Credential-Free NSE Scraper)
+## 6. Data Service (Credential-Free NSE Scraper — Tier-0 Provider)
 
-`data-service/` — a standalone Python 3.11 / FastAPI microservice that provides NSE market data without any broker credentials. It runs at port **8200** alongside the Next.js app and ML service.
+`data-service/` — a standalone Python 3.11 / FastAPI microservice that scrapes NSE market data without broker credentials. It runs at port **8200** and is the **tier-0 data provider** for the TypeScript layer via `ScraplingProvider`. All NSE scraping has been moved here from the TypeScript codebase (V3.0.0).
 
 > Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)  
 > Certification: [`data-service/reports/V2_1_CERTIFICATION_MATRIX.md`](./data-service/reports/V2_1_CERTIFICATION_MATRIX.md)
@@ -626,6 +690,8 @@ Stage 12  Execution Mode Isolation (BACKTEST | RESEARCH | SHADOW | PAPER | LIVE)
 
 `src/lib/signal-intelligence/` — measurement and attribution infrastructure. Does not add new strategies. Instruments existing ones so the system can answer what works, what doesn't, and why.
 
+> **V3.0 addition:** The Unified Indian Signal Center (`src/lib/india-signal-center/`) sits above the intelligence engine and provides one canonical `UnifiedIndiaSignal` envelope for all 9 signal families with `OpportunityCluster` deduplication. See SIGNAL-001 below.
+
 ### 10.1 Modules
 
 | Module | Key Exports |
@@ -667,6 +733,29 @@ All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE`. That 
 | `UniverseCoverageSnapshot` | Per-session coverage; session validity gate |
 | `OpportunityCluster` | Correlated signal groups for anti-double-counting |
 | `SignalIntelligenceRecord` | Full 40-field enriched signal envelope |
+
+### 10.5 Unified Indian Signal Center (V3.0 — SIGNAL-001)
+
+`src/lib/india-signal-center/` — canonical aggregation layer above the intelligence engine.
+
+**One envelope to rule them all:** `UnifiedIndiaSignal` covers all 9 signal families:
+`AI_SIGNAL | SCANNER | DAILY_PICK | FNO_TREND | PAPER_TRADE | MANUAL | OPPORTUNITY | SCALP | RESEARCH`
+
+**Mandatory fields:**
+- `signalFamily` — explicit family enum (never "technical")
+- `strategy` — one of the 33 registered strategies
+- `sourceAttribution` — format `FAMILY:STRATEGY` (e.g. `SCANNER:VOLUME_BREAKOUT`)
+- `dataQuality` metadata + `lineage` fields
+- `outcomeMfe`, `outcomeMae`, `pnlR` — outcome tracking fields
+
+**OpportunityCluster deduplication (DUP-001 context):**
+- Same instrument + direction signals within a 30-minute window → one cluster
+- `independentConfirmations` = count of unique families (not signal count)
+- NIFTY LONG confirmed by AI + 2 scanners + Daily Pick = **1 opportunity, 4 confirmations**
+- Confidence = geometric mean across contributing signals (prevents inflation)
+
+**API:** `GET /api/in/signal-center` — aggregates all families with deduplication applied.  
+**UI:** `/in/signal-center` — expandable cluster cards with per-family breakdown; added to India sidebar navigation.
 
 ---
 
@@ -947,7 +1036,7 @@ ATR(14)-based entry/SL/TP1/TP2/TP3 on every hit (intraday profile: SL = 1.4×ATR
 
 ## 15. Worker Jobs
 
-All 13 jobs in `worker/src/jobs/`:
+All 14 jobs in `worker/src/jobs/`:
 
 | Job | Cadence | Purpose |
 |---|---|---|
@@ -958,6 +1047,7 @@ All 13 jobs in `worker/src/jobs/`:
 | `india-scalper` | Per tick | 9 F&O strategies; persists `CandleBar` rows after each candle fetch (RCA-001 fix) |
 | `india-eod-squareoff` | 15:30 IST | Force-close all open India paper trades; finalise `IndiaDaySession` |
 | `india-fno-trend-track` | 60s, market hours | Track 14-condition FnO trend scan outcomes |
+| `india-whatsapp-scanner` | 60s, market hours | **NEW** Scanner delta detection → WhatsApp `SCANNER_HIT_NEW` events (only fires on genuinely new hits vs last-notified Redis set) |
 | `scalper` | 30s | 10 crypto strategies on 1m/5m/15m; resolve OPEN rows via 1m klines |
 | `signal-ingest` | Periodic | Persist new signals to `SignalHistory` (30-min per-symbol dedup) |
 | `signal-outcome` | Periodic | Resolve open signals via 1m klines (HIT_TARGET / HIT_STOP / EXPIRED) |
@@ -1026,6 +1116,7 @@ Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-ov
 | `GET /in/universe-coverage` | F&O universe coverage snapshot |
 | `GET /in/opportunity-engine` | Ranked opportunity pipeline output |
 | `GET /in/opportunity-engine/[id]` | Single opportunity detail |
+| `GET /in/signal-center` | **NEW (V3.0)** — Aggregated unified signal center (all families + deduplication) |
 | `GET /in/gex` | Dealer GEX + gamma flip + expected move (5-min cache) |
 | `GET /in/vol-surface` | SVI IV surface + term structure (5-min cache) |
 | `GET /in/order-flow` | VPIN toxic order-flow (2-min cache) |
@@ -1036,6 +1127,13 @@ Worker lifecycle: graceful shutdown on `SIGINT`/`SIGTERM`; all jobs use a non-ov
 | `POST /in/portfolio-optimizer` | Riskfolio-Lib allocation |
 | `GET /in/expiry-trades` | Expiry-day Gamma Blast / Hero Zero plays |
 | `GET /in/news` | RSS feeds + sentiment |
+| `GET /in/data/forensics/:tradeId` | **V2.1** — Full data-to-trade forensics chain |
+| `GET /in/providers/upstox/status` | **V3.0** — Upstox OAuth token lifecycle state |
+| `GET /in/providers/upstox/connect` | **V3.0** — Initiate Upstox OAuth |
+| `GET /in/providers/upstox/callback` | **V3.0** — Server-side token exchange |
+| `POST /in/providers/upstox/disconnect` | **V3.0** — Disconnect Upstox OAuth |
+| `GET /in/whatsapp/status` | **V3.0** — WhatsApp connection status |
+| `POST /in/whatsapp/test` | **V3.0** — Send test WhatsApp notification |
 
 ### Research API (`/api/research/`)
 
@@ -1061,14 +1159,21 @@ src/
         options-workbench/        Multi-leg payoff builder
         portfolio/                Portfolio optimizer
         history/                  Unified trade history
+        signal-center/            NEW (V3.0) — Unified signal center (all families + deduplication)
       research/                   10-page V6 quant research dashboard
     api/                          All API routes (auth, market, scalper, experiments, in/*, research/*)
+      in/
+        providers/upstox/         NEW (V3.0) — connect / callback / disconnect / status routes
+        signal-center/            NEW (V3.0) — aggregated signal center endpoint
+        data/forensics/           V2.1 — trade forensics endpoint
   components/
     ai-signals/                   AiSignalCard, AiSignalsBoard, AiMarketContextBanner
-    dashboard/                    Sidebar (market-aware), Topbar, MarketTickerBar, MarketSwitcher
+    dashboard/                    Sidebar (market-aware; logo at top, icon-only in rail mode), Topbar, MarketTickerBar, MarketSwitcher
     india/                        All India UI — no cross-imports from Crypto
       msb-dashboard, charts/price-chart, options/, daily-picks/
       paper-trading/, signal-quality/, strategies/, ticker/
+      signal-center/              NEW (V3.0) — india-signal-center.tsx
+      DataSourceBadge.tsx         NEW (V3.0) — shows which provider served the data
     trading/                      IIT component library (SignalBadge, NumberMorph, ...)
     layout/                       BentoGrid, PageHeader, EmptyState, PageTransition
     3d/                           R3F components (MarketIntelligenceCore, RiskSphere, PortfolioGalaxy)
@@ -1079,6 +1184,10 @@ src/
     best-time/                    Crypto IST window engine
     scalping/                     10 crypto strategies + helpers + backtest
     strategy-lab/                 Parser + backtest engine + live worker
+    whatsapp/                     NEW (V3.0) — phone.ts, types.ts, preferences.ts,
+                                  formatters.ts, notifier.ts, index.ts
+    settings/                     api-keys-shared.ts, api-keys.ts,
+                                  upstox-credentials.ts (NEW — per-user Upstox token resolver)
     india/
       best-time/                  NSE session engine
       daily-picks/                Freeze/track/history engine + builder
@@ -1088,6 +1197,8 @@ src/
       options-workbench/          Payoff + greeks aggregation engine
   lib/
     market-data/                  4-provider data layer + failover + circuit breaker
+                                  providers/nse.ts is a TOMBSTONE — do not use
+    india-signal-center/          NEW (V3.0) — types.ts, aggregator.ts
     signal-intelligence/          45-phase signal intelligence (12 modules)
     opportunity-engine/           12-stage validation pipeline
     research/                     24-phase V6 quant research platform
@@ -1099,7 +1210,8 @@ src/
                                   model governance, decision pipeline config
   services/
     brokers/                      BrokerAdapter contract + Delta/Binance adapters
-    india/                        Angel One, Upstox, NSE, Yahoo adapters + SmartAPI
+    india/                        Angel One, Upstox, Yahoo adapters + SmartAPI
+                                  (nse/ directory contains throwing stubs only — V3.0)
   store/
     uiStore.ts                    UIStore — Zustand v5 (regime, sidebar, density, ...)
     india/                        Market-scoped India stores
@@ -1110,7 +1222,7 @@ worker/
     index.ts                      Graceful shutdown + job registry
     scheduler.ts                  Non-overlapping recurring tick primitive
     config.ts                     Env-driven tunables
-    jobs/                         13 background jobs
+    jobs/                         14 background jobs (13 + india-whatsapp-scanner)
 ml-service/
   src/
     server.py                     FastAPI app
@@ -1122,11 +1234,13 @@ ml-service/
     greeks.py                     Black-76/BS greeks + IV solver
     gex.py                        Dealer GEX engine
     vol_surface.py                SVI IV surface
+    brokers/                      NEW (V3.0) — upstox_client.py broker API client
     training/                     Three-tier data pipeline + train_all.py
 prisma/
   schema.prisma                   18 models
-tests/                            Vitest suite (~3000 tests, 200+ files)
-docker-compose.yml                Postgres 17 + Redis 7 + ML service
+tests/                            Vitest suite (~3059 tests, 200+ files)
+                                  tests/lib/market-data/nse-elimination.test.ts — NEW (V3.0)
+docker-compose.yml                Postgres 17 + Redis 7 + ML service + data-service
 ```
 
 ---
@@ -1151,26 +1265,41 @@ NEXT_PUBLIC_ACTIVE_BROKER=delta
 ### Indian Market
 
 ```bash
-# Angel One SmartAPI (primary — all data + SmartStream WS)
+# Angel One SmartAPI (primary broker — all data + SmartStream WS)
 SMARTAPI_API_KEY=
 SMARTAPI_CLIENT_CODE=
 SMARTAPI_PIN=
 SMARTAPI_TOTP_SECRET=    # base32 TOTP secret
 
-# Upstox Analytics v2 (secondary)
+# Upstox Analytics v2 (secondary broker)
+# For data-only use, UPSTOX_ANALYTICS_TOKEN is sufficient (max 2048 chars — JWT bearer).
+# Configure via Profile → API Keys in the UI, or set via env.
+# For full OAuth BFF (V3.0), set all four:
 UPSTOX_CLIENT_ID=
-UPSTOX_CLIENT_SECRET=
-UPSTOX_ANALYTICS_TOKEN=  # long-lived read-only bearer — sufficient for data-only use
+UPSTOX_CLIENT_SECRET=    # NEVER in NEXT_PUBLIC_* — server-side only
+UPSTOX_REDIRECT_URI=     # e.g. http://localhost:3000/api/in/providers/upstox/callback
+UPSTOX_ANALYTICS_TOKEN=  # long-lived read-only bearer; takes precedence over OAuth token
+UPSTOX_ACCESS_TOKEN=     # set by the OAuth callback; stored in Node.js process memory only
+
+# Data provider hierarchy (V3.0)
+# Valid values: "auto" only. "nse" is no longer valid and falls back to yahoo.
+INDIA_DATA_PROVIDER=auto
 
 # OpenAlgo (33+ broker adapter)
 OPENALGO_BASE_URL=
 OPENALGO_API_KEY=        # AES-256-GCM encrypted
 LIVE_TRADING_ENABLED=    # Must be exactly "true" to enable placeOrder
 
+# WhatsApp notifications (V3.0 / 2026-08-23)
+WHATSAPP_EVOLUTION_URL=
+WHATSAPP_EVOLUTION_API_KEY=
+WHATSAPP_INSTANCE_NAME=
+WHATSAPP_COOLDOWN_MS=300000  # Per-user cooldown in ms (default 5 min)
+
 # Cache and worker
 REDIS_URL=redis://localhost:6379
 INDIA_REDIS_PREFIX=fno-pulse:
-INDIA_BROKER=yahoo       # yahoo | nse | groww | angel | openalgo (legacy env var)
+INDIA_BROKER=yahoo       # yahoo | angel | upstox | openalgo (nse no longer valid)
 
 # News feeds (optional override)
 INDIA_NEWS_FEEDS=        # comma-separated url|label|category triples
@@ -1201,6 +1330,8 @@ ENABLE_PORTFOLIO_OPTIMIZER=false
 ## 20. Testing & TDD Policy
 
 Test-Driven Development is mandatory. Write failing tests first. The `prebuild` hook enforces a green suite before every `next build`.
+
+**Current test count: 3059 passing, 0 failures (as of 2026-09-04, commit `b650249`).**
 
 ### Tooling
 

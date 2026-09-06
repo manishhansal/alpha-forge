@@ -121,7 +121,6 @@ async def close_http_client() -> None:
         await _http_client.aclose()
         _http_client = None
         logger.info("http_client_closed")
-_SESSION_TIMEOUT: float = 12.0  # exported for tests — session fetch timeout in seconds
 
 # ---------------------------------------------------------------------------
 # NSE NextApi base URLs (post-2026 redesign)

@@ -366,7 +366,7 @@ describe("Phase 2 — Stage 6: Execution simulation → fill → position → po
             confidence: 0.85,
             attribution: {
               strategyId: "pipeline-trace",
-              marketRegime: "TRENDING" as const,
+              marketRegime: "TRENDING_UP" as const,
               dataQualityScore: 0.95,
             },
           });
@@ -480,7 +480,7 @@ describe("Phase 2 — Stage 7: Portfolio snapshot → API response shape", () =>
             signalBarIndex: 0,
             atr: 60,
             confidence: 0.82,
-            attribution: { strategyId: "portfolio-api-test", marketRegime: "TRENDING" as const, dataQualityScore: 0.9 },
+            attribution: { strategyId: "portfolio-api-test", marketRegime: "TRENDING_UP" as const, dataQualityScore: 0.9 },
           }));
         }
       },
@@ -504,10 +504,10 @@ describe("Phase 2 — Stage 7: Portfolio snapshot → API response shape", () =>
 
     // All closed trades have required fields
     for (const trade of trades) {
-      expect(trade).toHaveProperty("openPrice");
-      expect(trade).toHaveProperty("closePrice");
+      expect(trade).toHaveProperty("entryPrice");
+      expect(trade).toHaveProperty("exitPrice");
       expect(trade).toHaveProperty("direction");
-      expect(trade.closePrice).toBeGreaterThan(0);
+      expect(trade.exitPrice).toBeGreaterThan(0);
     }
 
     // Result is deterministic

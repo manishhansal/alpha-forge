@@ -109,8 +109,14 @@ const CACHE_TTL_CLOSED_MS   = 5 * 60_000;
  * universe (170 symbols). Yahoo's chart endpoint rate-limits aggressively
  * on parallel bursts; 8 in-flight is the sweet spot we've seen settle
  * within ~12s on cold cache while staying clear of 429s.
+ *
+ * Raised to 16: at concurrency 8 the 170-symbol Daily Picks universe needs
+ * ceil(170/8) = 22 serial batches (~44s worst-case). At 16 that drops to
+ * ceil(170/16) = 11 batches (~22s), halving cold-path latency. Yahoo's
+ * chart endpoint is the bottleneck; the registry already applies per-provider
+ * circuit breakers that absorb 429s gracefully.
  */
-const YAHOO_HIST_CONCURRENCY = 8;
+const YAHOO_HIST_CONCURRENCY = 16;
 
 // ─── Quant Pre-filter ─────────────────────────────────────────────────────────
 /**
@@ -1642,10 +1648,14 @@ async function computeIndiaUniverse(
 
   // Phase 2: pull option chains via the canonical registry.
   // Registry routes: Angel One → Upstox → NSE (Yahoo has no option chains).
+  // Concurrency raised to 8 (was 4): for Daily Picks this means ceil(29/8) = 4
+  // serial batches instead of 8, cutting chain fetch time roughly in half.
+  // Angel One / NSE rate limits are per-session not per-symbol; 8 concurrent
+  // requests are well within the adapter's internal queuing limits.
   const chainFetches = universe.filter(fetchChainFor);
   await mapWithConcurrency(
     chainFetches,
-    4,
+    8,
     async (u) => {
       try {
         const chain = await registry.getOptionChain(u.symbol);

@@ -11,7 +11,7 @@ import type {
 } from "@/types/india/scanner";
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { yahoo } from "@/services/india/yahoo";
-import { nse } from "@/services/india/nse";
+// nse import kept for backward compatibility (throws on all methods — do not call directly)
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 
@@ -130,12 +130,14 @@ async function runVolumeBreakout(limit: number): Promise<ScannerResult> {
     .sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0))
     .slice(0, 50);
 
-  const ratios = await Promise.all(
-    candidates.map(async (q) => {
+  const ratios = await pmap(
+    candidates,
+    async (q) => {
       const avg = await avgVolume(q.symbol);
       const ratio = avg && avg > 0 && q.volume ? q.volume / avg : null;
       return { q, avg, ratio };
-    }),
+    },
+    8, // cap at 8 concurrent Yahoo historical fetches — same as FnO trend scanners
   );
 
   const sorted = ratios
@@ -175,9 +177,16 @@ const INDEX_UNDERLYINGS = FNO_INDICES.map((i) => i.underlying);
 
 async function indexChains() {
   return cache.memo("scanner:index-chains", 20_000, async () => {
+    // Use ProviderRegistry to route option chain requests through
+    // DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO (no direct NSE acquisition)
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+
     const out = await Promise.allSettled(
-      INDEX_UNDERLYINGS.map((u) => nse.getOptionChain(u)),
+      INDEX_UNDERLYINGS.map((u) => registry.getOptionChain(u)),
     );
+
+    type LegacyChain = Awaited<ReturnType<typeof registry.getOptionChain>>;
     return out
       .map((r, i) =>
         r.status === "fulfilled"
@@ -186,7 +195,7 @@ async function indexChains() {
       )
       .filter(Boolean) as {
       underlying: string;
-      chain: Awaited<ReturnType<typeof nse.getOptionChain>>;
+      chain: LegacyChain;
     }[];
   });
 }

@@ -13,7 +13,6 @@ export type Market = "india" | "crypto";
 export type DataSourceId =
   // India
   | "yahoo"
-  | "nse"
   | "groww"
   | "zerodha"
   | "bse"
@@ -58,16 +57,6 @@ export const DATA_SOURCES: readonly DataSourceMeta[] = [
     requiresApiKey: false,
     implemented: true,
     homeUrl: "https://finance.yahoo.com",
-  },
-  {
-    id: "nse",
-    market: "india",
-    label: "NSE direct",
-    blurb: "Cookie-warmed option chain, OI, PCR — direct from NSE.",
-    capabilities: ["optionChain", "oi", "quotes"],
-    requiresApiKey: false,
-    implemented: true,
-    homeUrl: "https://www.nseindia.com",
   },
   {
     id: "groww",
@@ -200,13 +189,13 @@ export function dataSourceLabels(ids: readonly DataSourceId[]): string[] {
 }
 
 /**
- * OI for the Indian market intentionally bypasses Yahoo (no live OI). The
- * picker only offers the brokers that actually publish chain/OI data.
+ * OI for the Indian market intentionally bypasses Yahoo (no live OI) and NSE
+ * direct (acquisition removed 2026-09-03). The picker only offers brokers that
+ * actually publish chain/OI data via a supported adapter.
  */
 export const INDIA_OI_SOURCES: readonly DataSourceId[] = [
   "angel",
   "upstox",
-  "nse",
   "groww",
   "bse",
 ];
@@ -216,8 +205,8 @@ export const INDIA_OI_SOURCES: readonly DataSourceId[] = [
 export interface IndiaSelections {
   /** Brokers the user toggled on for India quotes/history. */
   selected: DataSourceId[];
-  /** Which of the OI-capable sources to use for the option chain & OI
-   *  routes. Defaults to "nse". */
+  /** Which OI-capable source to use for option chain & OI routes.
+   *  Defaults to "angel" (Angel One SmartAPI). */
   optionChain: DataSourceId;
 }
 
@@ -235,7 +224,14 @@ export interface DataSourceSelections {
 }
 
 export const DEFAULT_SELECTIONS: DataSourceSelections = {
-  india: { selected: ["yahoo", "nse"], optionChain: "nse" },
+  // "yahoo" as the default optionChain is intentional: the ProviderRegistry
+  // (DATA_SERVICE → Angel One → Upstox) handles option chains automatically
+  // regardless of this setting. When "yahoo" is the configured optionChain,
+  // getOptionChainBroker() returns the yahoo adapter, which throws — the route
+  // then falls through to the ProviderRegistry path. New users with no broker
+  // credentials will get a working option chain via the ProviderRegistry
+  // instead of a hard 502 from a missing-credentials angel error.
+  india: { selected: ["yahoo"], optionChain: "yahoo" },
   crypto: { selected: ["binance", "delta"], primary: "delta" },
 };
 

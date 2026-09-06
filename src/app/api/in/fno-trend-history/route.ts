@@ -25,7 +25,10 @@ export async function GET(req: Request) {
   try {
     const data = await getFnoTrendHistory({ days, scanType: scanType as "BULLISH" | "BEARISH" | "ALL" });
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "no-store" },
+      // FnO trend history is a DB read of past data — it changes only when
+      // the worker runs every 60s. 30s shared-cache is safe and prevents
+      // every page load from hitting the DB.
+      headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" },
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Query failed";

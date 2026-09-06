@@ -56,7 +56,8 @@ describe("features/settings/data-sources-shared", () => {
   it("dataSourcesFor() filters by market", () => {
     const india = dataSourcesFor("india").map((s) => s.id);
     const crypto = dataSourcesFor("crypto").map((s) => s.id);
-    expect(india).toEqual(expect.arrayContaining(["yahoo", "nse", "groww"]));
+    expect(india).toEqual(expect.arrayContaining(["yahoo", "groww"]));
+    expect(india).not.toContain("nse");
     expect(crypto).toEqual(expect.arrayContaining(["binance", "delta"]));
     expect(india).not.toContain("binance");
     expect(crypto).not.toContain("yahoo");
@@ -80,7 +81,7 @@ describe("features/settings/data-sources-shared", () => {
         india: { selected: ["yahoo", "fake-source", "nse"], optionChain: "nse" },
         crypto: { selected: ["binance", "etoro"], primary: "binance" },
       });
-      expect(out.india.selected).toEqual(["yahoo", "nse"]);
+      expect(out.india.selected).toEqual(["yahoo"]);
       expect(out.crypto.selected).toEqual(["binance"]);
     });
 
@@ -118,7 +119,7 @@ describe("features/settings/data-sources-shared", () => {
         india: { selected: ["yahoo", "yahoo", "nse"], optionChain: "nse" },
         crypto: { selected: ["binance", "binance"], primary: "binance" },
       });
-      expect(out.india.selected).toEqual(["yahoo", "nse"]);
+      expect(out.india.selected).toEqual(["yahoo"]);
       expect(out.crypto.selected).toEqual(["binance"]);
     });
   });

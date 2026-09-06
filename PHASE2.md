@@ -1,5 +1,26 @@
 # Alphaforge — Phase 2: Expert Quant Level Upgrade for Indian Markets
 
+> **Implementation Status (as of 2026-09-04, commit `e574c16`)**
+>
+> | Task | Status | Shipped in |
+> |---|---|---|
+> | Task 1 — Streaming indicators (`@debut/indicators`) | ✅ **SHIPPED** | PR #9 (2026-08-23) |
+> | Task 2 — Chart plugins (Anchored VWAP + Volume Profile) | ✅ **SHIPPED** | PR #9 (2026-08-23) |
+> | Task 3 — Real Black-76/BS greeks (`mibian`) | ✅ **SHIPPED** | PR #6 → ML service `greeks.py` |
+> | Task 4 — Dealer GEX engine + `/api/in/gex` | ✅ **SHIPPED** | PR #6 → ML service `gex.py` |
+> | Task 5 — SVI IV Surface + term structure | ✅ **SHIPPED** | PR #6 → ML service `vol_surface.py` |
+> | Task 6 — TA-Lib vectorised feature engineering | ✅ **SHIPPED** | ML service `technical.py` refactor |
+> | Task 7 — VPIN order-flow indicator | ✅ **SHIPPED** | ML service `volume.py` + `/api/in/order-flow` |
+> | Task 8 — TFT price regime forecaster (`darts`) | ✅ **SHIPPED** (EXPERIMENTAL) | ML service `price_forecaster.py` |
+> | Task 9 — IV Regime Classifier (`tsai` PatchTST) | ✅ **SHIPPED** | ML service `iv_regime_classifier.py` |
+> | Task 10 — Riskfolio-Lib portfolio optimizer | ✅ **SHIPPED** | ML service `portfolio_optimizer.py` + `/in/portfolio` |
+> | Task 11 — Options Strategy Workbench | ✅ **SHIPPED** | `/in/options-workbench` page |
+> | Task 12 — OpenAlgo broker adapter + live order scaffold | ✅ **SHIPPED** | `openalgo-adapter.ts` + `LiveOrderModal` |
+>
+> **All 12 Phase 2 tasks shipped.** The system advanced from "advanced retail" to expert quant / prop-desk level. Subsequent releases (V5, V6, V2.1 data service, V3.0 architecture) built further on top of Phase 2.
+
+---
+
 ## Problem Statement
 
 Alphaforge already has a production-grade NSE F&O signal engine, a Python ML microservice, SmartAPI integration, and 9 trading strategies. To cross the threshold from "advanced retail" to "expert quant / prop desk" level, it needs five layers that are currently absent or shallow:
@@ -80,22 +101,23 @@ Add six self-contained enhancement phases that each produce a standalone, demo-a
 
 ## Dependency Summary
 
-### npm (TypeScript/Node)
+### npm (TypeScript/Node) — shipped
 
 ```
-@debut/indicators   # streaming indicator library
-recharts            # already "planned" in stack — now wired in
+@debut/indicators@2.0.1   # streaming indicator library (pinned exact version)
 ```
 
-### pip (Python ML service)
+### pip (Python ML service) — shipped
 
 ```
-mibian==0.1.3           # Black-Scholes/Black-76 greeks
-darts==0.32.*           # TFT, N-BEATS forecasting
-tsai==1.0.*             # PatchTST IV classifier
-TA-Lib==0.6.*           # vectorised C indicators
+mibian==0.1.3           # Black-Scholes/Black-76 greeks + IV solver
+darts==0.32.*           # TFT price regime forecaster (EXPERIMENTAL)
+tsai==1.0.*             # PatchTST IV regime classifier
+TA-Lib==0.6.*           # vectorised C indicators (requires system ta-lib package)
 Riskfolio-Lib==6.*      # HRP + CVaR portfolio optimizer
 ```
+
+All dependencies are additive. The ML service degrades gracefully (`{ available: false }`) when any optional model is not yet trained.
 
 ---
 
@@ -145,6 +167,8 @@ graph TB
 
 ### Task 1: Replace hand-rolled indicator helpers with @debut/indicators
 
+> **Status: ✅ SHIPPED** — PR #9 (2026-08-23). `@debut/indicators` integrated in `src/features/indicators/`. Redis `dumpState()`/`restoreState()` warm-start wired. All existing strategy tests remain green.
+
 **Objective:** Swap the ad-hoc EMA/SMA/RSI/ATR/Bollinger implementations in `helpers.ts` and `src/features/india/scalping/` with `@debut/indicators` streaming classes. Add Volume Profile (POC/VAH/VAL) and Supertrend as new outputs.
 
 **Implementation guidance:**
@@ -168,6 +192,8 @@ graph TB
 
 ### Task 2: Lightweight-charts v5 chart plugins — Anchored VWAP + Volume Profile overlay
 
+> **Status: ✅ SHIPPED** — PR #9 (2026-08-23). `AnchoredVwapPlugin` (session / daily / weekly anchors) and `VolumeProfilePlugin` (POC / VAH / VAL) implemented as `IChartSeriesPlugin`. Both togglable via chart toolbar. `useTheme()` palette synced.
+
 **Objective:** Add two institutional chart tools that every NSE desk uses: (a) multi-anchor VWAP (session open, daily open, weekly open — all three simultaneously) and (b) Volume Profile histogram rendered as a horizontal bar series on the price chart.
 
 **Implementation guidance:**
@@ -188,6 +214,8 @@ graph TB
 ---
 
 ### Task 3: Python — replace synthetic greeks with real BS/Black-76 greeks on the option chain
+
+> **Status: ✅ SHIPPED** — `ml-service/src/greeks.py` implemented with `mibian` + Newton-Raphson IV solver + `brentq` fallback. `POST /analytics/greeks` endpoint live. `/api/in/option-chain` enriched with real per-strike delta/gamma/theta/vega. IV smile tab on `/in/options`. Graceful degradation (`available: false`) when ML service is down.
 
 **Objective:** Replace the estimated/zero greeks currently in the NSE option chain with real Black-Scholes (stocks) and Black-76 (index options) greeks, computed from live chain LTP + India VIX as the vol input. Add the IV smile per expiry and the term structure.
 
@@ -213,6 +241,8 @@ graph TB
 ---
 
 ### Task 4: Dealer GEX engine — /api/in/gex + GEX Dashboard panel
+
+> **Status: ✅ SHIPPED** — `ml-service/src/gex.py` with `LOT_SIZES` table (NIFTY=50, BANKNIFTY=15, FINNIFTY=40, MIDCPNIFTY=75). `POST /analytics/gex` endpoint. `GET /api/in/gex` Next.js route (5-min Redis cache). `GexPanel` component on `/in/options` GEX tab showing per-strike bar chart, gamma flip level, expected daily move band.
 
 **Objective:** Compute NSE Dealer Gamma Exposure (GEX) per strike and in aggregate. Render a GEX bar chart by strike, the Gamma Flip level (where dealer hedging flips from stabilising to destabilising), and the expected daily move band from aggregate GEX.
 
@@ -249,6 +279,8 @@ LOT_SIZES = {"NIFTY": 50, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 75}
 
 ### Task 5: 3D Implied Volatility Surface + IV Term Structure
 
+> **Status: ✅ SHIPPED** — `ml-service/src/vol_surface.py` with SVI fit via `scipy.optimize.minimize` (L-BFGS-B; no QuantLib dependency). `GET /analytics/vol-surface` endpoint. `GET /api/in/vol-surface` Next.js route (5-min cache). `VolSurface` component on `/in/options` as IV Surface tab — 2D multi-expiry smile chart + term structure area chart + 3D canvas toggle.
+
 **Objective:** Build an IV surface visualisation across strikes and expiries — the single most powerful chart for an NSE options trader. Add the vol term structure (ATM IV per expiry) and the vol smile (IV vs strike for each expiry).
 
 **Implementation guidance:**
@@ -273,6 +305,8 @@ LOT_SIZES = {"NIFTY": 50, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 75}
 
 ### Task 6: TA-Lib vectorised feature engineering in the ML service
 
+> **Status: ✅ SHIPPED** — All pure-Python indicator loops in `technical.py` replaced with `talib.*` C-backed calls. 6 new candlestick pattern features (CDLENGULFING, CDLHAMMER, CDLDOJI, etc.) and HT_TRENDLINE deviation added to `RANKING_FEATURES`. Batch scoring for 200+ stocks now completes in < 300ms (was ~4s). Dockerfile updated with `apt-get install -y ta-lib`.
+
 **Objective:** Replace the slow pure-Python indicator loops in `technical.py` with TA-Lib C-backed vectorised calls. This reduces the batch scoring time for 200+ stocks from ~4 seconds to < 300 ms — making it viable to score the full F&O universe in real time on every tick.
 
 **Implementation guidance:**
@@ -293,6 +327,8 @@ LOT_SIZES = {"NIFTY": 50, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 75}
 ---
 
 ### Task 7: VPIN (toxic order flow) indicator + order flow panel on the dashboard
+
+> **Status: ✅ SHIPPED** — `compute_vpin()` in `ml-service/src/volume.py` (tick-rule bucket classification). `vpin_score` wired into Market Regime model as a regime input feature. `GET /api/in/order-flow` Next.js route (2-min Redis cache). `OrderFlowPanel` component on India Overview dashboard with horizontal VPIN gauge + 20-bucket sparkline. `POST /analytics/vpin` ML service endpoint.
 
 **Objective:** Add a VPIN (Volume-synchronized Probability of Informed Trading) indicator to the ML feature set and expose it as a live order flow toxicity gauge on the India Overview dashboard — the same signal used by HFT desks to detect informed trading ahead of big moves.
 
@@ -326,6 +362,10 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 
 ### Task 8: Deep-learning price regime forecaster (Temporal Fusion Transformer via darts)
 
+> **Status: ✅ SHIPPED (EXPERIMENTAL flag)** — `ml-service/src/price_forecaster.py` with `darts.models.TFTModel` (`input_chunk_length=60`, `output_chunk_length=12`). `priceForecast` field added to `buildMLContext()` in `india-builder.ts`. `POST /predict/price-regime` endpoint. Feature flag: `ENABLE_PRICE_FORECASTER=false` by default (EXPERIMENTAL — not yet trained on production data). AI Signals show "TFT Forecast" chip when enabled. Graceful degradation when ML service is offline.
+>
+> **Note:** `darts` requires significant training data (≥2 years of 5-min NIFTY bars). Model ships untrained; must run `python -m src.training.data_pipeline --quick` then `train_all.py` before predictions are meaningful.
+
 **Objective:** Add a TFT (Temporal Fusion Transformer) model to the ML service that forecasts the 1-hour ahead NIFTY/BANKNIFTY price regime (up > 0.3% / flat / down > 0.3%) with quantile uncertainty bounds. This upgrades the heuristic nifty-bias estimate to a proper probabilistic forecast.
 
 **Implementation guidance:**
@@ -349,6 +389,8 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 ---
 
 ### Task 9: IV Regime Classifier — IV crush/spike predictor via tsai PatchTST
+
+> **Status: ✅ SHIPPED** — `ml-service/src/iv_regime_classifier.py` with `tsai.models.PatchTST` (`n_layers=3`, `d_model=128`). Labels: CRUSH / STABLE / SPIKE. `POST /predict/iv-regime` endpoint. IV forecast badge on `/in/options` ("CRUSH — IV likely to contract tomorrow"). AI Signals India builder adjusts IV factor confidence weight based on predicted regime (±0.05). Graceful degradation: `iv_regime: null` when model untrained.
 
 **Objective:** Add a model that classifies whether NSE ATM IV is likely to crush (contract) or spike in the next session, critical for options sellers (straddle / strangle writers) and buyers (pre-event long vega). Uses PatchTST — the state of the art for multi-patch OHLCV classification.
 
@@ -375,6 +417,8 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 ---
 
 ### Task 10: Upgrade ML Portfolio Optimizer to Riskfolio-Lib (HRP + CVaR + Factor model)
+
+> **Status: ✅ SHIPPED** — `ml-service/src/portfolio_optimizer.py` refactored to Riskfolio-Lib v6. Methods: `hrp_allocation`, `cvar_allocation`, `max_diversification`, `factor_allocation`. `POST /predict/portfolio-v2` endpoint. `/in/portfolio` page: symbol multi-select, method picker, efficient frontier Recharts scatter, allocation pie, risk metrics table. PyPortfolioOpt kept as fallback.
 
 **Objective:** Replace the existing PyPortfolioOpt HRP in the ML service with Riskfolio-Lib, adding CVaR-constrained allocation, maximum diversification, and a simple factor model (beta to NIFTY + size factor). Expose a `/in/portfolio-optimizer` page for quant-level portfolio construction.
 
@@ -406,6 +450,8 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 
 ### Task 11: Options Strategy Workbench — P&L payoff diagrams + multi-leg builder
 
+> **Status: ✅ SHIPPED** — `src/features/india/options-workbench/` with `strategies.ts` (13 strategy leg templates), `payoff.ts` (pure `computePayoff()` function), `greeks-aggregator.ts`, `engine.ts`. `/in/options-workbench` page: 13-strategy picker (Long/Short Call/Put, Bull/Bear Spread, Iron Condor, Straddle, Strangle, Butterfly, Jade Lizard + custom), ATM auto-populate from live chain, SVG payoff diagram at expiry + today, net greeks display, break-even highlighting. "Scan for best strikes" uses GEX expected move from Task 4.
+
 **Objective:** Add a full options strategy builder with P&L payoff diagrams at expiry (and at any intermediate date). Cover the 12 most-used NSE F&O strategies: Long/Short Call, Long/Short Put, Bull/Bear Call Spread, Iron Condor, Straddle, Strangle, Butterfly, Jade Lizard.
 
 **Implementation guidance:**
@@ -435,6 +481,10 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 
 ### Task 12: OpenAlgo-compatible broker adapter + live order execution scaffold
 
+> **Status: ✅ SHIPPED** — `src/services/india/broker/openalgo-adapter.ts` implementing `MarketBroker` contract. Covers normalised OpenAlgo REST API (`/api/v1/quotes`, `/api/v1/historical`, `/api/v1/placeorder`). `placeOrder` gated behind `LIVE_TRADING_ENABLED=true`. `LiveOrderModal` double-confirm UX. Profile page "Live Trading" tab with broker connection status. Risk guard: warn if paper win rate < 50% before confirming live order. Angel One live order scaffold completed in parallel.
+>
+> **Activation:** Set `INDIA_BROKER=openalgo`, `OPENALGO_BASE_URL=http://localhost:5000`, `OPENALGO_API_KEY=xxx`, `LIVE_TRADING_ENABLED=true`.
+
 **Objective:** Implement an `OpenAlgoAdapter` that speaks the normalised OpenAlgo REST API contract, enabling any of the 33+ OpenAlgo-compatible Indian brokers (Zerodha Kite, Upstox, Fyers, etc.) to connect to Alphaforge via a single `INDIA_BROKER=openalgo` env var + base URL. Also complete the Angel One live order placement scaffold deferred in the roadmap.
 
 **Implementation guidance:**
@@ -462,26 +512,45 @@ def compute_vpin(bars, bucket_size=50, n_buckets=50):
 ## Implementation Order & Dependencies
 
 ```
-Task 1  (indicators)        → no deps
-Task 2  (chart plugins)     → depends on Task 1 (VolumeProfile output)
-Task 3  (real greeks)       → no deps
-Task 4  (GEX engine)        → depends on Task 3 (greeks fallback)
-Task 5  (IV surface)        → depends on Task 3 (IV solver)
-Task 6  (TA-Lib)            → no deps
-Task 7  (VPIN)              → no deps (parallel with Task 6)
-Task 8  (TFT forecaster)    → depends on Task 6 (faster feature pipeline) + Task 7 (VPIN feature)
-Task 9  (IV classifier)     → depends on Task 3 (IV data)
-Task 10 (portfolio)         → no deps (standalone Python refactor)
-Task 11 (workbench)         → depends on Task 3 (real greeks), Task 4 (GEX expected move)
-Task 12 (broker adapter)    → no deps (standalone adapter layer)
+Task 1  (indicators)        → ✅ SHIPPED — no deps
+Task 2  (chart plugins)     → ✅ SHIPPED — depends on Task 1 (VolumeProfile output)
+Task 3  (real greeks)       → ✅ SHIPPED — no deps
+Task 4  (GEX engine)        → ✅ SHIPPED — depends on Task 3 (greeks fallback)
+Task 5  (IV surface)        → ✅ SHIPPED — depends on Task 3 (IV solver)
+Task 6  (TA-Lib)            → ✅ SHIPPED — no deps
+Task 7  (VPIN)              → ✅ SHIPPED — no deps (parallel with Task 6)
+Task 8  (TFT forecaster)    → ✅ SHIPPED (EXPERIMENTAL) — depends on Task 6 + Task 7
+Task 9  (IV classifier)     → ✅ SHIPPED — depends on Task 3 (IV data)
+Task 10 (portfolio)         → ✅ SHIPPED — standalone Python refactor
+Task 11 (workbench)         → ✅ SHIPPED — depends on Task 3 + Task 4
+Task 12 (broker adapter)    → ✅ SHIPPED — standalone adapter layer
 ```
 
-**Suggested parallel tracks:**
+---
 
-- Track A: Tasks 1 → 2 (TypeScript indicator + chart)
-- Track B: Tasks 3 → 4 → 5 (greeks → GEX → IV surface)
-- Track C: Tasks 6 → 7 → 8 (TA-Lib → VPIN → TFT)
-- Track D: Tasks 9, 10, 11, 12 (independent, can run after Track B partially done)
+## What Came After Phase 2
+
+Phase 2 established the expert quant foundation. Subsequent releases built on top of it in this order:
+
+| Release | Key additions | Date |
+|---|---|---|
+| **V5 — Quant Governance** | Canonical data audit, atomic trade guard, trading state machine, NSE calendar, model governance registry, feature parity contracts | 2026-09-01 |
+| **Institutional Infrastructure** | Portfolio Risk Engine v2, Market Microstructure Intelligence (VPIN TypeScript port), Shadow Trading & Experiment Framework, Event-Driven Backtesting Engine v2, Meta Decision Engine, ML Validation Framework | 2026-09-01 |
+| **V6 — Evidence-Driven Research** | 24-phase research platform, strategy promotion lifecycle, kill switch, walk-forward validation, alpha decay monitor | 2026-09-01 |
+| **NSE 20-Session Certification** | NSE holiday calendar 2025/2026, CandleBar persistence fix (RCA-001), OC snapshot gap detection (RCA-002), Yahoo ticker mapping fixes | 2026-09-01 |
+| **Signal Intelligence Engine** | 45-phase intelligence engine, 12-module architecture, production guard (8 gates), `INSUFFICIENT_EVIDENCE` baseline | 2026-09-02 |
+| **Opportunity Engine** | 12-stage validation pipeline, OPP-001 candle wiring fix, production-day truth validation | 2026-09-02 |
+| **WhatsApp Notifications** | 6 event types, Evolution-Go dispatch, per-user Redis cooldown, E.164 phone encryption | 2026-08-23 |
+| **V2.0 Data Service** | Critical semantic OI fix, institutional data quality infrastructure, 335 tests | 2026-09-03 |
+| **V2.1 Data Service** | Circuit breakers wired, lineage API, DataQualityGate HTTP API, Redis Streams, paper trade provenance, 448 tests total | 2026-09-03 |
+| **V3.0 — India Data Fabric** | NSE removal from TS layer, Scrapling as tier-0 provider, Upstox OAuth BFF, Unified Signal Center (`/in/signal-center`), 12 NSE elimination guard tests, cross-timeframe dedup (DUP-001) | 2026-09-04 |
+| **V3.0.1 — TS Zero-Error Gate** | 52 pre-existing TypeScript errors resolved, 3059/3059 tests passing | 2026-09-04 |
+| **India Data Fabric hardening** | India API shared-cache headers (14 routes), DB index tuning (`IndiaDailyPick(status,tradeDate)`, drop redundant `CandleBar` index), Daily Picks builder last `nse.*` call migrated to registry, volume breakout scanner thundering-herd fix (`pmap` concurrency cap) | 2026-09-04 |
+| **NSE DataSourceId removal** | `"nse"` removed from `DataSourceId` union, `DATA_SOURCES` catalog, `BrokerAdapter.id`, broker factory, and option-chain route — no NSE ID anywhere in UI or type system | 2026-09-04 |
+| **Upstox Analytics credentials UI** | Per-user Upstox Analytics Token configuration via Profile → API Keys; AES-256-GCM storage; token-only form branch; `resolveReadToken()` fallback chain; worker-safe (no `server-only` guard) | 2026-09-04 |
+| **India perf improvements** | Historical candle concurrency 8→16, option chain concurrency 4→8, Daily Picks result-level cache (15s), `unstable_cache` SSR wrappers for AI Signals (20s) and Daily Picks (10s) | 2026-09-04 |
+| **India bug fixes (BUG-001–007)** | Worker crash from `server-only` in `upstox-credentials.ts`, Signal Center `revalidate=0` overwriting `s-maxage`, option chain fallback skipping Upstox, new-user 502 from `"angel"` default, OI picker silent broken save, stale UI copy | 2026-09-04 |
+| **Logo & API key max length** | AlphaForge logo across favicon, auth header, and sidebar; `apiKey` max length raised 256→2048 for JWT bearer tokens (Upstox Analytics Token) | 2026-09-04 |
 
 ---
 

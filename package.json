@@ -76,7 +76,6 @@
     "react-hook-form": "^7.75.0",
     "server-only": "^0.0.1",
     "sonner": "^2.0.8",
-    "stock-nse-india": "1.4.0",
     "tailwind-merge": "^3.6.0",
     "three": "^0.185.1",
     "ws": "8.21.3",

@@ -1,7 +1,8 @@
 /**
- * Upstox API v2 — SECONDARY Indian Market Data Provider
+ * Upstox API — SECONDARY Indian Market Data Provider
  *
- * Role in the provider chain:  ANGEL_ONE → UPSTOX → NSE → YAHOO
+ * Role in the provider chain:  DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO
+ * NSE is NOT in the chain. Direct NSE data acquisition is prohibited.
  *
  * This file is the complete, self-contained Upstox adapter.  It implements
  * every method of MarketDataProvider and never leaks Upstox-specific types
@@ -15,19 +16,17 @@
  *   ✓ Instrument resolution (NSE symbol → Upstox instrument key)
  *   ✗ Instrument master   (Upstox has no full dump; Angel One owns this)
  *
- * Authentication strategy (server-side only — tokens never reach the browser):
- *   1. UPSTOX_ANALYTICS_TOKEN  — long-lived read-only token; used for all
+ * Authentication strategy (server-side only — tokens NEVER reach the browser):
+ *   1. UPSTOX_ANALYTICS_TOKEN  — long-lived read-only token; preferred for all
  *      non-trading data paths (candles, quotes, option chain).  Rotate via
  *      the Upstox Developer Console independently of OAuth.
- *   2. UPSTOX_CLIENT_ID + UPSTOX_CLIENT_SECRET  — OAuth2 client credentials
- *      used to exchange an authorization code or refresh token for a short-
- *      lived access token.  The access token is stored in memory and refreshed
- *      automatically when it expires.
+ *   2. In-memory OAuth2 access token  — from /api/in/providers/upstox/callback BFF.
+ *      Exchanged server-side; stored in server memory only via upstox-token-state.ts.
  *   3. Legacy fallback: UPSTOX_ACCESS_TOKEN  — accepted for backward compat
  *      with deployments that already set this value directly.
  *
  * When none of the above are configured the provider is silently unconfigured.
- * All methods return empty / null and the failover engine routes to NSE/Yahoo.
+ * All methods return empty / null and the failover engine routes to Yahoo.
  *
  * Cache keys (Redis via market-cache facade):
  *   md:candles:upstox:{exchange}:{symbol}:{interval}:{from}:{to}  TTL 30s / 4h
@@ -43,7 +42,8 @@
  *   JSON frames instead of Protobuf, avoiding the need for a generated proto
  *   schema at runtime.
  *
- * Do NOT import from this file outside of src/lib/market-data/providers/.
+ * SECURITY: Do NOT add NEXT_PUBLIC_ environment variables for any Upstox credential.
+ * Do NOT import from this file in client components or client-side code.
  */
 
 import WebSocket from "ws";
@@ -137,6 +137,39 @@ function getReadToken(): string | null {
   );
 }
 
+/**
+ * Async token resolver — extends the sync {@link getReadToken} with a 4th
+ * fallback tier that reads the signed-in user's Analytics Token from the
+ * encrypted `UserSetting.apiKeysEncrypted` store (entered via Profile → API
+ * Keys → "Upstox Analytics API").
+ *
+ * Priority:
+ *   1. UPSTOX_ANALYTICS_TOKEN  (env — fastest, zero I/O)
+ *   2. In-memory OAuth2 access token
+ *   3. UPSTOX_ACCESS_TOKEN     (env legacy)
+ *   4. Per-user DB token       (loaded lazily via upstox-credentials.ts)
+ *
+ * Returns null when no token source is available; callers must handle the
+ * null case (provider returns empty / null and the registry fails over to
+ * Yahoo Finance).
+ */
+async function resolveReadToken(): Promise<string | null> {
+  // Fast path — check env vars first (synchronous, no I/O).
+  const envToken = getReadToken();
+  if (envToken) return envToken;
+
+  // Slow path — load the per-user DB token only when env vars are absent.
+  // The lazy import avoids pulling NextAuth + Prisma into every code path
+  // that imports this provider module (e.g. worker, data-service scripts).
+  try {
+    const mod = await import("@/features/settings/upstox-credentials");
+    const creds = await mod.getUpstoxTokenForRequest();
+    return creds?.analyticsToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function isUpstoxConfigured(): boolean {
   return Boolean(
     process.env.UPSTOX_ANALYTICS_TOKEN ??
@@ -228,9 +261,9 @@ async function upstoxGet<T>(
   signal?: AbortSignal,
   token?: string,
 ): Promise<T> {
-  const bearerToken = token ?? getReadToken();
+  const bearerToken = token ?? await resolveReadToken();
   if (!bearerToken) {
-    throw new Error("Upstox: no bearer token available (configure UPSTOX_ANALYTICS_TOKEN)");
+    throw new Error("Upstox: no bearer token available (set UPSTOX_ANALYTICS_TOKEN or configure via Profile → API Keys)");
   }
 
   const url = new URL(`${UPSTOX_BASE}${path}`);
@@ -550,8 +583,8 @@ export class UpstoxWsManager {
   }
 
   private async fetchWsUrl(): Promise<string> {
-    const token = getReadToken();
-    if (!token) throw new Error("Upstox WebSocket: no auth token");
+    const token = await resolveReadToken();
+    if (!token) throw new Error("Upstox WebSocket: no auth token — set UPSTOX_ANALYTICS_TOKEN or configure via Profile → API Keys");
 
     const res = await fetch(UPSTOX_WS_AUTH_URL, {
       method:  "GET",

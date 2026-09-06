@@ -394,7 +394,7 @@ interface ScripSubsets {
  * so a quote request and an option-chain request never trigger two ~10MB
  * downloads of the same dump.
  */
-async function getScripSubsets(): Promise<ScripSubsets> {
+export async function getScripSubsets(): Promise<ScripSubsets> {
   // `:v2` busts the cached NFO-only subset so BSE (BFO) option contracts —
   // needed for the SENSEX / BANKEX chains — are picked up immediately.
   return cache.memo("angel:scripmaster:subsets:v2", SCRIP_MASTER_TTL_MS, async () => {

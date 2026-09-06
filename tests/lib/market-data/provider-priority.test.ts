@@ -108,8 +108,12 @@ afterEach(() => {
 // ── PROVIDER_PRIORITY constant ────────────────────────────────────────────────
 
 describe("PROVIDER_PRIORITY constant", () => {
-  it("lists providers in the correct priority order", () => {
-    expect(PROVIDER_PRIORITY).toEqual(["angel_one", "upstox", "nse", "yahoo"]);
+  it("lists providers in the correct priority order (NSE is NOT in the chain)", () => {
+    expect(PROVIDER_PRIORITY).toEqual(["scrapling", "angel_one", "upstox", "yahoo"]);
+  });
+
+  it("does NOT include nse in the provider chain", () => {
+    expect(PROVIDER_PRIORITY).not.toContain("nse");
   });
 });
 
@@ -118,20 +122,19 @@ describe("PROVIDER_PRIORITY constant", () => {
 describe("provider priority ordering", () => {
   it("registers providers sorted by priority regardless of insertion order", () => {
     const r = new ProviderRegistry();
-    r.register(makeEntry("yahoo", 4, {}));
+    r.register(makeEntry("yahoo", 3, {}));
     r.register(makeEntry("angel_one", 1, {}));
-    r.register(makeEntry("nse", 3, {}));
     r.register(makeEntry("upstox", 2, {}));
 
     const ids = r.all().map((e) => e.provider.id);
-    expect(ids).toEqual(["angel_one", "upstox", "nse", "yahoo"]);
+    expect(ids).toEqual(["angel_one", "upstox", "yahoo"]);
   });
 
   it("calls the highest-priority (priority=1) provider first", async () => {
     const r = new ProviderRegistry();
     const called: ProviderId[] = [];
 
-    for (const [id, priority] of [["angel_one", 1], ["upstox", 2], ["nse", 3]] as const) {
+    for (const [id, priority] of [["angel_one", 1], ["upstox", 2], ["yahoo", 3]] as const) {
       const p = stubProvider(id as ProviderId, {});
       const orig = p.getLatestQuote.bind(p);
       p.getLatestQuote = async (s) => { called.push(id as ProviderId); return orig(s); };
@@ -169,8 +172,7 @@ describe("failover sequence", () => {
     const err = new Error("down");
     r.register(makeEntry("angel_one", 1, { error: err }));
     r.register(makeEntry("upstox", 2, { error: err }));
-    r.register(makeEntry("nse", 3, { error: err }));
-    r.register(makeEntry("yahoo", 4, { error: err }));
+    r.register(makeEntry("yahoo", 3, { error: err }));
 
     const expectation = expect(r.getLatestQuote("TEST")).rejects.toThrow(MarketDataError);
     await vi.runAllTimersAsync();

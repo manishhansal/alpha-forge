@@ -21,7 +21,6 @@ import type {
   SubscribeRequest,
 } from "./types";
 import type {
-  MarketDataProvider,
   ProviderCallOptions,
   RegisteredProvider,
 } from "./provider";
@@ -177,8 +176,7 @@ export class ProviderRegistry {
 // ── Global registry singleton ─────────────────────────────────────────────────
 
 declare global {
-  // eslint-disable-next-line no-var
-  var __marketDataRegistry: ProviderRegistry | undefined;
+  var __marketDataRegistry: ProviderRegistry | undefined; // eslint-disable-line no-var
 }
 
 export const registry: ProviderRegistry =
@@ -191,7 +189,10 @@ if (!globalThis.__marketDataRegistry) {
 // ── Bootstrap: register default providers ────────────────────────────────────
 
 /**
- * Lazily bootstrap the registry with the four default providers.
+ * Lazily bootstrap the registry with the canonical three providers.
+ * Provider priority:  Data Service (0) → Angel One (1) → Upstox (2) → Yahoo (3)
+ *
+ * NSE is NOT registered. Direct NSE data acquisition is prohibited in production.
  * Safe to call multiple times — idempotent via the register() dedup.
  */
 export async function bootstrapRegistry(): Promise<void> {
@@ -215,12 +216,10 @@ export async function bootstrapRegistry(): Promise<void> {
   const [
     { AngelOneProvider },
     { UpstoxProvider },
-    { NseProvider },
     { YahooProvider },
   ] = await Promise.all([
     import("./providers/angel-one"),
     import("./providers/upstox"),
-    import("./providers/nse"),
     import("./providers/yahoo"),
   ]);
 
@@ -255,21 +254,6 @@ export async function bootstrapRegistry(): Promise<void> {
   });
 
   registry.register({
-    provider: new NseProvider(),
-    capabilities: {
-      historicalCandles: false,
-      liveQuotes: true,
-      webSocket: false,
-      optionChain: true,
-      instrumentMaster: false,
-      intradayCandles: false,
-      fno: true,
-    },
-    priority: 3,
-    enabled: true,
-  });
-
-  registry.register({
     provider: new YahooProvider(),
     capabilities: {
       historicalCandles: true,
@@ -280,7 +264,7 @@ export async function bootstrapRegistry(): Promise<void> {
       intradayCandles: true,
       fno: false,
     },
-    priority: 4,
+    priority: 3,
     enabled: true,
   });
 }

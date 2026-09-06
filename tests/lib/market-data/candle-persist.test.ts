@@ -10,7 +10,7 @@
  * Uses an in-process stub Prisma client — no real DB required.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { OHLCVCandle } from "@/lib/market-data/types";
 
 // ── Stub Prisma ───────────────────────────────────────────────────────────────

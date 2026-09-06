@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { unstable_cache } from "next/cache";
 
 import { IndiaBestTimeBanner } from "@/components/india/best-time/india-best-time-banner";
 import { DailyPicksBoard } from "@/components/india/daily-picks/daily-picks-board";
@@ -12,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { getIndiaDailyPicks } from "@/features/india/daily-picks/builder";
 import { getIndiaExpiryTrades } from "@/features/india/expiry-trades/builder";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -21,8 +23,28 @@ export const metadata = {
     "The day's top F&O signals across six buckets — Indices Scalping, Opening Breakout, Highly Momentum, Short Setups, Highly Scalping and Highly Potential — each with entry, stop, target, how far it can move and what to expect, the time it appeared and how long it took to resolve, tracked live and archived to a daily history.",
 };
 
+/**
+ * Next.js Data Cache wrapper for the Daily Picks SSR fetch.
+ *
+ * Without this, every page navigation runs the full getIndiaDailyPicks()
+ * pipeline on the server — a 50–70s cold path for 170 symbols. The
+ * in-process indiaCache.memo (15s TTL, daily-picks:board:v1) eliminates
+ * redundant fan-outs within one process; this unstable_cache layer cuts
+ * the SSR cost to <5ms when the Data Cache is warm.
+ *
+ * TTL is 10s — slightly shorter than BOARD_CACHE_TTL_MS (15s) — so this
+ * outer cache expires before the inner memo, preventing them from expiring
+ * simultaneously (which would cause both to miss on the same request and
+ * trigger the full 50–70s cold path instead of just one of them).
+ */
+const getCachedDailyPicks = unstable_cache(
+  () => getIndiaDailyPicks(),
+  ["india-daily-picks-ssr"],
+  { revalidate: 10 },
+);
+
 async function DailyPicksSection() {
-  const data = await getIndiaDailyPicks();
+  const data = await getCachedDailyPicks();
   return <DailyPicksBoard initialData={data} />;
 }
 

@@ -15,7 +15,13 @@ vi.mock("@/lib/market-data/registry", () => ({
 // Stub getRedis so the atomic guard falls through to DB dedup silently.
 vi.mock("@/lib/redis", () => ({
   getRedis: () => { throw new Error("no redis in test"); },
-  redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), setNX: vi.fn() },
+  redis: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    del: vi.fn().mockResolvedValue(1),
+    // setNX must return "OK" so atomicClaim succeeds (claimed=true → no block)
+    setNX: vi.fn().mockResolvedValue("OK"),
+  },
 }));
 
 import {

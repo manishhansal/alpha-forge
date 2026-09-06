@@ -194,7 +194,7 @@ describe("applyDemotion", () => {
     const record = applyDemotion({
       strategyId: "UT_SMC",
       currentStatus: "LIVE",
-      trigger: "REPEATED_ERRORS",
+      trigger: "EXECUTION_DEGRADATION",
       reason: "15 consecutive execution errors",
       forceDisable: true,
     });

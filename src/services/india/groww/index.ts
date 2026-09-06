@@ -6,18 +6,15 @@ import type {
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
 import { yahoo } from "../yahoo";
-import { nse } from "../nse";
 
 /**
  * GrowwAdapter — production wiring for Groww Trade API.
  *
- * Today: if `GROWW_API_KEY` and `GROWW_API_SECRET` are set, this adapter
- * issues real Groww REST calls. Otherwise it transparently delegates to
- * the Yahoo+NSE adapters so the dashboard works with zero credentials.
- *
- * The contract (BrokerAdapter) is what the rest of the app sees, so when
- * Groww credentials are added later — or when migrating to Zerodha Kite,
- * Upstox, etc. — only this file changes.
+ * When `GROWW_API_KEY` and `GROWW_API_SECRET` are set, this adapter issues
+ * real Groww REST calls for quotes/history. Option chain requests must go
+ * through the ProviderRegistry (registry.getOptionChain()) which routes
+ * DATA_SERVICE → Angel One → Upstox automatically — getOptionChain() on
+ * this adapter throws to signal that it is not implemented here.
  */
 
 const GROWW_BASE = process.env.GROWW_API_BASE ?? "https://api.groww.in";
@@ -124,7 +121,12 @@ export class GrowwAdapter implements BrokerAdapter {
   }
 
   async getOptionChain(symbol: string, expiry?: string): Promise<OptionChain> {
-    return nse.getOptionChain(symbol, expiry);
+    // Groww option chain is not yet implemented. Option chain requests must go
+    // through the ProviderRegistry (registry.getOptionChain()) which routes
+    // DATA_SERVICE → Angel One → Upstox automatically.
+    throw new Error(
+      `GrowwAdapter.getOptionChain: not implemented for ${symbol}${expiry ? `@${expiry}` : ""}. Use registry.getOptionChain() instead.`,
+    );
   }
 
   /**

@@ -183,7 +183,7 @@ describe("Phase 10 — Performance: Feature calculation", () => {
         const vol = bars.map((b) => b.volume);
         const avgVol = vol.reduce((a, b) => a + b, 0) / vol.length;
         const volRatio = vol[n-1]! / avgVol;
-        return { sma5, sma10, ret1, volRatio };
+        void { sma5, sma10, ret1, volRatio };
       },
       2000,
       5,

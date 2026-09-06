@@ -35,6 +35,16 @@ export async function GET(req: Request) {
   });
   return NextResponse.json(
     { symbol, interval, range, candles, source: source ?? chain[0]?.id ?? "yahoo" },
-    { headers: { "Cache-Control": "no-store" } },
+    {
+      // Historical candles are immutable for past intervals and change only
+      // once per candle close for live intervals. Cache by interval:
+      //   1m/5m/15m/30m: 30s (intraday, changes frequently)
+      //   1h/1d/1w: 5 minutes (longer candles, much less frequent updates)
+      headers: {
+        "Cache-Control": interval === "1d" || interval === "1h" || interval === "1w"
+          ? "public, s-maxage=300, stale-while-revalidate=600"
+          : "public, s-maxage=30, stale-while-revalidate=60",
+      },
+    },
   );
 }

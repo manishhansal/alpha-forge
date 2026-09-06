@@ -64,7 +64,6 @@ export async function GET(
     const meta = (trade.meta ?? {}) as Record<string, unknown>;
     const strategyId = (meta.strategyId as string) ?? trade.source ?? "unknown";
     const confidence = (meta.confidence as number) ?? null;
-    const triggeredAtPrice = (meta.triggeredAtPrice as number) ?? null;
 
     const trace: DecisionTrace = new DecisionTraceBuilder(
       `trace:${trade.id}`,
@@ -76,7 +75,7 @@ export async function GET(
       })
       .setFeatureContext({
         mlAvailable: false, // Stored trades don't preserve ML context yet
-        marketRegime: null,
+        marketRegime: undefined,
       })
       .setRiskDecision({
         approved: true,

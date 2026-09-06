@@ -31,7 +31,10 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      // FnO bearish trend: 5-min service-layer cache already exists.
+      // HTTP s-maxage=60 collapses concurrent browser requests to one
+      // server execution per minute, matching the frontend's 5-min poll.
+      headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" },
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Scanner failed";

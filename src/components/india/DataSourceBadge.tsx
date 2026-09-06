@@ -27,7 +27,6 @@ const PROVIDER_PRIORITY: readonly ProviderId[] = [
   "scrapling",
   "angel_one",
   "upstox",
-  "nse",
   "yahoo",
 ];
 
@@ -35,14 +34,15 @@ const PROVIDER_PRIORITY: readonly ProviderId[] = [
  * Background colour (as a CSS variable) for each known provider.
  * Requirement 12.2:
  *   scrapling / angel_one → var(--color-data-positive)
- *   upstox / nse          → var(--color-data-neutral)
+ *   upstox                → var(--color-data-neutral)
  *   yahoo                 → var(--color-data-negative)
+ *
+ * NOTE: "nse" is no longer a valid provider — removed 2026-09-03.
  */
 const PROVIDER_BG: Record<ProviderId, string> = {
   scrapling:  "var(--color-data-positive)",
   angel_one:  "var(--color-data-positive)",
   upstox:     "var(--color-data-neutral)",
-  nse:        "var(--color-data-neutral)",
   yahoo:      "var(--color-data-negative)",
 };
 

@@ -1,8 +1,12 @@
 # AlphaForge Data Service
 
-**Version: 2.1.0** (V2.1 certification closure completed September 2026)
+**Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED (certification completed 2026-09-03)  
+**Role: Tier-0 market data provider** for the TypeScript layer (V3.0.0, 2026-09-04)  
+**Last updated:** 2026-09-04, commit `<pending>` (reconnect + duplicate-const fixes)
 
-Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency market-data foundation for AlphaForge.
+Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency NSE market-data foundation for AlphaForge.
+
+> **V3.0 context:** All direct NSE data acquisition was removed from the TypeScript layer in V3.0.0 (commit `1c8235f`). The `data-service` is now the **tier-0 provider** in the `ProviderRegistry` via `ScraplingProvider`. The TypeScript `ProviderId` union no longer includes `"nse"` — all NSE scraping runs here. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
 
 > **V2.1 Summary:** V2.1 closes the wiring gaps identified in V2.0's `PASS_WITH_WARNINGS` audit. Circuit breakers are now wired to all 5 upstream HTTP paths. Lineage is recorded on every successful fetch. The DataQualityGate is exposed as an HTTP API. Redis Streams are integrated into the TickPublisher. Paper trades now persist full data provenance. A trade forensics endpoint reconstructs the data→signal→trade chain. 448 tests pass (335 V2.0 baseline + 113 new integration tests). Certification level: **LEVEL 2 — INTEGRATION CERTIFIED**. See `data-service/reports/V2_1_CERTIFICATION_MATRIX.md` and `PRODUCTION_READINESS_V2_1.md` for full status.
 >
@@ -13,27 +17,31 @@ Standalone reference for the `data-service` Python microservice — the canonica
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [V2 Architecture](#2-v2-architecture)
-3. [Configuration](#3-configuration)
-4. [Docker & Networking](#4-docker--networking)
-5. [API Endpoints](#5-api-endpoints)
-6. [Session Management (Scrapling)](#6-session-management-scrapling)
-7. [Live Quotes — NSE NextApi](#7-live-quotes--nse-nextapi)
-8. [Historical OHLCV](#8-historical-ohlcv)
-9. [Option Chain Scraper](#9-option-chain-scraper)
-10. [Tick Publisher](#10-tick-publisher)
-11. [Anti-Ban Layer](#11-anti-ban-layer)
-12. [Redis Schema](#12-redis-schema)
-13. [Data Quality Infrastructure](#13-data-quality-infrastructure)
-14. [V2 Bug-Fix Log](#14-v2-bug-fix-log)
-15. [Known Limitations](#15-known-limitations)
-16. [Development Guide](#16-development-guide)
+2. [Architecture](#2-architecture)
+3. [TypeScript Integration (ScraplingProvider)](#3-typescript-integration-scraplingprovider)
+4. [Configuration](#4-configuration)
+5. [Docker & Networking](#5-docker--networking)
+6. [API Endpoints](#6-api-endpoints)
+7. [Session Management (Scrapling)](#7-session-management-scrapling)
+8. [Live Quotes — NSE NextApi](#8-live-quotes--nse-nextapi)
+9. [Historical OHLCV](#9-historical-ohlcv)
+10. [Option Chain Scraper](#10-option-chain-scraper)
+11. [Tick Publisher](#11-tick-publisher)
+12. [Anti-Ban Layer](#12-anti-ban-layer)
+13. [Redis Schema](#13-redis-schema)
+14. [Bug-Fix Log (V1 Deployment Sprint)](#14-bug-fix-log)
+15. [Known Limitations (V1)](#15-known-limitations-v1--deployment-sprint)
+16. [Development Guide (Quick Reference)](#16-development-guide-quick-reference)
+17. [Data Quality Infrastructure (V2)](#17-data-quality-infrastructure-v2)
+18. [V2 Bug-Fix Log](#18-v2-bug-fix-log)
+19. [Known Limitations (Updated V2)](#19-known-limitations-updated-v2)
+20. [Development Guide (Full)](#20-development-guide-full)
 
 ---
 
 ## 1. Overview
 
-The data service provides NSE market data without requiring any broker credentials. It runs as a sidecar alongside the main Next.js application and the ML microservice.
+The data service provides NSE market data without requiring any broker credentials. It runs as a sidecar alongside the main Next.js application and the ML microservice. **As of V3.0.0 (2026-09-04) it is the tier-0 provider in the TypeScript `ProviderRegistry`** — the `ScraplingProvider` adapter routes all NSE data through this service before attempting Angel One, Upstox, or Yahoo.
 
 | Property | Value |
 |---|---|
@@ -43,14 +51,22 @@ The data service provides NSE market data without requiring any broker credentia
 | Base image | `python:3.11-slim` |
 | Browser engine | Playwright / Chromium via **Scrapling 0.4.x** |
 | Redis client | `redis[hiredis]==5.0.8` |
+| Certification | LEVEL 2 — INTEGRATION CERTIFIED (V2.1, 448 tests) |
+| Role in TS stack | **Tier-0 `ScraplingProvider`** (`PROVIDER_PRIORITY[0]`) |
 
-### What it does
+### What it provides
 
-- **Live quotes** — Fetches real-time NSE equity and index prices via the NSE `NextApi` (plain `httpx`, no browser required for quotes).
-- **Historical OHLCV** — Downloads daily Bhavcopy archives from NSE/BSE CDN and intraday candles from the NSE charting API.
-- **Option chain** — Scrapes the NSE option-chain page using a headless Chromium browser (Scrapling `AsyncDynamicSession`), captures the `api/option-chain` XHR.
-- **Tick publisher** — Polls live quotes every 5 seconds and publishes ticks to Redis pub/sub channels for downstream consumers.
-- **Instrument master** — Exposes the full NSE/BSE instrument list for token-to-symbol resolution.
+| Capability | Implementation | V2.1 Status |
+|---|---|---|
+| Live quotes (equities + indices) | `httpx` → NSE `api/NextApi` endpoints (no browser) | Circuit breaker + lineage wired |
+| Live tick publishing | 5s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams | AT_LEAST_ONCE delivery |
+| Option chain | Playwright / Scrapling `AsyncDynamicSession` → XHR capture | Circuit breaker + lineage wired |
+| Daily OHLCV | `httpx` → NSE Bhavcopy CDN (`nsearchives.nseindia.com`) | Lineage wired |
+| Intraday OHLCV | `httpx` → NSE charting API (`charting.nseindia.com`) | Circuit breaker + lineage wired |
+| Instrument master | `httpx` → NSE instrument CSV | — |
+| **DataQualityGate** | `POST /data/gate` — evaluates freshness, completeness, provider health | **V2.1 NEW** |
+| **Lineage API** | `GET /data/lineage/*` — records and retrieves observation provenance | **V2.1 NEW** |
+| **Upstox broker client** | `src/brokers/upstox_client.py` — quotes + historical candles via Upstox API | **V3.0 NEW** |
 
 ---
 
@@ -72,6 +88,9 @@ The data service provides NSE market data without requiring any broker credentia
 │  ├── historical.py     → NSE/BSE archive CDN (httpx)     │
 │  └── instrument_master.py → NSE instrument CSV (httpx)   │
 │                                                          │
+│  Brokers (V3.0)                                          │
+│  └── upstox_client.py  → Upstox v2 API (httpx)          │
+│                                                          │
 │  Anti-ban                                                │
 │  ├── proxy_manager.py  (optional proxy pool)             │
 │  ├── ban_detector.py   (response body heuristics)        │
@@ -80,6 +99,13 @@ The data service provides NSE market data without requiring any broker credentia
          │                            │
     Redis pub/sub              Chromium (headless)
     af:ticks:{SYMBOL}          via Playwright
+         │
+    ┌────▼───────────────────────────────────────┐
+    │  Next.js / TypeScript layer                │
+    │  ScraplingProvider (ProviderRegistry[0])   │
+    │  ↓ withFailover() to AngelOne/Upstox/Yahoo │
+    │  ↓ useLiveQuotes() → af:ticks:{SYMBOL}     │
+    └────────────────────────────────────────────┘
 ```
 
 ### Component responsibilities
@@ -92,8 +118,10 @@ The data service provides NSE market data without requiring any broker credentia
 | `src/scrapers/option_chain.py` | `AsyncDynamicSession` singleton + NSE/BSE option chain scrapers |
 | `src/scrapers/historical.py` | Bhavcopy (daily) + charting API (intraday) fetchers + route handler |
 | `src/scrapers/instrument_master.py` | NSE/BSE instrument master download and parsing |
-| `src/publisher/tick_publisher.py` | 5 s poll loop + Redis `PUBLISH` |
+| `src/publisher/tick_publisher.py` | 5s poll loop + Redis `PUBLISH` + Redis Streams (V2.1) |
 | `src/publisher/router.py` | `GET /publisher/*` monitoring endpoints |
+| `src/brokers/upstox_client.py` | **NEW V3.0** — Upstox v2 API client (quotes, historical candles, lineage) |
+| `src/core/gate_router.py` | **NEW V2.1** — `POST /data/gate` + lineage endpoints |
 | `src/anti_ban/proxy_manager.py` | Optional proxy pool with rotation |
 | `src/anti_ban/ban_detector.py` | Body-content ban heuristics |
 | `src/anti_ban/session_warmer.py` | Background 30-min warm loop (market hours only) |
@@ -102,7 +130,57 @@ The data service provides NSE market data without requiring any broker credentia
 
 ---
 
-## 3. Configuration
+## 3. TypeScript Integration (ScraplingProvider)
+
+**This section is new in V3.0.** All NSE data acquisition was removed from the TypeScript layer. The `data-service` is now registered as priority-0 in the `ProviderRegistry`.
+
+### How the TypeScript layer uses this service
+
+```typescript
+// src/lib/market-data/providers/scrapling.ts
+// ScraplingProvider wraps all data-service HTTP endpoints
+
+const provider: MarketDataProvider = {
+  id: "scrapling",
+  priority: 0,
+  getQuotes: (symbols) =>
+    fetch(`${DATA_SERVICE_URL}/scraping/quotes?symbols=${symbols.join(",")}`),
+  getOptionChain: (underlying) =>
+    fetch(`${DATA_SERVICE_URL}/scraping/option-chain?underlying=${underlying}`),
+  getHistoricalCandles: (symbol, interval, from, to) =>
+    fetch(`${DATA_SERVICE_URL}/scraping/historical?symbol=${symbol}&interval=${interval}&from=${from}&to=${to}`),
+};
+```
+
+### DataQualityGate — required before signal generation
+
+Every TypeScript signal generation path **must** check `signalEngineAllowed` before proceeding:
+
+```typescript
+// Required pattern — not yet wired (GATE-001 open)
+const gate = await fetch(`${DATA_SERVICE_URL}/data/gate`, {
+  method: "POST",
+  body: JSON.stringify({ symbol, quoteAgeMs, strategyId, requiresOI }),
+});
+const { signalEngineAllowed, confidenceScore, blockReason } = await gate.json();
+if (!signalEngineAllowed) return;  // HARD BLOCK — no exceptions
+```
+
+**GATE-001 status:** The `POST /data/gate` endpoint is implemented and tested in the data-service. The TypeScript signal engine does **not yet call it**. This is the primary blocker for LEVEL 3 (Production Ready) certification.
+
+### NSE elimination enforcement
+
+```typescript
+// tests/lib/market-data/nse-elimination.test.ts — 12 tests
+// These fail immediately if TypeScript code re-introduces direct NSE acquisition:
+expect(PROVIDER_PRIORITY).not.toContain("nse");
+expect(() => getBrokerById("nse")).toReturn(null);
+expect(() => bootstrapRegistry()).not.toRegister("NseProvider");
+```
+
+---
+
+## 4. Configuration
 
 All configuration is read from environment variables. The `Settings` dataclass in `src/config.py` applies defaults.
 
@@ -118,12 +196,14 @@ All configuration is read from environment variables. The `Settings` dataclass i
 | `BSE_RATE_LIMIT` | `2` | Requests/second to `bseindia.com` |
 | `BAN_BACKOFF_SECONDS` | `60` | Cooldown after ban detection |
 | `SYMBOLS` | 20 NSE symbols | Comma-separated symbols for tick publisher |
+| `UPSTOX_CLIENT_ID` | _(empty)_ | Upstox client ID (broker client, V3.0) |
+| `UPSTOX_ACCESS_TOKEN` | _(empty)_ | Upstox bearer token (broker client, V3.0) |
 
 In `docker-compose.yml` these are passed via the `environment:` block on the `data-service` service.
 
 ---
 
-## 4. Docker & Networking
+## 5. Docker & Networking
 
 ### docker-compose.yml additions
 
@@ -168,7 +248,7 @@ Chromium is downloaded at **image build time** (`scrapling install` runs during 
 
 ---
 
-## 5. API Endpoints
+## 6. API Endpoints
 
 ### Health
 
@@ -252,7 +332,7 @@ Response:
 
 ---
 
-## 6. Session Management (Scrapling)
+## 7. Session Management (Scrapling)
 
 ### Why `AsyncDynamicSession` needs `__aenter__`
 
@@ -327,7 +407,7 @@ page = await session.fetch(
 
 ---
 
-## 7. Live Quotes — NSE NextApi
+## 8. Live Quotes — NSE NextApi
 
 ### Why the old XHR approach was abandoned
 
@@ -385,7 +465,7 @@ symbols
 
 ---
 
-## 8. Historical OHLCV
+## 9. Historical OHLCV
 
 ### Daily interval (1d)
 
@@ -436,7 +516,7 @@ return date.fromisoformat(date_part)
 
 ---
 
-## 9. Option Chain Scraper
+## 10. Option Chain Scraper
 
 The NSE option chain page requires a headless browser because the chain data is loaded by a client-side XHR after the Angular SPA boots. Direct HTTP requests return the HTML shell without data.
 
@@ -466,7 +546,7 @@ For BSE, the `GetOptionChain` XHR is captured from `bseindia.com/markets/Derivat
 
 ---
 
-## 10. Tick Publisher
+## 11. Tick Publisher
 
 `src/publisher/tick_publisher.py` — polls live quotes every 5 seconds and publishes to Redis.
 
@@ -508,7 +588,7 @@ DELETE /publisher/symbols/RELIANCE
 
 ---
 
-## 11. Anti-Ban Layer
+## 12. Anti-Ban Layer
 
 ### ProxyManager
 
@@ -535,7 +615,7 @@ Each warm attempt:
 
 ---
 
-## 12. Redis Schema
+## 13. Redis Schema
 
 | Key pattern | Type | TTL | Written by | Read by |
 |---|---|---|---|---|
@@ -546,9 +626,9 @@ Each warm attempt:
 
 ---
 
-## 13. Bug-Fix Log
+## 14. Bug-Fix Log
 
-This section documents every defect found and fixed during the initial deployment hardening sprint (2026-09-03).
+This section documents every defect found and fixed. V1 bugs were fixed during the initial deployment hardening sprint (2026-09-03). V2 bugs are semantic/infrastructure fixes from the V2 certification sprint. All are resolved.
 
 ---
 
@@ -663,7 +743,7 @@ Both `YYYY-MM-DD` and `YYYY-MM-DDThh:mm:ssZ` formats now work correctly.
 
 ---
 
-## 14. Known Limitations
+## 15. Known Limitations (V1 — Deployment Sprint)
 
 | Limitation | Detail |
 |---|---|
@@ -676,7 +756,7 @@ Both `YYYY-MM-DD` and `YYYY-MM-DDThh:mm:ssZ` formats now work correctly.
 
 ---
 
-## 15. Development Guide
+## 16. Development Guide (Quick Reference)
 
 ### Running locally (without Docker)
 
@@ -738,7 +818,7 @@ redis-cli KEYS "af:ticks:*"
 
 ---
 
-## 13. Data Quality Infrastructure (V2)
+## 17. Data Quality Infrastructure (V2)
 
 ### Semantic Integrity (Phase 3 — CRITICAL FIX)
 
@@ -818,9 +898,23 @@ symbol_normalizer.normalize("RELIANCE.NS")    # → "RELIANCE"
 symbol_normalizer.normalize("NIFTY 50")       # → "NIFTY"
 ```
 
+### Upstox Broker Client (V3.0)
+
+`src/brokers/upstox_client.py` — new Python broker API client for fallback data when NSE scraping is unavailable:
+
+```python
+from src.brokers.upstox_client import UpstoxClient
+
+client = UpstoxClient(client_id=..., access_token=...)
+quotes = await client.get_quotes(["NSE_EQ|INE009A01021"])   # INFOSYS
+candles = await client.get_historical_candles("NSE_EQ|INE009A01021", "1D", from_date, to_date)
+```
+
+Full lineage recording per observation. Circuit breaker integration. Used by the data-service as a secondary quote source when NSE endpoints are degraded.
+
 ---
 
-## 14. V2 Bug-Fix Log
+## 18. V2 Bug-Fix Log
 
 ### BUG-SEMANTIC-01 — `oi` mapped to `totalTradedValue` [P0, FIXED in V2]
 
@@ -838,11 +932,36 @@ Session warmer created an ephemeral browser; production singletons were never re
 
 `compute_max_pain()` called `pain_at(s)` twice per candidate strike, each iterating all N rows. **Fixed to O(N log N) using prefix/suffix sums. 200 strikes: <2ms measured.**
 
-*(For V1 bug fixes BUG-01 through BUG-06, see the original Bug-Fix Log section.)*
+### BUG-DOUBLE-PUBLISH-01 — Double pub/sub publish on every tick [MEDIUM, FIXED post-V2.1]
+
+**Commit:** `c8d80a1`  
+**Files:** `data-service/src/publisher/tick_publisher.py`, `data-service/src/publisher/stream_publisher.py`
+
+`_publish_to_stream()` in `TickPublisher` called `stream_publisher.publish_tick(tick_v2)`. `publish_tick` does two things: (1) publishes to the Redis pub/sub channel **and** (2) appends to the Redis Stream. Since `tick_publisher` had already published to the pub/sub channel directly above, every tick was appearing twice on the pub/sub channel and the stream was being written twice.
+
+**Fix:** Changed `_publish_to_stream()` to call `stream_publisher._stream_append(tick_v2, payload, "NORMAL")` directly — this appends to the durable Stream only, without re-publishing to pub/sub. The pub/sub publish path remains solely in `TickPublisher._publish_tick()`. A code comment was added to `stream_publisher.publish_tick()` clarifying that callers who have already published to pub/sub should use `_stream_append` directly.
+
+*(For V1 deployment sprint bugs BUG-01 through BUG-06, see §14 Bug-Fix Log above.)*
+
+### BUG-RECONNECT-01 — `tick_publisher.py` reconnect uses stale `aioredis` import [HIGH, FIXED 2026-09-04]
+
+`TickPublisher._try_create_redis()` called `import aioredis`. The `aioredis` package was replaced by `redis[hiredis]` in BUG-01 and is no longer installed. After any Redis blip, every reconnect attempt raised `ModuleNotFoundError: No module named 'aioredis'`, parking the publisher in `running="reconnecting"` indefinitely. Tick delivery stopped until the container was restarted.
+
+**Fix:** Changed `import aioredis` → `import redis.asyncio as aioredis` in `_try_create_redis`. Consistent with the rest of the module.
+
+**Files changed:** `data-service/src/publisher/tick_publisher.py`
+
+### BUG-DUPLICATE-CONST-01 — `live_quotes.py` duplicate `_SESSION_TIMEOUT` constant [LOW, FIXED 2026-09-04]
+
+`_SESSION_TIMEOUT: float = 12.0` was declared twice at module scope (lines 80 and 124). The duplicate was dead code introduced by a merge conflict resolution. No runtime impact but flagged by static analysis.
+
+**Fix:** Removed the duplicate declaration at line 124.
+
+**Files changed:** `data-service/src/scrapers/live_quotes.py`
 
 ---
 
-## 15. Known Limitations (Updated V2)
+## 19. Known Limitations (Updated V2)
 
 | Limitation | Detail | V2 Status |
 |-----------|--------|-----------|
@@ -854,10 +973,11 @@ Session warmer created an ephemeral browser; production singletons were never re
 | No adjusted historical prices | NSE Bhavcopy is raw exchange prices | Use Yahoo for adjusted |
 | 5s polling = near-real-time | Not exchange tick-by-tick | Documented |
 | BSE daily is slow (per-day downloads) | ~260s for 5 years on one symbol | Use Yahoo for BSE history |
+| GATE-001 — TS signal engine not wired to DataQualityGate | `POST /data/gate` implemented in Python but not called by TypeScript signal engine | **Open — blocks LEVEL 3 cert** |
 
 ---
 
-## 16. Development Guide
+## 20. Development Guide (Full)
 
 ### Running Tests
 

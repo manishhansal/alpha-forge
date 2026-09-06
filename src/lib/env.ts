@@ -68,18 +68,36 @@ const serverSchema = z.object({
   WHATSAPP_INSTANCE: z.string().optional(),
   WHATSAPP_API_KEY: z.string().optional(),
 
-  // Upstox API v2 — secondary Indian market data provider.
-  // Register an app at https://developer.upstox.com/ to obtain client credentials.
-  // UPSTOX_CLIENT_ID / UPSTOX_CLIENT_SECRET are used for OAuth2 token exchange
-  // (server-side only — never sent to the browser).
-  // UPSTOX_ANALYTICS_TOKEN is a long-lived read-only market data token suitable
-  // for historical candles and option chain requests; it avoids the full OAuth
-  // flow for non-trading read paths.
-  // When none of the three are set, the Upstox provider silently degrades and
-  // the failover engine routes to NSE / Yahoo.
+  // ── Indian Market Data Providers ────────────────────────────────────────────
+  //
+  // Provider chain: DATA_SERVICE (0) → ANGEL_ONE (1) → UPSTOX (2) → YAHOO (3)
+  // NSE direct acquisition was REMOVED 2026-09-03 and is no longer a provider.
+  //
+  // Angel One SmartAPI — primary Indian market data provider.
+  // Server-side only — never sent to the browser.
+  SMARTAPI_API_KEY: z.string().optional(),
+  SMARTAPI_CLIENT_CODE: z.string().optional(),
+  SMARTAPI_PIN: z.string().optional(),
+  SMARTAPI_TOTP_SECRET: z.string().optional(),
+
+  // Upstox API — secondary Indian market data provider.
+  // ALL of these are server-side only — never sent to the browser.
+  // Do NOT create NEXT_PUBLIC_UPSTOX_* variants.
+  //
+  // UPSTOX_CLIENT_ID: used in OAuth authorization URL initiation (via BFF)
+  // UPSTOX_CLIENT_SECRET: used server-side only in /api/in/providers/upstox/callback
+  // UPSTOX_REDIRECT_URI: OAuth callback URL (defaults to APP_URL/api/in/providers/upstox/callback)
+  // UPSTOX_ANALYTICS_TOKEN: long-lived read-only bearer (preferred for data-only flows)
+  // UPSTOX_ACCESS_TOKEN: legacy direct token (backward compat; prefer ANALYTICS_TOKEN)
   UPSTOX_CLIENT_ID: z.string().optional(),
   UPSTOX_CLIENT_SECRET: z.string().optional(),
+  UPSTOX_REDIRECT_URI: z.string().url().optional(),
   UPSTOX_ANALYTICS_TOKEN: z.string().optional(),
+  UPSTOX_ACCESS_TOKEN: z.string().optional(),
+
+  // India data provider mode. Default: "auto" (Data Service → Angel → Upstox → Yahoo).
+  // Do NOT set to "nse" — direct NSE acquisition is prohibited.
+  INDIA_DATA_PROVIDER: z.enum(["auto"]).default("auto"),
 
   // Delta Exchange India REST base. Override for testnet
   // (`https://cdn-ind.testnet.deltaex.org`).
@@ -150,7 +168,14 @@ const processEnv = {
   WHATSAPP_API_KEY: process.env.WHATSAPP_API_KEY,
   UPSTOX_CLIENT_ID: process.env.UPSTOX_CLIENT_ID,
   UPSTOX_CLIENT_SECRET: process.env.UPSTOX_CLIENT_SECRET,
+  UPSTOX_REDIRECT_URI: process.env.UPSTOX_REDIRECT_URI,
   UPSTOX_ANALYTICS_TOKEN: process.env.UPSTOX_ANALYTICS_TOKEN,
+  UPSTOX_ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN,
+  INDIA_DATA_PROVIDER: process.env.INDIA_DATA_PROVIDER,
+  SMARTAPI_API_KEY: process.env.SMARTAPI_API_KEY,
+  SMARTAPI_CLIENT_CODE: process.env.SMARTAPI_CLIENT_CODE,
+  SMARTAPI_PIN: process.env.SMARTAPI_PIN,
+  SMARTAPI_TOTP_SECRET: process.env.SMARTAPI_TOTP_SECRET,
   ML_SERVICE_URL: process.env.ML_SERVICE_URL,
   ML_MODE: process.env.ML_MODE,
   LIVE_TRADING_ENABLED: process.env.LIVE_TRADING_ENABLED,

@@ -239,7 +239,7 @@ describe("withRetry()", () => {
 
   it("succeeds on a later attempt", async () => {
     let calls = 0;
-    const resultPromise = withRetry("nse", async () => {
+    const resultPromise = withRetry("yahoo", async () => {
       calls++;
       if (calls < 3) throw new Error("not yet");
       return "success";

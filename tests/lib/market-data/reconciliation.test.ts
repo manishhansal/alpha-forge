@@ -154,17 +154,17 @@ describe("checkQuoteStaleness()", () => {
 
 describe("checkOptionChainStaleness()", () => {
   it("accepts a fresh option chain", () => {
-    expect(checkOptionChainStaleness("nse", NOW - 20_000, undefined, NOW)).toBe(false);
+    expect(checkOptionChainStaleness("yahoo", NOW - 20_000, undefined, NOW)).toBe(false);
   });
 
   it("rejects a stale option chain", () => {
-    expect(checkOptionChainStaleness("nse", NOW - 35_000, undefined, NOW)).toBe(true);
+    expect(checkOptionChainStaleness("yahoo", NOW - 35_000, undefined, NOW)).toBe(true);
   });
 
   it("respects custom OPTION_CHAIN_MAX_AGE_MS", () => {
     const config: ReconciliationConfig = { staleThresholdsMs: { OPTION_CHAIN_MAX_AGE_MS: 5_000 } };
-    expect(checkOptionChainStaleness("nse", NOW - 6_000, config, NOW)).toBe(true);
-    expect(checkOptionChainStaleness("nse", NOW - 4_000, config, NOW)).toBe(false);
+    expect(checkOptionChainStaleness("yahoo", NOW - 6_000, config, NOW)).toBe(true);
+    expect(checkOptionChainStaleness("yahoo", NOW - 4_000, config, NOW)).toBe(false);
   });
 });
 
@@ -181,7 +181,7 @@ describe("comparePrices() — provider agreement", () => {
   });
 
   it("uses the correct absolute and percentage diff", () => {
-    const r = comparePrices("NIFTY", "angel_one", 20_000, "nse", 20_040, "INDEX");
+    const r = comparePrices("NIFTY", "angel_one", 20_000, "yahoo", 20_040, "INDEX");
     expect(r.absoluteDiff).toBeCloseTo(40);
     expect(r.percentageDiff).toBeCloseTo(0.2);
   });
@@ -228,7 +228,7 @@ describe("comparePrices() — provider disagreement", () => {
   });
 
   it("includes threshold in the result", () => {
-    const r = comparePrices("SYM", "angel_one", 100, "nse", 101, "INDEX");
+    const r = comparePrices("SYM", "angel_one", 100, "yahoo", 101, "INDEX");
     expect(r.threshold).toBe(DEFAULT_DIVERGENCE_THRESHOLDS_PCT.INDEX);
   });
 });
@@ -526,7 +526,7 @@ describe("buildQualityEnvelope()", () => {
 
   it("INVALID: structurally invalid forces qualityScore=0 and INVALID status", () => {
     const q = buildQualityEnvelope({
-      source: "nse",
+      source: "yahoo",
       stale: false,
       outlier: noOutlier,
       crossProviderAnomaly: false,
@@ -810,7 +810,7 @@ describe("reconcileCandle()", () => {
 
   it("returns INVALID for a candle with close outside high/low", () => {
     const c = candle({ close: 90, low: 95 }); // close < low
-    const result = reconcileCandle({ candle: c, provider: "nse" });
+    const result = reconcileCandle({ candle: c, provider: "yahoo" });
     expect(result.quality.validationStatus).toBe("INVALID");
   });
 

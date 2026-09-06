@@ -56,7 +56,7 @@ describe("api/in/scanner", () => {
     expect(limits).toEqual([5, 100, 42]);
   });
 
-  it("forwards Cache-Control: no-store on success", async () => {
+  it("forwards Cache-Control: s-maxage=15 on success", async () => {
     runScannerMock.mockReset();
     runScannerMock.mockResolvedValueOnce({
       type: "momentum",
@@ -65,7 +65,9 @@ describe("api/in/scanner", () => {
     } as unknown as ScannerResult);
 
     const res = await GET(makeRequest("?type=momentum"));
-    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("cache-control")).toBe(
+      "public, s-maxage=15, stale-while-revalidate=30"
+    );
   });
 
   it("returns 502 with the engine's error message when runScanner throws", async () => {

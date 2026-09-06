@@ -207,14 +207,14 @@ describe("Chaos C03: ML service crash during inference", () => {
   it("ML circuit breaker opens after 4 failures", async () => {
     const { MLCircuitBreaker } = await import("@/lib/chaos/ml-resilience");
     const breaker = new MLCircuitBreaker({ openThreshold: 4, halfOpenDelayMs: 100 });
-    for (let i = 0; i < 4; i++) breaker.recordFailure();
+    for (let i = 0; i < 4; i++) breaker.recordFailure("test");
     expect(breaker.currentState).toBe("OPEN");
   });
 
   it("ML breaker allows fallback when open", async () => {
     const { MLCircuitBreaker } = await import("@/lib/chaos/ml-resilience");
     const breaker = new MLCircuitBreaker({ openThreshold: 4, halfOpenDelayMs: 0 });
-    for (let i = 0; i < 4; i++) breaker.recordFailure();
+    for (let i = 0; i < 4; i++) breaker.recordFailure("test");
 
     await new Promise((r) => setTimeout(r, 5));
     // Probe allowed in HALF_OPEN
@@ -594,7 +594,7 @@ describe("Chaos C13: DB transaction rollback on error", () => {
 
     // Should complete successfully
     const result = await withDbTransaction(mockPrisma, async (tx) => {
-      return tx.paperTrade.create({ data: {} });
+      return tx.paperTrade.create({ data: {} as any });
     });
     expect(result).toEqual({ id: "t1" });
   });

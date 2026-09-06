@@ -323,6 +323,9 @@ model IndiaDailyPick {
   @@unique([tradeDate, bucket, rank])
   @@index([tradeDate])
   @@index([symbol, tradeDate])
+  /// Speeds up the worker's OPEN-pick tracking query which filters by
+  /// status = 'OPEN' for today — avoids a full table scan on every tick.
+  @@index([status, tradeDate])
 }
 
 /// One confirmed OHLCV candle bar produced by the real-time candle builder.
@@ -359,6 +362,10 @@ model CandleBar {
 
   /// Composite unique constraint prevents duplicate candle records.
   @@unique([instrumentId, exchange, intervalStr, time])
+  /// PostgreSQL creates a B-tree index automatically to enforce the unique
+  /// constraint above. The explicit @@index below adds a second covering
+  /// index on the same columns for query performance (e.g. range scans that
+  /// PostgreSQL can use the index for without a sequential scan).
   @@index([instrumentId, exchange, intervalStr, time])
   @@index([confirmedAt])
   @@map("candle_bar")

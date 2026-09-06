@@ -16,6 +16,7 @@ import {
   EXCHANGE_LABELS,
   SUPPORTED_EXCHANGES,
   usesSmartApiAuth,
+  usesTokenOnlyAuth,
   type Exchange,
   type StoredKeySummary,
 } from "@/features/settings/api-keys-shared";
@@ -55,6 +56,7 @@ export function ApiKeysForm({
 
   const saveFieldError = (name: string) => saveState?.fieldErrors?.[name]?.[0];
   const isSmartApi = usesSmartApiAuth(exchange);
+  const isTokenOnly = usesTokenOnlyAuth(exchange);
 
   return (
     <div className="flex flex-col gap-5">
@@ -120,6 +122,8 @@ export function ApiKeysForm({
               placeholder={
                 isSmartApi
                   ? "Paste your SmartAPI app key here"
+                  : isTokenOnly
+                  ? "Paste your Analytics Token here"
                   : "Paste the public API key here"
               }
               disabled={!encryptionAvailable || savePending}
@@ -188,7 +192,26 @@ export function ApiKeysForm({
                 </p>
               </div>
             </>
+          ) : isTokenOnly ? (
+            /* Upstox Analytics API — token-only, no apiSecret needed */
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <p className="text-[11px] text-[var(--color-fg-subtle)]">
+                Paste your <strong>Analytics Token</strong> from the{" "}
+                <a
+                  href="https://account.upstox.com/developer/apps"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-[var(--color-fg)]"
+                >
+                  Upstox Developer Console
+                </a>{" "}
+                (Apps → your app → Analytics Token). This is a long-lived read-only token
+                — no OAuth2 flow required. Encrypted with AES-256-GCM; never logged or
+                sent to the browser.
+              </p>
+            </div>
           ) : (
+            /* Standard apiKey + apiSecret (Binance, Groww, etc.) */
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="api-secret">API secret</Label>

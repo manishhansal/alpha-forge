@@ -2,6 +2,8 @@
 
 A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js 16, a Python ML microservice, and an institutional-grade research platform.
 
+**Current state (2026-09-04, commit `b650249`):** 3059 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
+
 ---
 
 ## What It Is
@@ -9,7 +11,7 @@ A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** 
 AlphaForge runs two fully independent trading surfaces in one shell, toggled by a sidebar switcher:
 
 - **Crypto** — BTC · ETH · SOL via Delta Exchange India (default) or Binance. Futures analytics, options chain, AI signals, 10 scalping strategies, strategy backtest, conversational strategy lab, and paper trading.
-- **Indian F&O (NSE)** — Full sidebar parity with the crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, AI signals with real-time derivatives context, Daily Picks, FnO trend scanners, intelligent auto paper-trading engine, trade history, and an evidence-driven quant research platform.
+- **Indian F&O (NSE)** — Full sidebar parity with the crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, AI signals with real-time derivatives context, Daily Picks, FnO trend scanners, intelligent auto paper-trading engine, trade history, Signal Center, WhatsApp notifications, an evidence-driven quant research platform, and per-user Upstox Analytics API credential configuration.
 
 The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep links, browser back/forward, and shared links always land in the right mode.
 
@@ -126,15 +128,16 @@ src/app/(dashboard)/
 All Indian market data flows through a **provider-agnostic data layer** (`src/lib/market-data/`) with automatic failover:
 
 ```
-Angel One SmartAPI  →  Upstox Analytics v2  →  NSE direct  →  Yahoo Finance
-       1                        2                    3                4
+Data Service / Scrapling (0)  →  Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  Yahoo Finance (3)
 ```
+
+**NSE direct scraping was removed from the TypeScript layer in V3.0.0.** The `data-service` Python microservice is now the tier-0 provider for all NSE data — it runs the Scrapling browser sessions, circuit breakers, lineage recording, and DataQualityGate that the TypeScript layer consumes via `ScraplingProvider`.
 
 The `ProviderRegistry` routes each capability request to the highest-priority available provider. `withFailover()` retries 3× with exponential backoff, then switches provider. A 0–100 health score and circuit breaker prevent routing to persistently failing providers.
 
 ### Worker
 
-A separate Node process (`worker/src/`) runs 13 background jobs:
+A separate Node process (`worker/src/`) runs 14 background jobs:
 
 | Job | What it does |
 |---|---|
@@ -145,6 +148,7 @@ A separate Node process (`worker/src/`) runs 13 background jobs:
 | `india-scalper` | Intraday F&O scalping loop; persists CandleBar rows |
 | `india-eod-squareoff` | Close all open India trades at 15:30 IST |
 | `india-fno-trend-track` | Track 14-condition FnO Trend Scanner outcomes |
+| `india-whatsapp-scanner` | Scanner delta detection → WhatsApp `SCANNER_HIT_NEW` (fires only on new hits) |
 | `scalper` | Crypto 10-strategy scalping loop |
 | `signal-ingest/outcome` | Record and resolve signal history |
 | `alerts` | Evaluate user-configured alerts |
@@ -153,13 +157,15 @@ A separate Node process (`worker/src/`) runs 13 background jobs:
 
 ### Data Service
 
-A standalone Python / FastAPI microservice (`data-service/`, port 8200) that delivers NSE market data without any broker credentials:
+A standalone Python / FastAPI microservice (`data-service/`, port 8200) — the **tier-0 provider** for all NSE market data. All NSE scraping was moved here from the TypeScript layer in V3.0.0. **Current version: 2.1.0, LEVEL 2 INTEGRATION CERTIFIED** (448 tests).
 
-- **Live quotes** — Fetches real-time NSE equity and index prices via `httpx` against the new NSE `NextApi` endpoints (no browser required for quotes).
-- **Tick publisher** — Polls all configured symbols every 5 seconds and publishes `LiveTick` payloads to Redis pub/sub (`af:ticks:{SYMBOL}`). The Next.js `useLiveQuotes` hook subscribes to these channels.
-- **Option chain** — Scrapes the NSE option-chain page using a headless Chromium browser via Scrapling, captures the `api/option-chain` XHR, and computes PCR, max pain, ATM IV, and OI walls.
-- **Historical OHLCV** — Daily candles from the NSE Bhavcopy CDN; intraday candles from the NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings for `from`/`to` parameters.
-- **Instrument master** — Full NSE/BSE instrument list for token-to-symbol resolution.
+- **Live quotes** — `httpx` against the NSE `NextApi` endpoints (no browser required; NSE migrated to Next.js in 2026).
+- **Tick publisher** — 5s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams (AT_LEAST_ONCE delivery). The Next.js `useLiveQuotes` hook subscribes to these channels.
+- **Option chain** — Headless Chromium via Scrapling `AsyncDynamicSession`; captures `api/option-chain` XHR; computes PCR, max pain, ATM IV, OI walls.
+- **Historical OHLCV** — Daily candles from NSE Bhavcopy CDN; intraday from NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings.
+- **DataQualityGate** (`POST /data/gate`) — evaluates freshness, completeness, provider health before allowing signal generation.
+- **Lineage API** (`GET /data/lineage/*`) — records and retrieves observation provenance for every fetch.
+- **Instrument master** — Full NSE/BSE instrument list.
 
 ```bash
 # Start
@@ -171,8 +177,13 @@ curl http://localhost:8200/health
 # Live quotes
 curl "http://localhost:8200/scraping/quotes?symbols=NIFTY,BANKNIFTY,RELIANCE"
 
-# Historical (datetime strings accepted)
+# Historical (ISO 8601 datetime strings accepted)
 curl "http://localhost:8200/scraping/historical?symbol=RELIANCE&exchange=NSE&interval=1d&from=2026-08-01T00:00:00Z&to=2026-09-03T00:00:00Z"
+
+# DataQualityGate
+curl -X POST http://localhost:8200/data/gate \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"NIFTY","quoteAgeMs":5000,"strategyId":"RANGE_EXPANSION"}'
 ```
 
 > The service requires `dns: [8.8.8.8, 8.8.4.4]` in `docker-compose.yml` because Chromium's built-in DNS resolver rejects Docker's loopback nameserver `127.0.0.11`.
@@ -276,19 +287,39 @@ A 24-phase research infrastructure that governs how strategies move from idea to
 
 All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE` — that is the correct state. Nothing has been fabricated.
 
+### Signal Center (V3.0)
+
+`/in/signal-center` — a unified view of all signal families with `OpportunityCluster` deduplication:
+
+- **9 signal families** aggregated: AI_SIGNAL, SCANNER, DAILY_PICK, FNO_TREND, PAPER_TRADE, MANUAL, OPPORTUNITY, SCALP, RESEARCH
+- Same instrument + direction within a 30-min window → one cluster (not N duplicated cards)
+- `independentConfirmations` = unique-family count (geometric mean confidence, never inflated)
+- Expandable cluster cards with per-contributing-signal breakdown
+
+### WhatsApp Notifications (V3.0)
+
+Real-time trading alerts delivered to WhatsApp via the Evolution-Go API:
+
+- **6 event types:** `AI_SIGNAL_NEW`, `SIGNALS_BOARD_NEW`, `DAILY_PICKS_NEW`, `PAPER_TRADE_OPENED`, `PAPER_TRADE_CLOSED`, `SCANNER_HIT_NEW`
+- Per-user opt-in per event type (managed from `/in/profile`)
+- Per-user Redis cooldown (default 5 min) prevents duplicate alerts
+- Scanner delta detection — only genuinely new scan hits fire `SCANNER_HIT_NEW`
+- Phone numbers stored AES-256-GCM encrypted; E.164 validated
+
 ---
 
 ## Indian Market Data (Provider Chain)
 
+All Indian market data flows through a **provider-agnostic data layer** (`src/lib/market-data/`) with automatic failover. **Direct NSE scraping was removed from the TypeScript layer in V3.0.0** — it now lives exclusively in the `data-service` Python microservice (tier 0).
+
 | Priority | Provider | Capabilities | Activation |
 |---|---|---|---|
-| 0 | **Data Service** (`data-service/`) | Live quotes, tick stream, option chain, historical, instrument master — no credentials | `docker compose up data-service` |
-| 1 | **Angel One SmartAPI** | Quotes, historical, option chain, live stream, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
-| 2 | **Upstox Analytics v2** | Quotes, historical, option chain | `UPSTOX_ANALYTICS_TOKEN` |
-| 3 | **NSE direct** | Option chain, quotes (cookie-warmed scraper) | Always available |
-| 4 | **Yahoo Finance** | Historical OHLCV, quotes | Always available (last resort) |
+| 0 | **Data Service** (`data-service/`) | Live quotes, tick stream, option chain, historical, instrument master — **no credentials required**. All NSE scraping runs here. | `docker compose up data-service` |
+| 1 | **Angel One SmartAPI** | Quotes, historical, option chain, live stream, greeks, GEX, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
+| 2 | **Upstox Analytics v2** | Quotes, historical, option chain. Full OAuth BFF at `/api/in/providers/upstox/*` | `UPSTOX_ANALYTICS_TOKEN` (data-only) or `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` (full OAuth) |
+| 3 | **Yahoo Finance** | Historical OHLCV, quotes | Always available (last resort) |
 
-Legacy `INDIA_BROKER=yahoo|nse|groww|angel|openalgo` env var still works for existing adapters.
+`INDIA_BROKER=nse` is no longer valid — it falls back to yahoo. The `"nse"` `ProviderId` has been removed from the TypeScript type system entirely. The `"nse"` `DataSourceId` has also been removed from the settings UI, type system, and broker factory — `DataSourceId` no longer includes `"nse"` anywhere. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
 
 ---
 
@@ -312,12 +343,26 @@ SMARTAPI_PIN=
 SMARTAPI_TOTP_SECRET=
 
 # Upstox (secondary data source)
-UPSTOX_ANALYTICS_TOKEN=
+# Data-only: set UPSTOX_ANALYTICS_TOKEN only (max 2048 chars — JWT bearer token).
+# Full OAuth BFF: set all four.
+UPSTOX_CLIENT_ID=
+UPSTOX_CLIENT_SECRET=    # server-side only — never in NEXT_PUBLIC_*
+UPSTOX_REDIRECT_URI=
+UPSTOX_ANALYTICS_TOKEN=  # configure via Profile → API Keys in the UI, or set here
+
+# Data provider (V3.0)
+INDIA_DATA_PROVIDER=auto  # "auto" is the only valid value; "nse" is no longer accepted
 
 # OpenAlgo broker adapter (covers 33+ Indian brokers)
 OPENALGO_BASE_URL=
 OPENALGO_API_KEY=
 LIVE_TRADING_ENABLED=   # Must be exactly "true" to allow order placement
+
+# WhatsApp notifications (V3.0)
+WHATSAPP_EVOLUTION_URL=
+WHATSAPP_EVOLUTION_API_KEY=
+WHATSAPP_INSTANCE_NAME=
+WHATSAPP_COOLDOWN_MS=300000  # Per-user cooldown in ms (default 5 min)
 
 # Worker and ML
 ML_SERVICE_URL=http://localhost:8100
@@ -361,7 +406,7 @@ NEXT_PUBLIC_ACTIVE_BROKER=delta
 AlphaForge is TDD-first. Tests must be written before implementation — no exceptions.
 
 ```bash
-npm test                    # full suite (~3000 tests)
+npm test                    # full suite (3059 tests, 0 failures)
 npm run test:features       # feature engines only
 npm run test:api            # API route handlers only
 npm run test:coverage       # v8 coverage → coverage/
@@ -373,6 +418,7 @@ Test layout mirrors `src/` by concern:
 ```
 tests/
   lib/           Pure utilities, validators, market-data layer
+                 nse-elimination.test.ts — 12 guard tests (V3.0)
   features/      Domain engines (best-time, scalping, daily-picks, ...)
   components/    React component render + interaction tests
   api/           Next.js Route Handler tests (Request/Response)
@@ -381,16 +427,21 @@ tests/
   stores/        Zustand store tests
   pages/         Page-level smoke + redirect tests
   worker/        Worker scheduler, config, log, env-validation
+  research/      V6 research platform
+  runtime/       Certification harnesses (phase tests)
 ```
 
 Key test counts:
-- Microstructure Engine: 974
 - Shadow Trading / Experiment Framework: 1,643
 - Financial ML Validation: 1,480
 - Meta Decision Engine: 1,058
+- Market Microstructure Engine: 974
+- Model Monitoring: 930
 - Signal Intelligence Engine: 196
 - Portfolio Risk Engine v2: 64
 - Research Platform (V6): 92
+- NSE Elimination Guards (V3.0): 12
+- **Total: 3,059 passing**
 
 ---
 
@@ -403,11 +454,18 @@ src/
     (dashboard)/             Authenticated shell — sidebar + topbar
       page.tsx               Crypto Overview
       in/                    India route group
+        signal-center/       NEW (V3.0) — unified signal center page
       api/                   All API routes
+        in/
+          providers/upstox/  NEW (V3.0) — OAuth BFF (connect/callback/disconnect/status)
+          signal-center/     NEW (V3.0) — aggregated signal endpoint
+          data/forensics/    V2.1 — trade forensics endpoint
   components/
     ai-signals/              AiSignalCard, AiSignalsBoard, AiMarketContextBanner
-    dashboard/               Sidebar (market-aware), Topbar, MarketTickerBar
+    dashboard/               Sidebar (logo at top, icon rail when collapsed), Topbar, MarketTickerBar
     india/                   All India UI (msb-dashboard, option-chain, ticker, ...)
+      signal-center/         NEW (V3.0) — india-signal-center.tsx
+      DataSourceBadge.tsx    NEW (V3.0) — shows which provider served data
     trading/                 SignalBadge, ConfidenceBar, RegimeBadge, NumberMorph, AiRadar
     layout/                  BentoGrid, PageHeader, EmptyState, ErrorState, PageTransition
     3d/                      MarketIntelligenceCore, RiskSphere, PortfolioGalaxy
@@ -415,6 +473,10 @@ src/
     ai-signals/              Cross-market AI engine + crypto/india builders
     best-time/               IST window engine (crypto + NSE versions)
     scalping/                10 crypto scalping strategies + journal + backtest
+    whatsapp/                NEW (V3.0) — phone.ts, types.ts, preferences.ts,
+                             formatters.ts, notifier.ts, index.ts
+    settings/                api-keys-shared.ts, api-keys.ts,
+                             upstox-credentials.ts (NEW — per-user Upstox token resolver)
     india/
       best-time/             NSE-anchored session engine (7 windows)
       daily-picks/           Top-3-per-bucket engine + freeze/track/history
@@ -423,7 +485,9 @@ src/
       news/                  RSS feed + bull/bear lexicon + sentiment engine
       options-workbench/     Multi-leg payoff engine
   lib/
-    market-data/             Provider-agnostic data layer (4 providers + failover)
+    market-data/             Provider-agnostic data layer
+                             providers/nse.ts = TOMBSTONE — do not use
+    india-signal-center/     NEW (V3.0) — types.ts, aggregator.ts
     signal-intelligence/     45-phase signal intelligence engine (12 modules)
     opportunity-engine/      12-stage opportunity validation pipeline
     research/                24-phase V6 quant research platform
@@ -434,11 +498,14 @@ src/
     india/                   NSE calendar, atomic trade guard, feature validators
   services/
     brokers/                 BrokerAdapter contract + Delta/Binance adapters
-    india/                   Angel One, Upstox, NSE, Yahoo broker adapters
+    india/                   Angel One, Upstox, Yahoo broker adapters
+                             nse/ — throwing stubs only (V3.0)
   store/                     Zustand stores (UIStore + market-scoped stores)
   hooks/india/               useFetchPoll, useOptionChain, useScanner, ...
+public/
+  logo.png                   NEW — master logo asset (favicon, auth header, sidebar)
 worker/
-  src/jobs/                  13 background jobs
+  src/jobs/                  14 background jobs (+ india-whatsapp-scanner)
   src/index.ts               Graceful shutdown + job registry
 ml-service/
   src/
@@ -450,9 +517,11 @@ ml-service/
     greeks.py                Black-76/BS greeks + Newton-Raphson IV solver
     gex.py                   Dealer GEX engine
     vol_surface.py           SVI IV surface + term structure
+    brokers/                 NEW (V3.0) — upstox_client.py Python broker API client
 prisma/schema.prisma         18 models
-docker-compose.yml           Postgres 17 + Redis 7 + ML service
-tests/                       Vitest suite — see Testing section
+docker-compose.yml           Postgres 17 + Redis 7 + ML service + data-service
+tests/                       Vitest suite — 3059 tests
+  lib/market-data/nse-elimination.test.ts  NEW (V3.0) — 12 guard tests
 ```
 
 ---
@@ -497,8 +566,19 @@ npm run dev
 **Windows fork exhaustion** (`STATUS_COMMITMENT_LIMIT` / code `127`)
 Close extra Electron apps and Cursor windows. Avoid running dev server + worker + `vitest --watch` simultaneously. Use `npm run worker:dev` (no watcher) rather than `worker:watch`. Restart Docker before the dev server if the fork pool is depleted.
 
+### Upstox Analytics API Credential Configuration
+
+Users can configure their Upstox Analytics Token directly in the UI without requiring server-side environment variable access:
+
+- Navigate to **Profile → API Keys → Upstox Analytics API**
+- Paste the Analytics Token from the Upstox Developer Console
+- Token is encrypted with AES-256-GCM at rest and used for all subsequent Upstox data requests
+- Token-only exchanges (Upstox) skip the `apiSecret` field — the form adapts automatically
+- Tokens can be up to 2048 characters (JWT bearer token length)
+
 ---
 
-> Full product spec and architecture deep-dive: [ALPHAFORGE.md](./ALPHAFORGE.md)
-> Chronological changelog: [CHANGES.md](./CHANGES.md)
-> Data service reference: [DATA_SERVICE.md](./DATA_SERVICE.md)
+> Full product spec and architecture deep-dive: [ALPHAFORGE.md](./ALPHAFORGE.md)  
+> Chronological changelog: [CHANGES.md](./CHANGES.md)  
+> Data service reference: [DATA_SERVICE.md](./DATA_SERVICE.md)  
+> Phase 2 expert quant design: [PHASE2.md](./PHASE2.md)

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOptionChainBroker, getBrokerById } from "@/services/india/broker/factory";
 import { getActiveSelections } from "@/features/settings/active-sources";
-import { nse } from "@/services/india/nse";
+import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { redis } from "@/lib/redis";
 import {
   validateOptionChain,
@@ -41,11 +41,14 @@ async function fetchEnrichedGreeks(
  * Returns the option chain + PCR/IV/Max-pain analytics for the requested
  * F&O underlying. Cached server-side for 20s.
  *
- * Source preference: honours the user's `india.optionChain` setting (NSE
- * direct by default; Groww or BSE if they opted in and the adapter is
- * implemented). Falls back to NSE if the chosen adapter throws — the chain
- * is the most important Indian-market widget and we never want the page to
- * surface a hard failure when an alternate source is available.
+ * Source preference:
+ *   1. The user's `india.optionChain` setting (defaults to "yahoo" for new
+ *      users; Angel One or Upstox when configured via Profile → API Keys).
+ *   2. Other BrokerAdapters in the user's `india.selected` list (excluding
+ *      Upstox which routes through the ProviderRegistry, not BrokerAdapter).
+ *   3. ProviderRegistry.getOptionChain() — DATA_SERVICE → Angel One → Upstox.
+ *      This covers Upstox and any other ProviderRegistry-only source when
+ *      the BrokerAdapter fallback chain is exhausted.
  *
  * When the ML service is reachable, per-strike greeks are enriched with real
  * Black-76/BS values. The `iv_regime` field is always present (null until
@@ -105,7 +108,14 @@ export async function GET(req: Request) {
       iv_regime,
     };
 
-    return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(payload, {
+      // 20s shared-cache: option chain + ML greeks are the same for every user
+      // requesting the same symbol. 20s matches the broker-layer cache TTL so
+      // we don't return stale data beyond the upstream window. The ML
+      // enrichment (greeks + IV regime) is the most expensive part — caching
+      // at the HTTP layer means concurrent users share one ML call per 20s.
+      headers: { "Cache-Control": "public, s-maxage=20, stale-while-revalidate=30" },
+    });
   }
 
   try {
@@ -155,13 +165,12 @@ export async function GET(req: Request) {
     console.warn(`[option-chain] ${primary.id} failed for ${symbol}: ${msg}`);
 
     // Try the next OI-capable source from the user's selection list (skip
-    // the one we just tried). NSE is always the last-resort fallback.
+    // the one we just tried).
     const fallbacks = selections.india.selected
       .map((id) => getBrokerById(id))
       .filter((b): b is NonNullable<ReturnType<typeof getBrokerById>> =>
         Boolean(b) && b!.id !== primary.id,
       );
-    if (!fallbacks.some((b) => b.id === "nse")) fallbacks.push(nse);
 
     for (const b of fallbacks) {
       try {
@@ -175,6 +184,25 @@ export async function GET(req: Request) {
         attempts.push({ id: b.id, error: m });
         console.warn(`[option-chain] ${b.id} failed for ${symbol}: ${m}`);
       }
+    }
+
+    // Final fallback: ProviderRegistry (DATA_SERVICE → Angel One → Upstox).
+    // This covers Upstox (which has no BrokerAdapter) and any future
+    // ProviderRegistry-only source. Only attempted after all BrokerAdapter
+    // paths are exhausted to avoid double-fetching when a BrokerAdapter succeeds.
+    try {
+      await bootstrapRegistry();
+      const registryChain = await registry.getOptionChain(symbol, expiry ?? "nearest");
+      if (registryChain) {
+        return await respondWithChain(registryChain as unknown as Record<string, unknown>, {
+          source: "registry",
+          fallbackFrom: primary.id,
+        });
+      }
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      attempts.push({ id: "registry", error: m });
+      console.warn(`[option-chain] registry failed for ${symbol}: ${m}`);
     }
 
     return NextResponse.json(

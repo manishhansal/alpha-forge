@@ -31,6 +31,10 @@ export async function GET(req: Request) {
       sources,
       fetchedAt: new Date().toISOString(),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    {
+      // 5s shared-cache: quote data refreshes frequently but is identical
+      // for all users requesting the same symbols within a 5s window.
+      headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" },
+    },
   );
 }
