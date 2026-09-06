@@ -4,6 +4,104 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3H: Portfolio Intelligence, Risk Management & Position Sizing
+
+**Date:** 2026-09-06  
+**Branch:** `refactor/improve-ml-service`  
+**Files changed:** 10 new source files + 1 fixed source file + 1 test file + 11 reports/docs  
+**Tests (Phase 3H):** 115 passed / 0 failed / 0 skipped  
+**Full suite (3A–3H):** 513 passed / 0 failed / 11 skipped (pre-existing)  
+**Static audit:** CLEAN — 0 `np.random.*` (executable), 0 synthetic correlation, 0 rank_score-as-EV  
+**Phase result:** PHASE_3H_PASS
+
+### Summary
+
+Introduces the complete portfolio intelligence layer for AlphaForge, transforming
+individual Phase 3F meta-decision outputs into a coherent, cost-aware, risk-managed
+target portfolio. Builds `src/portfolio/` from scratch (10 modules). Fixes 2 critical
+defects in the legacy `portfolio_optimizer.py`: uncontrolled `np.random.uniform` producing
+non-deterministic weights, and a silent equal-weight fallback with no logging. Implements
+Ledoit-Wolf shrinkage in pure numpy (avoiding the broken sklearn/joblib chain on Python 3.14),
+HRP via scipy hierarchical clustering, and all 6 optimization objectives via SLSQP.
+
+### New Package: `src/portfolio/`
+
+| Module | Purpose |
+|--------|---------|
+| `__init__.py` | Package entry point with public API |
+| `schemas.py` | 10 enums (`PortfolioObjective`, `OptimizationStatus`, `EligibilityStatus`, `CovarianceMethod`, `CovarianceStatus`, `SizingMethod`, `RiskOverlayAction`, `RebalancePolicy`, `PortfolioMode`, `ConstraintRelaxationPolicy`); 8 dataclasses (`PortfolioCandidate`, `CovarianceResult`, `ConstraintSet`, `PortfolioTarget`, `PortfolioState`, `TargetOrder`, `PortfolioResult`, `PortfolioProvenance`) |
+| `risk_model.py` | `RiskModel` with historical, EWMA, Ledoit-Wolf (analytical), OAS covariance; PSD repair with eigenvalue floor and documentation; PIT enforcement; condition number and missingness checks |
+| `eligibility.py` | `EligibilityFilter` with 10 rejection reasons; Phase 3F `Decision.TAKE` semantics preserved; batch filtering and rejection summary |
+| `constraints.py` | `ConstraintEngine` with sector, industry, single-name, gross/net exposure, beta, factor, turnover, liquidity constraints; pre-solve feasibility check; scipy-compatible constraint builder; post-solve violation check |
+| `sizing.py` | `SizingEngine` with EV/risk sizing, fractional Kelly (¼ Kelly default), inverse-vol, iterative risk-budgeting, volatility targeting; clip applied post-normalization |
+| `optimizer.py` | `PortfolioOptimizer` with 6 objectives (MIN_VARIANCE, MAX_SHARPE, MAX_DIVERSIFICATION, CVaR, RISK_BUDGETING, EV_RISK) via scipy SLSQP + HRP via scipy clustering + 3 baselines; all 8 explicit failure states; no `np.random.*` |
+| `rebalancer.py` | `Rebalancer` with turnover calculation, target vs executed separation, `TargetOrder` execution contract for Phase 3G |
+| `analytics.py` | `PortfolioAnalytics` with performance metrics (Sharpe, Sortino, Calmar, max_dd, CVaR), benchmark-relative (IR, tracking error), concentration (HHI, effective N), stability (deterministic grid perturbation), regime analysis, attribution |
+| `risk_overlay.py` | `RiskOverlay` with configurable thresholds for drawdown/vol/CVaR/regime/model-confidence; ordered action escalation (NO_ACTION → REDUCE_RISK → HALT → EXIT); risk weight scaling |
+
+### Fixed: `src/models/portfolio_optimizer.py`
+
+| Bug | Severity | Fix |
+|-----|----------|-----|
+| `np.random.uniform(-0.05, 0.05)` in `_build_correlation_matrix` — non-deterministic weights | CRITICAL | Replaced with deterministic constant `0.25` |
+| Silent equal-weight fallback in `_normalize` — no log, no flag | HIGH | Added `logger.warning` with explicit reason |
+
+### 5 Additional Bugs Fixed (Phase 3H code)
+
+| ID | File | Description | Fix |
+|----|------|-------------|-----|
+| BUG-3H-03 | `sizing.py` | Weight clip before normalization — flattened EV proportionality | Moved clip to post-normalization |
+| BUG-3H-04 | `constraints.py` | LONG_ONLY `sum(w)≤1` inequality allowed degenerate zero-weight SLSQP solutions | Changed to `sum(w)=1` equality |
+| BUG-3H-05 | `schemas.py` | `PortfolioCandidate.alpha_score`/`rank_percentile` required — broke options candidate creation | Made `Optional` with `None` default |
+
+### Static Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| `np.random.*` in executable portfolio code | CLEAN (AST-based scan) |
+| Synthetic correlation on production path | CLEAN |
+| `rank_score` used as expected return | CLEAN |
+| `rank_score` used as probability | CLEAN |
+| `shift(-N)` forward-looking | CLEAN |
+| `fillna(0)` on financial series | CLEAN |
+| `center=True` rolling | CLEAN |
+| Silent equal-weight fallback | CLEAN (all flagged with logging + `FEASIBLE_FALLBACK`) |
+| `COVARIANCE_UNAVAILABLE` silenced | CLEAN |
+
+### Key Design Decisions
+
+1. **No synthetic correlation.** `CovarianceStatus.UNAVAILABLE` is returned if historical returns are absent. The optimizer never proceeds with invented data.
+2. **rank_score ≠ expected_return.** `EV_RISK_OPTIMIZATION` exclusively uses `PortfolioCandidate.expected_value` (Phase 3F `EVCalculator` output, post-cost, post-calibration).
+3. **sum(w)=1 equality constraint.** Long-only SLSQP uses an equality constraint to prevent degenerate zero-weight solutions.
+4. **Clip post-normalization.** Per-position ceiling applied after normalization so EV proportionality is preserved before the cap.
+5. **Ledoit-Wolf in pure numpy.** sklearn dependency avoided (broken on Python 3.14 joblib chain).
+6. **FEASIBLE_FALLBACK always documented.** Every fallback has a non-empty `fallback_reason` and `fallback_method`.
+7. **PIT enforced in covariance.** `returns_end_time > formation_time` → `UNAVAILABLE`.
+
+### Reports & Docs Created
+
+| File | Description |
+|------|-------------|
+| `reports/phase-3h-portfolio-report.md/.json` | Full portfolio intelligence summary |
+| `reports/phase-3h-risk-report.md/.json` | Covariance model, shrinkage, PSD repair, risk decomposition |
+| `reports/phase-3h-exposure-report.md/.json` | Gross/net/sector/factor/options exposure metrics |
+| `reports/phase-3h-capacity-report.md/.json` | Liquidity, ADV, lot-size constraints, F&O limits |
+| `reports/phase-3h-stability-report.md/.json` | Grid-perturbation stability analysis |
+| `reports/phase-3h-current-portfolio-audit.md` | Pre-phase audit findings and defect register |
+| `docs/ml-audit/phase-3h-portfolio-intelligence.md` | Full audit with per-check verdicts |
+| `docs/ml-research/portfolio-construction-methodology.md` | All objectives, constraints, sizing, rebalancing |
+| `docs/ml-research/india-risk-model-methodology.md` | NSE market structure, F&O risk, India-specific notes |
+
+### Backward Compatibility
+
+Legacy `optimize()`, `hrp_allocation()`, `cvar_allocation()` APIs preserved. All 398 prior-phase tests pass. `LabelConfig`, `MetaDecisionOutput`, `BacktestEngine` unaffected.
+
+### OOS Evidence
+
+**INSUFFICIENT_EVIDENCE** — no real Indian equity/F&O dataset loaded. Portfolio weights, Sharpe, CVaR, and strategy comparison (HRP vs CVaR vs EW vs EV-risk) are verified on synthetic data only. Real OOS evaluation deferred to Phase 3I when NSE data is available.
+
+---
+
 ## [Unreleased] — Phase 3G: Cost, Slippage & Execution-Aware Backtesting
 
 **Date:** 2026-09-06

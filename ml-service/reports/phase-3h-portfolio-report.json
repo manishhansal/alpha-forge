@@ -1,0 +1,78 @@
+{
+  "report_type": "phase-3h-portfolio-report",
+  "phase": "3H",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "status": "PASS",
+  "test_summary": {
+    "phase_3h_collected": 115,
+    "phase_3h_passed": 115,
+    "phase_3h_failed": 0,
+    "phase_3h_skipped": 0,
+    "full_suite_passed": 513,
+    "full_suite_failed": 0,
+    "full_suite_skipped": 11
+  },
+  "components": [
+    "src/portfolio/__init__.py",
+    "src/portfolio/schemas.py",
+    "src/portfolio/risk_model.py",
+    "src/portfolio/eligibility.py",
+    "src/portfolio/constraints.py",
+    "src/portfolio/sizing.py",
+    "src/portfolio/optimizer.py",
+    "src/portfolio/rebalancer.py",
+    "src/portfolio/analytics.py",
+    "src/portfolio/risk_overlay.py"
+  ],
+  "bugs_fixed": [
+    {
+      "id": "BUG-3H-01",
+      "severity": "CRITICAL",
+      "file": "src/models/portfolio_optimizer.py",
+      "description": "np.random.uniform with no seed in _build_correlation_matrix",
+      "fix": "Replaced with deterministic constant 0.25"
+    },
+    {
+      "id": "BUG-3H-02",
+      "severity": "HIGH",
+      "file": "src/models/portfolio_optimizer.py",
+      "description": "Silent equal-weight fallback in _normalize with no logging",
+      "fix": "Added logger.warning with explicit reason"
+    },
+    {
+      "id": "BUG-3H-03",
+      "severity": "MEDIUM",
+      "file": "src/portfolio/sizing.py",
+      "description": "Weight clip applied before normalization — flattened EV proportionality",
+      "fix": "Moved clip to post-normalization step"
+    },
+    {
+      "id": "BUG-3H-04",
+      "severity": "MEDIUM",
+      "file": "src/portfolio/constraints.py",
+      "description": "Long-only sum(w)<=1 inequality allowed degenerate zero-weight solutions",
+      "fix": "Changed to sum(w)=1 equality constraint for LONG_ONLY mode"
+    },
+    {
+      "id": "BUG-3H-05",
+      "severity": "LOW",
+      "file": "src/portfolio/schemas.py",
+      "description": "PortfolioCandidate.alpha_score/rank_percentile were required positional args",
+      "fix": "Made Optional with None default"
+    }
+  ],
+  "static_audit": {
+    "np_random_in_executable_code": "CLEAN",
+    "synthetic_correlation": "CLEAN",
+    "rank_score_as_expected_return": "CLEAN",
+    "rank_score_as_probability": "CLEAN",
+    "shift_negative_lookahead": "CLEAN",
+    "fillna_zero": "CLEAN",
+    "center_true_rolling": "CLEAN",
+    "silent_fallback": "CLEAN",
+    "covariance_unavailable_silenced": "CLEAN",
+    "overall": "CLEAN"
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

@@ -1,0 +1,39 @@
+{
+  "report_type": "phase-3h-exposure-report",
+  "phase": "3H",
+  "generated": "2026-09-06",
+  "exposure_metrics": {
+    "gross_exposure": {"formula": "sum(|w_i|)", "available": true},
+    "net_exposure": {"formula": "sum(w_i)", "available": true},
+    "long_exposure": {"formula": "sum(w_i for w_i > 0)", "available": true},
+    "short_exposure": {"formula": "sum(|w_i| for w_i < 0)", "available": true},
+    "cash_pct": {"formula": "max(0, 1 - gross_exposure)", "available": true},
+    "portfolio_volatility_daily": {"formula": "sqrt(w^T Sigma w)", "available": "requires_covariance"},
+    "portfolio_volatility_annual": {"formula": "daily * sqrt(252)", "available": "requires_covariance"},
+    "portfolio_cvar_95": {"formula": "historical_simulation", "available": "requires_returns"},
+    "portfolio_beta": {"formula": "sum(w_i * beta_i)", "available": "requires_beta_per_candidate"},
+    "sector_weights": {"available": "requires_sector_field"},
+    "industry_weights": {"available": "requires_industry_field"},
+    "factor_exposures": {"available": "DATA_UNAVAILABLE"},
+    "portfolio_delta": {"available": "requires_options_candidates"},
+    "portfolio_gamma": {"available": "requires_options_candidates"},
+    "portfolio_vega": {"available": "requires_options_candidates"},
+    "portfolio_theta": {"available": "requires_options_candidates"},
+    "hhi": {"formula": "sum((|w_i|/gross)^2)", "available": true},
+    "effective_n": {"formula": "1/HHI", "available": true},
+    "top_1_5_10_weight": {"available": true}
+  },
+  "benchmark_relative": {
+    "active_return": {"formula": "mean(r_p - r_b) * 252", "available": "requires_benchmark_returns"},
+    "tracking_error": {"formula": "std(r_p - r_b) * sqrt(252)", "available": "requires_benchmark_returns"},
+    "information_ratio": {"available": "requires_benchmark_returns"},
+    "active_beta": {"available": "requires_benchmark_returns"},
+    "default_benchmark": "NIFTY50",
+    "benchmark_version": "NIFTY50-v1"
+  },
+  "fno_exposure": {
+    "capital_terms": "weight * capital_inr",
+    "notional_terms": "lots * lot_size * price",
+    "liquidity_check": "estimated_notional / ADV"
+  }
+}
