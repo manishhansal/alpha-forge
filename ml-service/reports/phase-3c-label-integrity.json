@@ -1,0 +1,257 @@
+{
+  "report_id": "phase-3c-label-integrity",
+  "phase": "3C",
+  "title": "Label V2 & Event-Based Target Engineering — Integrity Report",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "label_version": "lv2",
+
+  "evidence_status": {
+    "overall": "INSUFFICIENT_EVIDENCE",
+    "reason": "No production dataset available in the test environment. All statistics below are derived from deterministic synthetic price paths used in unit tests, not from real Indian equity/F&O market data.",
+    "real_data_available": false,
+    "synthetic_data_used": true,
+    "synthetic_note": "Synthetic OHLCV paths were constructed with known mathematical outcomes so that correctness of label logic can be verified, not to produce statistically meaningful label distributions."
+  },
+
+  "test_results": {
+    "run_at": "2026-09-06T00:00:00Z",
+    "python_version": "3.14.6",
+    "pytest_version": "9.1.1",
+    "total_collected": 63,
+    "passed": 61,
+    "failed": 0,
+    "skipped": 2,
+    "skipped_reasons": [
+      "TestPurgingContract::test_overlapping_event_removed_by_purging — sklearn not installed (pre-existing environment constraint)",
+      "TestPipelineIntegration::test_generate_risk_labels_uses_first_touch — talib not installed (pre-existing environment constraint)"
+    ],
+    "pass_rate_pct": 96.8,
+    "verdict": "PASS"
+  },
+
+  "bugs_fixed": [
+    {
+      "id": "BUG-3C-001",
+      "severity": "CRITICAL",
+      "component": "src/labels/triple_barrier.py",
+      "function": "_compute_atr_at_bar",
+      "description": "Early return for single-bar window returned `float(c.iloc[-1]) * 0.01` which equals `close * 0.01` (e.g. 1.0 for a ₹100 stock) instead of the intended fractional ATR of 0.01 (1%). This made barriers 100× too wide on the first bar, causing all golden-path golden tests to fail with TIME_LIMIT instead of TP/SL.",
+      "fix": "Changed return to `0.01` (a 1% ATR fraction), independent of close price.",
+      "tests_affected": [
+        "TestTripleBarrierGoldenTP::test_first_event_is_tp",
+        "TestTripleBarrierGoldenSL::test_first_event_is_sl",
+        "TestIntrabarAmbiguity::test_conservative_sl_policy",
+        "TestIntrabarAmbiguity::test_data_ambiguous_policy"
+      ]
+    },
+    {
+      "id": "BUG-3C-002",
+      "severity": "HIGH",
+      "component": "src/labels/triple_barrier.py",
+      "function": "generate_triple_barrier_labels",
+      "description": "Contract expiry was checked inside the forward scan loop but the is_incomplete early-exit path (triggered when i+horizon >= n) bypassed the expiry cap entirely. Events starting at or after contract_expiry were also generated instead of being skipped.",
+      "fix": "Added expiry cap to the is_incomplete path; added guard at loop entry to skip bars at or after contract_expiry.",
+      "tests_affected": ["TestExpiryAware::test_event_does_not_extend_past_expiry"]
+    },
+    {
+      "id": "BUG-3C-003",
+      "severity": "HIGH",
+      "component": "src/labels/sample_weights.py, src/labels/risk_outcomes.py",
+      "function": "multiple",
+      "description": "All `pd.Timestamp(tz_aware_datetime, tz='UTC')` calls raise ValueError in pandas ≥ 2.x (Python 3.14 environment). The tz= parameter is invalid when the datetime already carries tzinfo.",
+      "fix": "Added `_to_ts()` helper in both files that calls `pd.Timestamp(dt)` then `.tz_convert('UTC')` when tzinfo is already set, or `.tz_localize('UTC')` when naive.",
+      "tests_affected": [
+        "TestMFEMAE::test_long_mfe_is_nonnegative",
+        "TestMFEMAE::test_long_mae_is_nonpositive",
+        "TestMFEMAE::test_short_mfe_is_nonnegative",
+        "TestSampleWeights::test_concurrency_at_least_one",
+        "TestSampleWeights::test_uniqueness_between_0_and_1",
+        "TestSampleWeights::test_non_overlapping_events_have_full_uniqueness",
+        "TestSampleWeights::test_build_t1_from_events_matches_end_times",
+        "TestPurgingContract::test_non_overlapping_event_retained"
+      ]
+    }
+  ],
+
+  "static_analysis": {
+    "check": "shift(-N) in label paths",
+    "tool": "grep -rn 'shift(-' src/labels/ src/training/ --include='*.py'",
+    "findings": [
+      {
+        "file": "src/labels/relative.py",
+        "line": 247,
+        "code": "peer_fwd = peer.shift(-horizon) / peer - 1.0",
+        "classification": "LABEL_ONLY",
+        "reason": "Computes the forward return for a sector peer as the label target. Never stored in any feature column."
+      },
+      {
+        "file": "src/training/data_pipeline.py",
+        "line": 613,
+        "code": "df[label_col].shift(-horizon).values.astype(float) if label_present else None",
+        "classification": "LABEL_ONLY",
+        "reason": "Inside check_feature_leakage() leakage detector. The shifted label is the reference being tested against, not a feature being produced."
+      },
+      {
+        "file": "src/training/data_pipeline.py",
+        "line": 661,
+        "code": "future_label = df[label_col].shift(-horizon).values.astype(float)",
+        "classification": "LABEL_ONLY",
+        "reason": "Same leakage detector, check 2 (literal future copy). Reference only."
+      },
+      {
+        "file": "src/training/data_pipeline.py",
+        "line": 843,
+        "code": "fwd = returns.shift(-horizon)",
+        "classification": "LABEL_ONLY",
+        "reason": "Inside _compute_risk_adjusted_return(). Computes the volatility-adjusted forward return which becomes the ranking label target. The result is returned as a label Series, never merged into the feature matrix."
+      }
+    ],
+    "leakage_risk": "NONE",
+    "verdict": "CLEAN — all shift(-N) occurrences are in label-generation code paths, not feature-engineering paths."
+  },
+
+  "label_modules": [
+    {
+      "module": "labels/config.py",
+      "class": "LabelConfig",
+      "status": "IMPLEMENTED",
+      "key_properties": ["deterministic_hash", "versioned", "cost_model_unavailable_by_default"]
+    },
+    {
+      "module": "labels/schemas.py",
+      "classes": ["LabelEvent", "FixedHorizonLabel", "TripleBarrierLabel", "RiskOutcomeLabel", "MetaLabel", "SampleMetadata", "LabelDiagnostics"],
+      "enums": ["FirstTouch", "Side", "DirectionClass", "PriceBasis", "LabelFamily"],
+      "status": "IMPLEMENTED"
+    },
+    {
+      "module": "labels/triple_barrier.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "sequential bar scan (not .any())",
+        "first-touch semantics",
+        "CONSERVATIVE_SL / DATA_AMBIGUOUS intrabar ambiguity policy",
+        "is_incomplete=True → DATA_INSUFFICIENT (not TIME_LIMIT)",
+        "long and short",
+        "expiry-aware window truncation",
+        "trailing-only ATR (no future look)"
+      ]
+    },
+    {
+      "module": "labels/fixed_horizon.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "raw return, vol-adjusted return, directional class",
+        "UTC-aware",
+        "is_incomplete=True at tail"
+      ]
+    },
+    {
+      "module": "labels/meta_label.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "TAKE/SKIP binary label",
+        "side-separated",
+        "excludes DATA_INSUFFICIENT events"
+      ]
+    },
+    {
+      "module": "labels/risk_outcomes.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "MFE ≥ 0 (signed convention)",
+        "MAE ≤ 0 (signed convention)",
+        "long and short",
+        "per-event bar scan"
+      ]
+    },
+    {
+      "module": "labels/sample_weights.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "compute_event_concurrency",
+        "compute_average_uniqueness",
+        "build_t1_from_events for PurgedKFold",
+        "event_overlap_fraction"
+      ]
+    },
+    {
+      "module": "labels/relative.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "excess return vs NIFTY with vol-normalisation",
+        "sector-relative with DATA_UNAVAILABLE policy",
+        "backward-compat adapter generate_ranking_labels_v2_compat()"
+      ]
+    },
+    {
+      "module": "labels/validators.py",
+      "status": "IMPLEMENTED",
+      "properties": [
+        "Rule 1: outcome column in features → CRITICAL",
+        "Rule 7: is_incomplete=True with first_touch=TIME_LIMIT → ERROR",
+        "PIT mutation check",
+        "event_end before event_start → CRITICAL"
+      ]
+    },
+    {
+      "module": "labels/registry.py",
+      "status": "IMPLEMENTED",
+      "active_labels": ["TRIPLE_BARRIER_V2_DAILY", "FIXED_HORIZON_V2_DAILY", "META_LABEL_V2", "RELATIVE_EXCESS_V2", "RISK_OUTCOMES_V2"],
+      "deprecated_labels": ["FIXED_HORIZON_V1", "RISK_LABELS_V1", "RANKING_LABELS_V1"]
+    }
+  ],
+
+  "pipeline_integration": {
+    "generate_risk_labels_delegates_to_v2": true,
+    "generate_ranking_labels_v2_compat_returns_series": true,
+    "generate_labels_public_api": true,
+    "validate_labels_raises_on_critical": true,
+    "LABEL_VERSION": "lv2",
+    "DATASET_VERSION_includes_lv2": true
+  },
+
+  "dataset_snapshot_provenance": {
+    "new_fields_added": [
+      "label_id", "label_config_hash", "label_family",
+      "n_events", "n_valid_labels", "n_insufficient_events", "n_ambiguous_events",
+      "label_tp_pct", "label_sl_pct", "label_time_pct",
+      "label_positive_rate", "event_overlap_fraction",
+      "barrier_pt_multiplier", "barrier_sl_multiplier",
+      "price_basis", "cost_model_version"
+    ],
+    "attach_label_diagnostics_method": true
+  },
+
+  "known_limitations": [
+    "No real Indian equity/F&O OHLCV data available in test environment — label distribution statistics are INSUFFICIENT_EVIDENCE.",
+    "sklearn (PurgedKFold integration test) not installed — 1 purging contract test skipped.",
+    "talib (ATR computation in features/technical.py) not installed — pipeline ATR integration test skipped.",
+    "Cost model is DATA_UNAVAILABLE by default — net returns not computed until broker API costs are populated.",
+    "Intraday tick data not available — intrabar ambiguity cannot be resolved below daily OHLCV granularity.",
+    "Sector peer universe for sector-relative labels requires a live data feed — returns DATA_UNAVAILABLE in offline tests.",
+    "Label distribution (TP%/SL%/TIME%) on real Indian market data is not yet characterised — expected class imbalance ~30/20/50 is an estimate only."
+  ],
+
+  "statistical_risks_remaining": [
+    {
+      "risk": "Class imbalance in TP/SL/TIME_LIMIT",
+      "severity": "MEDIUM",
+      "mitigation": "sample_weights.compute_average_uniqueness() reduces effective over-sampling; meta-label filters non-actionable events. Full characterisation requires real data."
+    },
+    {
+      "risk": "Intrabar ambiguity rate unknown on real daily data",
+      "severity": "LOW",
+      "mitigation": "CONSERVATIVE_SL is the default policy. Ambiguous events are tracked in LabelDiagnostics.ambiguous_count and surfaced in DatasetSnapshot."
+    },
+    {
+      "risk": "ATR-based barrier sizing may be too tight on high-volatility F&O underlyings (Nifty Bank, midcap)",
+      "severity": "MEDIUM",
+      "mitigation": "LabelConfig.min_volatility floor and per-symbol calibration deferred to Phase 3D."
+    },
+    {
+      "risk": "Event overlap fraction untested on real data — PurgedKFold embargo may need tuning",
+      "severity": "MEDIUM",
+      "mitigation": "build_t1_from_events() produces the correct t1 series structure. embargo_pct tuning deferred to Phase 3D."
+    }
+  ]
+}

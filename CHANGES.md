@@ -4,6 +4,103 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3C: Label V2 & Event-Based Target Engineering
+
+**Date:** 2026-09-06
+**Files changed:** 13 new files + 4 modified source files + 1 test file + 4 docs/reports
+**Tests:** 61 passed / 0 failed / 2 skipped (sklearn/talib absent — pre-existing env constraint)
+**Phase result:** PHASE_3C_PASS
+
+### Summary
+
+Replaces AlphaForge's simplistic ML targets with economically meaningful, event-based, leakage-safe labels for Indian equity/F&O. Every label now carries `event_start_time`, `event_end_time`, `label_available_time`, `label_config_hash`, and `label_version`. The long-standing simultaneous-barrier bug (`.any()` over full window with no first-touch ordering) is fixed. Three production bugs were caught and fixed by the test suite during this phase.
+
+### New Package: `ml-service/src/labels/`
+
+| File | Purpose |
+|------|---------|
+| `config.py` | `LabelConfig` (deterministic 16-char hash, versioned), `CostModelConfig` (default `DATA_UNAVAILABLE`) |
+| `schemas.py` | `LabelEvent`, `TripleBarrierLabel`, `FixedHorizonLabel`, `RiskOutcomeLabel`, `MetaLabel`, `SampleMetadata`, `LabelDiagnostics`; enums: `FirstTouch`, `Side`, `DirectionClass`, `PriceBasis`, `LabelFamily` |
+| `validators.py` | `LabelLeakageValidator` — 7 rules including outcome-in-features (CRITICAL) and incomplete-as-TIME_LIMIT (ERROR); PIT mutation check |
+| `registry.py` | `LABEL_REGISTRY` with active + deprecated labels; `get_label_config()`, `list_active_labels()` |
+| `triple_barrier.py` | Sequential bar scan; first-touch semantics; `CONSERVATIVE_SL`/`DATA_AMBIGUOUS` intrabar policy; long+short; `is_incomplete` → `DATA_INSUFFICIENT`; expiry-aware truncation |
+| `fixed_horizon.py` | Raw/vol-adjusted/directional forward-return labels; UTC-aware; tail completeness |
+| `meta_label.py` | `TAKE`/`SKIP` second-layer label; side-separated; `DATA_INSUFFICIENT` excluded |
+| `risk_outcomes.py` | MFE ≥ 0 / MAE ≤ 0 signed convention; per-event bar scan; long+short |
+| `sample_weights.py` | `compute_event_concurrency()`, `compute_average_uniqueness()`, `build_t1_from_events()` for PurgedKFold |
+| `relative.py` | Excess-vs-NIFTY with vol-normalisation; sector-relative with `DATA_UNAVAILABLE` policy; backward-compat adapter |
+
+### Changes to `ml-service/src/training/data_pipeline.py`
+
+- `generate_risk_labels()` now delegates to `generate_risk_labels_v2()` from `triple_barrier.py`, fixing the simultaneous-barrier bug with sequential first-touch scan
+- `generate_ranking_labels_v2()` delegates to `generate_ranking_labels_v2_compat()` in `relative.py`; returns `pd.Series` for backward compat
+- `generate_labels()` public API added — routes by `label_id` to the correct label engine
+- `validate_labels()` wrapper added — raises `RuntimeError` on CRITICAL violation
+- `LABEL_VERSION = 'lv2'`; `DATASET_VERSION` updated
+
+### Changes to `ml-service/src/data/dataset_version.py`
+
+- `DatasetSnapshot` extended with 14 new label provenance fields: `label_id`, `label_config_hash`, `label_family`, `n_events`, `n_valid_labels`, `n_insufficient_events`, `n_ambiguous_events`, `label_tp_pct`, `label_sl_pct`, `label_time_pct`, `label_positive_rate`, `event_overlap_fraction`, `barrier_pt_multiplier`, `barrier_sl_multiplier`, `price_basis`, `cost_model_version`
+- `attach_label_diagnostics()` method added
+- `LABEL_VERSION` bumped to `'lv2'`
+
+### Bugs Caught and Fixed by Phase 3C Tests
+
+| ID | Severity | Description | Fix |
+|----|----------|-------------|-----|
+| BUG-3C-001 | **Critical** | `_compute_atr_at_bar()` returned `close × 0.01` (absolute) instead of `0.01` (fractional ATR). For a ₹100 stock this produced ATR = 1.0 (100%), making barriers ±100% of entry. All events were silently misclassified as `TIME_LIMIT`. | Changed early-return to `return 0.01` |
+| BUG-3C-002 | High | `contract_expiry` not applied to `is_incomplete` early-exit path; entries at/after expiry were still generated | Added expiry cap in `is_incomplete` path; skip entries `>= contract_expiry` |
+| BUG-3C-003 | High | `pd.Timestamp(tz_aware_dt, tz='UTC')` raises `ValueError` in pandas ≥ 2.x | Added `_to_ts()` helper in `sample_weights.py` and `risk_outcomes.py` using `.tz_convert('UTC')` |
+
+### Static Analysis
+
+`grep -rn "shift(-" src/labels/ src/training/` found 4 occurrences. All classified **LABEL_ONLY** — none in feature-engineering paths. Leakage verdict: **CLEAN**.
+
+### New Tests: `ml-service/tests/test_phase3c.py`
+
+63 tests across 18 test classes:
+
+| Class | Tests | Coverage area |
+|-------|-------|---------------|
+| `TestLabelConfig` | 5 | Hash determinism, parameter isolation |
+| `TestTripleBarrierGoldenTP/SL/TimeLimit` | 7 | Golden-path: TP-first, SL-first, time-first |
+| `TestTripleBarrierLongShort` | 3 | Long/short semantics and gross return signs |
+| `TestIntrabarAmbiguity` | 3 | Both policies; must never silently be TP |
+| `TestIncompleteHorizon` | 2 | `DATA_INSUFFICIENT` vs `TIME_LIMIT` at tail |
+| `TestExpiryAware` | 1 | Event window respects contract expiry |
+| `TestTripleBarrierEdgeCases` | 3 | Zero price, naive index, barrier-at-first-bar |
+| `TestFixedHorizonLabels` | 5 | Raw return, directional class, tail completeness |
+| `TestMetaLabel` | 4 | TAKE/SKIP, side preservation, incomplete excluded |
+| `TestMFEMAE` | 3 | MFE ≥ 0 / MAE ≤ 0 for long and short |
+| `TestSampleWeights` | 4 | Concurrency, uniqueness, non-overlapping=1.0, t1 |
+| `TestRelativeLabels` | 3 | Excess return, DATA_UNAVAILABLE, compat adapter |
+| `TestValidators` | 4 | Rule 1, Rule 7, end-before-start CRITICAL |
+| `TestPITMutationLabels` | 2 | Future bar must not alter completed labels |
+| `TestPurgingContract` | 2 | t1 series alignment (1 skipped: sklearn absent) |
+| `TestRegistry` | 6 | Active labels, deprecated, hash uniqueness |
+| `TestPipelineIntegration` | 3 | generate_labels roundtrip, validate_labels raises |
+| `TestBackwardCompatibility` | 4 | Series return, LABEL_VERSION, DatasetSnapshot fields |
+
+### New Docs / Reports
+
+| File | Type |
+|------|------|
+| `reports/phase-3c-label-integrity.md` | Integrity report (human-readable) |
+| `reports/phase-3c-label-integrity.json` | Integrity report (machine-readable) |
+| `docs/ml-audit/phase-3c-label-v2.md` | Audit: invariants, bugs, backward compat, gaps |
+| `docs/ml-research/label-methodology.md` | Research: economic rationale, math, design decisions |
+
+### Documented Limitations (DATA_UNAVAILABLE — not fabricated)
+
+- Label distribution (TP%/SL%/TIME%) on real Indian equity/F&O data: `INSUFFICIENT_EVIDENCE`
+- Cost model: `DATA_UNAVAILABLE` — broker round-trip costs not yet populated
+- Sector peer universe for sector-relative labels: `DATA_UNAVAILABLE` offline
+- ATR barrier calibration per symbol/instrument: deferred to Phase 3D
+- PurgedKFold embargo_pct tuning: deferred to Phase 3D
+- lv1 labels in `models/market_regime.py`, `models/stock_ranker.py`, `models/strategy_selector.py`: deferred to Phase 3D
+
+---
+
 ## [Unreleased] — Phase 3B: Point-in-Time Data Foundation
 
 **Date:** 2026-09-06  

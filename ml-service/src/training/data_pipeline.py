@@ -99,7 +99,8 @@ def _get_pit_components():
 
 PIPELINE_VERSION = "v3.1"           # Phase 3B — PIT foundation added
 FEATURE_VERSION = "fv4"             # bump when feature set changes (RANKING_FEATURES etc.)
-DATASET_VERSION = f"af-{PIPELINE_VERSION}-{FEATURE_VERSION}"
+LABEL_VERSION   = "lv2"             # Phase 3C — Label V2 (triple-barrier, event-based)
+DATASET_VERSION = f"af-{PIPELINE_VERSION}-{FEATURE_VERSION}-{LABEL_VERSION}"
 
 # ─── F&O training universe ────────────────────────────────────────────────────
 
@@ -851,32 +852,21 @@ def generate_ranking_labels_v2(
     horizon: int = 5,
 ) -> pd.Series:
     """
-    Generate stock-ranking labels.
+    Generate stock-ranking labels — delegates to Label V2 relative module.
 
-    Returns risk-adjusted relative return vs NIFTY over `horizon` bars.
-    Future data is shifted BACKWARDS (forward-looking), then the result is
-    stored at timestamp t — the timestamp of the bar when we place the order.
+    Returns a pd.Series of vol-adjusted excess returns vs NIFTY.
+    Backward-compatible with existing callers in build_ranking_training_data().
 
-    Leakage note: the label at index i uses close[i+1..i+horizon], which is
-    by definition future data. This is intentional and correct — the model
-    is trained on (features at t) → (outcome after t). Features must never
-    use data after t.
+    .. deprecated::
+       Use :func:`src.labels.relative.generate_excess_return_labels` for
+       full provenance.  This wrapper is kept for pipeline compatibility.
     """
-    if len(stock_df) < horizon + 2:
-        return pd.Series(dtype=float)
-
-    stock_ret = stock_df["close"].pct_change()
-    nifty_ret = nifty_close.reindex(stock_df.index).pct_change()
-
-    # Forward return = mean daily return over next `horizon` bars
-    stock_fwd = stock_ret.shift(-1).rolling(horizon).mean().shift(-(horizon - 1))
-    nifty_fwd = nifty_ret.shift(-1).rolling(horizon).mean().shift(-(horizon - 1))
-
-    # Risk-adjusted: forward excess return / historical vol
-    excess = stock_fwd - nifty_fwd
-    vol = stock_ret.rolling(horizon * 2).std()
-    ra = (excess / (vol + 1e-8)).clip(-5, 5)
-    return ra
+    from ..labels.relative import generate_ranking_labels_v2_compat  # noqa: PLC0415
+    return generate_ranking_labels_v2_compat(
+        stock_df=stock_df,
+        nifty_close=nifty_close,
+        horizon=horizon,
+    )
 
 
 def generate_risk_labels(
@@ -887,52 +877,36 @@ def generate_risk_labels(
     lookforward: int = 20,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
-    Generate risk model labels at each bar.
+    Generate risk model labels — DEPRECATED wrapper around Label V2.
 
-    Simulates a long trade entry at close[t] with:
-      stop  = close[t] - stop_atr_mult   × ATR[t]
-      target= close[t] + target_atr_mult × ATR[t]
+    .. deprecated::
+       Use :func:`src.labels.triple_barrier.generate_risk_labels_v2` instead.
+       This function is retained for backward compatibility with train_all.py
+       and the existing risk model training loop.
 
-    Looks forward `lookforward` bars into low[] and high[] to determine:
-      stop_hit   : 1 if any future low ≤ stop  (else 0)
-      target_hit : 1 if any future high ≥ target (else 0)
-      mae        : max adverse excursion % (abs of min future drawdown from entry)
+    Changes from lv1:
+      ✓ Simultaneous TP+SL resolved sequentially (CONSERVATIVE_SL policy)
+      ✓ is_incomplete / DATA_INSUFFICIENT for tail bars
+      ✓ event_start/event_end timestamps in the returned label objects
 
-    Returned series are indexed identically to df — NaN at the tail where
-    there aren't enough future bars.
-
-    No future leakage: labels are computed purely from future OHLC. They are
-    NEVER used as input features.
+    Returns the same (stop_hit, target_hit, mae) tuple the callers expect.
     """
-    close = df["close"]
-    low = df["low"]
-    high = df["high"]
-    n = len(df)
+    from ..labels.triple_barrier import generate_risk_labels_v2  # noqa: PLC0415
+
+    y_stop, y_target, y_mae, _events = generate_risk_labels_v2(
+        df=df,
+        atr_series=atr_series,
+        stop_atr_mult=stop_atr_mult,
+        target_atr_mult=target_atr_mult,
+        lookforward=lookforward,
+        ambiguity_policy="CONSERVATIVE_SL",
+        symbol="pipeline",
+    )
+    return y_stop, y_target, y_mae
 
     stop_hit = pd.Series(np.nan, index=df.index, dtype=float)
     target_hit = pd.Series(np.nan, index=df.index, dtype=float)
     mae = pd.Series(np.nan, index=df.index, dtype=float)
-
-    for i in range(len(df) - lookforward):
-        entry = close.iloc[i]
-        atr_val = atr_series.iloc[i]
-        if atr_val <= 0 or entry <= 0 or np.isnan(atr_val) or np.isnan(entry):
-            continue
-
-        stop_price = entry - stop_atr_mult * atr_val
-        target_price = entry + target_atr_mult * atr_val
-
-        fwd_low = low.iloc[i + 1 : i + 1 + lookforward]
-        fwd_high = high.iloc[i + 1 : i + 1 + lookforward]
-
-        stop_hit.iloc[i] = 1.0 if (fwd_low <= stop_price).any() else 0.0
-        target_hit.iloc[i] = 1.0 if (fwd_high >= target_price).any() else 0.0
-        min_low = fwd_low.min()
-        raw_mae = abs(min((min_low - entry) / entry * 100, 0.0))
-        mae.iloc[i] = min(raw_mae, 20.0)  # cap at 20 % (Requirement #7)
-
-    return stop_hit, target_hit, mae
-
 
 def generate_regime_labels_v2(
     nifty_df: pd.DataFrame,
@@ -1366,6 +1340,122 @@ def _save_dataset(
 
     logger.info("dataset_saved", path=str(npz_path), records=row_count)
     return npz_path
+
+
+# ─── Label V2 public API (Phase 3C) ──────────────────────────────────────────
+
+
+def generate_labels(
+    ohlcv: pd.DataFrame,
+    label_id: str = "TRIPLE_BARRIER_V2_DAILY",
+    symbol: str = "UNKNOWN",
+    benchmark_close: pd.Series | None = None,
+    sector_close_map: dict | None = None,
+    atr_series: pd.Series | None = None,
+    contract_expiry: "datetime | None" = None,
+    **kwargs,
+) -> dict:
+    """
+    Public label generation API — routes to the correct Label V2 engine.
+
+    Parameters
+    ----------
+    ohlcv        : OHLCV DataFrame with UTC DatetimeIndex.
+    label_id     : Key in LABEL_REGISTRY (e.g. "TRIPLE_BARRIER_V2_DAILY").
+    symbol       : Trading symbol.
+    benchmark_close : Required for EXCESS_RETURN labels.
+    sector_close_map: Required for SECTOR_RELATIVE labels.
+    atr_series   : Pre-computed ATR for backward-compat risk labels.
+    contract_expiry: Optional contract expiry datetime.
+
+    Returns
+    -------
+    dict with keys:
+      "events"       : list of LabelEvent objects
+      "label_id"     : label_id used
+      "label_config" : LabelConfig used
+      "diagnostics"  : LabelDiagnostics summary
+    """
+    from ..labels.registry import get_label_registration    # noqa: PLC0415
+    from ..labels.triple_barrier import (                   # noqa: PLC0415
+        generate_triple_barrier_labels, label_diagnostics_triple
+    )
+    from ..labels.fixed_horizon import (                    # noqa: PLC0415
+        generate_fixed_horizon_labels, label_diagnostics_fixed
+    )
+    from ..labels.relative import generate_excess_return_labels  # noqa: PLC0415
+    from ..labels.schemas import LabelFamily                # noqa: PLC0415
+
+    reg    = get_label_registration(label_id)
+    config = reg.config
+
+    if reg.deprecated:
+        import warnings
+        warnings.warn(
+            f"Label '{label_id}' is deprecated: {reg.deprecation_note}",
+            DeprecationWarning, stacklevel=2,
+        )
+
+    if reg.label_family == LabelFamily.TRIPLE_BARRIER:
+        events = generate_triple_barrier_labels(
+            ohlcv=ohlcv, config=config, symbol=symbol,
+            contract_expiry=contract_expiry,
+        )
+        diag = label_diagnostics_triple(events, config)
+    elif reg.label_family == LabelFamily.EXCESS_RETURN:
+        if benchmark_close is None:
+            raise ValueError(
+                f"label_id='{label_id}' requires benchmark_close (e.g. NIFTY close series)"
+            )
+        events = generate_excess_return_labels(
+            ohlcv=ohlcv, benchmark_close=benchmark_close,
+            config=config, symbol=symbol,
+        )
+        diag = label_diagnostics_fixed(events, config)
+    elif reg.label_family == LabelFamily.FIXED_RETURN:
+        events = generate_fixed_horizon_labels(
+            ohlcv=ohlcv, config=config, symbol=symbol,
+        )
+        diag = label_diagnostics_fixed(events, config)
+    else:
+        raise NotImplementedError(
+            f"label_id='{label_id}' (family={reg.label_family}) "
+            "is not yet directly callable via generate_labels(). "
+            "Use the specific module API."
+        )
+
+    return {
+        "events":       events,
+        "label_id":     label_id,
+        "label_config": config,
+        "diagnostics":  diag,
+    }
+
+
+def validate_labels(
+    labels: list,
+    feature_columns: "Sequence[str] | None" = None,
+    feature_df: "pd.DataFrame | None" = None,
+    symbol: str = "*",
+) -> list:
+    """
+    Run all label leakage validators. Returns list of LabelViolation objects.
+    Raises RuntimeError if any CRITICAL violations are found.
+    """
+    from ..labels.validators import validate_labels as _validate  # noqa: PLC0415
+    violations = _validate(
+        labels=labels,
+        feature_columns=feature_columns,
+        feature_df=feature_df,
+        symbol=symbol,
+    )
+    critical = [v for v in violations if v.severity == "CRITICAL"]
+    if critical:
+        raise RuntimeError(
+            f"Label validation CRITICAL violations for {symbol}: "
+            + "; ".join(v.description for v in critical)
+        )
+    return violations
 
 
 # ─── Main pipeline orchestrator ───────────────────────────────────────────────

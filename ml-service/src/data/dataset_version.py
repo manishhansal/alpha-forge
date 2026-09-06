@@ -36,7 +36,7 @@ UTC = timezone.utc
 
 PIPELINE_VERSION = "v3.1"    # Phase 3B added PIT validation
 FEATURE_VERSION  = "fv4"     # Phase 3A feature set
-LABEL_VERSION    = "lv1"     # Phase 3A label set (no costs yet)
+LABEL_VERSION    = "lv2"     # Phase 3C Label V2 (triple-barrier, event-based)
 SCHEMA_VERSION   = "3b.0"    # DatasetSnapshot schema version
 
 
@@ -107,6 +107,53 @@ class DatasetSnapshot:
     source_versions:           dict[str, str] = field(default_factory=dict)
     is_reproducible:           bool = True
     reproducibility_notes:     str = ""
+
+    # ── Phase 3C label provenance fields ─────────────────────────────────
+    label_id:                  str = ""          # LABEL_REGISTRY key used
+    label_config_hash:         str = ""          # LabelConfig.hash
+    label_family:              str = ""          # LabelFamily value
+    label_horizons:            list[int] = field(default_factory=list)
+    barrier_pt_multiplier:     float = 0.0
+    barrier_sl_multiplier:     float = 0.0
+    price_basis:               str = "RAW"
+    cost_model_version:        str = "DATA_UNAVAILABLE"
+    n_events:                  int = 0           # total label events generated
+    n_valid_labels:            int = 0           # non-incomplete, non-insufficient
+    n_insufficient_events:     int = 0           # is_incomplete=True
+    n_ambiguous_events:        int = 0           # intrabar_ambiguous=True
+    label_tp_pct:              float | None = None
+    label_sl_pct:              float | None = None
+    label_time_pct:            float | None = None
+    label_positive_rate:       float | None = None  # for classification labels
+    event_overlap_fraction:    float | None = None
+
+    def attach_label_diagnostics(self, diag: object) -> None:
+        """
+        Populate label provenance fields from a LabelDiagnostics object.
+        Call this after generating labels to record their statistics.
+        """
+        try:
+            self.label_family         = getattr(diag, "label_family", "")
+            self.label_config_hash    = getattr(diag, "label_config_hash", "")
+            self.label_version        = getattr(diag, "label_version", self.label_version)
+            self.n_events             = getattr(diag, "sample_count", 0)
+            self.n_insufficient_events = getattr(diag, "incomplete_count", 0)
+            self.n_ambiguous_events   = getattr(diag, "ambiguous_count", 0)
+            self.n_valid_labels       = self.n_events - self.n_insufficient_events
+
+            tp_pct  = getattr(diag, "tp_pct", None)
+            sl_pct  = getattr(diag, "sl_pct", None)
+            t_pct   = getattr(diag, "time_pct", None)
+            pos_cnt = getattr(diag, "positive_count", None)
+
+            if tp_pct is not None:
+                self.label_tp_pct   = tp_pct
+                self.label_sl_pct   = sl_pct
+                self.label_time_pct = t_pct
+            if pos_cnt is not None and self.n_valid_labels > 0:
+                self.label_positive_rate = round(pos_cnt / self.n_valid_labels, 4)
+        except Exception:
+            pass  # Non-blocking — provenance fields stay at defaults
 
     # ── Serialization ────────────────────────────────────────────────────
 
