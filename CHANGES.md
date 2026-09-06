@@ -4,6 +4,67 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Forensic ML Audit: docs/ml-audit/
+
+**Date:** 2026-09-06  
+**Files changed:** 14 new files added under `docs/ml-audit/`  
+**Code modified:** 0 (read-only audit phase)  
+**Tests:** No changes to tests — audit identifies test gaps (see findings)
+
+### Summary
+
+A complete forensic audit of the `ml-service` was performed covering every source file, test, config, and documentation file. The audit inspects the full ML lifecycle: data ingestion → feature generation → label generation → dataset construction → train/val/test splitting → model training → model selection → calibration → ensemble → meta-model → risk → portfolio → signal generation → monitoring → model promotion.
+
+The audit found **research-grade architecture with several critical bugs that must be fixed before any model is treated as evidence of alpha**. All findings are documented without modifying application code.
+
+### New Documents
+
+| Document | Purpose |
+|---|---|
+| `docs/ml-audit/executive-summary.md` | Overall assessment, top critical/high/medium findings, risk ratings |
+| `docs/ml-audit/architecture.md` | System context, module map, ML lifecycle, dependency graph, component status |
+| `docs/ml-audit/data-audit.md` | Data sources, normalization, quality filtering, versioning, corporate actions |
+| `docs/ml-audit/feature-audit.md` | All 7 feature modules, leakage per feature, 150+ feature inventory |
+| `docs/ml-audit/label-audit.md` | Regime, ranking, risk, strategy label generation — temporal safety + cost gaps |
+| `docs/ml-audit/model-audit.md` | All 6 models — algorithm, training bugs, heuristic quality, OOS evidence status |
+| `docs/ml-audit/validation-audit.md` | Validation framework quality + the critical gap: framework exists but is unused |
+| `docs/ml-audit/calibration-audit.md` | Platt/isotonic calibrators — in-sample quality bug, ensemble weight dependency |
+| `docs/ml-audit/portfolio-audit.md` | HRP/CVaR via Riskfolio-Lib — functional but missing cost/liquidity constraints |
+| `docs/ml-audit/execution-audit.md` | RL executor (PPO) — action space, reward design, environment validation gaps |
+| `docs/ml-audit/monitoring-audit.md` | Drift detector, model registry, performance monitor — strong stack with registry↔ensemble gap |
+| `docs/ml-audit/leakage-audit.md` | Complete leakage taxonomy — all 9 confirmed instances with exact file/line locations |
+| `docs/ml-audit/india-market-audit.md` | India F&O specific audit: expiry, OI, PCR, ban list, lot sizes, corporate actions |
+| `docs/ml-audit/remediation-roadmap.md` | Component matrix (KEEP/FIX/REWRITE/REMOVE) + Top 20 prioritised problems + 4-phase remediation plan |
+
+### Critical Findings (Code NOT modified — must be addressed before retraining)
+
+| ID | Location | Issue |
+|---|---|---|
+| C1 | `training/train_all.py` | `train_regime_model()` and `train_strategy_model()` use `sklearn.train_test_split` with random shuffle — temporal leakage invalidates all regime/strategy OOS metrics |
+| C2 | `features/market_structure.py` | `detect_bos_choch()` uses `rolling(center=True)` — look-ahead: swing detection sees 5 future bars |
+| C3 | `features/volume.py` | `compute_vwap_distance_pct()` uses `cumsum()` over entire window — cross-session contamination for daily bars |
+| C4 | `meta/calibration.py` | `CalibrationStore.fit()` measures ECE/MCE/Brier on fitting data — in-sample quality scores bias ensemble weights |
+| C5 | `training/train_all.py` | `WalkForwardValidator` and `PurgedKFold` are tested and correct but never used in training |
+| C6 | `validation/metrics.py` | `ModelAcceptanceGate` never called from `train_all.py` — no evidence gate before model is saved |
+
+### What Is Genuinely Good
+
+- Walk-forward validation framework (`WalkForwardValidator`, `PurgedKFold`, `EmbargoApplier`) is production-grade and exceeds most open-source financial ML toolkits.
+- Abstention/NO_TRADE system with 7 independent gates (WAIT vs NO_TRADE distinction) is principled.
+- Drift monitoring (PSI + KS + JS), model registry state machine, and performance monitor are production-quality.
+- F&O-specific features (OI buildup, PCR scoring, IV rank, VPIN, expiry proximity) are India-native and well-implemented.
+- Label generation in `data_pipeline.py` correctly uses forward windows with point-in-time barriers.
+- Test suite is comprehensive for validation, meta-engine, and data pipeline components (15 test files, 3000+ tests overall).
+
+### Verdict
+
+**EXPERIMENTAL / RESEARCH_ONLY** — not production-ready.  
+Current status: **INSUFFICIENT_EVIDENCE** of OOS alpha. No trained model artifact constitutes valid evidence until Phase 1 (Leakage Eradication) fixes are applied and models are retrained from scratch.
+
+See `docs/ml-audit/remediation-roadmap.md` for the full 4-phase remediation plan (~120 hours total).
+
+---
+
 ## [Unreleased] — Proxy auth CSRF crypto crash fix (`Failed to fetch` on all /api/in/* routes)
 
 **Date:** 2026-09-04  
