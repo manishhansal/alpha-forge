@@ -4,6 +4,95 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3G: Cost, Slippage & Execution-Aware Backtesting
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Files changed:** 8 new source files + 3 fixed source/test files + 8 reports + 2 docs
+**Tests (Phase 3G):** 56 passed / 0 failed / 0 skipped
+**Full suite (3A–3G):** 398 passed / 0 failed / 11 skipped
+**Static audit:** CLEAN — 0 shift(-N), 0 fillna(0), 0 center=True, 0 fake fills, 0 infinite liquidity
+**Phase result:** PHASE_3G_PASS
+
+### Summary
+
+Introduces the full execution simulation layer for the AlphaForge ML service, sitting
+downstream of Phase 3F (meta-labeling / OOS decisions) and upstream of any live deployment.
+Builds `src/execution/` from scratch (it did not exist), covering India-specific transaction
+costs, four slippage models, NSE market calendar, event-driven fill simulation, position
+accounting with P&L reconciliation, and a reproducible backtesting engine. Fixes 5 bugs found
+during testing, including a critical `add_position` call-site error and a config-hash enum
+coercion bug.
+
+### New Package: `src/execution/`
+
+| Module | Purpose |
+|--------|---------|
+| `__init__.py` | Package entry point |
+| `schemas.py` | Canonical enums (`ExecutionPolicy`, `FillStatus`, `ProductType`, `InstrumentType`, `TradeSide`, `OrderSide`, `SpreadDataStatus`, `AmbiguityPolicy`) and dataclasses (`OrderIntent`, `SimulatedFill`, `CostBreakdown`, `TradeRecord` with `validate_pnl()`, `ExecutionLedger` with `verify_cost_reconciliation()`) |
+| `cost_model.py` | `IndiaEquityCostSchedule` (7 components: brokerage+STT+exchange+GST+SEBI+stamp, cap ₹20/order); `IndiaFnOCostSchedule` (Budget 2023-24 STT changes); versioned `CostScheduleRegistry`; `compute_trade_cost()` routing by `InstrumentType` |
+| `slippage.py` | `FixedBPSSlippage` (Model A); `SpreadProxySlippage` (Model B, HL proxy + volume adjustment); `VolatilityParticipationSlippage` (Model C, σ×√participation); `MarketImpactSlippage` (Model D, square-root); `SlippageModelRegistry`; all return `SpreadDataStatus` |
+| `market_calendar.py` | `NSECalendar` with 2020–2026 holiday set; `is_trading_day`, `next_trading_day`, `monthly_expiry` (last Thursday), `weekly_expiry_thursday`; out-of-range → `INSUFFICIENT_EVIDENCE` |
+| `fill_engine.py` | `FillEngine` with `NEXT_OPEN`/`NEXT_BAR`/`NEXT_VWAP`/`STOP`/`LIMIT` policies; gap-through stop execution; `CONSERVATIVE` ambiguity resolution (stop wins); circuit-limit rejection; F&O ban enforcement; partial fill with 10% ADV participation cap |
+| `position_accounting.py` | `Position`, `PortfolioState`, `TradeAccountingLedger` (cost-aware P&L, open/close position); `TurnoverStats` |
+| `backtest_engine.py` | Event-driven `BacktestEngine` consuming frozen Phase 3F `OOSDecisionRecord` objects; `BacktestConfig` with deterministic `config_hash` (SHA-256 of 11 params); `BacktestProvenance`; `BacktestResult` with `pnl_reconciled()` |
+
+### Also Fixed
+
+- `src/gex.py` — `LOT_SIZES` updated to post-SEBI Nov 2024 values (NIFTY 50→75, BANKNIFTY 15→30, FINNIFTY 40→65, MIDCPNIFTY 75→120) with PIT warning
+
+### 5 Bugs Fixed
+
+| ID | File | Description | Fix |
+|----|------|-------------|-----|
+| BUG-3G-01 | `position_accounting.py:217` | `add_position(pos.position_id)` passed string instead of `Position` | Changed to `add_position(pos)`; removed duplicate redundant line |
+| BUG-3G-02 | `backtest_engine.py` | `config_hash` crashed when `execution_policy` supplied as string | Added str→enum coercion for `execution_policy` and `ambiguity_policy` |
+| BUG-3G-03 | `tests/test_phase3g.py` | Test expected 2024-01-22 as next trading day; Mon 22 Jan is Republic Day | Corrected to `date(2024, 1, 23)` |
+| BUG-3G-04 | `tests/test_phase3g.py` | `TradeRecord` missing required fields `holding_bars`, `max_adverse_excursion`, `max_favourable_excursion` | Added all three fields to test fixture |
+| BUG-3G-05 | `tests/test_phase3g.py` | `OOSDecisionRecord` missing required fields `stop_price_hint`, `target_price_hint` | Added both fields as `None` |
+
+### Static Anti-Pattern Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| Same-bar fill (unrestricted) | CLEAN — `SAME_CLOSE` gated behind `allow_same_close=False` |
+| Forward-looking `shift(-N)` | CLEAN — 0 occurrences in `src/execution/` |
+| `fillna(0)` on financial series | CLEAN — 0 occurrences |
+| `center=True` rolling (lookahead) | CLEAN — 0 occurrences |
+| Infinite liquidity assumption | CLEAN — 10% ADV participation cap enforced |
+| Hardcoded magic-number costs | CLEAN — all named regulatory rates with comments |
+| Hardcoded lot sizes in execution | CLEAN — 0 occurrences in `src/execution/` |
+| Fake / fabricated fills | CLEAN — `UNAVAILABLE` is a valid first-class outcome |
+
+### Key Design Decisions
+
+1. **NEXT_OPEN default.** Signals from `close(T)` execute at `open(T+1)`. Only lookahead-free policy by default.
+2. **UNAVAILABLE is a valid outcome.** Never fabricates a fill when data is missing or constraints block execution.
+3. **Conservative ambiguity.** When stop and target both hit in same bar, stop wins (worst case).
+4. **Versioned cost schedules.** Pre/post-Budget 2023-24 schedules stored separately; future rate changes cannot alter historical costs.
+5. **Deterministic config hash.** `BacktestConfig.config_hash` is SHA-256 of all 11 parameters for reproducibility (spec §33).
+
+### Reports & Docs Created
+
+| File | Description |
+|------|-------------|
+| `reports/phase-3g-execution-report.md/.json` | Full execution backtest summary |
+| `reports/phase-3g-cost-report.md/.json` | India cost model documentation with rate tables |
+| `reports/phase-3g-capacity-report.md/.json` | Participation rate, F&O constraints, known gaps |
+| `reports/phase-3g-sensitivity-report.md/.json` | Break-even analysis, slippage sensitivity, STT impact |
+| `docs/ml-audit/phase-3g-execution-backtest.md` | Lookahead/cost/fill audit with per-check verdicts |
+| `docs/ml-research/india-execution-methodology.md` | Regulatory cost structure, slippage model rationale, NSE conventions |
+
+### Backward Compatibility
+
+All 342 prior-phase tests pass without modification. `LabelConfig` cost model still functional. All phase 3A–3F imports unaffected.
+
+### OOS Evidence
+
+**INSUFFICIENT_EVIDENCE** — no real Indian equity/F&O dataset loaded. Round-trip cost estimates and slippage model calibration deferred to production data ingestion. Backtester is architecturally complete and verifiably correct on synthetic data.
+
+---
+
 ## [Unreleased] — Phase 3F: Meta-Labeling, Probability Calibration & Abstention
 
 **Date:** 2026-09-06

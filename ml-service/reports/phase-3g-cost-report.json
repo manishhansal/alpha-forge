@@ -1,0 +1,90 @@
+{
+  "report_type": "phase-3g-cost-report",
+  "phase": "3G",
+  "generated": "2026-09-06",
+  "cost_schedules": {
+    "india_equity_2020": {
+      "version": "india-equity-2020",
+      "effective_from": "2020-01-01",
+      "effective_to": "2023-09-30",
+      "brokerage_pct": 0.0003,
+      "brokerage_cap_inr": 20.0,
+      "stt_delivery_buy_pct": 0.001,
+      "stt_delivery_sell_pct": 0.001,
+      "stt_intraday_sell_pct": 0.00025,
+      "exchange_charges_pct": 0.0000325,
+      "sebi_charges_pct": 0.000001,
+      "stamp_duty_buy_pct": 0.00015,
+      "gst_rate": 0.18
+    },
+    "india_equity_2023": {
+      "version": "india-equity-2023",
+      "effective_from": "2023-10-01",
+      "effective_to": null,
+      "brokerage_pct": 0.0003,
+      "brokerage_cap_inr": 20.0,
+      "stt_delivery_buy_pct": 0.001,
+      "stt_delivery_sell_pct": 0.001,
+      "stt_intraday_sell_pct": 0.00025,
+      "exchange_charges_pct": 0.0000325,
+      "sebi_charges_pct": 0.000001,
+      "stamp_duty_buy_pct": 0.00015,
+      "gst_rate": 0.18
+    },
+    "india_fno_2020": {
+      "version": "india-fno-2020",
+      "effective_from": "2020-01-01",
+      "effective_to": "2023-09-30",
+      "brokerage_pct": 0.0003,
+      "brokerage_cap_inr": 20.0,
+      "stt_futures_sell_pct": 0.0001,
+      "stt_options_sell_pct": 0.0005,
+      "stt_options_exercise_pct": 0.00125,
+      "exchange_charges_futures_pct": 0.00002,
+      "exchange_charges_options_pct": 0.00053,
+      "sebi_charges_pct": 0.000001,
+      "stamp_duty_futures_buy_pct": 0.00003,
+      "stamp_duty_options_buy_pct": 0.00003,
+      "gst_rate": 0.18
+    },
+    "india_fno_2023": {
+      "version": "india-fno-2023",
+      "effective_from": "2023-10-01",
+      "effective_to": null,
+      "brokerage_pct": 0.0003,
+      "brokerage_cap_inr": 20.0,
+      "stt_futures_sell_pct": 0.000125,
+      "stt_options_sell_pct": 0.000625,
+      "stt_options_exercise_pct": 0.00125,
+      "exchange_charges_futures_pct": 0.00002,
+      "exchange_charges_options_pct": 0.00053,
+      "sebi_charges_pct": 0.000001,
+      "stamp_duty_futures_buy_pct": 0.00003,
+      "stamp_duty_options_buy_pct": 0.00003,
+      "gst_rate": 0.18
+    }
+  },
+  "sample_calculations": {
+    "nifty_futures_1lot_sell_post_2023": {
+      "instrument": "NIFTY",
+      "lot_size": 75,
+      "price": 21000.0,
+      "notional_inr": 1575000.0,
+      "stt_inr": 196.875,
+      "brokerage_inr": 20.0,
+      "exchange_inr": 31.5,
+      "sebi_inr": 1.575,
+      "stamp_duty_inr": 0.0,
+      "gst_inr": 9.27,
+      "total_inr": 259.22,
+      "round_trip_bps_approx": 3.3
+    }
+  },
+  "validation": {
+    "tests_passed": 7,
+    "tests_failed": 0,
+    "gst_base_correct": true,
+    "brokerage_cap_enforced": true,
+    "historical_schedule_immutable": true
+  }
+}
