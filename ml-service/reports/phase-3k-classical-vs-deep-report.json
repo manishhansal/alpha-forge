@@ -1,0 +1,19 @@
+{
+  "report_type": "phase-3k-classical-vs-deep-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "classical_baseline_preserved": true,
+  "deep_standalone_superiority": "INSUFFICIENT_EVIDENCE",
+  "fair_comparison": {
+    "same_folds": true, "same_features": true, "same_labels": true,
+    "same_universe": true, "pit_scaler_train_fit_only": true,
+    "ic_via_phase3e": true, "fresh_model_per_fold": true,
+    "walk_forward_no_random_split": true
+  },
+  "baselines": ["LinearRanker", "RidgeRanker", "ElasticNetRanker",
+                "existing_StockRanker_via_BaseRanker(where sklearn imports)"],
+  "gbm_note": "LightGBM/XGBoost rankers require broken sklearn/lightgbm stack; harness accepts any BaseRanker",
+  "synthetic_pooled_rank_ic": {"ridge": 0.975, "linear": 0.975, "mlp": 0.954},
+  "error_correlation_surfaced": true,
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

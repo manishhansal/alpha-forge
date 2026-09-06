@@ -4,6 +4,91 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3K: Advanced ML / Deep-Learning Research & Incremental Alpha Validation
+
+**Date:** 2026-09-06  
+**Branch:** `refactor/improve-ml-service`  
+**Files changed:** 15 new source files + 1 test file + 13 reports/docs  
+**Tests (Phase 3K):** 55 passed / 0 failed / 0 skipped  
+**Full suite (3A–3K):** 820 passed / 0 failed / 19 skipped (pre-existing)  
+**Static audit:** CLEAN — 0 executable `np.random.*`, 0 `train_test_split`, 0 `random_state`, 0 `shift(-N)`, 0 `center=True`, 0 `latest.pkl`/`current_model`, 0 `fit_transform` (only in a docstring forbidding it), 0 `scaler.fit(` misuse  
+**Phase result:** PHASE_3K_PASS  
+**Research verdict:** NO_INCREMENTAL_ALPHA — INSUFFICIENT_EVIDENCE (no real dataset loaded; framework verified on deterministic synthetic data)
+
+### Summary
+
+Introduces the advanced-ML / deep-learning research layer (`src/deep/`). It
+determines whether advanced models (MLP, temporal CNN, LSTM/GRU,
+transformer-lite) provide credible, stable, INCREMENTAL out-of-sample
+information beyond the existing classical stack. The classical stack remains the
+baseline — deep learning is never assumed superior. This is a research /
+governance-integrated phase: NO auto-retraining, NO reinforcement learning, NO
+live execution, and NO auto-promotion of a deep model.
+
+### Framework decision
+
+Implemented framework-agnostic on a **pure-NumPy** neural backend for
+determinism and dependency-light reproducibility. In this environment
+(Python 3.14) torch is not importable in the interpreter and TensorFlow has no
+wheel; the NumPy backend runs everywhere and is bitwise reproducible. See
+`reports/phase-3k-current-deep-learning-audit.md` §3.1.
+
+### New Package: `src/deep/`
+
+| Module | Purpose |
+|--------|---------|
+| `schemas.py` | `DeepLearningExperiment`, `ExperimentStatus`, `ArchitectureFamily`, `TaskType`, `LossType`, `ComplexityClass`, `ModelValueClass`, `ContaminationStatus`, `OverfitStatus`, `DeepModelProvenance`, `LatencyProfile`, `ComplexityProfile` |
+| `experiment_registry.py` | `DeepExperimentRegistry` — reproducible experiments + Phase 3J challenger wiring; blocks `FINAL_OOS_CONTAMINATED` |
+| `sequence_builder.py` | PIT-safe versioned `SequenceBuilder` (left-pad only, no future data) |
+| `normalization.py` | `fit_scaler` (train-fit only), cross-sectional z/rank/sector-neutral |
+| `nn_backend.py` | deterministic NumPy `Dense`/`Dropout`/`AdamOptimizer`/`SeedBundle`; no global `np.random.*` |
+| `models.py` | compact `MLPRanker` (`BaseRanker`), early stopping on validation |
+| `temporal_models.py` | `CausalTemporalCNN`, `RecurrentRanker` (LSTM/GRU), `TransformerLiteRanker` (causal mask) |
+| `classical_baselines.py` | `LinearRanker`, `RidgeRanker`, `ElasticNetRanker` (pure NumPy) |
+| `comparison.py` | `WalkForwardComparator` — fair, same-fold/feature/label comparison |
+| `training.py` | `DataSplit`, `grid_search_hpo`, multi-seed robustness — validation-only selection |
+| `incremental_alpha.py` | incremental IC, residual model, ensemble (val-fit weights), disagreement/abstention |
+| `integration.py` | Phase 3F calibration, complexity/latency profiling, Phase 3I decay adapter |
+| `leakage_tests.py` | causality / future-scaler / future-label / label-permutation / negative-control / contamination probes |
+| `classification.py` | `classify_model_value` — SUPERIOR/COMPLEMENTARY/REDUNDANT/UNSTABLE/WORSE/INSUFFICIENT_EVIDENCE |
+
+### Reuse (no duplication)
+
+- Phase 3A `WalkForwardValidator` (no random splits)
+- Phase 3B `DatasetSnapshot` / PIT conventions, Phase 3C labels, Phase 3D features
+- Phase 3E `BaseRanker`, `compute_rank_ic` / `compute_ic`
+- Phase 3F `compute_calibration_metrics` (raw sigmoid never treated as calibrated)
+- Phase 3I `analyse_ic_decay`
+- Phase 3J `ModelRegistry` / `ChallengerRegistry` (every deep model is a challenger)
+- stdlib + numpy/scipy only — no new heavyweight dependency
+
+### Static Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| `np.random.*` in executable code | CLEAN (0; AST scan; only seeded `default_rng`) |
+| `train_test_split` / `random_state` | CLEAN (0) |
+| `shift(-N)` / `center=True` | CLEAN (0) |
+| `latest.pkl` / `current_model` | CLEAN (0) |
+| `fit_transform` on full dataset | CLEAN (0; only a docstring forbidding it) |
+| auto-promotion of a deep model | CLEAN (none; Phase 3J challenger only) |
+| arbitrary numeric complexity score | CLEAN (structured LOW/MODERATE/HIGH/VERY_HIGH) |
+
+### Reports & Docs
+
+`reports/phase-3k-current-deep-learning-audit.md`,
+`phase-3k-deep-learning-report.{md,json}`,
+`phase-3k-classical-vs-deep-report.{md,json}`,
+`phase-3k-incremental-alpha-report.{md,json}`,
+`phase-3k-model-complexity-report.{md,json}`,
+`phase-3k-seed-stability-report.{md,json}`,
+`phase-3k-experiment-registry-report.{md,json}`;
+`docs/ml-audit/phase-3k-deep-learning.md`,
+`docs/ml-research/deep-learning-methodology.md`,
+`docs/ml-research/temporal-neural-models.md`.
+
+---
+
 ## [Unreleased] — Phase 3J: Champion/Challenger, Model Registry & Evidence-Gated Promotion
 
 **Date:** 2026-09-06  

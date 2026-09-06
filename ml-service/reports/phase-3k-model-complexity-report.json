@@ -1,0 +1,27 @@
+{
+  "report_type": "phase-3k-model-complexity-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "complexity_is_structured_not_numeric": true,
+  "classes": ["LOW", "MODERATE", "HIGH", "VERY_HIGH"],
+  "criteria": ["parameter_count", "sequential_recurrence", "attention_mechanism",
+               "requires_gpu", "dependency_count"],
+  "model_complexity": {
+    "MLP": "LOW",
+    "TemporalCNN": "LOW_TO_MODERATE",
+    "LSTM": "MODERATE",
+    "GRU": "MODERATE",
+    "TransformerLite": "HIGH",
+    "hypothetical_large_gpu_attention": "VERY_HIGH"
+  },
+  "latency": {
+    "metrics": ["mean_ms", "median_ms", "p95_ms", "p99_ms"],
+    "tail_requires_min_observations": 20,
+    "hardware_note": "research CPU arm64; production may differ",
+    "numpy_models_sub_millisecond": true
+  },
+  "model_size": {"mlp_state_bytes_example": 2056, "large_models": false},
+  "data_requirement": "INSUFFICIENT_EVIDENCE (no real dataset)",
+  "complexity_adjusted_decision": "no model justifies added complexity given NO_INCREMENTAL_ALPHA",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}
