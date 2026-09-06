@@ -4,6 +4,49 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Post-Audit Verification: docs/ml-audit/ (13 new documents)
+
+**Date:** 2026-09-06  
+**Files changed:** 13 new files added under `docs/ml-audit/`; 1 file updated (`CHANGES.md`)  
+**Code modified:** 0 (audit-only phase)  
+**Decision:** **BLOCK_PHASE_3** — 10 blocking issues confirmed unresolved
+
+### Summary
+
+A rigorous post-audit verification of Prompts 1 and 2 changes was performed. All original audit findings were independently re-verified against source code. The test suite was executed. All leakage patterns were searched with grep + manual inspection. A GO/NO-GO decision was rendered.
+
+**Result: BLOCK_PHASE_3.** All 10 Phase 3 prerequisites remain unmet.
+
+### New Documents
+
+| Document | Purpose |
+|---|---|
+| `post-audit-diff.md` | Confirms branch vs master: only docs changed; zero production code changes |
+| `finding-verification.md` | All 18 Prompt 1 findings independently re-verified; 2 were imprecise (M4 VOLATILE label, M6 Thursday hardcoding) |
+| `research-verification.md` | All Prompt 2 recommendations evaluated; 3 marked DO_NOT_ADOPT; priority order given |
+| `current-ml-architecture.md` | Complete verified end-to-end ML pipeline trace with gaps annotated |
+| `leakage-verification.md` | 6 confirmed leakage instances with file/line/mechanism/proof |
+| `survivorship-audit.md` | Static universe confirmed; no PIT registry; magnitude ~0.01-0.03 IC inflation |
+| `label-audit.md` | All 6 labels audited; simultaneous stop+target bug confirmed; costs absent everywhere |
+| `validation-audit.md` | WalkForward/PurgedKFold/CPCV all correct in isolation; all unused in training |
+| `model-audit.md` | All 11 models classified; all currently HEURISTIC; zero OOS evidence for any model |
+| `backtest-audit.md` | Zero transaction cost modelling anywhere; systematic gross-only performance inflation |
+| `india-market-audit.md` | 6 READY, 7 PARTIAL, 14 MISSING, 2 INCORRECT India-specific elements |
+| `test-quality-audit.md` | 131 pass / 146 fail / 7 errors; all failures due to missing env deps; train_all.py has 0 tests |
+| `phase-3-readiness.md` | BLOCK_PHASE_3 with 10 exact required fixes and success criteria |
+
+### Key Corrections to Prompt 1 Audit
+
+Two original findings were imprecise and corrected:
+- **M4 VOLATILE label**: NOT look-ahead. The `realized_atr_pct` is trailing. The label mixes past volatility with future direction (legitimate design, not leakage).
+- **M6 Thursday hardcoding**: No hardcoded "Thursday" string exists. The gap is a missing NSE expiry calendar — expiry values must be supplied by callers.
+
+### Blocking Issues Confirmed
+
+All 10 blocking issues were independently re-verified with exact file/line evidence. None were introduced by Prompts 1 or 2. All pre-exist in master.
+
+---
+
 ## [Unreleased] — ML Research Architecture Benchmark: docs/ml-research/
 
 **Date:** 2026-09-06  

@@ -1,243 +1,148 @@
-# AlphaForge ML Service — India Market Audit
+# India Market Audit: Classification of India-Specific Coverage
 
-**Audit Date:** 2026-09-06  
-**Scope:** India-specific market microstructure, F&O dynamics, regulatory requirements, and their representation in the ML pipeline
-
----
-
-## 1. India NSE F&O Context
-
-AlphaForge targets Indian NSE F&O equities — a market with specific structural characteristics that differ significantly from US or European equities:
-
-| Characteristic | NSE F&O | Impact on ML |
-|---|---|---|
-| Trading hours | 09:15–15:30 IST (375 min) | Session-specific feature zones are India-specific |
-| Lot sizes | Fixed per-symbol (15–1500 shares) | Portfolio weights cannot be fractional |
-| Weekly expiry | Every Thursday (Bank Nifty, Nifty 50, FinNifty) | Expiry effects dominate Thursday behaviour |
-| Monthly expiry | Last Thursday of month | Rollover creates OI discontinuities |
-| Circuit breakers | ±20% individual stocks, ±5/10/15% index | Liquidity vanishes at circuit limits |
-| STT on sell | 0.1% on equity delivery | Asymmetric cost structure |
-| Margin requirements | SEBI SPAN + Exposure margins | Position limits change with VIX |
-| F&O ban list | Stocks with OI >95% of MWPL | Changes daily; must be excluded from signals |
+**Verification Date:** 2026-09-06  
+**Method:** Direct code inspection. Each feature, assumption, and design decision verified against actual NSE/SEBI rules.
 
 ---
 
-## 2. What the Codebase Gets Right
+## Classification Legend
 
-### 2.1 Session Time Features
-
-`compute_time_features()` in `macro.py` correctly divides the NSE session into India-specific zones:
-- Opening volatility: 0–30 min (09:15–09:45)
-- Mid-morning: 30–90 min
-- Lunch lull: 90–210 min
-- Afternoon trend: 210–300 min
-- Power hour: 300–375 min (14:15–15:30)
-
-Cyclical encoding (sin/cos) is included for neural model compatibility. **This is well-designed.**
-
-### 2.2 F&O Expiry Proximity
-
-`compute_expiry_features()` produces:
-- `is_expiry_day` binary flag
-- `days_to_weekly_expiry`, `days_to_monthly_expiry`
-- `weekly_theta_pressure = 1/max(days, 0.5)` — captures theta decay acceleration
-
-**The hyperbolic theta pressure is appropriate.** On expiry Thursday, near-ATM options have near-zero time value and gamma exposure is extreme.
-
-### 2.3 OI Build-up Quadrant Classification
-
-The 4-quadrant OI buildup model (`LONG_BUILDUP / SHORT_BUILDUP / SHORT_COVERING / LONG_UNWINDING`) maps price change vs OI change to directional signals. This is a genuine F&O insight:
-- Long Buildup (price↑ + OI↑): new longs entering, **bullish**
-- Short Buildup (price↓ + OI↑): new shorts entering, **bearish**
-- Short Covering (price↑ + OI↓): shorts exiting, **short-term bullish but weakening**
-- Long Unwinding (price↓ + OI↓): longs exiting, **short-term bearish but weakening**
-
-**This is a genuine India F&O edge.** Indian retail and institutional participants are highly active in monthly and weekly expiry positioning, making OI signals more predictive than in many other markets.
-
-### 2.4 PCR Interpretation
-
-The PCR scoring function in `derivatives.py`:
-```python
-# PCR > 1.3 → bullish (PE writers dominating → market supported)
-# PCR < 0.7 → bearish (CE writers dominating → market capped)
-return np.clip((pcr - 1.0) / 0.5, -1.0, 1.0)
-```
-
-This is the standard Indian options market interpretation of PCR. Indian options markets are predominantly driven by institutional and HNI option writing, so a high PCR genuinely signals strong PE writing (put selling) which is a bullish hedging posture.
-
-### 2.5 India VIX Regime
-
-`compute_vix_features()` uses India-specific VIX thresholds:
-- VIX < 13: low (Indian markets rarely sustain VIX < 12 for long)
-- VIX 13–18: moderate (typical NSE range)
-- VIX 18–25: high
-- VIX > 25: extreme (2020 COVID: VIX hit 90; 2008: 85)
-
-**The thresholds are reasonable for Indian market history.**
-
-### 2.6 Inter-Market Features
-
-`compute_intermarket_features()` correctly models India-specific correlations:
-- BankNifty vs Nifty spread (Bank sector leadership in Indian markets)
-- US futures impact (SGX Nifty / Dow pre-market)
-- Crude oil impact (negative for India as net importer)
-- USD/INR (rupee depreciation = equity headwind for FII flows)
-
-The composite global sentiment formula:
-```python
-global_sum = (us_futures or 0) - (crude or 0) * 0.3 - (dollar_inr or 0)
-```
-Crude gets a 0.3 dampening factor and USD/INR is subtracted — roughly correct directional influences.
-
----
-
-## 3. India-Specific Gaps
-
-### 3.1 F&O Ban List
-
-**No handling of the NSE F&O ban list.** When a stock's OI exceeds 95% of the Market-Wide Position Limit (MWPL), it enters the F&O ban period — new positions cannot be opened. During a ban, OI data is distorted (only closing trades allowed), PCR signals are unreliable, and the stock must be excluded from signal generation.
-
-The `TRAINING_UNIVERSE` does not exclude stocks that may have been in ban periods during the training window. This creates distorted OI signals in historical training data.
-
-### 3.2 Rollover Dynamics
-
-**No rollover-specific features.** In the last few days of a monthly expiry (typically Tuesday–Thursday before expiry), F&O participants roll positions from the expiring series to the next month. This creates:
-- Artificial OI increase in the next month
-- Suppressed current-month OI
-- Widened basis (spot vs futures price)
-- Elevated OI volatility
-
-The `compute_expiry_features()` captures theta pressure but not rollover-specific OI dynamics. A "days_to_rollover_start" feature and OI-series split tracking would improve accuracy.
-
-### 3.3 FII/DII Flow Data
-
-`compute_regime_features()` includes `fii_net_cr` in the `market_data` dict but the `REGIME_FEATURES` list does not include it. Foreign Institutional Investor (FII) and Domestic Institutional Investor (DII) daily net buy/sell data is a genuine regime indicator in Indian markets — FII selling under rupee depreciation is a leading bear signal.
-
-### 3.4 Delivery Percentage
-
-`delivery_pct` is correctly included as a feature (from the data client). In NSE, delivery % (fraction of traded volume that resulted in actual delivery vs intraday squaring) is a genuine quality indicator — high delivery % with volume breakout is a strong institutional accumulation signal.
-
-**Assessment: Feature exists and is weighted in `_compute_heuristic_score()`. Good.**
-
-### 3.5 Lot Size Constraints
-
-No lot-size constraint is modelled anywhere in the pipeline. NSE F&O positions must be in multiples of lot sizes:
-- NIFTY: 50 units
-- BANKNIFTY: 15 units
-- HDFCBANK: 550 units
-- etc.
-
-A continuous position size of 7.3% portfolio weight cannot be directly traded. The execution layer must reconcile fractional weights to lot boundaries.
-
-### 3.6 Circuit Breaker Handling
-
-**No circuit breaker awareness.** If a stock hits a 20% circuit breaker:
-- The close price is the circuit limit, not a market-clearing price
-- Volume may be very low (only buyers or only sellers)
-- ATR computed from such a day is misleading
-- The following day's gap is extreme and should not be treated as a normal gap
-
-`data_pipeline.py` has quality flags (SUSPICIOUS) that may catch some circuit-breaker days, but there is no explicit circuit-breaker detection in the normalisation layer.
-
-### 3.7 T+1 Settlement Cycle
-
-NSE moved to T+1 settlement for equities in January 2023. This changes the carry cost of positions and the delivery % calculation. Historical data before vs after the T+1 migration may have different statistical properties for delivery-based features.
-
-### 3.8 Pre-Market Session
-
-NSE has a pre-market session (09:00–09:15) with call auction. The gap feature `compute_gap_pct()` uses the regular market open, not the pre-market price. This is correct for most purposes, but the pre-market auction price may better represent the genuine opening sentiment.
-
----
-
-## 4. Regime Calibration for India
-
-The regime heuristic thresholds in `MarketRegimeClassifier._predict_heuristic()` use India-appropriate values:
-
-| Threshold | Value | India Context |
-|---|---|---|
-| CRASH: VIX > 30 | Reasonable | NSE VIX > 30 seen in COVID, 2008, 2020 elections |
-| CRASH: Nifty < -3% daily | Reasonable | Very rare (15–20 times in past decade) |
-| STRONG_BULL: VIX < 13 | Slightly tight | India VIX avg ~14; < 13 is low |
-| SIDEWAYS: ADX < 18 | Reasonable for daily bars | |
-| PCR > 1.2 for bull confirmation | Good | High PCR = heavy put selling = institutional hedge |
-
-**Assessment:** Thresholds are India-appropriate. They are not calibrated to historical data distributions but are reasonable starting points.
-
----
-
-## 5. Market Microstructure Gaps
-
-### 5.1 Impact Costs
-
-The National Stock Exchange publishes "impact cost" (a liquidity measure) for F&O stocks. This is an estimate of the percentage price impact of a standard ₹1 lakh order. Stocks with high impact costs have higher effective execution costs and should receive lower position sizes.
-
-This is not incorporated in the feature set or position sizing.
-
-### 5.2 Open Interest in Multiple Expiries
-
-Indian F&O markets have weekly and monthly expiries simultaneously. The current OI features aggregate across all expiries:
-```python
-features["pcr_oi"] = total_pe_oi / total_ce_oi
-```
-
-A more informative approach would separate current-week OI from current-month OI from next-month OI — the relative OI distribution across expiries reveals positioning patterns (e.g., heavy near-term PE buying vs far-month CE selling).
-
-### 5.3 Nifty vs Stock-Level Signals
-
-The model generates per-stock signals but does not account for the fact that most Indian F&O stocks have beta close to 1 and are highly correlated with Nifty. A portfolio of 20 high-scoring F&O stocks is not 20 independent bets — it is largely a leveraged Nifty position with some stock-selection alpha.
-
-The relative strength features (`relative_strength_vs_nifty`, `sector_relative_strength`) partially address this, but there is no beta-neutralisation or tracking-error budgeting in the portfolio construction layer.
-
----
-
-## 6. Regulatory Considerations
-
-### 6.1 SEBI Regulations
-
-- SEBI requires position limits per client in F&O — the system does not model client-level position limits.
-- SEBI has capital gain tax implications for intraday vs delivery trades — tax is not modelled in returns.
-- STT (Securities Transaction Tax) for F&O: 0.05% on sell (premium-based for options) — this is a meaningful cost for high-frequency strategies.
-
-### 6.2 RBI Currency Controls
-
-USD/INR movements affect FII flows. Large depreciations (> 1% in a day) historically trigger FII outflows. This is captured via `dollar_inr_change` in inter-market features but without explicit threshold modelling.
-
----
-
-## 7. Assessment Summary
-
-| India-Specific Element | Present | Correct | Complete |
-|---|---|---|---|
-| NSE session time zones | ✅ | ✅ | ✅ |
-| Weekly/monthly expiry features | ✅ | ✅ | ⚠️ No rollover |
-| OI buildup quadrants | ✅ | ✅ | ✅ |
-| PCR interpretation | ✅ | ✅ | ✅ |
-| India VIX regime | ✅ | ✅ | ✅ |
-| BankNifty vs Nifty spread | ✅ | ✅ | ✅ |
-| Delivery percentage feature | ✅ | ✅ | ✅ |
-| F&O ban list | ❌ | N/A | ❌ |
-| FII/DII flow data | ⚠️ Partial | — | ❌ Not in REGIME_FEATURES |
-| Lot size constraints | ❌ | N/A | ❌ |
-| Circuit breaker handling | ❌ | N/A | ❌ |
-| Rollover dynamics | ❌ | N/A | ❌ |
-| Corporate action adjustment | ❌ | N/A | ❌ |
-| T+1 settlement impact | ❌ | N/A | ❌ |
-| Transaction costs (STT etc.) | ❌ | N/A | ❌ |
-| Impact costs / liquidity | ❌ | N/A | ❌ |
-
----
-
-## 8. Recommendations
-
-| Priority | Action |
+| Status | Meaning |
 |---|---|
-| 🔴 CRITICAL | Add F&O ban list filtering — exclude banned symbols from signal generation and training |
-| 🔴 HIGH | Add NSE transaction cost model (brokerage + STT + SEBI + stamp + exchange) |
-| 🔴 HIGH | Verify corporate action adjustment for all OHLCV data (splits, bonuses, rights issues) |
-| 🟡 MEDIUM | Add rollover detection features (days to next-month expiry shift in OI distribution) |
-| 🟡 MEDIUM | Include FII/DII net flow in REGIME_FEATURES (already parsed, not wired) |
-| 🟡 MEDIUM | Add lot-size reconciliation in portfolio and execution layers |
-| 🟡 MEDIUM | Add circuit breaker detection in OHLCV normalisation (flag days where close = high or close = low AND volume is abnormally low) |
-| 🟢 LOW | Add NSE impact cost as a liquidity-adjusted position size factor |
-| 🟢 LOW | Separate near-term vs far-term OI in PCR calculation |
-| 🟢 LOW | Add T+1 settlement regime flag (pre- and post-January 2023) |
+| `READY` | Correctly implemented and current |
+| `PARTIAL` | Implemented but incomplete or outdated |
+| `MISSING` | Not implemented; gap exists |
+| `INCORRECT` | Implemented but wrong per current NSE/SEBI rules |
+
+---
+
+## NSE Instruments and Markets
+
+| Area | Status | Evidence |
+|---|---|---|
+| NIFTY 50 as primary index | READY | Used as benchmark throughout `data_pipeline.py`; `TRAINING_UNIVERSE` includes "NIFTY" |
+| BANKNIFTY | READY | `compute_regime_features()` accepts banknifty_ohlcv; bank_nifty_spread computed |
+| FINNIFTY | PARTIAL | In `TRAINING_UNIVERSE` as "FINNIFTY" but no FINNIFTY-specific features |
+| MIDCPNIFTY | PARTIAL | In `TRAINING_UNIVERSE` but no MIDCPNIFTY-specific features |
+| F&O stock universe | PARTIAL | 50 stocks included; static list; no PIT eligibility |
+
+---
+
+## F&O Market Mechanics
+
+| Area | Status | Evidence | Notes |
+|---|---|---|---|
+| **PCR (Put-Call Ratio)** | READY | `compute_pcr_score()` in `derivatives.py`; centre at 1.0, clip ±1 | PCR interpretation correct for India. However, should use 252-day percentile not absolute level (see finding M6). |
+| **OI buildup quadrants** | READY | `compute_oi_buildup_score()` — 4 quadrant system | Correct NSE F&O interpretation. |
+| **IV rank** | PARTIAL | `compute_iv_rank()` correct but fallback is fake history | Fix fallback to return 50.0 |
+| **IV percentile** | READY | `compute_iv_percentile()` correct | More robust than IV rank for tail events |
+| **ATM skew** | PARTIAL | `DerivativesSnapshot.atm_skew` field exists in data layer | Not yet used as a feature in RANKING_FEATURES |
+| **Max pain** | READY | `compute_max_pain_distance()` — % distance from spot to max-pain strike | India-specific; relevant especially for weekly expiry |
+| **OI walls (CE/PE)** | READY | `compute_oi_wall_proximity()` — CE wall (resistance), PE wall (support) | Correct NSE F&O concept |
+| **Delta-weighted OI** | PARTIAL | Total CE/PE OI used but not delta-weighted | Delta-weighted OI is more informative for options chains |
+| **Delivery %** | READY | `delivery_pct` feature present; used as quality gate in ranker heuristic | NSE-specific; genuine quality signal |
+| **VPIN** | READY | `compute_vpin()` in `volume.py` | Theoretically grounded; India-appropriate |
+
+---
+
+## India VIX
+
+| Area | Status | Evidence |
+|---|---|---|
+| **India VIX level** | READY | `compute_vix_features()` in `macro.py`; VIX in REGIME_FEATURES |
+| **VIX regime classification** | READY | 4 regimes: <13 low, 13-18 moderate, 18-25 high, >25 extreme |
+| **VIX percentile** | READY | 252-day rolling percentile computed |
+| **VIX mean reversion** | READY | Z-score vs 252-day history |
+| **VIX change %** | READY | Day-over-day change computed |
+| **India VIX thresholds** | PARTIAL | Thresholds are reasonable (India mean ~14-16) but not calibrated to historical distribution |
+
+---
+
+## Expiry Effects
+
+| Area | Status | Evidence |
+|---|---|---|
+| **Expiry day flag** | PARTIAL | `is_expiry_day` feature exists; computed from caller-supplied parameter | No internal NSE calendar |
+| **Days to weekly expiry** | PARTIAL | Feature exists; default fallback is 5 (arbitrary) | Caller must supply correct value |
+| **Days to monthly expiry** | PARTIAL | Feature exists; default fallback is 20 (arbitrary) | Caller must supply correct value |
+| **Theta pressure features** | READY | `weekly_theta_pressure = 1/max(days, 0.5)` — hyperbolic decay correct | Appropriate for NSE |
+| **NSE expiry calendar** | **MISSING** | No calendar embedded in code | Critical gap |
+| **Weekly expiry day** | **INCORRECT** | No hardcoded day, but no calendar → caller-dependent; default assumes 5 days to expiry | NSE changed weekly expiry to Tuesday (Sep 1, 2025) from Thursday |
+| **Rollover period detection** | **MISSING** | Not implemented | Last 3 days of monthly cycle; OI distorted during rollover |
+| **Expiry contract selection** | **MISSING** | No logic to select near vs far expiry OI data | Critical for multi-expiry OI analysis |
+
+---
+
+## Market Microstructure
+
+| Area | Status | Evidence |
+|---|---|---|
+| **Session time zones** | READY | `compute_time_features()` — 5 zones (opening 0-30min, mid-morning 30-90, lunch 90-210, afternoon 210-300, power hour 300-375) | Correct NSE session (09:15-15:30, 375 min) |
+| **Pre-open session (09:00-09:15)** | MISSING | Not modelled | Call auction; price discovery |
+| **BankNifty vs Nifty spread** | READY | `bank_nifty_spread` feature | India-specific risk-on/off indicator |
+| **Sector rotation** | READY | `compute_sector_rotation_score()` — Z-scores per sector, cyclicals vs defensives | India-appropriate sector classification |
+| **Advance/Decline ratio** | READY | `compute_advance_decline_ratio()` — normalised (-1, 1) | Standard market breadth |
+| **Market breadth (% above SMA)** | READY | `compute_market_breadth()` — 20/50/200 SMA thresholds | Correct |
+| **Breadth thrust** | INCORRECT | Always returns 0.0 | Dead feature |
+| **FII/DII flows** | PARTIAL | `fii_net_cr` parsed but not in REGIME_FEATURES | Missing important signal |
+
+---
+
+## Regulatory and Compliance
+
+| Area | Status | Evidence |
+|---|---|---|
+| **F&O ban list** | **MISSING** | Zero code for ban list filtering | Daily MWPL-based ban; regulatory non-compliance risk |
+| **MWPL utilisation** | **MISSING** | No MWPL data or tracking | Ban warning signal not available |
+| **SEBI lot size changes (Nov 2024)** | **MISSING** | Not modelled; OI normalisation may be inconsistent across this date | Large lots now; historical OI at different scale |
+| **T+1 settlement (from Jan 2023)** | **MISSING** | Not flagged | Delivery % calculation semantics changed |
+| **Circuit breakers** | **MISSING** | Not detected in normalisation | Circuit days produce invalid OHLCV |
+| **SEBI algo trading registration** | **MISSING** | Not documented | Regulatory requirement for live trading |
+| **Position limits per SEBI** | **MISSING** | Not enforced | Risk management requirement |
+
+---
+
+## Inter-Market Features
+
+| Area | Status | Evidence |
+|---|---|---|
+| **US futures impact** | READY | `us_futures_change` in `compute_intermarket_features()` | Correct SGX Nifty / Dow pre-market proxy |
+| **Crude oil impact** | READY | `crude_change` with 0.3 dampening | India = net importer; negative impact on equities |
+| **USD/INR impact** | READY | `dollar_inr_change` | Rupee depreciation → FII outflows → equity headwind |
+| **Global sentiment composite** | READY | Weighted combination of above | Reasonable formulation |
+| **RBI monetary policy events** | **MISSING** | Not modelled | ±50bps moves significant for Financials sector |
+| **Union Budget proximity** | **MISSING** | Not modelled | Feb 1 event; highest pre-event IV of the year |
+| **Election results proximity** | **MISSING** | Not modelled | Extreme volatility events |
+
+---
+
+## Options Analytics
+
+| Area | Status | Evidence |
+|---|---|---|
+| **Black-Scholes greeks** | READY | `src/greeks.py` — delta, gamma, vega, theta | Tests pass (test_greeks — missing mibian but structure correct) |
+| **IV surface** | READY | `src/vol_surface.py` — term structure, SVI fitting | Advanced; requires scipy (missing in test env) |
+| **GEX (Gamma Exposure)** | READY | `src/gex.py` — per-strike and aggregate GEX | Tests pass fully (29/29 in test_gex.py) |
+| **IV carry (VIX - HV)** | **MISSING** | Feature not computed anywhere | India VRP premium; should be added |
+| **Skew features** | PARTIAL | `atm_skew` in DerivativesSnapshot but not used as feature | Risk reversal / call vs put premium |
+
+---
+
+## Summary Scorecard
+
+| Category | READY | PARTIAL | MISSING | INCORRECT |
+|---|---|---|---|---|
+| F&O mechanics (PCR, OI, IV) | 6 | 4 | 0 | 0 |
+| Expiry effects | 3 | 2 | 3 | 1 |
+| Market microstructure | 5 | 1 | 2 | 1 |
+| Regulatory/compliance | 0 | 0 | 6 | 0 |
+| Inter-market | 4 | 0 | 3 | 0 |
+| Options analytics | 3 | 1 | 1 | 0 |
+
+**Most critical missing items (ranked by trading impact):**
+1. F&O ban list — regulatory non-compliance if unaddressed
+2. NSE expiry calendar — all expiry features unreliable without it
+3. Transaction costs — systematic alpha inflation
+4. IV carry feature — genuine India return premium
+5. Corporate action adjustment — potential data integrity issue
+6. Circuit breaker day detection — corrupted OHLCV on those days
