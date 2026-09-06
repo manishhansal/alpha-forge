@@ -4,6 +4,62 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3A: Leakage Eradication + Training Pipeline Reconstruction
+
+**Date:** 2026-09-06  
+**Files changed:** 20 files modified/created (16 source + 1 new source + 1 new test + 2 doc)  
+**Tests:** 39 passed / 7 skipped (env deps) / 0 failed | Pre-existing: 131 pass, 9 fail (unchanged)  
+**Phase result:** PHASE_3A_PASS
+
+### Summary
+
+Implemented all BLOCKING fixes identified in the Phase 3A audit. The training pipeline is now statistically valid — no model can be trained and saved without passing through temporal splits, label-aware embargo, and the ModelAcceptanceGate. All critical leakage bugs are corrected.
+
+### Critical Fixes
+
+| Fix | File | Before | After |
+|---|---|---|---|
+| C1 Random splits | `train_all.py` | `train_test_split(stratify=y)` — temporal leakage | `WalkForwardValidator` — chronological splits with hard temporal-order assertions |
+| C2 center=True look-ahead | `market_structure.py` | `rolling(center=True)` — 5 future bars in swing detection | `rolling(min_periods=lookback+1)` — trailing window only; causality proven by test |
+| C3 VWAP cross-session | `volume.py` | `cumsum()` — 200-day cumulative price masquerading as intraday VWAP | `rolling(N).sum()` — N-bar trailing window; session-reset for intraday mode |
+| C4 In-sample calibration | `calibration.py` | ECE/Brier computed on fitting data | Separate `eval_scores`/`eval_labels` for OOS quality measurement |
+| C5 Validation unused | `train_all.py` | WalkForwardValidator existed but was never called | Called for all 4 base models; fold manifest saved |
+| C6 Weak leakage detector | `data_pipeline.py` | Single Pearson threshold 0.95 | 4-check structural detector: correlation, literal copy, label overlap, centered-window heuristic; returns PASS/WARNING/FAIL |
+| H8 HPO validation leakage | `train_all.py` | HPO optimised on same val set used for final metrics | HPO inner folds only; outer test set never touched during HPO |
+| J Mean-reversion direction | `meta_model.py` | `mean_reversion → -1` (bearish) | `mean_reversion → 0` (neutral, direction-agnostic) |
+| K Fake IV history | `derivatives.py`, `engineer.py` | Returns 50.0 with `[15,18,20,22,25]` fake history | Returns NaN; `compute_iv_rank_with_status()` exposes INSUFFICIENT_HISTORY status |
+
+### New Capabilities
+
+- **`PredictionProvenance` enum** (`prediction_provenance.py`): Every prediction tagged as TRAINED_MODEL / HEURISTIC / INSUFFICIENT_EVIDENCE / UNAVAILABLE. `VALIDATED_ML_ONLY` deployment mode blocks heuristic signals for live capital.
+- **Expanded `ModelRecord` provenance** (`model_registry.py`): 11 new fields: `label_version`, `validation_period`, `oos_period`, `universe_version`, `cv_method`, `purge_window`, `embargo_window`, `random_seed`, `git_commit`, `hyperparameters`, `calibration_metrics`, `acceptance_status`.
+- **`ModelAcceptanceGate.evaluate_from_arrays()`** (`validation/metrics.py`): Convenience method for evaluating the gate from flat prediction arrays (as produced by walk-forward training loops).
+- **`check_structural_leakage()`** (`data_pipeline.py`): Replaces the weak correlation-only leakage check. Returns structured report; FAIL status blocks training.
+- **Lazy module imports** (`features/__init__.py`, `monitoring/__init__.py`, `validation/__init__.py`, `training/__init__.py`): All optional-dependency modules (talib, scipy, sklearn) now loaded on demand, not at package import time.
+
+### Test Coverage
+
+New file: `tests/test_phase3a.py` — 46 tests, 39 pass, 7 skip (env deps):
+- Chronological split enforcement (AST + runtime)
+- Temporal order hard assertions
+- Embargo gap correctness
+- OOS/HPO isolation
+- Calibration OOS eval
+- ModelAcceptanceGate wiring
+- ModelRecord provenance fields
+- Structural leakage detection (FAIL blocks, PASS allows)
+- BOS/CHOCH causality invariant (appended-future-bars test)
+- VWAP causality invariant
+- Mean-reversion direction = 0
+- IV insufficient-history NaN
+- PredictionProvenance governance
+
+### Remaining Limitations (Phase 3B+)
+
+Transaction costs in labels, F&O ban list filtering, NSE expiry calendar, triple-barrier labels, sample weights, Deflated Sharpe Ratio, MLflow tracking, survivorship bias correction — all deferred to Phase 3B per specification.
+
+---
+
 ## [Unreleased] — Post-Audit Verification: docs/ml-audit/ (13 new documents)
 
 **Date:** 2026-09-06  

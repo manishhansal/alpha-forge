@@ -28,6 +28,7 @@ import numpy as np
 import structlog
 
 from ..features.engineer import RANKING_FEATURES
+from ..prediction_provenance import PredictionProvenance
 from ..schemas import MarketRegime, RankingResponse, StockRank
 
 logger = structlog.get_logger()
@@ -194,6 +195,7 @@ class StockRanker:
                 rankings=rankings,
                 model_version=self.model_version,
                 regime_used=regime,
+                provenance=PredictionProvenance.TRAINED_MODEL,
             )
         except Exception as exc:
             logger.warning(
@@ -231,6 +233,7 @@ class StockRanker:
             rankings=rankings,
             model_version=f"{self.model_version}-heuristic",
             regime_used=regime,
+            provenance=PredictionProvenance.HEURISTIC,
         )
 
     def _compute_heuristic_score(

@@ -42,14 +42,78 @@ def compute_volume_price_confirmation(
 
 
 def compute_vwap_distance_pct(
-    close: pd.Series, high: pd.Series, low: pd.Series, volume: pd.Series
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    period: int = 20,
+    mode: str = "rolling",
 ) -> pd.Series:
-    """% distance from intraday VWAP (approximated for daily using typical price)."""
+    """
+    % distance from VWAP — with explicit, correct semantics per bar type.
+
+    Causal guarantee
+    ----------------
+    The VWAP value at bar t uses ONLY bars ≤ t.  No future bar can affect
+    the value at any past bar.
+
+    Parameters
+    ----------
+    close, high, low, volume : standard OHLCV series
+    period : lookback window length (bars) used in "rolling" mode.
+             Ignored in "intraday" mode (resets per session).
+    mode : "rolling"   — rolling N-bar VWAP.
+               Each bar's VWAP = Σ(tp × vol) over [t-N+1 .. t] /
+                                  Σ(vol)        over [t-N+1 .. t].
+               Suitable for daily bars where there is no meaningful
+               "session" boundary in the input data.
+               This replaces the previous cumsum() implementation that
+               accumulated from bar 0 of the passed window and produced
+               a multi-month average masquerading as "intraday VWAP".
+           "intraday" — session-anchored VWAP.
+               Resets when the DatetimeIndex date changes.
+               Suitable for sub-daily bars (1-min, 5-min) where the series
+               contains multiple trading sessions.
+
+    Returns
+    -------
+    pd.Series of floats: (close - vwap) / vwap × 100.
+    Positive → close above VWAP; negative → close below VWAP.
+    NaN where the rolling window has insufficient data.
+
+    Previous behaviour (WRONG for daily bars)
+    -----------------------------------------
+    The old implementation used cumsum() over whatever series was passed in.
+    For a 200-bar lookback window passed from compute_stock_features(), this
+    produced a 200-day cumulative VWAP — a noisy proxy for "average cost
+    over the last 10 months", NOT an intraday VWAP.  That feature was
+    semantically misleading and highly autocorrelated with the price trend.
+    """
     typical_price = (high + low + close) / 3
-    cum_tp_vol = (typical_price * volume).cumsum()
-    cum_vol = volume.cumsum()
-    vwap = cum_tp_vol / cum_vol.replace(0, np.nan)
-    return ((close - vwap) / vwap) * 100
+
+    if mode == "intraday":
+        # Session-reset VWAP: accumulate within each calendar date.
+        # Requires a DatetimeIndex; falls back to rolling if unavailable.
+        if not isinstance(close.index, pd.DatetimeIndex):
+            # Can't determine session boundaries — fall back to rolling.
+            mode = "rolling"
+        else:
+            tp_vol = typical_price * volume
+            # Group by date, compute cumulative sum within each group.
+            dates = close.index.date
+            date_series = pd.Series(dates, index=close.index)
+            cum_tp_vol = tp_vol.groupby(date_series).cumsum()
+            cum_vol    = volume.groupby(date_series).cumsum()
+            vwap = cum_tp_vol / cum_vol.replace(0, np.nan)
+            return ((close - vwap) / vwap.replace(0, np.nan)) * 100
+
+    # "rolling" mode (default, and fallback from intraday)
+    # Uses a trailing N-bar window — purely causal.
+    tp_vol = typical_price * volume
+    rolling_tp_vol = tp_vol.rolling(window=period, min_periods=1).sum()
+    rolling_vol    = volume.rolling(window=period, min_periods=1).sum()
+    vwap = rolling_tp_vol / rolling_vol.replace(0, np.nan)
+    return ((close - vwap) / vwap.replace(0, np.nan)) * 100
 
 
 def compute_volume_profile_score(

@@ -57,6 +57,8 @@ from .momentum import (
 )
 from .derivatives import (
     compute_iv_rank,
+    compute_iv_rank_with_status,
+    compute_iv_rank_safe,
     compute_max_pain_distance,
     compute_oi_buildup_score,
     compute_oi_wall_proximity,
@@ -339,9 +341,21 @@ def compute_stock_features(
 
     current_iv = deriv.get("current_iv")
     iv_history = deriv.get("iv_history", [])
-    features["iv_rank"] = compute_iv_rank(
-        current_iv or 20.0, iv_history if iv_history else [15, 18, 20, 22, 25]
+
+    # Use compute_iv_rank_with_status so downstream code can distinguish
+    # "rank = 50 because IV is at the median" from "rank = 50 because we
+    # have no data".  When history is insufficient, iv_rank_status will be
+    # "INSUFFICIENT_HISTORY" and iv_rank will be NaN — the NaN cleanup at
+    # the end of this function will convert it to 0.0 (neutral).
+    iv_rank_result = compute_iv_rank_with_status(
+        current_iv or 20.0, iv_history if iv_history else []
     )
+    features["iv_rank"] = (
+        iv_rank_result["iv_rank"]
+        if iv_rank_result["iv_rank"] is not None
+        else float("nan")   # will be set to 0.0 by NaN cleanup below
+    )
+    features["iv_rank_status"] = 0.0 if iv_rank_result["status"] == "OK" else 1.0
 
     spot = _last(c)
     features["max_pain_distance_pct"] = compute_max_pain_distance(

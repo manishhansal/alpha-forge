@@ -696,21 +696,34 @@ def _regime_to_direction(regime: MarketRegime) -> int:
 _BULLISH_STRATEGIES = {
     "breakout", "momentum", "trend_following", "volatility_breakout",
 }
-# Strategies that suggest caution or a short bias
-_BEARISH_STRATEGIES = {
-    "mean_reversion",   # typically fades extended moves
-}
-# Neutral / execution-timing strategies
+# Mean-reversion is direction-AGNOSTIC: it fades extended moves in either
+# direction.  Mapping it to -1 (bearish) was incorrect because a mean-
+# reversion signal on an oversold stock generates a LONG, not a SHORT.
+# It is moved to _NEUTRAL_STRATEGIES so the ensemble treats the strategy
+# selector as providing zero directional opinion when mean_reversion is
+# selected — the direction comes from other models (regime, ranker, risk).
 _NEUTRAL_STRATEGIES = {
-    "vwap_bounce", "range_trading", "scalping",
+    "mean_reversion",  # direction-agnostic: long when oversold, short when overbought
+    "vwap_bounce",     # execution-timing strategy; direction from broader signal
+    "range_trading",   # symmetric; no inherent directional bias
+    "scalping",        # execution-timing; no strategic directional bias
 }
 
 
 def _strategy_to_direction(strategy: str) -> int:
-    """Map a TradingStrategy name to a directional signal."""
+    """
+    Map a TradingStrategy name to a directional signal (+1 / 0 / -1).
+
+    Mean-reversion is intentionally 0 (neutral).
+    A strategy family is NOT a trade direction — the trade direction for
+    a mean-reversion strategy is determined by the ranker/regime/risk
+    models, not by the strategy name alone.  Mapping mean_reversion to
+    -1 was a bug that systematically penalised mean-reversion signals in
+    the ensemble.
+    """
     s = strategy.lower()
     if s in _BULLISH_STRATEGIES:
         return 1
-    if s in _BEARISH_STRATEGIES:
-        return -1
+    # All remaining strategies (mean_reversion, vwap_bounce, range_trading,
+    # scalping) are neutral — they say HOW to trade, not WHICH direction.
     return 0

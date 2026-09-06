@@ -69,35 +69,55 @@ from .embargo import (
     purge_train_indices_by_t1,
 )
 
-from .purged_kfold import (
-    PurgedKFold,
-    build_t1_series,
-    build_t1_series_from_events,
-    detect_label_overlap,
-)
+# sklearn-dependent modules — imported lazily to allow tests that only
+# need walk_forward / embargo to run without scikit-learn installed.
 
-from .combinatorial_cv import (
-    CPCVFold,
-    CPCVConfig,
-    CombinatorialPurgedCV,
-    cpcv_splits,
-)
+def __getattr__(name: str):
+    _PURGED_KFOLD = {"PurgedKFold", "build_t1_series", "build_t1_series_from_events", "detect_label_overlap"}
+    _CPCV = {"CPCVFold", "CPCVConfig", "CombinatorialPurgedCV", "cpcv_splits"}
+    _METRICS = {
+        "ClassificationMetrics", "TradingMetrics", "FoldResult", "StabilityAnalysis",
+        "ValidationResult", "AcceptanceThresholds", "AcceptanceDecision",
+        "FinancialMetricsEvaluator", "ModelAcceptanceGate",
+        "compute_stability", "aggregate_fold_results",
+        "save_validation_result", "load_validation_history",
+    }
 
-from .metrics import (
-    ClassificationMetrics,
-    TradingMetrics,
-    FoldResult,
-    StabilityAnalysis,
-    ValidationResult,
-    AcceptanceThresholds,
-    AcceptanceDecision,
-    FinancialMetricsEvaluator,
-    ModelAcceptanceGate,
-    compute_stability,
-    aggregate_fold_results,
-    save_validation_result,
-    load_validation_history,
-)
+    if name in _PURGED_KFOLD:
+        from .purged_kfold import (  # noqa: PLC0415
+            PurgedKFold, build_t1_series, build_t1_series_from_events, detect_label_overlap
+        )
+        _MAP = {
+            "PurgedKFold": PurgedKFold,
+            "build_t1_series": build_t1_series,
+            "build_t1_series_from_events": build_t1_series_from_events,
+            "detect_label_overlap": detect_label_overlap,
+        }
+        return _MAP[name]
+
+    if name in _CPCV:
+        from .combinatorial_cv import (  # noqa: PLC0415
+            CPCVFold, CPCVConfig, CombinatorialPurgedCV, cpcv_splits
+        )
+        _MAP = {
+            "CPCVFold": CPCVFold, "CPCVConfig": CPCVConfig,
+            "CombinatorialPurgedCV": CombinatorialPurgedCV, "cpcv_splits": cpcv_splits,
+        }
+        return _MAP[name]
+
+    if name in _METRICS:
+        from .metrics import (  # noqa: PLC0415
+            ClassificationMetrics, TradingMetrics, FoldResult, StabilityAnalysis,
+            ValidationResult, AcceptanceThresholds, AcceptanceDecision,
+            FinancialMetricsEvaluator, ModelAcceptanceGate,
+            compute_stability, aggregate_fold_results,
+            save_validation_result, load_validation_history,
+        )
+        import importlib
+        m = importlib.import_module(".metrics", package=__name__)
+        return getattr(m, name)
+
+    raise AttributeError(f"module 'src.validation' has no attribute '{name}'")
 
 __all__ = [
     # walk_forward

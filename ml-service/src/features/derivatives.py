@@ -43,30 +43,114 @@ def compute_oi_buildup_score(
         return -0.6, "LONG_UNWINDING"
 
 
-def compute_iv_rank(current_iv: float, iv_history: list[float], period: int = 252) -> float:
+def compute_iv_rank(
+    current_iv: float,
+    iv_history: list[float],
+    period: int = 252,
+) -> float:
     """
     IV Rank: where current IV sits in its N-day range [0, 100].
     0 = at the lowest IV of the period
     100 = at the highest IV of the period
+
+    Returns float('nan') when history is insufficient (< 5 bars).
+    Callers must handle NaN explicitly — do NOT silently substitute 50.
+    Use compute_iv_rank_safe() if a neutral fallback is required and the
+    caller documents acceptance of that substitution.
     """
     if not iv_history or len(iv_history) < 5:
-        return 50.0  # Default to middle when insufficient data
+        return float("nan")
 
     history = iv_history[-period:]
     iv_min = min(history)
     iv_max = max(history)
     if iv_max == iv_min:
-        return 50.0
+        return 50.0  # All history identical — rank is indeterminate; 50 = neutral
     return ((current_iv - iv_min) / (iv_max - iv_min)) * 100
+
+
+def compute_iv_rank_with_status(
+    current_iv: float,
+    iv_history: list[float],
+    period: int = 252,
+    min_history: int = 5,
+) -> dict:
+    """
+    IV Rank with explicit data-quality status.
+
+    Returns
+    -------
+    {
+      "iv_rank":  float | None — None when INSUFFICIENT_HISTORY
+      "status":   "OK" | "INSUFFICIENT_HISTORY" | "CONSTANT_IV"
+      "n_history": int — number of valid history bars used
+    }
+
+    This is the preferred function for any component that needs to
+    distinguish between "rank = 50 because IV is at the median" and
+    "rank = 50 because we had no data".  Downstream models and the
+    data-quality layer can gate on status != "OK".
+    """
+    n = len(iv_history) if iv_history else 0
+
+    if n < min_history:
+        return {
+            "iv_rank": None,
+            "status": "INSUFFICIENT_HISTORY",
+            "n_history": n,
+        }
+
+    history = iv_history[-period:]
+    iv_min = min(history)
+    iv_max = max(history)
+
+    if iv_max == iv_min:
+        return {
+            "iv_rank": 50.0,
+            "status": "CONSTANT_IV",
+            "n_history": len(history),
+        }
+
+    rank = ((current_iv - iv_min) / (iv_max - iv_min)) * 100
+    return {
+        "iv_rank": round(float(rank), 2),
+        "status": "OK",
+        "n_history": len(history),
+    }
+
+
+def compute_iv_rank_safe(
+    current_iv: float,
+    iv_history: list[float],
+    period: int = 252,
+    neutral_fallback: float = 50.0,
+) -> float:
+    """
+    IV Rank with an explicit neutral fallback for callers that accept
+    the substitution and document that acceptance.
+
+    Use this ONLY when:
+      - The downstream model has been trained to handle this as a neutral
+        signal (iv_rank = 50 treated as no information).
+      - The caller logs or tracks that the fallback was triggered.
+
+    Do NOT use this to silently paper over missing data.
+    """
+    rank = compute_iv_rank(current_iv, iv_history, period)
+    if np.isnan(rank):
+        return neutral_fallback
+    return rank
 
 
 def compute_iv_percentile(current_iv: float, iv_history: list[float], period: int = 252) -> float:
     """
     IV Percentile: % of days where IV was lower than current.
     More robust than IV Rank for tail events.
+
+    Returns float('nan') when history is insufficient (< 5 bars).
     """
     if not iv_history or len(iv_history) < 5:
-        return 50.0
+        return float("nan")
 
     history = iv_history[-period:]
     below = sum(1 for iv in history if iv < current_iv)

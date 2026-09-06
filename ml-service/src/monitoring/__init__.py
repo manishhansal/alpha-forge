@@ -4,52 +4,66 @@ AlphaForge ML Model Monitoring Package.
 Provides drift detection, performance monitoring, feature monitoring,
 model registry, and alerting for all deployed ML models.
 
-Sub-modules
------------
-drift_detector      : PSI, KS-statistic, population-level distribution shift
-feature_monitor     : Per-feature drift tracking with reference distributions
-performance_monitor : Brier score, calibration error, trading expectancy,
-                      strategy decay (rolling Sharpe / win-rate / drawdown)
-model_registry      : Model versioning, health states, auto safety actions
-alerts              : Alert rules, severity levels, structured alert dispatch
+Lazy-import design
+------------------
+drift_detector.py imports scipy. monitoring/__init__.py must NOT force scipy
+to load — only calling drift detection functions should do that.
+
+ModelRecord and ModelRegistry are imported eagerly since they only depend
+on stdlib (dataclasses, threading, json, pathlib).
 """
 
-from .alerts import Alert, AlertSeverity, AlertSystem
-from .drift_detector import DriftDetector, DriftResult, DriftSeverity
-from .feature_monitor import FeatureMonitor, FeatureDriftReport
+from __future__ import annotations
+
+
+# ── Eager imports (stdlib only — no optional deps) ────────────────────────────
 from .model_registry import (
     ModelRecord,
     ModelRegistry,
     ModelState,
     RetrainingRecommendation,
 )
-from .performance_monitor import (
-    PerformanceMonitor,
-    PerformanceSnapshot,
-    StrategyDecayMetrics,
-    TradeOutcome,
-)
+
+# ── Lazy imports (have optional deps — scipy, etc.) ───────────────────────────
+
+def __getattr__(name: str):
+    if name in ("DriftDetector", "DriftResult", "DriftSeverity"):
+        from .drift_detector import (  # noqa: PLC0415
+            DriftDetector,
+            DriftResult,
+            DriftSeverity,
+        )
+        _MAP = {
+            "DriftDetector":  DriftDetector,
+            "DriftResult":    DriftResult,
+            "DriftSeverity":  DriftSeverity,
+        }
+        return _MAP[name]
+
+    if name in ("FeatureMonitor", "FeatureDriftReport"):
+        from .feature_monitor import FeatureMonitor, FeatureDriftReport  # noqa: PLC0415
+        _MAP = {"FeatureMonitor": FeatureMonitor, "FeatureDriftReport": FeatureDriftReport}
+        return _MAP[name]
+
+    if name in ("Alert", "AlertSeverity", "AlertSystem"):
+        from .alerts import Alert, AlertSeverity, AlertSystem  # noqa: PLC0415
+        _MAP = {"Alert": Alert, "AlertSeverity": AlertSeverity, "AlertSystem": AlertSystem}
+        return _MAP[name]
+
+    raise AttributeError(f"module 'src.monitoring' has no attribute '{name}'")
+
 
 __all__ = [
-    # alerts
-    "Alert",
-    "AlertSeverity",
-    "AlertSystem",
-    # drift_detector
-    "DriftDetector",
-    "DriftResult",
-    "DriftSeverity",
-    # feature_monitor
-    "FeatureMonitor",
-    "FeatureDriftReport",
-    # model_registry
     "ModelRecord",
     "ModelRegistry",
     "ModelState",
     "RetrainingRecommendation",
-    # performance_monitor
-    "PerformanceMonitor",
-    "PerformanceSnapshot",
-    "StrategyDecayMetrics",
-    "TradeOutcome",
+    "DriftDetector",
+    "DriftResult",
+    "DriftSeverity",
+    "FeatureMonitor",
+    "FeatureDriftReport",
+    "Alert",
+    "AlertSeverity",
+    "AlertSystem",
 ]

@@ -26,6 +26,7 @@ import numpy as np
 import structlog
 
 from ..features.engineer import REGIME_FEATURES
+from ..prediction_provenance import PredictionProvenance
 from ..schemas import MarketRegime, RegimePredictionResponse
 
 logger = structlog.get_logger()
@@ -167,6 +168,7 @@ class MarketRegimeClassifier:
                 probabilities=prob_dict,
                 features_used=len(self.feature_names),
                 model_version=self.model_version,
+                provenance=PredictionProvenance.TRAINED_MODEL,
             )
         except Exception as exc:
             logger.warning(
@@ -327,6 +329,7 @@ class MarketRegimeClassifier:
             probabilities=prob_dict,
             features_used=sum(1 for f in self.feature_names if f in features),
             model_version=f"{self.model_version}-heuristic",
+            provenance=PredictionProvenance.HEURISTIC,
         )
 
     def train(
