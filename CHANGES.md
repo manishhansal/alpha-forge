@@ -155,6 +155,70 @@ The builder's `trackExistingRows()` batches pick updates via `db.$transaction(ar
 
 ---
 
+## [Unreleased] — ML Service Runtime Bug Fixes (3 bugs: regime schema, price-regime 404, TATAMOTORS denylist)
+
+**Date:** 2026-09-04  
+**Files changed:** 4 (`ml-service/src/schemas.py`, `ml-service/tests/test_schemas_optional.py`, `src/features/ai-signals/india-builder.ts`, `src/services/india/yahoo/index.ts`)  
+**Tests:** Vitest 3059 / 3059 passing · Python Hypothesis property tests added
+
+### Summary
+
+Three independent runtime bugs in the ML service and Yahoo Finance data client, diagnosed and fixed using the bug-condition → preservation methodology. All fixes are defensive (fail-soft, no new hard failures) and preserve existing behaviour for the happy path.
+
+---
+
+### BUG-ML-01 — `POST /predict/regime` returned HTTP 422/500 for partial feature bodies
+
+**Severity:** 🔴 Runtime broken — every partial-feature regime call failed  
+**File:** `ml-service/src/schemas.py`
+
+The TypeScript ML client (`src/lib/ml/client.ts`) only sends the market features it has assembled at call time — it omits optional fields like `advance_decline_ratio`, `market_breadth`, `sector_strength`, `volume_ratio`, and `gap_pct` when the data is unavailable. All ten fields were declared as required (`float = Field(...)`) in `RegimePredictionRequest`. Pydantic rejected any partial body with `422 Unprocessable Entity`, which the ML client surfaced as a 500-range error, causing `mlCtxResult` to come back `null` and the regime signal to degrade to the pure heuristic.
+
+**Fix:** Made all ten primary fields (and all five supplementary fields) `Optional[float] = Field(default=None, ...)` in `RegimePredictionRequest`. The route handler already calls `request.model_dump(exclude_none=True)` before passing to the classifier, and `_predict_heuristic` already uses `.get(key, default)` — no handler changes needed. Partial bodies now return HTTP 200 with a valid `RegimePredictionResponse` using the heuristic fallback for missing inputs.
+
+**Tests:** `ml-service/tests/test_schemas_optional.py` — Hypothesis property tests:
+- Property 1 (Bug Condition): randomly-dropped fields → assert HTTP 200 + valid response
+- Property 2 (Preservation): all ten fields present → identical prediction output as before
+
+---
+
+### BUG-ML-02 — `POST /predict/price-regime` returned HTTP 404 (stale process + null guard)
+
+**Severity:** 🔴 Runtime broken — price forecast never reached india-builder  
+**Files:** `ml-service/src/server.py` (operational fix), `src/features/ai-signals/india-builder.ts`
+
+Two sub-bugs:
+
+**Bug 2a** — `POST /predict/price-regime` was added to `server.py` as part of Phase 2, but the running ML service process predated the route registration. Any HTTP 404 was silently swallowed by `mlPost()` returning `null`.
+
+**Fix 2a:** Operational — restart the ML service: `docker-compose restart ml-service` (or `uvicorn src.server:app --host 0.0.0.0 --port 8100` for local runs). The `PriceForecaster` singleton is now initialised at module-level in `server.py` (not lazily inside the handler) so it is always ready after the first startup — no per-request import delay.
+
+**Bug 2b** — `india-builder.ts` accessed `mlCtxResult.priceForecast` (no `?.`) after `buildMLContext().catch(() => null)`. When the ML service was down and `mlCtxResult` was `null`, this threw `TypeError: Cannot read properties of null (reading 'priceForecast')`.
+
+**Fix 2b:** Replaced every bare `mlCtxResult.priceForecast` access with `mlCtxResult?.priceForecast`. All other `mlCtxResult` accesses already used `?.` — only the new `priceForecast` integration path was missing the guard.
+
+**Tests:** `tests/features/india/india-builder-null-guard.test.ts` — Vitest + source-code AST check:
+- Scans `india-builder.ts` for any `mlCtxResult\.priceForecast` without optional chain
+- Simulates `buildMLContext()` throwing → `mlCtxResult === null` → asserts no TypeError
+
+---
+
+### BUG-ML-03 — `getHistorical("TATAMOTORS")` spammed `console.error` every tick
+
+**Severity:** 🟡 Noisy — `console.error` on every request cycle for a known-bad symbol  
+**File:** `src/services/india/yahoo/index.ts`
+
+`toYahooSymbol("TATAMOTORS")` produced `"TATAMOTORS.NS"`, which Yahoo Finance does not recognise — the stock was renamed / has a different ticker in their database. The error was already caught (returns `[]`, no trading impact), but a `console.error("No data found, symbol may be delisted")` fired on every request cycle because there was no denylist. In production this flooded logs with a known-permanent non-issue.
+
+**Fix:** Added `const KNOWN_DELISTED = new Set<string>(["TATAMOTORS"])` at module level in `src/services/india/yahoo/index.ts`. At the top of `getHistorical()`, before any cache lookup or `yf.chart` call: `if (KNOWN_DELISTED.has(req.symbol)) return [];`. This suppresses both the network call and the `console.error` for permanently delisted/renamed symbols. All other symbols (including non-denylist symbols that encounter transient errors) continue to log normally.
+
+**Tests:** `tests/services/india/yahoo-denylist.test.ts` — Vitest:
+- TATAMOTORS → asserts `console.error` NOT called, result is `[]`
+- RELIANCE / INFY (valid) → asserts candles returned, `console.error` NOT called
+- Non-denylist symbol with simulated transient error → asserts `console.error` IS called (preservation)
+
+---
+
 ## [Unreleased] — API Key Max Length Fix & Logo
 
 **Date:** 2026-09-04  

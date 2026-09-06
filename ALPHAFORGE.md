@@ -909,7 +909,7 @@ Institutional-grade NSE F&O backtester. Parallel to the existing strategy backte
 | Risk Predictor | XGBoost ×3 | P(stop hit), P(target hit), expected drawdown |
 | Portfolio Optimizer | Riskfolio-Lib | HRP + CVaR-constrained allocation |
 | RL Executor | PPO (SB3) | Entry/exit timing, trailing stops, position sizing |
-| Price Forecaster | TFT heuristic | 1-hour price regime forecast (EXPERIMENTAL) |
+| Price Forecaster | TFT heuristic | 1-hour price regime forecast (EXPERIMENTAL) — singleton init at startup; `POST /predict/price-regime` |
 | IV Regime Classifier | Heuristic | CRUSH / STABLE / SPIKE |
 | Meta Decision Engine | Platt + isotonic | Combines all 7 base models with regime-aware ensemble weighting |
 | Greeks Engine | Black-76 / Black-Scholes | Delta/gamma/theta/vega + Newton-Raphson IV solver |
@@ -971,17 +971,37 @@ Three-tier `MarketDataClient` (`ml-service/src/training/market_data_client.py`):
 
 ```bash
 # Start ML service
-docker compose up -d
+docker compose up ml-service -d
 
 # Or run locally
 cd ml-service
 pip install -r requirements.txt
-uvicorn src.server:app --port 8100 --reload
+uvicorn src.server:app --host 0.0.0.0 --port 8100 --reload
 
 # Generate training data and train
 python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
 python -m src.training.train_all
 ```
+
+### 13.7 Runtime Bug Fixes Applied (2026-09-04)
+
+Three runtime bugs diagnosed and fixed using the bug-condition → preservation methodology. All fixes are backward-compatible.
+
+**BUG-ML-01 — `POST /predict/regime` rejected partial feature bodies (HTTP 422)**
+
+All ten primary fields in `RegimePredictionRequest` were `float = Field(...)` (required). The TypeScript ML client omits fields it hasn't assembled. Pydantic rejected partial bodies with 422, causing the ML regime signal to always fall back to heuristic.
+
+Fix: Made all fields `Optional[float] = Field(default=None, ...)` in `ml-service/src/schemas.py`. The route handler already calls `request.model_dump(exclude_none=True)` and the heuristic already uses `.get(key, default)` — no handler changes needed.
+
+**BUG-ML-02 — `POST /predict/price-regime` returned 404 (stale process) + null guard**
+
+The price-regime route was added to `server.py` but any long-running process that predated the change returned 404. Additionally, `india-builder.ts` accessed `mlCtxResult.priceForecast` (no `?.`) after `buildMLContext().catch(() => null)` — TypeError on null.
+
+Fix: `PriceForecaster` is now a module-level singleton in `server.py` (initialised at startup, not lazily). All `mlCtxResult.priceForecast` accesses in `india-builder.ts` replaced with `mlCtxResult?.priceForecast`. Restart the ML service if running an old process: `docker compose restart ml-service`.
+
+**BUG-ML-03 — `getHistorical("TATAMOTORS")` spammed `console.error` every tick**
+
+`TATAMOTORS.NS` is not recognised by Yahoo Finance (stock renamed). The error was non-fatal but logged on every request cycle. Fix: added `KNOWN_DELISTED = new Set(["TATAMOTORS"])` in `src/services/india/yahoo/index.ts`; early-return `[]` for denylist symbols before any network call.
 
 ---
 
@@ -1238,7 +1258,7 @@ ml-service/
     training/                     Three-tier data pipeline + train_all.py
 prisma/
   schema.prisma                   18 models
-tests/                            Vitest suite (~3059 tests, 200+ files)
+tests/                            Vitest suite (~3090 tests, 200+ files)
                                   tests/lib/market-data/nse-elimination.test.ts — NEW (V3.0)
 docker-compose.yml                Postgres 17 + Redis 7 + ML service + data-service
 ```
@@ -1331,7 +1351,7 @@ ENABLE_PORTFOLIO_OPTIMIZER=false
 
 Test-Driven Development is mandatory. Write failing tests first. The `prebuild` hook enforces a green suite before every `next build`.
 
-**Current test count: 3059 passing, 0 failures (as of 2026-09-04, commit `b650249`).**
+**Current test count: 3090 passing, 0 failures (as of 2026-09-04, commit `c551e21`).**
 
 ### Tooling
 
