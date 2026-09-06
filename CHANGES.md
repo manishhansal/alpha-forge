@@ -4,6 +4,61 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — ML Research Architecture Benchmark: docs/ml-research/
+
+**Date:** 2026-09-06  
+**Files changed:** 7 new files added under `docs/ml-research/`  
+**Code modified:** 0 (research and documentation only)  
+**Frameworks studied:** Microsoft Qlib, QuantConnect LEAN, NautilusTrader, MlFinLab, FreqAI, VectorBT, skfolio, PyPortfolioOpt, MLflow, Feast  
+**Literature studied:** López de Prado (AFML + ML for Asset Managers), Ernest Chan (QT + AT), Robert Carver (Systematic Trading), Grinold & Kahn (Active Portfolio Management), Antti Ilmanen (Expected Returns)
+
+### Summary
+
+A research-driven architecture benchmark comparing AlphaForge against 7 leading quantitative ML frameworks, synthesising principles from 7 authoritative texts, and producing actionable recommendations specific to Indian equity and F&O markets.
+
+### New Documents
+
+| Document | Purpose |
+|---|---|
+| `docs/ml-research/framework-benchmark.md` | AlphaForge vs Qlib vs LEAN vs NautilusTrader vs MlFinLab vs FreqAI vs VectorBT — 7-dimension comparison matrix, missing capabilities, unnecessary complexity, architectural weaknesses, best practices |
+| `docs/ml-research/financial-ml-methodology.md` | Principles from López de Prado, Chan, Carver, Grinold-Kahn, Ilmanen — triple-barrier labeling, sample weights, AFML validation, IR = IC × √BR, factor timing, IV carry |
+| `docs/ml-research/model-selection.md` | Algorithm selection by task, nested CV for HPO, OOS evidence standards, IC decomposition, Deflated Sharpe Ratio, complexity budget per component |
+| `docs/ml-research/validation-methodology.md` | Complete validation lifecycle (research → paper → shadow → live), CPCV distribution, structural breaks, NSE-specific cost model, multiple testing corrections |
+| `docs/ml-research/portfolio-methodology.md` | Grinold-Kahn IR framework, HRP/CVaR/Black-Litterman for India, Carver's volatility targeting, FDM, lot-size constraints, NSE sector limits, Brinson attribution |
+| `docs/ml-research/execution-methodology.md` | NSE execution windows, VWAP/IS/TWAP comparison, RL vs rule-based execution, research-to-live parity, pre-trade checks, promotion protocol |
+| `docs/ml-research/india-adaptation.md` | India-specific adaptations including NSE Tuesday expiry (critical), FII/DII flows, VRP/IV carry, PCR calibration, SEBI regulations, max-pain pull, F&O ban list, MWPL |
+
+### Critical Discovery: NSE Expiry Day Change
+
+**NSE moved all F&O weekly expiry from Thursday to Tuesday effective September 1, 2025.**  
+AlphaForge hardcodes Thursday/pre-2025 assumptions in `compute_expiry_features()`, heuristic thresholds, and documentation. All `days_to_weekly_expiry` and `is_expiry_day` features are semantically wrong for post-September 2025 data. Fix required in `features/macro.py` and the data pipeline.
+
+### Key Findings
+
+**Missing capabilities vs best-of-class frameworks:**
+- No point-in-time feature serving (vs Qlib PIT database)
+- No automatic experiment recording (vs Qlib Recorder / MLflow)
+- No training/inference feature parity guarantee (vs FreqAI)
+- No adaptive model retraining on drift (vs FreqAI sliding window)
+- No triple-barrier labeling (vs MlFinLab)
+- No sample weights for overlapping labels (vs MlFinLab AFML)
+- No Deflated Sharpe Ratio (vs MlFinLab DSR)
+- No transaction costs in objectives or labels (vs LEAN / VectorBT)
+- No NSE expiry calendar (Tuesday since Sep 2025)
+- F&O ban list not filtered from signal generation
+
+**Best practices recommended for adoption:**
+1. Qlib Recorder pattern — auto-capture every training run's metadata
+2. FreqAI feature parity — single function for training and inference
+3. MlFinLab sample weights — down-weight overlapping labels
+4. MlFinLab triple-barrier — replace fixed-horizon with event-driven labels
+5. Carver volatility targeting — replace Kelly with vol-targeted sizing
+6. LEAN 5-module framework — cleanly separate alpha, portfolio, risk, execution
+7. NautilusTrader research-to-live parity — shared execution kernel principle
+8. skfolio (vs Riskfolio-Lib) — sklearn-compatible walk-forward portfolio CV
+
+---
+
 ## [Unreleased] — Forensic ML Audit: docs/ml-audit/
 
 **Date:** 2026-09-06  
