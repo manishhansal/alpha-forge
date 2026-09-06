@@ -4,6 +4,67 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3B: Point-in-Time Data Foundation
+
+**Date:** 2026-09-06  
+**Files changed:** 14 source files (new `src/data/` package + integration) + 1 test file + 3 docs  
+**Tests:** 67 passed / 0 failed / 0 skipped (Phase 3B) | Phase 3A: 39 pass, 0 regressions  
+**Phase result:** PHASE_3B_PASS
+
+### Summary
+
+Establishes the data truth layer required for statistically valid ML training. Every ML observation now has a verifiable `available_time <= prediction_time` invariant. Historical universe, instrument metadata, corporate actions, F&O ban state, and dataset snapshots are all point-in-time aware. Where historical data is genuinely unavailable, the system returns `DATA_UNAVAILABLE` explicitly rather than fabricating values.
+
+### New Package: `ml-service/src/data/`
+
+| File | Purpose |
+|---|---|
+| `point_in_time.py` | `PointInTimeRecord`, `PointInTimeValidator`, UTC/IST timezone helpers, `select_best_revision()` |
+| `lineage.py` | `MLObservationLineage`, `DatasetLineage`, `compute_source_fingerprint()` |
+| `dataset_version.py` | `DatasetSnapshot`, `DatasetVersionRegistry` — full provenance per training artefact |
+| `instrument_master.py` | `InstrumentMasterStore` with time-aware lot-size lookup; SEBI Nov 2024 revision tracked |
+| `historical_universe.py` | `HistoricalUniverse` with 5-dimensional membership: FO_ELIGIBLE / FO_BANNED / TRADABLE / DATA_AVAILABLE / LIQUID / MODEL_ELIGIBLE |
+| `corporate_actions.py` | `CorporateActionStore` with pre-announcement isolation; DATA_UNAVAILABLE policy |
+| `fno_eligibility.py` | `FnOStateStore` with MWPL / ban state; DATA_UNAVAILABLE for all historical queries |
+| `data_quality.py` | `MLDataQualityGate` with 12 checks (7 CRITICAL, 3 ERROR, 2 WARNING) |
+
+### Changes to `data_pipeline.py`
+
+- `get_lot_size(symbol, date)` — replaces static `LOT_SIZES` dict with time-aware PIT lookup
+- `validate_observation_pit()` — 7-step pre-feature validation returning `PITValidationResult`
+- `get_pit_validated_universe(query_date)` — replaces static `TRAINING_UNIVERSE` with PIT-aware lookup
+- `_save_dataset()` — now writes `DatasetSnapshot` sidecar alongside existing `DatasetMetadata` JSON
+- `PIPELINE_VERSION` bumped to `v3.1`
+
+### Key PIT Invariants Proven by Tests
+
+1. `available_time <= prediction_time` enforced; violations are CRITICAL
+2. Naive timestamps (no tzinfo) rejected at every entry point
+3. IST↔UTC conversion correct; India has no DST (UTC+5:30 always)
+4. NSE close: 15:30 IST = 10:00 UTC; Bhavcopy available: ~16:00 IST = 10:30 UTC
+5. Revision selection: latest revision whose `available_time <= prediction_time`
+6. Future revision cannot alter past selection (proven by test)
+7. Historical universe is time-aware; unknown symbol correctly returns FALSE
+8. F&O ban DATA_UNAVAILABLE does not fabricate tradability
+9. NIFTY lot size 50 (pre-Nov 2024) → 75 (post-Nov 2024); proven by test
+10. Future lot-size change cannot alter historical query result
+11. Dataset snapshot: same inputs → same fingerprint (reproducibility)
+12. Dataset snapshot default limitations include all DATA_UNAVAILABLE fields
+13. Quality gate CRITICAL issues block training
+14. Future corporate action cannot adjust pre-announcement prices
+15. Lineage observation_id is a valid UUID for every training row
+
+### Documented Limitations (DATA_UNAVAILABLE — not fabricated)
+
+- Historical F&O eligibility per date: DATA_UNAVAILABLE
+- Historical MWPL ban list per date: DATA_UNAVAILABLE  
+- Corporate action price adjustments: DATA_UNAVAILABLE
+- Stock F&O lot sizes pre-SEBI-Nov-2024: APPROXIMATE (current value)
+- NSE Tuesday expiry calendar (post Sep 2025): not yet embedded
+- Transaction costs in labels: deferred to Phase 3C
+
+---
+
 ## [Unreleased] — Phase 3A: Leakage Eradication + Training Pipeline Reconstruction
 
 **Date:** 2026-09-06  

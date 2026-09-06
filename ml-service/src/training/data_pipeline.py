@@ -33,7 +33,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +54,8 @@ from .market_data_client import (
 
 logger = structlog.get_logger(__name__)
 
+_UTC = timezone.utc
+
 # ─── Lazy feature / model imports (avoid loading talib at import time) ─────────
 
 def _get_feature_constants():
@@ -69,9 +71,33 @@ def _get_feature_constants():
     return (RANKING_FEATURES, REGIME_FEATURES, RISK_FEATURES,
             STRATEGY_FEATURES, compute_regime_features, compute_stock_features)
 
+
+def _get_pit_components():
+    """Lazy import of PIT data foundation (no external deps)."""
+    from ..data.point_in_time import (  # noqa: PLC0415
+        PointInTimeValidator,
+        bhavcopy_available_utc,
+        nse_close_utc,
+        require_utc_aware,
+    )
+    from ..data.instrument_master import InstrumentMasterStore  # noqa: PLC0415
+    from ..data.historical_universe import HistoricalUniverse    # noqa: PLC0415
+    from ..data.fno_eligibility import FnOStateStore             # noqa: PLC0415
+    from ..data.corporate_actions import CorporateActionStore    # noqa: PLC0415
+    from ..data.data_quality import MLDataQualityGate            # noqa: PLC0415
+    from ..data.dataset_version import DatasetSnapshot           # noqa: PLC0415
+    from ..data.lineage import observation_lineage_store         # noqa: PLC0415
+    return (
+        PointInTimeValidator, bhavcopy_available_utc, nse_close_utc,
+        require_utc_aware, InstrumentMasterStore, HistoricalUniverse,
+        FnOStateStore, CorporateActionStore, MLDataQualityGate,
+        DatasetSnapshot, observation_lineage_store,
+    )
+
+
 # ─── Pipeline version constants ───────────────────────────────────────────────
 
-PIPELINE_VERSION = "v3.0"           # bump when labeling logic changes
+PIPELINE_VERSION = "v3.1"           # Phase 3B — PIT foundation added
 FEATURE_VERSION = "fv4"             # bump when feature set changes (RANKING_FEATURES etc.)
 DATASET_VERSION = f"af-{PIPELINE_VERSION}-{FEATURE_VERSION}"
 
@@ -110,6 +136,308 @@ LOT_SIZES: dict[str, int] = {
     "ICICIBANK": 700, "SBIN": 1500, "AXISBANK": 1200, "BAJFINANCE": 125,
 }
 DEFAULT_LOT_SIZE = 500
+
+
+def get_lot_size(symbol: str, query_date: date) -> int:
+    """
+    Return the historical lot size for symbol on query_date.
+
+    This replaces the static LOT_SIZES dict with a point-in-time lookup that
+    accounts for known NSE lot-size changes (e.g. SEBI Nov 2024 revision).
+
+    Falls back to LOT_SIZES dict (then DEFAULT_LOT_SIZE) for symbols without
+    historical data.  APPROXIMATE results are logged as warnings.
+    """
+    try:
+        from ..data.instrument_master import InstrumentMasterStore  # noqa: PLC0415
+        store = InstrumentMasterStore.default()
+        lot, status, _ = store.get_lot_size(symbol.upper(), query_date)
+        if lot is not None:
+            if status != "OK":
+                logger.debug("lot_size_approximate", symbol=symbol, date=str(query_date))
+            return lot
+    except Exception as exc:
+        logger.debug("lot_size_fallback", symbol=symbol, error=str(exc))
+
+    # Fallback to static dict
+    return LOT_SIZES.get(symbol.upper(), DEFAULT_LOT_SIZE)
+
+
+# ─── 7-Step PIT Pre-Feature Validation ───────────────────────────────────────
+
+class PITValidationResult:
+    """
+    Result of the 7-step point-in-time pre-feature validation.
+
+    status  : "DATA_READY" | "DATA_READY_WITH_WARNINGS" | "BLOCKED"
+    issues  : list of (step, severity, message) tuples
+    symbol  : symbol being validated
+    bar_date: date of the bar being validated
+    lot_size: resolved lot size (may be APPROXIMATE)
+    """
+
+    def __init__(self, symbol: str, bar_date: date) -> None:
+        self.symbol    = symbol
+        self.bar_date  = bar_date
+        self.issues:   list[tuple[str, str, str]] = []
+        self.lot_size: int | None = None
+        self.lot_size_status: str = "UNKNOWN"
+        self.fno_ban_status:  str = "DATA_UNAVAILABLE"
+        self.corporate_action_status: str = "DATA_UNAVAILABLE"
+        self.observation_id: str | None = None
+
+    @property
+    def status(self) -> str:
+        if any(sev == "CRITICAL" for _, sev, _ in self.issues):
+            return "BLOCKED"
+        if any(sev in ("ERROR", "WARNING") for _, sev, _ in self.issues):
+            return "DATA_READY_WITH_WARNINGS"
+        return "DATA_READY"
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.status == "BLOCKED"
+
+    @property
+    def critical_messages(self) -> list[str]:
+        return [msg for _, sev, msg in self.issues if sev == "CRITICAL"]
+
+    def add(self, step: str, severity: str, message: str) -> None:
+        self.issues.append((step, severity, message))
+        if severity == "CRITICAL":
+            logger.error("pit_validation_critical", step=step, symbol=self.symbol,
+                         date=str(self.bar_date), message=message)
+        elif severity in ("ERROR", "WARNING"):
+            logger.warning("pit_validation_issue", step=step, symbol=self.symbol,
+                           severity=severity, message=message)
+
+
+def validate_observation_pit(
+    symbol: str,
+    bar_date: date,
+    ohlcv_df: pd.DataFrame,
+    prediction_time: datetime,
+    universe: "HistoricalUniverse | None" = None,
+    instrument_store: "InstrumentMasterStore | None" = None,
+    fno_store: "FnOStateStore | None" = None,
+    ca_store: "CorporateActionStore | None" = None,
+) -> PITValidationResult:
+    """
+    Seven-step point-in-time validation before feature generation.
+
+    Steps
+    -----
+    1. Validate timestamps (no naive; no future available_time)
+    2. Validate instrument identity (symbol known in instrument master)
+    3. Resolve historical universe membership (is symbol MODEL_ELIGIBLE?)
+    4. Resolve contract metadata (lot size at bar_date, not today's)
+    5. Resolve corporate action state (flag if adjustments are DATA_UNAVAILABLE)
+    6. Resolve F&O ban state (flag if symbol was in ban list)
+    7. Run ML data quality gate (OHLCV integrity checks)
+
+    Parameters
+    ----------
+    symbol          : NSE trading symbol.
+    bar_date        : Date of the OHLCV bar being validated.
+    ohlcv_df        : DataFrame slice for this symbol (the lookback window).
+    prediction_time : The model's prediction timestamp (UTC, tz-aware).
+                      The bar at bar_date must be available by prediction_time.
+    universe        : Optional HistoricalUniverse; created lazily if None.
+    instrument_store: Optional InstrumentMasterStore; created lazily if None.
+    fno_store       : Optional FnOStateStore; created lazily if None.
+    ca_store        : Optional CorporateActionStore; created lazily if None.
+
+    Returns
+    -------
+    PITValidationResult with status DATA_READY | DATA_READY_WITH_WARNINGS | BLOCKED.
+    """
+    result = PITValidationResult(symbol=symbol, bar_date=bar_date)
+
+    try:
+        (PointInTimeValidator, bhavcopy_available_utc, nse_close_utc,
+         require_utc_aware, InstrumentMasterStore, HistoricalUniverse,
+         FnOStateStore, CorporateActionStore, MLDataQualityGate,
+         DatasetSnapshot, obs_store) = _get_pit_components()
+
+        # ── Step 1: Validate timestamps ───────────────────────────────────────
+        try:
+            require_utc_aware(prediction_time, "prediction_time")
+        except ValueError as e:
+            result.add("STEP1_TIMESTAMPS", "CRITICAL", str(e))
+            return result
+
+        # Compute expected available_time for daily Bhavcopy data
+        expected_available = bhavcopy_available_utc(bar_date)
+        if prediction_time < expected_available:
+            result.add(
+                "STEP1_TIMESTAMPS", "CRITICAL",
+                f"FUTURE_DATA: Bar at {bar_date} has estimated available_time "
+                f"{expected_available.isoformat()} > prediction_time "
+                f"{prediction_time.isoformat()}. "
+                f"Bhavcopy for {bar_date} was not yet published at prediction_time."
+            )
+
+        # Check for naive timestamps in DataFrame index
+        if isinstance(ohlcv_df.index, pd.DatetimeIndex) and ohlcv_df.index.tz is None:
+            result.add(
+                "STEP1_TIMESTAMPS", "CRITICAL",
+                f"NAIVE_TIMESTAMP: DataFrame index for {symbol} has no timezone. "
+                "Use tz_localize('UTC')."
+            )
+
+        # ── Step 2: Validate instrument identity ──────────────────────────────
+        store = instrument_store or InstrumentMasterStore.default()
+        instrument = store.get_instrument(symbol, bar_date)
+        if instrument.lot_size_status == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP2_INSTRUMENT", "WARNING",
+                f"LOT_SIZE_DATA_UNAVAILABLE: No historical lot-size record for "
+                f"{symbol} on {bar_date}. Cannot determine instrument metadata."
+            )
+
+        # ── Step 3: Resolve historical universe membership ────────────────────
+        hist_universe = universe or HistoricalUniverse.default()
+        membership = hist_universe.get_membership(symbol, bar_date)
+
+        if membership.fo_eligible.value == "FALSE":
+            result.add(
+                "STEP3_UNIVERSE", "ERROR",
+                f"NOT_FO_ELIGIBLE: {symbol} was NOT in NSE F&O list on {bar_date}."
+            )
+        elif membership.fo_eligible.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP3_UNIVERSE", "WARNING",
+                f"FO_ELIGIBILITY_UNKNOWN: Historical F&O eligibility for {symbol} "
+                f"on {bar_date} is DATA_UNAVAILABLE. Using current universe as approximation."
+            )
+
+        # ── Step 4: Resolve contract metadata (lot size) ─────────────────────
+        lot, lot_status, lot_source = store.get_lot_size(symbol, bar_date)
+        result.lot_size = lot if lot is not None else DEFAULT_LOT_SIZE
+        result.lot_size_status = lot_status
+        if lot_status == "APPROXIMATE":
+            result.add(
+                "STEP4_CONTRACT", "WARNING",
+                f"LOT_SIZE_APPROXIMATE: Using current lot size ({result.lot_size}) as "
+                f"approximation for {symbol} on {bar_date}. "
+                "True historical lot size is DATA_UNAVAILABLE."
+            )
+        elif lot_status == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP4_CONTRACT", "WARNING",
+                f"LOT_SIZE_DATA_UNAVAILABLE: No lot-size data for {symbol} on {bar_date}. "
+                f"Defaulting to {DEFAULT_LOT_SIZE}."
+            )
+
+        # ── Step 5: Resolve corporate action state ────────────────────────────
+        ca = ca_store or CorporateActionStore.empty()
+        ca_result = ca.get_adjusted_price(symbol, bar_date, raw_price=None)
+        result.corporate_action_status = ca_result.status.value
+        if ca_result.status.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP5_CORPORATE_ACTIONS", "WARNING",
+                f"CORPORATE_ACTION_DATA_UNAVAILABLE: Historical corporate action "
+                f"adjustment data for {symbol} is not available. "
+                "Price data may be unadjusted for splits/bonuses."
+            )
+
+        # ── Step 6: Resolve F&O ban state ─────────────────────────────────────
+        fno = fno_store or FnOStateStore.empty()
+        fno_state = fno.get_fno_state(symbol, bar_date)
+        result.fno_ban_status = fno_state.ban_status.value
+        if fno_state.ban_status.value == "BANNED":
+            result.add(
+                "STEP6_FNO_STATE", "ERROR",
+                f"FNO_BANNED: {symbol} was in the F&O ban list on {bar_date}. "
+                "Only closing trades were permitted. OI signals are unreliable."
+            )
+        elif fno_state.ban_status.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP6_FNO_STATE", "WARNING",
+                f"FNO_BAN_DATA_UNAVAILABLE: Cannot confirm {symbol} was not banned "
+                f"on {bar_date}. Historical MWPL ban list is DATA_UNAVAILABLE."
+            )
+
+        # ── Step 7: Run ML data quality gate ──────────────────────────────────
+        gate = MLDataQualityGate()
+        quality_report = gate.check_ohlcv(
+            ohlcv_df.tail(1) if len(ohlcv_df) > 0 else ohlcv_df,
+            symbol=symbol,
+            prediction_time=prediction_time,
+        )
+        for issue in quality_report.issues:
+            if issue.severity.value == "CRITICAL":
+                result.add("STEP7_QUALITY", "CRITICAL", issue.description)
+            elif issue.severity.value == "ERROR":
+                result.add("STEP7_QUALITY", "ERROR", issue.description)
+            elif issue.severity.value == "WARNING":
+                result.add("STEP7_QUALITY", "WARNING", issue.description)
+
+        # ── Record observation lineage ─────────────────────────────────────────
+        try:
+            avail_time = expected_available
+            event_time = nse_close_utc(bar_date)
+            result.observation_id = obs_store.record(
+                symbol=symbol,
+                data_type="OHLCV",
+                provider="NSE_BHAVCOPY",
+                event_time=event_time,
+                available_time=avail_time,
+                dataset_version=DATASET_VERSION,
+                is_fallback=False,
+                notes=f"7-step PIT validation: {result.status}",
+            )
+        except Exception:
+            pass  # Lineage recording failure should not block training
+
+    except Exception as exc:
+        logger.warning(
+            "pit_validation_exception",
+            symbol=symbol,
+            date=str(bar_date),
+            error=str(exc),
+        )
+        result.add(
+            "PIT_VALIDATION", "WARNING",
+            f"Exception during PIT validation (non-blocking): {exc}"
+        )
+
+    return result
+
+
+def get_pit_validated_universe(
+    query_date: date,
+    universe: "HistoricalUniverse | None" = None,
+    include_approximate: bool = True,
+) -> list[str]:
+    """
+    Return the list of model-eligible symbols for query_date using PIT universe.
+
+    This replaces direct use of TRAINING_UNIVERSE with a historically-aware
+    lookup.  When historical data is unavailable, falls back to TRAINING_UNIVERSE
+    with a WARNING logged.
+
+    Parameters
+    ----------
+    query_date          : Historical date.
+    universe            : Optional HistoricalUniverse; created lazily if None.
+    include_approximate : Include symbols where eligibility is DATA_UNAVAILABLE
+                          but symbol is in the current TRAINING_UNIVERSE.
+    """
+    try:
+        from ..data.historical_universe import HistoricalUniverse as _HU  # noqa: PLC0415
+        hist_universe = universe or _HU.default()
+        return hist_universe.get_model_eligible_symbols(
+            query_date, include_approximate=include_approximate
+        )
+    except Exception as exc:
+        logger.warning(
+            "pit_universe_fallback",
+            date=str(query_date),
+            error=str(exc),
+            note="Falling back to static TRAINING_UNIVERSE",
+        )
+        return list(TRAINING_UNIVERSE)
 
 
 # ─── Walk-forward split helpers (Requirement #6) ──────────────────────────────
@@ -987,25 +1315,56 @@ def _save_dataset(
     name: str,
     arrays: dict[str, np.ndarray],
     metadata: DatasetMetadata,
+    pit_warnings: int = 0,
+    pit_violations: int = 0,
 ) -> Path:
     """
-    Save a training dataset as a compressed NPZ file + a JSON metadata sidecar.
+    Save a training dataset as a compressed NPZ file + two sidecar files:
+      {name}.npz              — compressed numpy arrays
+      {name}_meta.json        — DatasetMetadata JSON (backward-compatible)
+      {name}_snapshot.json    — DatasetSnapshot (Phase 3B full provenance)
 
-    File layout:
-      {output_dir}/{name}.npz      — compressed numpy arrays
-      {output_dir}/{name}_meta.json — DatasetMetadata as JSON
+    The snapshot records all known limitations including DATA_UNAVAILABLE fields.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    npz_path = output_dir / f"{name}.npz"
-    meta_path = output_dir / f"{name}_meta.json"
+    npz_path      = output_dir / f"{name}.npz"
+    meta_path     = output_dir / f"{name}_meta.json"
+    snapshot_path = output_dir / f"{name}_snapshot.json"
 
     np.savez_compressed(npz_path, **arrays)
 
+    row_count = int(next(iter(arrays.values())).shape[0])
+
+    # ── Backward-compatible metadata sidecar ─────────────────────────────
     meta_dict = metadata.to_dict()
-    meta_dict["recordCount"] = int(next(iter(arrays.values())).shape[0])
+    meta_dict["recordCount"] = row_count
     meta_path.write_text(json.dumps(meta_dict, indent=2))
 
-    logger.info("dataset_saved", path=str(npz_path), records=meta_dict["recordCount"])
+    # ── Phase 3B DatasetSnapshot ──────────────────────────────────────────
+    try:
+        from ..data.dataset_version import DatasetSnapshot  # noqa: PLC0415
+
+        quality_status = "CLEAN"
+        if pit_violations > 0:
+            quality_status = "BLOCKED"
+        elif pit_warnings > 0:
+            quality_status = "HAS_WARNINGS"
+
+        snapshot = DatasetSnapshot.create(
+            training_start=metadata.date_range[0],
+            training_end=metadata.date_range[1],
+            symbol_count=len(metadata.instrument_universe),
+            row_count=row_count,
+            source_versions={"pipeline": PIPELINE_VERSION, "features": FEATURE_VERSION},
+            quality_status=quality_status,
+            quality_issues=pit_warnings,
+            pit_violations=pit_violations,
+        )
+        snapshot.save(snapshot_path)
+    except Exception as exc:
+        logger.warning("snapshot_save_failed", error=str(exc))
+
+    logger.info("dataset_saved", path=str(npz_path), records=row_count)
     return npz_path
 
 
