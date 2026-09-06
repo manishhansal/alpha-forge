@@ -4,6 +4,80 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3E: Cross-Sectional Alpha & Ranking Engine
+
+**Date:** 2026-09-06
+**Files changed:** 10 new source files + 1 test file + 5 reports + 2 docs + 2 scripts
+**Tests:** 72 passed / 0 failed / 4 skipped (sklearn/lgbm/xgb/scipy absent — pre-existing)
+**Leakage audit:** PASS — 0 `shift(-N)`, 0 `center=True`, 0 `fillna(0)` INVALID in `ranking/`
+**Research conclusion:** INSUFFICIENT_EVIDENCE (no real Indian equity dataset available)
+**Phase result:** PHASE_3E_PASS
+
+### Summary
+
+Transforms AlphaForge from an individual-stock predictor into a genuine point-in-time cross-sectional alpha-ranking system. Introduces a canonical ranking infrastructure (universe, targets, normalization, neutralization, evaluation, models) that is architecturally complete and verifiably correct on synthetic data. Documents 14 known problems in the existing `StockRanker` and provides the migration path for Phase 3F. All OOS ranking metrics are `INSUFFICIENT_EVIDENCE` pending real NSE/BSE data.
+
+### Existing Ranker Audit — 14 Known Problems
+
+| # | Severity | Problem |
+|---|----------|---------|
+| 1–2 | HIGH | LambdaRank dead code; XGBoost HPO params silently injected into LightGBM |
+| 3–4 | MED/HIGH | HPO on fold 0 only; acceptance gate IC>0.02 (no Rank IC/decile) |
+| 5–6 | MED | No `ModelAcceptanceGate`; pseudo-SHAP instead of TreeExplainer |
+| 7–8 | HIGH | No cross-sectional feature z-scoring; Label V2 disconnected from training |
+| 9–10 | MED/HIGH | Sample weights not passed to lgb.Dataset; silent heuristic fallback |
+| 11–14 | MED/LOW | Quintile assignment bug; no fold manifest; no CPCV; survivorship bias risk |
+
+### New Package: `ml-service/src/ranking/`
+
+| File | Purpose |
+|------|---------|
+| `schemas.py` | `CrossSectionalAlphaSignal`, `RankingRow`, `RankingDataset`, `ExperimentManifest`; `EligibilityState`, `PredictionProvenance`, `SignalStatus`, `AlphaScoreSemantics` enums |
+| `universe.py` | `UniverseResolver` — PIT register/resolve, IPO/delisting/ban/history checks |
+| `normalization.py` | `cs_zscore`, `cs_robust_zscore`, `cs_rank_pct`, `cs_rank_normal`, `winsorize`, `normalize_panel` — all timestamp-local |
+| `neutralization.py` | `sector_neutralize`, `beta_neutralize`, `factor_neutralize` — PIT contract documented |
+| `ranker.py` | `MomentumBaselineRanker`, `CompositeBaselineRanker`, `RidgeRanker`, `ElasticNetRanker`, `LightGBMRanker`, `XGBoostRanker` |
+| `evaluation.py` | `compute_rank_ic`, `compute_ic_series`, `summarise_ic_series`, `compute_decile_report`, `compute_turnover_proxy`, `compute_rank_stability`, `compare_rankers` |
+| `walk_forward.py` | `CrossSectionalWalkForward` — timestamp-grouped splits, hard temporal assertions, embargo |
+
+### New Module: `ml-service/src/labels/cross_sectional.py`
+
+Implements canonical CS targets A–F: raw return (A), excess vs NIFTY (B), sector-relative (C), CS percentile (D), CS z-score (E), CS rank (F). All computed within `eligible_symbols` at t; missing price → `None` (never fabricated).
+
+### Test Coverage (`tests/test_phase3e.py`)
+
+72 tests across 18 classes covering universe (IPO/delist/ban/history), universe/sector/price/CS-target mutation invariants, targets A–F, normalization PIT, winsorization, sector/beta/OLS neutralization, ranking golden (spec §94), IC golden (spec §96), decile golden (spec §97), turnover, walk-forward, schema invariants, compare-rankers ML_ADDS_NO_CLEAR_VALUE logic.
+
+### Reports and Docs
+
+| File | Type |
+|------|------|
+| `reports/phase-3e-ranking-report.json/.md` | Ranking report (machine + human) |
+| `reports/phase-3e-experiment-manifest.json` | Reproducibility manifest |
+| `reports/phase-3e-model-comparison.csv` | 6-model comparison (INSUFFICIENT_EVIDENCE) |
+| `reports/phase-3e-decile-analysis.csv` | 10-decile analysis (synthetic data) |
+| `reports/phase-3e-ic-timeseries.csv` | IC time-series (synthetic data) |
+| `docs/ml-audit/phase-3e-cross-sectional-ranking.md` | Audit doc |
+| `docs/ml-research/cross-sectional-alpha-methodology.md` | Research doc |
+
+### Score Semantics Invariant
+
+Every `CrossSectionalAlphaSignal` carries `AlphaScoreSemantics` documenting what the score means. The canonical convention is **higher score = more attractive** across all 6 models. Baselines use `PredictionProvenance.BASELINE`; heuristics `HEURISTIC`; trained models `TRAINED_MODEL`. A heuristic may never claim `TRAINED_MODEL` provenance.
+
+### Backward Compatibility
+
+Phase 3E is purely additive. `StockRanker`, `RANKING_FEATURES`, `build_ranking_training_data()`, and `train_all.py` are untouched. All Phase 3A/3B/3C/3D tests continue to pass.
+
+### Documented Limitations
+
+- OOS Rank IC / decile / spread: **INSUFFICIENT_EVIDENCE** — requires real NSE/BSE data
+- sklearn/lightgbm/xgboost/scipy: not installed in test env (4 tests skipped)
+- LambdaRank group reconstruction through walk-forward: deferred to Phase 3F
+- `train_all.py` migration to CS infrastructure: deferred to Phase 3F
+- Label V2 connection to ranking training data: deferred to Phase 3F
+
+---
+
 ## [Unreleased] — Phase 3D: India-Native Alpha Feature Engine & Feature Governance
 
 **Date:** 2026-09-06

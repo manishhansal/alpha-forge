@@ -1,0 +1,44 @@
+{
+  "experiment_id": "phase-3e-initial",
+  "created_at": "2026-09-06T00:00:00Z",
+  "git_commit": "see_git_log",
+  "dataset_id": "INSUFFICIENT_EVIDENCE",
+  "universe_version": "historical_v1",
+  "feature_set_id": "RANKING_SET-v1",
+  "label_version": "lv2",
+  "target_horizon": 5,
+  "models": [
+    "momentum_baseline",
+    "composite_baseline",
+    "ridge_ranker",
+    "elasticnet_ranker",
+    "lgbm_ranker",
+    "xgboost_ranker"
+  ],
+  "hyperparameters": {
+    "ridge_ranker":       {"alpha": 1.0},
+    "elasticnet_ranker":  {"alpha": 0.1, "l1_ratio": 0.5, "max_iter": 1000},
+    "lgbm_ranker":        {"num_leaves": 63, "max_depth": 8, "learning_rate": 0.03, "n_estimators": 300},
+    "xgboost_ranker":     {"max_depth": 6, "learning_rate": 0.05, "n_estimators": 300}
+  },
+  "validation_config": {
+    "type":         "CrossSectionalWalkForward",
+    "train_bars":   252,
+    "val_bars":     63,
+    "test_bars":    63,
+    "embargo_bars": 5,
+    "expanding":    false
+  },
+  "normalization":   "cs_zscore (timestamp-local)",
+  "neutralization":  "sector_neutralize (PIT sector membership)",
+  "cost_model":      "DATA_UNAVAILABLE",
+  "random_seed":     42,
+  "n_experiments":   1,
+  "n_models":        6,
+  "n_feature_sets":  1,
+  "n_horizons":      1,
+  "n_hpo_trials":    0,
+  "oos_evidence_status": "INSUFFICIENT_EVIDENCE",
+  "reason": "No real historical Indian equity dataset available in the test environment. All OOS metrics would require real NSE/BSE OHLCV data loaded through the Phase 3B data pipeline.",
+  "notes": "This manifest documents the experimental configuration. OOS results will be populated when real data is available in Phase 3F."
+}
