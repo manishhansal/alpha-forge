@@ -1,0 +1,58 @@
+{
+  "report_id": "phase-3f-selective-report",
+  "phase": "3F",
+  "title": "Selective Prediction & Abstention Report",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "oos_evidence_status": "INSUFFICIENT_EVIDENCE",
+
+  "decision_states": {
+    "TAKE":                  "probability above threshold AND positive EV AND valid calibration",
+    "SKIP":                  "probability below threshold OR negative EV",
+    "ABSTAIN":               "calibration unavailable, stale, mismatched, or insufficient data",
+    "INSUFFICIENT_EVIDENCE": "no trained meta model or no OOS validation available",
+    "UNAVAILABLE":           "meta engine not operational"
+  },
+
+  "abstention_reasons": [
+    "CALIBRATION_INSUFFICIENT_DATA",
+    "CALIBRATION_STALE",
+    "CALIBRATION_MISMATCH",
+    "CALIBRATION_UNAVAILABLE",
+    "HIGH_MODEL_DISAGREEMENT",
+    "HIGH_UNCERTAINTY",
+    "LOW_CROSS_SECTION_SIZE",
+    "FEATURE_MISSINGNESS",
+    "DISTRIBUTION_SHIFT",
+    "STALE_MODEL",
+    "STALE_DATA"
+  ],
+
+  "ev_engine": {
+    "formula": "EV = P × E[win] + (1-P) × E[loss] - E[cost]",
+    "asymmetric_payoffs": true,
+    "cost_model": "DATA_UNAVAILABLE (NSE STT, brokerage, slippage not loaded)",
+    "ev_status_when_cost_absent": "COST_DATA_UNAVAILABLE (EV still computed for research)",
+    "ev_leakage_protection": "PayoffDistribution.fit_end_time must be < prediction_time",
+    "ev_threshold": "configurable (EVConfig.min_ev_for_take); not hardcoded as > 0"
+  },
+
+  "selective_prediction_metrics": {
+    "coverage": "INSUFFICIENT_EVIDENCE",
+    "abstention_rate": "INSUFFICIENT_EVIDENCE",
+    "success_rate_all": "INSUFFICIENT_EVIDENCE",
+    "success_rate_non_abstained": "INSUFFICIENT_EVIDENCE",
+    "ev_all": "INSUFFICIENT_EVIDENCE",
+    "ev_non_abstained": "INSUFFICIENT_EVIDENCE"
+  },
+
+  "probability_bucket_analysis": {
+    "status": "INSUFFICIENT_EVIDENCE",
+    "infrastructure": "compute_probability_bucket_analysis() implemented; reports all 10 buckets"
+  },
+
+  "threshold_analysis": {
+    "status": "INSUFFICIENT_EVIDENCE",
+    "thresholds_to_evaluate": [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80],
+    "selection_rule": "threshold must be selected inside training/validation; OOS untouched"
+  }
+}

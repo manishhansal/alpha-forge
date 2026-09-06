@@ -1,0 +1,118 @@
+{
+  "report_id": "phase-3f-calibration-report",
+  "phase": "3F",
+  "title": "Meta-Labeling, Probability Calibration & Abstention — Calibration Report",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "oos_evidence_status": "INSUFFICIENT_EVIDENCE",
+
+  "semantic_bug_fixes": [
+    {
+      "bug_id": "BUG-3F-001",
+      "severity": "CRITICAL",
+      "file": "src/meta/calibration.py",
+      "description": "CalibrationStore.calibrate() fallback returned clip(raw_score, 0, 1) for unknown models — this treats a raw score as a calibrated probability",
+      "fix": "Returns 0.5 (neutral, uninformative) with a warning. Raw score clipping is NOT calibration."
+    },
+    {
+      "bug_id": "BUG-3F-002",
+      "severity": "CRITICAL",
+      "file": "src/meta/calibration.py",
+      "description": "calibrate_batch() same clip fallback for unknown models",
+      "fix": "Returns np.full(n, 0.5) with warning."
+    },
+    {
+      "bug_id": "BUG-3F-003",
+      "severity": "MEDIUM",
+      "file": "src/meta/calibration.py",
+      "description": "CalibrationQuality.eval_is_oos documented in docstring but not stored as a field",
+      "fix": "Added eval_is_oos: bool = False field to CalibrationQuality dataclass; propagated into fit() return value."
+    },
+    {
+      "bug_id": "BUG-3F-004",
+      "severity": "HIGH",
+      "file": "src/meta/meta_model.py",
+      "description": "Risk signal abs(prob_target - prob_stop) calibrated as logit-scale raw score — type mismatch",
+      "fix": "Pass probability-difference directly as confidence without running through CalibrationStore calibrator."
+    },
+    {
+      "bug_id": "BUG-3F-005",
+      "severity": "HIGH",
+      "file": "src/meta/decision_policy.py",
+      "description": "signal_confidence = abs(weighted_score) — score magnitude ≠ probability",
+      "fix": "Replaced with er.weighted_confidence (calibration-quality-weighted mean of calibrated model confidences)."
+    },
+    {
+      "bug_id": "BUG-3F-006",
+      "severity": "MEDIUM",
+      "file": "src/meta/meta_model.py",
+      "description": "IVPrediction.confidence = 0.7 hardcoded fabrication",
+      "fix": "Changed to Optional[float] = None; None handled explicitly in _build_signals."
+    },
+    {
+      "bug_id": "BUG-3F-007",
+      "severity": "MEDIUM",
+      "file": "src/meta/meta_model.py",
+      "description": "mean_conf computed as unweighted mean; ensemble.weighted_confidence computed but never used",
+      "fix": "decide() now uses ensemble.weighted_confidence (calibration-quality-weighted)."
+    },
+    {
+      "bug_id": "BUG-3F-008",
+      "severity": "LOW",
+      "file": "src/meta/calibration_engine.py",
+      "description": "CalibratorArtifact.predict() checked staleness before fitted; unfitted artifact returns STALE instead of UNCALIBRATED",
+      "fix": "Check order: UNCALIBRATED → MISMATCH → STALE → CALIBRATED."
+    }
+  ],
+
+  "calibration_metrics": {
+    "status": "INSUFFICIENT_EVIDENCE",
+    "reason": "No real dataset available. Metrics require OOS model predictions on real Indian equity data.",
+    "platt_ece": null,
+    "platt_mce": null,
+    "platt_brier": null,
+    "platt_log_loss": null,
+    "platt_slope": null,
+    "platt_intercept": null,
+    "isotonic_ece": null,
+    "isotonic_mce": null,
+    "isotonic_brier": null,
+    "reliability_bins": null
+  },
+
+  "calibration_infrastructure": {
+    "CalibratorArtifact": {
+      "states": ["UNCALIBRATED", "CALIBRATOR_MISMATCH", "STALE", "CALIBRATED"],
+      "never_clips_raw_score": true,
+      "compatibility_check": "model_id + model_version",
+      "staleness_check": "effective_from + max_age_days",
+      "temporal_order": "UNCALIBRATED checked first to prevent STALE masking unfitted state"
+    },
+    "walk_forward_calibrate": {
+      "temporal_invariant": "fit_end_time < eval_start_time for every fold",
+      "tested_by": "TestCalibrationLeakage::test_walk_forward_temporal_order_invariant"
+    },
+    "CalibrationQualityV2": {
+      "eval_is_oos": true,
+      "fields": ["ece", "mce", "brier_score", "log_loss", "calibration_slope", "calibration_intercept", "eval_is_oos", "fit_sample_count", "eval_sample_count"]
+    }
+  },
+
+  "test_results": {
+    "test_phase3f": { "collected": 76, "passed": 71, "failed": 0, "skipped": 5 },
+    "test_meta_engine": { "collected": 72, "passed": 63, "failed": 0, "skipped": 9 },
+    "overall": { "passed": 405, "failed": 0, "skipped": 20 }
+  },
+
+  "q_and_a": {
+    "Q1_distinguish_alpha_prob_return_ev": "YES — SchemaType enum enforces distinct types; tests verify",
+    "Q2_meta_trained_on_oos_predictions": "YES — build_meta_labels(require_oos=True) raises RuntimeError for in-sample",
+    "Q3_unfitted_calibrator_not_calibrated": "YES — CalibratorArtifact returns UNCALIBRATED; CalibrationStore returns 0.5 neutral",
+    "Q4_final_oos_not_influence_calibrator": "YES — walk_forward_calibrate temporal assertion enforces fit_end < eval_start",
+    "Q5_final_oos_not_influence_threshold": "YES — threshold selection is research-configured; not selected on OOS",
+    "Q6_stale_calibrator_not_silent_take": "YES — STALE status propagates; is_usable() returns False",
+    "Q7_probability_carries_provenance": "YES — CalibratedProbability carries calibrator_id, calibration_version, fit_end_time",
+    "Q8_abstention_possible": "YES — AbstentionPolicy + ABSTAIN Decision state + DecisionReason.CALIBRATION_UNAVAILABLE",
+    "Q9_insufficient_evidence_returnable": "YES — INSUFFICIENT_EVIDENCE state in Decision enum and EVStatus",
+    "Q10_primary_ranker_handles_ranking_not_calibration": "YES — alpha_score stays in AlphaScore type; CalibrationStore is a separate layer"
+  }
+}

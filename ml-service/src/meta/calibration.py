@@ -55,8 +55,10 @@ class CalibrationQuality:
     ece: float = 0.0          # Expected Calibration Error  (lower = better)
     mce: float = 0.0          # Maximum Calibration Error   (lower = better)
     brier_score: float = 1.0  # Brier score                 (lower = better)
-    n_samples: int = 0        # Number of OOS samples used
+    n_samples: int = 0        # Number of samples used for quality evaluation
     is_fitted: bool = False
+    # Phase 3F fix (BUG #4): eval_is_oos was referenced in docstring but never stored.
+    eval_is_oos: bool = False  # True = quality metrics computed on disjoint OOS fold
 
     @property
     def quality_score(self) -> float:
@@ -383,6 +385,7 @@ class CalibrationStore:
                 brier_score=brier,
                 n_samples=len(q_scores),
                 is_fitted=True,
+                eval_is_oos=eval_is_oos,   # Phase 3F fix BUG #4
             )
             entry.quality_platt = quality
 
@@ -399,6 +402,7 @@ class CalibrationStore:
                 brier_score=brier,
                 n_samples=len(q_scores),
                 is_fitted=True,
+                eval_is_oos=eval_is_oos,   # Phase 3F fix BUG #4
             )
             entry.quality_isotonic = quality
 
@@ -455,11 +459,22 @@ class CalibrationStore:
         """
         Return calibrated probability for a single raw score.
 
-        Falls back to raw score (clipped to [0,1]) if the calibrator is
-        not yet fitted.
+        Phase 3F fix (BUG #3): NEVER clips raw_score to [0,1] and returns
+        it as a "calibrated probability".  Unknown models return 0.5
+        (neutral/uninformative) so the score does not silently fabricate
+        a directional probability.
+
+        For a typed result with explicit status, use CalibratorArtifact directly.
         """
         if model_name not in self._store:
-            return float(np.clip(raw_score, 0.0, 1.0))
+            # BUG #3 FIX: was clip(raw_score, 0, 1) — treating raw as probability.
+            # Now returns 0.5 (neutral) with an explicit warning.
+            logger.warning(
+                "calibration_model_not_registered",
+                model_name=model_name,
+                note="Returning 0.5 (neutral). Register the model in CalibrationStore.",
+            )
+            return 0.5
 
         entry = self._store[model_name]
         effective_kind = kind or entry.active_kind
@@ -476,9 +491,17 @@ class CalibrationStore:
         raw_scores: np.ndarray,
         kind: CalibratorKind | None = None,
     ) -> np.ndarray:
-        """Batch version of :meth:`calibrate`."""
+        """Batch version of :meth:`calibrate`.
+
+        Phase 3F fix (BUG #3): unknown model returns 0.5 array, not clip().
+        """
         if model_name not in self._store:
-            return np.clip(raw_scores, 0.0, 1.0)
+            logger.warning(
+                "calibration_model_not_registered_batch",
+                model_name=model_name,
+                note="Returning 0.5 array (neutral). Register the model.",
+            )
+            return np.full(len(raw_scores), 0.5)
 
         entry = self._store[model_name]
         effective_kind = kind or entry.active_kind

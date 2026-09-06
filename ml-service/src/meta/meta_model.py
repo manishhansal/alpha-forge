@@ -135,7 +135,9 @@ class IVPrediction:
     """IV regime classifier output."""
 
     regime: str                             # "CRUSH" | "STABLE" | "SPIKE"
-    confidence: float = 0.7                 # ∈ [0, 1]
+    # Phase 3F fix (BUG #8): was hardcoded 0.7 — fabricated confidence.
+    # Now Optional[float] = None so absence is explicit.
+    confidence: float | None = None         # ∈ [0, 1]; None = unavailable
 
 
 @dataclass
@@ -345,8 +347,12 @@ class MetaDecisionEngine:
         data_quality = inp.computed_data_quality()
         regime_confidence = inp.regime.confidence if inp.regime else 0.5
         prob_stop_hit = inp.risk.prob_stop_hit if inp.risk else 0.5
-        available_confs = [s.confidence for s in signals if s.is_available]
-        mean_conf = float(np.mean(available_confs)) if available_confs else 0.5
+        # Phase 3F fix (BUG #7): use ensemble.weighted_confidence (calibration-
+        # quality-weighted mean of calibrated confidences) rather than computing
+        # an independent unweighted mean.  This is consistent with the ensemble
+        # computation and respects calibration quality differences.
+        mean_conf = float(np.clip(ensemble.weighted_confidence, 0.0, 1.0)) \
+            if ensemble.active_models else 0.5
 
         abstention_inputs = AbstentionInputs(
             agreement_ratio=ensemble.disagreement.agreement_ratio,
@@ -609,8 +615,15 @@ class MetaDecisionEngine:
             # Positive direction when target is more likely to hit than stop
             diff = inp.risk.prob_target_hit - inp.risk.prob_stop_hit
             direction = 1 if diff > 0.10 else (-1 if diff < -0.10 else 0)
+            # Phase 3F fix (BUG #5): do NOT calibrate abs(diff) through the
+            # risk calibrator — that calibrator is trained on raw logit-scale
+            # scores, but abs(diff) is already a probability-difference ∈ [0,1].
+            # Running it through Platt/isotonic produces a meaningless transform.
+            # Instead use abs(diff) directly as confidence — it is already
+            # bounded [0,1] and represents directional conviction.
             raw = float(abs(diff))
-            cal = self.calibration_store.calibrate("risk", raw)
+            # Clip to valid confidence range; do NOT call calibrate() here.
+            cal = float(np.clip(raw, 0.0, 1.0))
             signals.append(ModelSignal(
                 model_name="risk",
                 direction=direction,
@@ -641,7 +654,11 @@ class MetaDecisionEngine:
 
         # ── IV Classifier ─────────────────────────────────────────────────
         if inp.iv is not None:
-            raw = inp.iv.confidence
+            # Phase 3F fix (BUG #8): iv.confidence may now be None.
+            # When absent, use 0.5 (neutral/uninformative) and mark explicitly.
+            raw_iv = inp.iv.confidence
+            iv_available = raw_iv is not None
+            raw = float(raw_iv) if iv_available else 0.5
             cal = self.calibration_store.calibrate("iv_classifier", raw)
             # SPIKE → unfavourable for entry (-1)
             # CRUSH → slightly positive (+1, options are cheap)

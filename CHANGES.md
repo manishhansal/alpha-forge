@@ -4,6 +4,65 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3F: Meta-Labeling, Probability Calibration & Abstention
+
+**Date:** 2026-09-06
+**Files changed:** 5 new source files + 4 modified source files + 1 test file + 8 reports/docs
+**Tests:** 71 passed / 0 failed / 5 skipped (sklearn/lgbm/xgb/scipy absent — pre-existing)
+**Full suite:** 405 passed / 0 failed / 20 skipped
+**Phase result:** PHASE_3F_PASS
+
+### Summary
+
+Introduces the layer between the ranking engine (Phase 3E) and execution that answers: "Given the primary ranker has identified a candidate, should we act on it?" Fixes 8 semantic bugs in the existing meta layer where raw scores were silently treated as calibrated probabilities. Establishes an explicit type contract (`AlphaScore ≠ RawProbabilityScore ≠ CalibratedProbability ≠ ExpectedValue ≠ Decision`). Implements programmatic stacking leakage prevention, temporal calibration ordering, EV leakage protection, and 11 explicit abstention reasons.
+
+### 8 Semantic Bugs Fixed
+
+| Bug | Severity | Fix |
+|-----|----------|-----|
+| `CalibrationStore.calibrate()` returned `clip(raw, 0, 1)` as "calibrated probability" | **CRITICAL** | Returns 0.5 (neutral) with warning |
+| `calibrate_batch()` same clip fallback | **CRITICAL** | Returns 0.5 array with warning |
+| `CalibrationQuality.eval_is_oos` documented but not stored | MEDIUM | Added field; propagated into `fit()` |
+| Risk signal `abs(prob_diff)` calibrated as logit-scale raw score | HIGH | Pass directly as confidence (no calibration) |
+| `signal_confidence = abs(weighted_score)` — score ≠ probability | HIGH | Replaced with `er.weighted_confidence` |
+| `IVPrediction.confidence = 0.7` hardcoded fabrication | MEDIUM | Changed to `Optional[float] = None` |
+| `weighted_confidence` computed but never consumed | MEDIUM | `decide()` uses `ensemble.weighted_confidence` |
+| `CalibratorArtifact.predict()` checked staleness before fitted | LOW | Check order: UNCALIBRATED → MISMATCH → STALE |
+
+### New Modules (`src/meta/`)
+
+| File | Purpose |
+|------|---------|
+| `schemas.py` | `AlphaScore`, `RawProbabilityScore`, `CalibratedProbability`, `ExpectedReturn`, `ExpectedValue`, `MetaDecisionOutput`; `ScoreType`, `ProbabilityStatus`, `Decision`, `EVStatus`, `PredictionProvenance` enums |
+| `meta_label.py` | `MetaEvent`, `MetaLabelPolicy` (A/B/C), `build_meta_labels()` with stacking leakage enforcement, `validate_no_outcome_features()` |
+| `calibration_engine.py` | `CalibratorArtifact` (4 explicit states: UNCALIBRATED/MISMATCH/STALE/CALIBRATED), `walk_forward_calibrate()`, `reliability_curve()`, `compute_calibration_metrics()` |
+| `meta_ranker.py` | `AlphaThresholdBaseline`, `LinearMetaRanker`, `LightGBMMetaRanker`, `XGBoostMetaRanker`, `compare_meta_models()` with `ML_ADDS_NO_CLEAR_VALUE` logic |
+| `ev_engine.py` | `PayoffDistribution` with `assert_no_future_leakage()`, `ExpectedValueCalculator`, `compute_probability_bucket_analysis()` |
+
+### Key Invariants Verified by Tests
+
+| Invariant | Test |
+|-----------|------|
+| Unfitted calibrator returns UNCALIBRATED (never clips raw) | `TestNoRawScoreFallback` |
+| In-sample predictions rejected before meta training | `TestStackingLeakage` |
+| EV leakage: payoff fitted after prediction_time rejected | `TestEVLeakage` |
+| Calibration temporal order: fit_end < eval_start | `TestCalibrationLeakage` |
+| Model/calibrator mismatch returns CALIBRATOR_MISMATCH | `TestCalibratorArtifactStates` |
+| Stale calibrator returns STALE (not a probability) | `TestCalibratorArtifactStates` |
+| Outcome features in feature list raise ValueError | `TestOutcomeFeatureLeakage` |
+| Future data mutation does not alter historical meta labels | `TestFutureMutation` |
+| Golden EV: P=0.7, E[win]=5%, E[loss]=-3% → EV=2.6% | `TestExpectedValueGolden` |
+
+### Backward Compatibility
+
+`MetaDecisionEngine.decide()` behavior improved (more correct). `CalibrationStore.calibrate()` returns 0.5 instead of `clip(raw)` for unknown models. `IVPrediction.confidence` now `Optional[float]` — callers must handle `None`. All 405 prior tests pass.
+
+### OOS Evidence
+
+**INSUFFICIENT_EVIDENCE** — no real Indian equity dataset loaded. Calibration metrics (Brier, ECE, log-loss) and meta model OOS performance (ROC-AUC, PR-AUC) deferred to Phase 3G when real data is available.
+
+---
+
 ## [Unreleased] — Phase 3E: Cross-Sectional Alpha & Ranking Engine
 
 **Date:** 2026-09-06
