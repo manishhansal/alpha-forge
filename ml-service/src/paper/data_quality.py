@@ -412,8 +412,18 @@ def validate_fno_metadata(contract: dict, as_of: date,
     lot = contract.get("lot_size")
     if instrument_store is not None:
         try:
-            hist = instrument_store.get_lot_size(sym, as_of)  # expected (value, status)
-            value, status = hist if isinstance(hist, tuple) else (hist, "OK")
+            hist = instrument_store.get_lot_size(sym, as_of)  # (value, status[, source])
+            # InstrumentMasterStore.get_lot_size returns a 3-tuple (value, status,
+            # source); older stores may return a 2-tuple or a bare value. Unpack
+            # tolerantly so a KNOWN historical lot size is actually compared
+            # (Phase 3Q fix P3Q-001: the previous 2-target unpack crashed on the
+            # real 3-tuple, silently degrading every lookup to UNAVAILABLE and
+            # never detecting a lot-size MISMATCH).
+            if isinstance(hist, tuple):
+                value = hist[0] if len(hist) >= 1 else None
+                status = hist[1] if len(hist) >= 2 else "OK"
+            else:
+                value, status = hist, "OK"
             if status == "DATA_UNAVAILABLE" or value is None:
                 rep.add("FNO_LOT_SIZE_UNAVAILABLE", QualitySeverity.CRITICAL,
                         f"historical lot size unavailable for {sym} @ {as_of} (do NOT substitute current)",

@@ -4,6 +4,52 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3Q: Production Data & Indian-Market Reliability Engineering
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** ADDITIVE data-reliability layer — no new model, feature, strategy, live path, broker integration, or parameter optimization
+**Tests (Phase 3Q):** 97 passed / 0 failed / 0 skipped
+**Full regression (3A–3Q):** 1390 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions** (baseline 1293 + 97 new)
+**Security:** CLEAN — broker credentials server-side env only; no `NEXT_PUBLIC_*` secret vars; no NSE-scrape in the TS production layer; redaction guards on health API + observability events
+**Final status:** `PHASE_3Q_PASS`
+**Data-reliability state:** `PRODUCTION_READY_WITH_LIMITATIONS` (real-provider/real-market soak not exercisable in this environment)
+
+### Summary
+
+Added `ml-service/src/data_reliability/` (27 files, 111 exports) — an ADDITIVE,
+fail-closed Indian-market data-reliability layer that **reuses** the existing
+foundation (`paper.providers`, `paper.data_quality`, `data.point_in_time`,
+`data.instrument_master`, `data.corporate_actions`, `data.historical_universe`,
+`data.dataset_version`, `data.lineage`, `execution.market_calendar`,
+`lifecycle._storage`, `monitoring`). It provides a typed provider-failure taxonomy,
+deterministic hierarchy (DataService→AngelOne→Upstox→Yahoo), cross-provider
+conflict detection, stale detection (frozen/regression/future/delayed), calendar +
+timezone integrity, bar completeness (FORMING vs CLOSED), OHLC quarantine (no silent
+repair), adjustment-mode guard, F&O/universe PIT, a canonical DataQualityGate, a
+feature-availability contract (no silent 0.0), a 10-gate signal-safety check
+(→ NO_DECISION, never a directional signal), bounded retry, idempotent ingest,
+cache integrity, extended lineage, reproducible snapshots, no-future-leak replay,
+append-only corrections, monitoring metrics, alert severity, a secret-free data-health
+API, rate-limit safety, structured observability events, a signal-family
+data-dependency matrix, a document-only double-counting audit, and a paper/shadow-only
+current-day harness.
+
+### Findings
+
+| ID | Severity | Category | Status |
+|----|----------|----------|--------|
+| P3Q-001 | Correctness | F&O PIT lot-size guard | **FIXED** — `paper.data_quality.validate_fno_metadata` unpacked the 3-tuple `get_lot_size` into two targets, raising `ValueError` whose `except` branch always emitted `FNO_LOT_SIZE_UNAVAILABLE`, so a wrong historical lot was never detected as a mismatch. Fixed with a tolerant unpack; wrong lot now → `FNO_LOT_SIZE_MISMATCH`, unknown → `DATA_INSUFFICIENT` (fail-closed, never fabricated). Regression-guarded. |
+
+### Known limitations
+
+Muhurat dates are a hardcoded set (extend per year); retry backoff does no real sleep
+by default (caller injects one); the current-day harness is paper/shadow-only and uses
+synthetic fixtures; real-provider/real-market validation is not exercisable here
+(no live credentials; `talib/torch/sklearn/riskfolio/yfinance` absent).
+
+---
+
 ## [Unreleased] — Phase 3P: Independent Quant Validation, Red-Team Audit & Evidence Certification
 
 **Date:** 2026-09-06
