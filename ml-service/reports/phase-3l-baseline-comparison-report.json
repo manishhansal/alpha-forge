@@ -1,0 +1,20 @@
+{
+  "report_type": "phase-3l-baseline-comparison-report",
+  "phase": "3L",
+  "generated": "2026-09-06",
+  "deterministic_baselines_preserved": true,
+  "rl_improvement_over_baselines": "INSUFFICIENT_EVIDENCE",
+  "fair_comparison": {
+    "same_market_data": true, "same_simulator": true, "same_cost_model": true,
+    "same_slippage_liquidity": true, "same_period": true,
+    "enforced_by": "SimulatorBridge over Phase 3G BacktestEngine"
+  },
+  "baselines": ["NEXT_OPEN", "TWAP", "VWAP_PROXY", "FIXED_PARTICIPATION", "PASSIVE", "AGGRESSIVE"],
+  "baselines_use_future": false,
+  "oracle": {"label": "ORACLE_ONLY", "uses_future": true, "used_for_training_or_prod": false,
+             "purpose": "headroom upper bound only"},
+  "baseline_integrity_verified": true,
+  "zero_cost_reward_exceeds_net_cost_reward": true,
+  "ope_status": "OPE_INSUFFICIENT_EVIDENCE",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

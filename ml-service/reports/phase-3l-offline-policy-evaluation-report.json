@@ -1,0 +1,18 @@
+{
+  "report_type": "phase-3l-offline-policy-evaluation-report",
+  "phase": "3L",
+  "generated": "2026-09-06",
+  "evaluated_by_naive_replay": false,
+  "estimators": ["IS", "WIS", "DR", "FQE"],
+  "behavior_policy_estimation": "empirical per binned state, epsilon-smoothed",
+  "target_policy": "epsilon-greedy on learned Q",
+  "uncertainty_metrics": ["effective_sample_size", "weight_concentration", "coverage", "bootstrap_ci_95"],
+  "reliability_rule": "RELIABLE iff ess>=min_ess and weight_concentration<=max and coverage>=min",
+  "synthetic_result": {
+    "is": 2227585.93, "wis": 768525.52, "dr": 1848965.37, "fqe": 1904870.91,
+    "effective_sample_size": 1.06, "weight_concentration": 0.973, "coverage": 1.0,
+    "status": "OPE_INSUFFICIENT_EVIDENCE"
+  },
+  "tiny_dataset_status": "OPE_INSUFFICIENT_EVIDENCE",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

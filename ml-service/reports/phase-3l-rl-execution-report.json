@@ -1,0 +1,29 @@
+{
+  "report_type": "phase-3l-rl-execution-report",
+  "phase": "3L",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "verdict": "NO_INCREMENTAL_EXECUTION_ALPHA",
+  "evidence": "INSUFFICIENT_EVIDENCE",
+  "framework": {
+    "backend": "numpy",
+    "deterministic": true,
+    "torch_available": false,
+    "stable_baselines3_available": false,
+    "gymnasium_available": false,
+    "rationale": "determinism + dependency-light robustness; discrete small action space suits tabular/linear Fitted-Q; see audit 3.1"
+  },
+  "rl_scope": "downstream execution + trade management only; never learns alpha from scratch",
+  "tracks": ["EXECUTION_OPTIMIZATION", "TRADE_MANAGEMENT"],
+  "reuses_phase_3g_simulator": true,
+  "reward_net_of_cost": true,
+  "reward_is_raw_price_change": false,
+  "offline_rl": true,
+  "ope_status_on_synthetic": "OPE_INSUFFICIENT_EVIDENCE",
+  "every_rl_agent_is_phase3j_challenger": true,
+  "auto_promotion": false,
+  "live_broker_connection": false,
+  "tests": {"phase_3l_passed": 38, "phase_3l_failed": 0,
+            "full_suite_passed": 858, "full_suite_failed": 0, "full_suite_skipped": 19},
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

@@ -4,6 +4,86 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3L: Reinforcement-Learning Execution & Adaptive Trade Management
+
+**Date:** 2026-09-06  
+**Branch:** `refactor/improve-ml-service`  
+**Files changed:** 13 new source files + 1 test file + 15 reports/docs  
+**Tests (Phase 3L):** 38 passed / 0 failed / 0 skipped  
+**Full suite (3A–3L):** 858 passed / 0 failed / 19 skipped (pre-existing)  
+**Static audit:** CLEAN — 0 global `np.random.*`, 0 `train_test_split`, 0 bare `random.*`, 0 `shift(-N)`, 0 `center=True`, 0 `latest.pkl`/`current_model`, 0 broker/live-order symbols (`place_order`/`submit_order`/`Angel`/`Upstox`)  
+**Phase result:** PHASE_3L_PASS  
+**Research verdict:** NO_INCREMENTAL_EXECUTION_ALPHA — INSUFFICIENT_EVIDENCE (no real dataset; OPE unreliable on synthetic → OPE_INSUFFICIENT_EVIDENCE)
+
+### Summary
+
+Introduces a controlled reinforcement-learning EXECUTION / adaptive
+trade-management research layer (`src/rl/`). RL operates strictly DOWNSTREAM of
+the existing alpha/ranker/meta/EV/portfolio/execution stack — it optimises
+WHEN/HOW/HOW-MUCH to execute and how to manage an open position, and NEVER learns
+alpha from scratch. This is a research phase: NO live broker, NO real orders, NO
+auto-promotion, NO auto-retraining, NO autonomous live trading.
+
+### Framework decision
+
+Framework-agnostic, deterministic pure-NumPy backend (torch / stable-baselines3 /
+gymnasium are not importable under Python 3.14 in this environment). The small
+discrete action spaces suit tabular / linear Fitted-Q (a DQN-equivalent). A
+gymnasium-compatible façade sits behind a capability check. See
+`reports/phase-3l-current-rl-audit.md` §3.1.
+
+### New Package: `src/rl/`
+
+| Module | Purpose |
+|--------|---------|
+| `schemas.py` | `RLExperiment`, versioned `EnvironmentVersion`/`RewardFunctionVersion`/`ExecutionSimulatorVersion`, `ObservationSchema`, `ActionSchema`, `RLAgentProvenance`, `RewardComponents`, `Transition`; enums incl. `RLModelValueClass`, `OPEStatus` |
+| `registry.py` | `RLExperimentRegistry` (status machine, final-holdout guard, 3J challenger wiring) + immutable `TrajectoryRegistry` |
+| `environment.py` | causal, deterministic, replayable `ExecutionEnv` (state hash, no future in obs) |
+| `actions.py` | action space + deterministic `SafetyLayer` + `valid_action_mask` |
+| `reward.py` | `RewardEngine` — net-of-cost via Phase 3G `compute_trade_cost` |
+| `simulator_bridge.py` | `SimulatorBridge` reusing the Phase 3G `BacktestEngine` (no second simulator) |
+| `baselines.py` | TWAP/VWAP-proxy/fixed-participation/passive/aggressive/next-open + `ORACLE_ONLY` bound |
+| `offline.py` | trajectory generation, `CoverageModel` OOD protection, behavior cloning |
+| `agent.py` | pure-NumPy `OfflineQAgent` (tabular/linear Fitted-Q), walk-forward, HPO (train/val only), multi-seed |
+| `ope.py` | off-policy evaluation (IS/WIS/DR/FQE) + ESS/coverage/concentration/CI + `OPE_INSUFFICIENT_EVIDENCE` |
+| `evaluation.py` | execution/risk/capacity metrics, robustness perturbations, failure-mode detectors, `SIMULATOR_DEPENDENCY_RISK` |
+| `classification.py` | `classify_rl_value` (7 classes) + `RLActionAudit` + `FallbackController` |
+
+### Reuse (no duplication)
+
+- Phase 3G `BacktestEngine` / `compute_trade_cost` / slippage / `NSECalendar` — the ONLY execution simulator
+- Phase 3J `ModelRegistry` / `ChallengerRegistry` / `ModelIdentity` / `ModelProvenance` — RL enters as a CHALLENGER
+- `lifecycle._storage` atomic writes + JSONL
+- stdlib + numpy only — no new heavyweight dependency
+- The pre-existing `src/models/rl_executor.py` (SB3 PPO with its own synthetic simulator + raw-price reward) is documented as an ANTI-PATTERN and left unmodified (out of scope; used by server.py)
+
+### Static Audit — ALL CLEAN
+
+| Pattern | Result |
+|---------|--------|
+| global `np.random.*` | CLEAN (0; AST scan; only seeded `default_rng`) |
+| `train_test_split` / bare `random.*` | CLEAN (0) |
+| `shift(-N)` / `center=True` | CLEAN (0) |
+| future data in observation | CLEAN (causality tests pass) |
+| `latest.pkl` / `current_model` | CLEAN (0) |
+| live broker (`place_order`/`submit_order`/`Angel`/`Upstox`) | CLEAN (0) |
+| auto-promotion of an RL agent | CLEAN (Phase 3J challenger only) |
+
+### Reports & Docs
+
+`reports/phase-3l-current-rl-audit.md`,
+`phase-3l-rl-execution-report.{md,json}`,
+`phase-3l-baseline-comparison-report.{md,json}`,
+`phase-3l-offline-policy-evaluation-report.{md,json}`,
+`phase-3l-robustness-report.{md,json}`,
+`phase-3l-safety-report.{md,json}`;
+`docs/ml-audit/phase-3l-reinforcement-learning.md`,
+`docs/ml-research/rl-execution-methodology.md`,
+`docs/ml-research/offline-rl-methodology.md`,
+`docs/ml-operations/rl-safety-runbook.md`.
+
+---
+
 ## [Unreleased] — Phase 3K: Advanced ML / Deep-Learning Research & Incremental Alpha Validation
 
 **Date:** 2026-09-06  

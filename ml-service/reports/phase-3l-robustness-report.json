@@ -1,0 +1,15 @@
+{
+  "report_type": "phase-3l-robustness-report",
+  "phase": "3L",
+  "generated": "2026-09-06",
+  "perturbations": ["base", "worse_slippage", "higher_spread", "higher_impact", "lower_liquidity", "execution_delay"],
+  "simulator_dependency_rule": "risk flagged if degradation>=80% or positive->negative flip",
+  "verified": {
+    "robust_policy_no_risk": true,
+    "fragile_policy_flags_sim_dependency": true
+  },
+  "failure_modes_detected": ["policy_collapse", "always_wait", "always_aggressive",
+                             "excessive_turnover", "inventory_accumulation", "reward_hacking"],
+  "adversarial_conditions": "covered via perturbations; historical stress requires real data (INSUFFICIENT_EVIDENCE)",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}
