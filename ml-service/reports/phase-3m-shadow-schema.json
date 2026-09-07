@@ -1,0 +1,216 @@
+{
+  "artifact": "phase-3m-shadow-schema",
+  "description": "Shadow/paper execution contract (spec \u00a710\u201313). NEVER a broker.",
+  "guarantees": {
+    "broker_execution": false,
+    "corrections_are_new_events": true,
+    "idempotent_per_decision": true,
+    "immutable_append_only": true,
+    "live_forbidden": true,
+    "reuses_phase3g_simulator": true,
+    "second_simulator": false
+  },
+  "ledger_event_types": [
+    "ORDER_CREATED",
+    "FILL_CREATED",
+    "ORDER_COMPLETED",
+    "ORDER_CANCELLED",
+    "CORRECTION"
+  ],
+  "shadow_fill_fields": {
+    "assumed_execution_price": {
+      "required": true,
+      "type": "Optional[float]"
+    },
+    "created_at": {
+      "required": false,
+      "type": "str"
+    },
+    "data_snapshot_id": {
+      "required": false,
+      "type": "str"
+    },
+    "decision_id": {
+      "required": true,
+      "type": "str"
+    },
+    "execution_policy": {
+      "required": false,
+      "type": "str"
+    },
+    "execution_policy_version": {
+      "required": false,
+      "type": "str"
+    },
+    "feature_version": {
+      "required": false,
+      "type": "str"
+    },
+    "fees": {
+      "required": false,
+      "type": "float"
+    },
+    "fill_id": {
+      "required": true,
+      "type": "str"
+    },
+    "fill_timestamp": {
+      "required": false,
+      "type": "str"
+    },
+    "instrument": {
+      "required": true,
+      "type": "str"
+    },
+    "market_regime": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "model_ids": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "order_id": {
+      "required": true,
+      "type": "str"
+    },
+    "pnl_reconciled": {
+      "required": false,
+      "type": "bool"
+    },
+    "quantity_filled": {
+      "required": true,
+      "type": "float"
+    },
+    "realized_pnl": {
+      "required": false,
+      "type": "float"
+    },
+    "rl_action": {
+      "required": false,
+      "type": "str"
+    },
+    "rl_policy_id": {
+      "required": false,
+      "type": "str"
+    },
+    "side": {
+      "required": true,
+      "type": "str"
+    },
+    "simulator_version": {
+      "required": false,
+      "type": "str"
+    },
+    "slippage": {
+      "required": false,
+      "type": "float"
+    },
+    "status": {
+      "required": true,
+      "type": "str"
+    },
+    "target_price": {
+      "required": true,
+      "type": "Optional[float]"
+    },
+    "taxes": {
+      "required": false,
+      "type": "float"
+    },
+    "total_cost": {
+      "required": false,
+      "type": "float"
+    },
+    "unrealized_pnl": {
+      "required": false,
+      "type": "float"
+    }
+  },
+  "shadow_order_fields": {
+    "created_at": {
+      "required": false,
+      "type": "str"
+    },
+    "data_snapshot_id": {
+      "required": false,
+      "type": "str"
+    },
+    "decision_id": {
+      "required": true,
+      "type": "str"
+    },
+    "execution_policy": {
+      "required": false,
+      "type": "str"
+    },
+    "execution_policy_version": {
+      "required": false,
+      "type": "str"
+    },
+    "feature_version": {
+      "required": false,
+      "type": "str"
+    },
+    "horizon_bars": {
+      "required": false,
+      "type": "int"
+    },
+    "instrument": {
+      "required": true,
+      "type": "str"
+    },
+    "instrument_type": {
+      "required": false,
+      "type": "str"
+    },
+    "lot_size": {
+      "required": false,
+      "type": "int"
+    },
+    "market_regime": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "mode": {
+      "required": false,
+      "type": "str"
+    },
+    "model_ids": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "order_id": {
+      "required": true,
+      "type": "str"
+    },
+    "order_timestamp": {
+      "required": true,
+      "type": "str"
+    },
+    "quantity": {
+      "required": true,
+      "type": "float"
+    },
+    "rl_action": {
+      "required": false,
+      "type": "str"
+    },
+    "rl_policy_id": {
+      "required": false,
+      "type": "str"
+    },
+    "side": {
+      "required": true,
+      "type": "str"
+    },
+    "signal_timestamp": {
+      "required": true,
+      "type": "str"
+    },
+    "target_price": {
+      "required": true,
+      "type": "Optional[float]"
+    }
+  }
+}
