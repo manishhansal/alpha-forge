@@ -4,6 +4,21 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3S: Research Factory & Experimentation Governance
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** ADDITIVE research layer — new package `ml-service/src/research/`; **NOT a live-trading phase**, NOT about creating more models; no live path/broker, no auto-promote/retrain/recalibrate, no threshold/weight optimization, no OOS contamination, no post-hoc optimization
+**Added:** `ml-service/src/research/` (19 modules, 123 exports) — falsifiable hypotheses + pre-registration; immutable `ExperimentManifest` + deterministic experiment hash + append-only registry; canonical metric registry (one primary metric per experiment); immutable PIT data snapshots + point-in-time universe (survivorship-biased universes rejected); documented feature registry + provenance + future-feature/normalization leakage guards (→ EXPERIMENT_INVALIDATED); walk-forward validation with a **sealed untouched OOS** (HPO/selection reveals refused); experiment tiers A–D; baseline-first rule + ablation framework; incremental-alpha test (NO_NET_ALPHA / NO_OOS_ALPHA / INSUFFICIENT_EVIDENCE); correlated-signal audit (redundant vs incremental); multiple-testing (Bonferroni/Holm/BH, trial-count-tracked), Deflated Sharpe Ratio, Probability of Backtest Overfitting (CSCV), White's Reality Check; placebo + negative controls + multi-seed fragility + degrees-of-freedom + data-snooping lineage + HPO governance; apples-to-apples comparison (COMPARISON_INVALID) + leaderboard (not ranked by return alone); immutable hashed experiment artifact + reproduction (REPRODUCTION_FAILURE → invalidate); nine automated research gates; research-factory orchestrator with a strict **recommend-only** challenger boundary (never promotes; `promoted=True` invariant blocked; no promote/deploy/retrain method) + experiment isolation
+**Tests (Phase 3S):** 77 passed / 0 failed / 0 skipped (deterministic; incl. test-the-tests §58 and security §55)
+**Full regression (3A–3S):** 1526 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions** (baseline 1449 + 77 new)
+**Security (§55):** CLEAN — experiment artifacts reject credentials (`ArtifactSecretLeak`) via the Phase 3Q secret guard; no secrets in manifests/sections
+**Promotion boundary (§41):** the research factory RECOMMENDS a `CHALLENGER_CANDIDATE` only (all nine gates + Tier D + mandatory human review); it never promotes, retrains, recalibrates, or trades
+**Alpha evidence:** `INSUFFICIENT_EVIDENCE` — machinery green on synthetic data only; no real alpha discovered or validated; evidence deliberately not upgraded because tests pass (§63)
+**Final status:** `PHASE_3S_PASS` — `RESEARCH_FACTORY_STATE: RESEARCH_OPERATIONAL_WITH_LIMITATIONS`
+
+---
+
 ## [Unreleased] — Phase 3R: Paper-Trading Operational Reliability
 
 **Date:** 2026-09-06
