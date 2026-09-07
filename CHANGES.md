@@ -4,6 +4,21 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 4A: Real-Market Paper Trading & Alpha Evidence Validation (Entry + Freeze)
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** Evidence-collection phase — ML service FROZEN (no features/models/thresholds/EV/calibration/labels/ranking/portfolio/risk/execution changed); AUDIT + FREEZE + SAFETY + reports only, no source modified
+**Added:** `ml-service/reports/PHASE_4A_ENTRY_MANIFEST.json` (frozen `PAPER_BASELINE_V1` identity, environment, provider config, safety verification), `ml-service/reports/PHASE_4A_OPERATIONAL_LOG.md`, `ml-service/reports/PHASE_4A_EVIDENCE_CERTIFICATION_REPORT.md`
+**Entry audit:** Phase 3T PASS confirmed; HEAD `4b48088`; frozen system regression **1570 passed / 28 skipped / 0 failed**; live-order primitives in `ml-service/src` = 0; `LIVE_TRADING_ENABLED` not active; hardcoded secrets = 0; provider credentials unset (no live data provider operational); zero accumulated real paper sessions
+**Real-market evidence window:** NOT executed — no live provider credentials configured and no real NSE/BSE trading days can elapse in this environment. Fabricating sessions is prohibited by the phase's integrity rules (§14/§39/§51), so no trading/statistical/predictive/robustness evidence was collected
+**Evidence separation:** engineering evidence STRONG (regression/live-order/security/reconciliation+replay machinery); statistical/trading/predictive/robustness evidence NONE (0 real sessions, 0 trades, 0 observations)
+**Security / live-order safety:** CLEAN — LIVE_TRADING DISABLED and enforced at session-start and paper-order boundaries
+**No automatic action:** nothing promoted/retrained/recalibrated; champion frozen; recommendation-only (human review determines next step)
+**Final classification:** `PHASE_4A_INSUFFICIENT_EVIDENCE` — `LIVE_TRADING_STATUS: DISABLED`
+
+---
+
 ## [Unreleased] — Phase 3T: Final ML-Service Production Readiness, Security & Quant Certification
 
 **Date:** 2026-09-06
