@@ -4,6 +4,21 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3R: Paper-Trading Operational Reliability
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** ADDITIVE paper-operations layer — new package `ml-service/src/paper_ops/`; **NOT live trading**; no new model/feature/strategy, no live path/broker/credentials, no threshold/weight optimization, no auto retrain/recalibrate/promote
+**Added:** `ml-service/src/paper_ops/` (10 modules, 79 exports) — immutable `PaperSession` + explicit state machine (CREATED..INVALIDATED, no LIVE state); 25 fail-closed session-start gates; event-sourced append-only ledger with idempotency + hash-chain + ordering-anomaly detection; order/fill bridge reusing Phase 3G `FillEngine` (no perfect fills) + position/F&O accounting + daily MTM; end-of-day boundary + reconciliation engine (10 typed discrepancies, never silent repair); crash recovery + provider/model/risk failure handling + kill switches (6 scopes) + explicit degraded modes; evidence-only analytics (abstention/performance+uncertainty/benchmarks/attribution/drift/tiers/aggregation); immutable evidence package + manifest + SHA-256 hashes + replay determinism (no-overwrite, no-credentials guards); operational heartbeat (alive≠healthy) + latency monitoring + 24-point daily report
+**Tests (Phase 3R):** 59 passed / 0 failed / 0 skipped (deterministic; incl. failure injection §46, test-the-tests §50, performance §51, hypothesis property tests)
+**Full regression (3A–3R):** 1449 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions** (baseline 1390 + 59 new)
+**Security (§47):** CLEAN — evidence freeze rejects secrets (`EvidenceSecretLeak`); events/health redacted via 3Q guards; no credentials in evidence/logs/manifests
+**Live-order boundary (§48):** CLEAN — grep of `ml-service/src` for live-order primitives = zero matches; all ml-service order paths PAPER/SHADOW; live-capable broker code isolated in TS frontend, disabled, no creds
+**Evidence state:** `INSUFFICIENT_EVIDENCE` — machinery green on synthetic data only; no real paper sessions accumulated, no live credentials; evidence deliberately not upgraded because tests pass (§55)
+**Final status:** `PHASE_3R_PASS` — `PAPER_OPERATIONS_STATE: OPERATIONALLY_READY_WITH_LIMITATIONS`
+
+---
+
 ## [Unreleased] — Phase 3Q: Production Data & Indian-Market Reliability Engineering
 
 **Date:** 2026-09-06
