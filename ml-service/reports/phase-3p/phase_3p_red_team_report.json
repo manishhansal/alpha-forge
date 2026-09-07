@@ -1,0 +1,63 @@
+{
+  "phase": "PHASE_3P",
+  "git_commit": "ff31a69",
+  "generated_at": "2026-09-06",
+  "severity_legend": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+  "summary": {"CRITICAL": 0, "HIGH": 2, "MEDIUM": 0, "LOW": 0, "INFO": 1, "all_high_fixed": true},
+  "findings": [
+    {
+      "finding_id": "P3P-001",
+      "severity": "HIGH",
+      "category": "PROMOTION_INTEGRITY / PROVENANCE",
+      "description": "PromotionOrchestrator.promote() did not enforce model/dependency compatibility. The CompatibilityChecker existed but was never wired into the promotion path, so a challenger trained on a DIFFERENT feature_version/label_version than the incumbent champion could be promoted purely on a higher IC — a non-like-for-like replacement that breaks provenance continuity.",
+      "reproduction": "Promote champion A (feature_version=feat-v3). Register + advance challenger B (feature_version=feat-v99) with higher IC. Call promote(scope, B, ev_B, ev_A, ...). Before fix: outcome=PROMOTE, champion becomes B. Reproduced by an independent probe and captured in tests/test_phase3p.py::TestLifecycleRedTeam::test_promotion_fail_closed (case d).",
+      "impact": "A model with an incompatible feature/label contract could silently become champion, invalidating downstream inference and evidence provenance.",
+      "affected_component": "ml-service/src/lifecycle/promotion.py (PromotionOrchestrator.promote)",
+      "status": "FIXED",
+      "fix": "promote() now computes feature_version + label_version compatibility (reusing the existing CompatibilityChecker) against the current champion and returns a BLOCKED decision on INCOMPATIBLE, before any state mutation. Compatible challengers still promote (verified — no false positive).",
+      "regression_test": "tests/test_phase3p.py::TestLifecycleRedTeam::test_promotion_fail_closed"
+    },
+    {
+      "finding_id": "P3P-002",
+      "severity": "HIGH",
+      "category": "PROMOTION_ATOMICITY",
+      "description": "_atomic_promote() flipped the champion pointer (step 3) BEFORE advancing the registry state (step 4). If the challenger was not PROMOTION_ELIGIBLE, _advance_to_champion raised AFTER the pointer was already flipped, leaving champion=x@v1 while the registry record stayed REGISTERED. recover_pending() then compared the flipped pointer to the intent target, mis-classified it as 'committed', cleared the intent, and permanently left a champion whose registry record was never advanced — a divergent, non-fail-closed state. Promotion was not truly atomic despite the module docstring claiming it was.",
+      "reproduction": "Register challenger x@v1 but do NOT advance it past REGISTERED. Call promote(...). Before fix: PromotionError raised, but champion pointer = x@v1 and registry state = REGISTERED; recover_pending() retained the divergent champion. Reproduced by independent probe; captured in tests/test_phase3p.py::TestLifecycleRedTeam::test_promotion_fail_closed (case b).",
+      "impact": "A crash or an ineligible challenger during promotion could leave the system with a champion pointer inconsistent with the registry, silently bypassing eligibility/soak requirements.",
+      "affected_component": "ml-service/src/lifecycle/promotion.py (PromotionOrchestrator.promote / _atomic_promote)",
+      "status": "FIXED",
+      "fix": "Registry eligibility is validated UP FRONT — in promote() (returns BLOCKED if state not in {PROMOTION_ELIGIBLE, CHAMPION}) and defensively at the top of _atomic_promote() (raises PromotionError before ANY write). An ineligible challenger now causes ZERO state change: no champion pointer, registry unchanged, no dangling recovery intent (verified).",
+      "regression_test": "tests/test_phase3p.py::TestLifecycleRedTeam::test_promotion_fail_closed + test_concurrent_promotion"
+    },
+    {
+      "finding_id": "P3P-INFO-001",
+      "severity": "INFO",
+      "category": "IDENTITY_HASH",
+      "description": "Initial suspicion (from a static behavioral map) that ModelIdentity.identity_hash excludes dataset_version/universe_version and could collide across materially different identities. Independent executable probe DISPROVED this: identity_hash differs when dataset_version/universe_version differ. No collision exists. Recorded for transparency — verifying from behavior corrected an inaccurate static claim (spec §5).",
+      "reproduction": "Build two ModelIdentity with identical model_id@version but different dataset_version + universe_version; identity_hash values differ.",
+      "impact": "None — not a defect.",
+      "affected_component": "ml-service/src/lifecycle/schemas.py (ModelIdentity.identity_hash)",
+      "status": "NOT_A_DEFECT",
+      "fix": "N/A",
+      "regression_test": "N/A"
+    }
+  ],
+  "attacks_that_correctly_failed_closed": [
+    "future-data injection T+1s..T+1w -> LOOKAHEAD_LEAK",
+    "universe-membership / F&O lot-size stamped in the future -> leak / MISSING_AVAILABILITY",
+    "artifact tamper -> INTEGRITY_FAILURE; forbidden latest/current alias -> INTEGRITY_FAILURE",
+    "evidence content mutation after freeze -> verify_integrity False",
+    "unregistered / ineligible / contaminated-OOS / incompatible challenger -> promotion BLOCKED",
+    "concurrent promotions -> exactly one champion, no divergence",
+    "duplicate event -> economic effect once (idempotent)",
+    "wrong closing equity -> UNEXPLAINED_MISMATCH",
+    "all-unusable providers -> NO_NEW_DECISIONS (never CORRUPTED)",
+    "random-label negative control -> ~zero cross-sectional IC",
+    "small sample -> UNAVAILABLE / INSUFFICIENT_EVIDENCE",
+    "multiple hypotheses -> Bonferroni/BH correction removes marginal significance",
+    "raw-score->probability via clip(0,1) -> ABSENT in executable code (explicitly forbidden + prior bug-fixed)",
+    "RL comparison -> execution-quality only, gross PnL disclaimed, thin dims INSUFFICIENT_EVIDENCE"
+  ],
+  "final_status": "PHASE_3P_PASS",
+  "evidence_state": "PAPER_VALIDATED_WITH_LIMITATIONS"
+}

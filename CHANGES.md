@@ -4,6 +4,51 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3P: Independent Quant Validation, Red-Team Audit & Evidence Certification
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** ADVERSARIAL VALIDATION / EVIDENCE CERTIFICATION — no new model, feature, strategy, live path, broker integration, or parameter optimization
+**Tests (Phase 3P):** 26 passed / 0 failed / 0 skipped
+**Full regression (3A–3P):** 1293 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions**
+**Security:** CLEAN — no secrets in `ml-service/src`; no broker order primitives in `ml-service/src`; no `NEXT_PUBLIC_*` secret vars; live trading DISABLED; live order path UNREACHABLE
+**Evidence level:** `E1` (no real market data / model artifacts reachable → economic + predictive results `REPRODUCTION_INCOMPLETE`)
+**Final status:** `PHASE_3P_PASS`
+**Evidence state:** `PAPER_VALIDATED_WITH_LIMITATIONS` (NOT `LIVE_READY`)
+
+### Summary
+
+Phase 3P independently attempted to DISPROVE the existing AlphaForge evidence.
+Behavior was verified from code + executable adversarial tests, never from
+docstrings/reports. Two HIGH promotion-integrity defects were found by independent
+probes and FIXED (spec §79: fix the defect, do not tune away evidence); both now
+carry regression tests. All other attack surfaces failed closed.
+
+### Findings
+
+| ID | Severity | Category | Status |
+|----|----------|----------|--------|
+| P3P-001 | HIGH | promotion / provenance | FIXED — compatibility (feature+label version) now enforced in `promote()` |
+| P3P-002 | HIGH | promotion atomicity | FIXED — eligibility validated up front; ineligible challenger = zero state change |
+| P3P-INFO-001 | INFO | identity_hash | NOT A DEFECT — collision suspicion disproven by executable probe |
+
+### New / changed files
+
+- `src/lifecycle/promotion.py` — P3P-001 + P3P-002 fixes (compatibility gate + up-front eligibility validation; correctness/integrity fixes only, no strategy logic).
+- `src/validation/evidence_audit/` — independent evidence ledger (fail-closed; never auto-upgrades to E5; only SUPPORTED claims lift the corpus level).
+- `tests/test_phase3p.py` — 26 adversarial + mutation tests (all §72 required tests + §58 test-the-tests).
+- `reports/phase-3p-audit.md`, `reports/phase-3p/phase_3p_evidence_certificate.json`, `reports/phase-3p/phase_3p_red_team_report.json`, `docs/ml-audit/phase-3p-red-team.md`.
+
+### Honest verdict
+
+`PHASE_3P_PASS` / `PAPER_VALIDATED_WITH_LIMITATIONS`. The safety, correctness,
+reproducibility and promotion-integrity machinery survived adversarial validation
+(with two HIGH defects fixed). The economic/predictive edge is **neither confirmed
+nor disproven** — it is `INSUFFICIENT_EVIDENCE` / `REPRODUCTION_INCOMPLETE` because
+no real Indian-market data is reachable in this environment. Not `LIVE_READY`.
+
+---
+
 ## [Unreleased] — Phase 3O: Paper-Trading Evidence Accumulation, Reliability & Go/No-Go Gate
 
 **Date:** 2026-09-06

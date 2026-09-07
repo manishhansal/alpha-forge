@@ -162,9 +162,36 @@ class PromotionOrchestrator:
                 )
                 return decision, None
 
+            # 1c. Registry eligibility (Phase 3P fix P3P-002): fail closed BEFORE
+            # the gate so an ineligible challenger can never reach _atomic_promote.
+            if reg_record.lifecycle_state not in (
+                LifecycleState.PROMOTION_ELIGIBLE.value, LifecycleState.CHAMPION.value,
+            ):
+                decision = self._blocked_decision(
+                    scope, challenger_id, None,
+                    f"Challenger {challenger_full_key} is in state "
+                    f"{reg_record.lifecycle_state}; must be PROMOTION_ELIGIBLE.",
+                )
+                return decision, None
+
             # 2. Run the promotion gate
             current_champion = self.champions.get_champion(scope)
             champion_id = current_champion.champion_full_key if current_champion else None
+
+            # 2b. Compatibility gate (Phase 3P fix P3P-001): a challenger whose
+            # feature/label/execution/portfolio contract is incompatible with the
+            # current champion must NOT silently replace it. Enforced here because
+            # CompatibilityChecker previously existed but was never wired into the
+            # promotion path, allowing an incompatible model to become champion.
+            if current_champion is not None and champion_evidence is not None:
+                incompat = self._compatibility_reasons(
+                    challenger_evidence, champion_evidence)
+                if incompat:
+                    decision = self._blocked_decision(
+                        scope, challenger_id, champion_id,
+                        "Challenger incompatible with champion: " + "; ".join(incompat),
+                    )
+                    return decision, None
 
             decision = self.gate.evaluate(
                 scope=scope,
@@ -239,7 +266,27 @@ class PromotionOrchestrator:
 
         A crash between (1) and (5) leaves an INTENT marker → recoverable via
         recover_pending(); the champion pointer is only flipped atomically in (3).
+
+        Phase 3P fix (finding P3P-002): the challenger's registry eligibility is
+        validated UP FRONT, before any state is written. Previously the champion
+        pointer was flipped in step (3) and only then did _advance_to_champion
+        raise if the challenger was not PROMOTION_ELIGIBLE — leaving the pointer
+        flipped while the registry record was never advanced (a divergent,
+        non-fail-closed state that recover_pending() mis-classified as committed).
+        Validating first guarantees zero state mutation on an ineligible challenger.
         """
+        # 0. Pre-validate registry eligibility BEFORE mutating any state (fail-closed).
+        rec = self.registry.get(challenger_full_key)
+        if rec is None:
+            raise PromotionError(f"{challenger_full_key} not registered.")
+        if rec.lifecycle_state not in (
+            LifecycleState.PROMOTION_ELIGIBLE.value, LifecycleState.CHAMPION.value,
+        ):
+            raise PromotionError(
+                f"{challenger_full_key} is in state {rec.lifecycle_state}; must be "
+                "PROMOTION_ELIGIBLE before promotion to CHAMPION. No state changed."
+            )
+
         # 1. Intent marker
         self._write_intent(scope, challenger_full_key, promotion_id, decision)
 
@@ -437,6 +484,28 @@ class PromotionOrchestrator:
             promoted_at=champ.promoted_at,
             evidence_package_id=champ.evidence_package_id,
         )
+
+    def _compatibility_reasons(
+        self,
+        challenger_evidence: ModelEvidencePackage,
+        champion_evidence: ModelEvidencePackage,
+    ) -> list[str]:
+        """
+        Return a list of incompatibility reasons between challenger and champion
+        (empty if compatible). A challenger must share the champion's feature and
+        label contract to be a like-for-like replacement (spec §7). Uses the
+        existing CompatibilityChecker so the logic is not duplicated.
+        """
+        from .compatibility import CompatibilityChecker
+        checker = CompatibilityChecker()
+        chal = challenger_evidence.model_identity
+        champ = champion_evidence.model_identity
+        checks = [
+            checker.check_feature_version(chal.feature_version, champ.feature_version),
+            checker.check_label_version(chal.label_version, champ.label_version),
+        ]
+        return [c.reason for c in checks
+                if c.status.value == "INCOMPATIBLE"]
 
     def _blocked_decision(
         self, scope: str, challenger_id: str, champion_id: Optional[str], reason: str,
