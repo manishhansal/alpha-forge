@@ -70,6 +70,17 @@ function isFailoverCoolingDown(
 
 function classifyError(err: unknown): FailureKind {
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  // 403 / forbidden = upstream WAF or gateway block (e.g. NSE charting API,
+  // Angel One's Akamai gateway). Non-retryable — retrying just burns attempts
+  // and can flag the source IP further. Detect before "auth" so a generic
+  // "forbidden" message isn't mislabelled.
+  if (
+    msg.includes("403") ||
+    msg.includes("forbidden") ||
+    msg.includes("blocked")
+  ) {
+    return "hard_block";
+  }
   if (
     msg.includes("auth") ||
     msg.includes("jwt") ||
@@ -153,8 +164,9 @@ export async function withFailover<T>(
         const kind = classifyError(err);
         recordFailure(id, kind, err instanceof Error ? err.message : String(err));
 
-        // Auth failures and circuit opens should not be retried within the same provider.
-        if (kind === "auth_failure" || isCircuitOpen(id)) {
+        // Auth failures, hard blocks (403), and circuit opens should not be
+        // retried within the same provider — retrying won't help.
+        if (kind === "auth_failure" || kind === "hard_block" || isCircuitOpen(id)) {
           break;
         }
 
@@ -213,7 +225,7 @@ export async function withRetry<T>(
       const kind = classifyError(err);
       recordFailure(providerId, kind, err instanceof Error ? err.message : String(err));
 
-      if (kind === "auth_failure" || isCircuitOpen(providerId)) {
+      if (kind === "auth_failure" || kind === "hard_block" || isCircuitOpen(providerId)) {
         break;
       }
     }

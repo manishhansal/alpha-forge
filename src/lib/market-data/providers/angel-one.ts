@@ -45,7 +45,7 @@ import type {
   ProviderHealth,
   SubscribeRequest,
 } from "../types";
-import { getProviderHealth, recordFailure, recordStaleData, recordSuccess, isTickStale, mdLog } from "../health";
+import { getProviderHealth, recordFailure, recordStaleData, recordSuccess, isTickStale, mdLog, type FailureKind } from "../health";
 import { memoCandles, memoInstrumentMaster, memoQuote } from "../cache/market-cache";
 import { filterValidCandles } from "../validation/candle-validator";
 import { normaliseExpiry, intervalToSmartApi, finiteOrNull } from "../normalizer";
@@ -74,6 +74,28 @@ import {
 // ── Provider constant ─────────────────────────────────────────────────────────
 
 const PROVIDER_ID: ProviderId = "angel_one";
+
+/**
+ * Map a raw SmartAPI/adapter error message to a {@link FailureKind}. Kept in
+ * sync with `classifyError` in ../failover so the health breaker reacts the
+ * same way whether the failure is surfaced here or from the failover engine.
+ *
+ * Order matters: an HTTP 403 from Angel's Akamai gateway is a hard block
+ * (non-retryable) and must be detected before the generic "auth" match.
+ */
+function classifyProviderError(rawMsg: string): FailureKind {
+  const msg = rawMsg.toLowerCase();
+  if (msg.includes("403") || msg.includes("forbidden") || msg.includes("blocked")) {
+    return "hard_block";
+  }
+  if (msg.includes("auth") || msg.includes("401") || msg.includes("unauthorized")) {
+    return "auth_failure";
+  }
+  if (msg.includes("timeout") || msg.includes("abort") || msg.includes("timed out")) {
+    return "timeout";
+  }
+  return "api_error";
+}
 
 // ── Configurable TTLs (ms) ────────────────────────────────────────────────────
 // All callers of the cache use these so a single change propagates everywhere.
@@ -975,9 +997,7 @@ export class AngelOneProvider implements MarketDataProvider {
       return ohlcv;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const kind = msg.includes("auth") || msg.includes("401") ? "auth_failure"
-        : msg.includes("timeout") || msg.includes("abort") ? "timeout"
-        : "api_error";
+      const kind = classifyProviderError(msg);
       recordFailure(PROVIDER_ID, kind, msg);
       return [];
     }
@@ -1007,10 +1027,7 @@ export class AngelOneProvider implements MarketDataProvider {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const kind = msg.includes("auth") ? "auth_failure"
-        : msg.includes("timeout") ? "timeout"
-        : "api_error";
-      recordFailure(PROVIDER_ID, kind, msg);
+      recordFailure(PROVIDER_ID, classifyProviderError(msg), msg);
       return symbols.map(() => null);
     }
   }
