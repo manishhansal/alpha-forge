@@ -4,6 +4,21 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 4B: Frozen Real-Market Paper Evidence Collection (Entry Gate)
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** Operational-readiness / entry-gate phase — ML service FROZEN (no `src/` changes); documentation + verification only
+**Added:** `ml-service/docs/PHASE_4B_PROVIDER_SETUP.md` (provider env-var names/consumer/scope/priority/fallback/health-check/rotation — no secret values), `ml-service/reports/PHASE_4B_ENTRY_GATE.md` (§40 18-item first-session checklist), `ml-service/reports/PHASE_4B_SESSION_INVENTORY.md` (empty; evidence window NOT_PRE-SPECIFIED)
+**Freeze verification:** last `ml-service/src/` commit = `abbc403` (PHASE_3S); zero src changes since (independently confirmed)
+**Tests:** full regression **1570 passed / 28 skipped / 0 failed**; paper/provider/reconciliation/replay suites (3Q/3R/3O/3M) **275 passed**; 6 files SKIP (dependency absence)
+**Entry gate:** machinery gates PASS (freeze/hashes/provider-chain/security/live-safety/PIT/closed-candle/execution-sim/cost/ledger/reconciliation/replay/evidence-sealing/failure-handling); credential + live-data gates BLOCKED (no provider credentials configured)
+**Live-order safety:** zero order primitives in `ml-service/src`; `LIVE_TRADING_ENABLED` not active; PAPER-ONLY
+**No first session run:** first real-market session is gated behind human credential setup; nothing was executed, retrained, recalibrated, optimized, promoted, or enabled
+**Outcome:** `PHASE_4B_REQUIRES_HUMAN_CREDENTIAL_SETUP` — configure Angel One (`SMARTAPI_*`) or Upstox (`UPSTOX_ANALYTICS_TOKEN`) securely backend-side, then re-run the provider health check
+
+---
+
 ## [Unreleased] — Phase 4A FINAL: Independent Real-Market Evidence Audit
 
 **Date:** 2026-09-06
