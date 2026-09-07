@@ -4,6 +4,20 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 4A FINAL: Independent Real-Market Evidence Audit
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** AUDIT-ONLY — no code/model/evidence/configuration modified; audit reports only
+**Added:** `ml-service/reports/PHASE_4A_FINAL_ENTRY_AUDIT.md`, `PHASE_4A_SESSION_INVENTORY.md`, `PHASE_4A_ALPHA_AUDIT.md`, `PHASE_4A_FINAL_EVIDENCE_AUDIT.md`
+**Independent findings:** ML-service source frozen since `abbc403` (PHASE_3S) — neither the 3T nor 4A commits touched `src/` (model freeze + no post-hoc optimization independently verified via git history); frozen regression **1570 passed / 28 skipped / 0 failed**; live-order primitives in `ml-service/src` = 0; `LIVE_TRADING_ENABLED` not active; hardcoded secrets = 0; provider credentials unset; **zero accumulated real paper sessions / evidence corpora on disk**
+**Real-market evidence:** NONE — the evidence window was not executed (no credentials, no real trading days); absence is honestly disclosed, not fabricated
+**Findings:** 0 CRITICAL; 1 HIGH (real evidence window not executed → alpha untestable); 2 MEDIUM (deep/RL runtime unexercised; isolated TS broker adapter); low/informational only
+**Engineering vs alpha:** ENGINEERING_STATUS PRODUCTION_READY_WITH_LIMITATIONS; ALPHA_STATUS INSUFFICIENT_EVIDENCE
+**Final:** `PHASE_4A_AUDIT_PASS_WITH_LIMITATIONS` — `ALPHA_INSUFFICIENT_EVIDENCE` — `PAPER_SYSTEM_STATUS: OPERATIONAL_WITH_LIMITATIONS` — `LIVE_TRADING_STATUS: DISABLED`
+
+---
+
 ## [Unreleased] — Phase 4A: Real-Market Paper Trading & Alpha Evidence Validation (Entry + Freeze)
 
 **Date:** 2026-09-06
