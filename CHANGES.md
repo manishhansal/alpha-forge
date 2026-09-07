@@ -4,6 +4,22 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3T: Final ML-Service Production Readiness, Security & Quant Certification
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Type:** FINAL certification gate — independent audit of actual executable behavior (prior-phase claims not trusted); ADDITIVE test + reports only, no source behavior changed
+**Added:** `ml-service/tests/test_phase3t.py` (44 deterministic certification tests, 12 classes) — critical-path fail-closed matrix, EV independent recalculation, India cost PIT versioning, execution realism (no perfect fills), PIT/leakage guards, risk-model PIT + no-synthetic-covariance, probability semantics, research-factory integrity/reproduction/secret-guard/no-promote, property-based invariants (OHLC/probability/monotonic/net-PnL/EV), live-order boundary assertion, and an end-to-end pipeline scenario + corrupt-input fail-safe. Certification package: `ml-service/reports/PHASE_3T_FINAL_CERTIFICATION_REPORT.md` (36 sections), `ml-service/reports/PHASE_3T_EVIDENCE_CERTIFICATE.md`, `ml-service/reports/PHASE_3T_RISK_REGISTER.md`, `ml-service/docs/ALPHAFORGE_ML_SYSTEM_CARD.md`
+**Audit findings:** Phases 3A–3S verified IMPLEMENTED as executable code; architecture fail-closed end-to-end; zero live-order primitives in `ml-service/src`; zero hardcoded secrets; probability semantics not mislabeled; EV/cost/rank-IC independently recalculated and matching; no synthetic covariance used as evidence
+**Tests (Phase 3T):** 44 passed / 0 failed / 0 skipped
+**Full regression (3A–3T):** 1570 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions** (baseline 1526 + 44 new)
+**Blocking conditions (§62):** NONE
+**Independent calculations:** EV matches P·win+(1-P)·loss-cost to 1e-6; Rank IC matches scipy.stats.spearmanr; India cost PIT boundaries confirmed
+**Known limitations:** synthetic/historical evidence only (no real profitable alpha); deep-learning/RL runtime unexercised (torch absent); sklearn/talib tests skipped; statistical operating points provisional
+**Final status:** `PHASE_3T_STATUS: PASS` — `ML_SERVICE_READINESS: PRODUCTION_READY_WITH_LIMITATIONS` — `ALPHA_EVIDENCE: INSUFFICIENT_EVIDENCE` — `LIVE_TRADING_STATUS: DISABLED` — Readiness Level 3 (paper operationally reliable; engineering Level-4-grade)
+
+---
+
 ## [Unreleased] — Phase 3S: Research Factory & Experimentation Governance
 
 **Date:** 2026-09-06
