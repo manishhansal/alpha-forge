@@ -57,6 +57,8 @@ from .momentum import (
 )
 from .derivatives import (
     compute_iv_rank,
+    compute_iv_rank_with_status,
+    compute_iv_rank_safe,
     compute_max_pain_distance,
     compute_oi_buildup_score,
     compute_oi_wall_proximity,
@@ -271,9 +273,11 @@ def compute_stock_features(
     # ─── Relative Strength ────────────────────────────────────────────────
     if index_close is not None and len(index_close) >= 20:
         rs = compute_relative_strength_vs_index(c, index_close, 20)
-        features["relative_strength_vs_nifty"] = _last(rs)
+        features["relative_strength_vs_nifty"] = _last_or_nan(rs)
     else:
-        features["relative_strength_vs_nifty"] = 1.0
+        # DATA_UNAVAILABLE — do NOT substitute 1.0 (neutral ratio)
+        # 1.0 is a real market state (stock performing exactly in line with NIFTY)
+        features["relative_strength_vs_nifty"] = float("nan")
 
     # Sector momentum (average 5-day return of sector peers)
     # Sector relative strength: stock RS vs average of sector peers over 20d
@@ -286,9 +290,10 @@ def compute_stock_features(
                 sector_returns.append(ret)
             if len(peer_close) >= 20:
                 peer_closes.append(peer_close)
-        features["sector_momentum"] = float(np.mean(sector_returns)) if sector_returns else 0.0
+        # Use NaN when no sector returns available — NOT 0.0
+        features["sector_momentum"] = float(np.mean(sector_returns)) if sector_returns else float("nan")
 
-        # Sector RS: 20d return of this stock / average 20d return of sector
+        # Sector RS: 20d return of this stock vs average 20d return of sector
         if peer_closes and len(c) >= 21:
             stock_ret20 = (c.iloc[-1] - c.iloc[-21]) / c.iloc[-21]
             peer_rets = []
@@ -301,12 +306,13 @@ def compute_stock_features(
                     1.0 + float(stock_ret20) - avg_sector_ret
                 )
             else:
-                features["sector_relative_strength"] = 1.0
+                features["sector_relative_strength"] = float("nan")
         else:
-            features["sector_relative_strength"] = 1.0
+            features["sector_relative_strength"] = float("nan")
     else:
-        features["sector_momentum"] = 0.0
-        features["sector_relative_strength"] = 1.0
+        # DATA_UNAVAILABLE — NOT 0.0 / 1.0
+        features["sector_momentum"]          = float("nan")
+        features["sector_relative_strength"] = float("nan")
 
     # ─── Market Structure ─────────────────────────────────────────────────
     fvg = detect_fair_value_gaps(h, l, c)
@@ -330,7 +336,8 @@ def compute_stock_features(
 
     pcr = deriv.get("pcr")
     features["pcr_score"] = compute_pcr_score(pcr)
-    features["pcr_raw"] = float(pcr) if pcr is not None else 1.0
+    # pcr_raw: None when no PCR data — NOT 1.0 (1.0 is a real PCR level)
+    features["pcr_raw"] = float(pcr) if pcr is not None else float("nan")
 
     price_change = deriv.get("price_change_pct", features.get("return_1d", 0))
     oi_change = deriv.get("oi_change_pct", 0)
@@ -339,9 +346,21 @@ def compute_stock_features(
 
     current_iv = deriv.get("current_iv")
     iv_history = deriv.get("iv_history", [])
-    features["iv_rank"] = compute_iv_rank(
-        current_iv or 20.0, iv_history if iv_history else [15, 18, 20, 22, 25]
+
+    # Use compute_iv_rank_with_status so downstream code can distinguish
+    # "rank = 50 because IV is at the median" from "rank = 50 because we
+    # have no data".  When history is insufficient, iv_rank_status will be
+    # "INSUFFICIENT_HISTORY" and iv_rank will be NaN — the NaN cleanup at
+    # the end of this function will convert it to 0.0 (neutral).
+    iv_rank_result = compute_iv_rank_with_status(
+        current_iv or 20.0, iv_history if iv_history else []
     )
+    features["iv_rank"] = (
+        iv_rank_result["iv_rank"]
+        if iv_rank_result["iv_rank"] is not None
+        else float("nan")   # will be set to 0.0 by NaN cleanup below
+    )
+    features["iv_rank_status"] = 0.0 if iv_rank_result["status"] == "OK" else 1.0
 
     spot = _last(c)
     features["max_pain_distance_pct"] = compute_max_pain_distance(
@@ -371,13 +390,19 @@ def compute_stock_features(
                 features[key] = float(val) if val is not None else 0.0
 
     # ─── Delivery % (if provided) ────────────────────────────────────────
-    features["delivery_pct"] = float(deriv.get("delivery_pct", 0)) or 0.0
+    # NaN when absent — 0% delivery is a real market state; unknown != 0%
+    raw_delivery = deriv.get("delivery_pct")
+    features["delivery_pct"] = float(raw_delivery) if raw_delivery is not None else float("nan")
 
-    # Clean up NaN/None/Inf
+    # ─── Clean up Inf values only; preserve NaN as DATA_UNAVAILABLE ──────
+    # Phase 3D: NaN is the correct representation of unavailable data.
+    # Callers that need model-ready inputs use FeatureRow.to_model_input()
+    # which handles imputation with explicit documentation.
+    # We only clean up inf/-inf here (which are always bugs).
     for key in list(features.keys()):
         val = features[key]
-        if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
-            features[key] = 0.0
+        if val is not None and isinstance(val, float) and np.isinf(val):
+            features[key] = float("nan")
 
     return features
 
@@ -432,25 +457,37 @@ def compute_regime_features(
     features.update(vix_feats)
     features["india_vix"] = vix_feats["vix_level"]
 
-    # Market breadth
+    # Market breadth — NaN when data absent (not 50.0)
     advances = md.get("advances", 0)
     declines = md.get("declines", 0)
     features["advance_decline_ratio"] = compute_advance_decline_ratio(advances, declines)
-    features["market_breadth"] = md.get("market_breadth", 50.0)
-    features["pct_above_sma20"] = md.get("pct_above_sma20", 50.0)
-    features["pct_above_sma50"] = md.get("pct_above_sma50", 50.0)
-    features["pct_above_sma200"] = md.get("pct_above_sma200", 50.0)
+    features["market_breadth"] = (
+        md["market_breadth"] if "market_breadth" in md and md["market_breadth"] is not None
+        else float("nan")
+    )
+    features["pct_above_sma20"] = (
+        md["pct_above_sma20"] if "pct_above_sma20" in md and md["pct_above_sma20"] is not None
+        else float("nan")
+    )
+    features["pct_above_sma50"] = (
+        md["pct_above_sma50"] if "pct_above_sma50" in md and md["pct_above_sma50"] is not None
+        else float("nan")
+    )
+    features["pct_above_sma200"] = (
+        md["pct_above_sma200"] if "pct_above_sma200" in md and md["pct_above_sma200"] is not None
+        else float("nan")
+    )
 
-    # Sector rotation
+    # Sector rotation — NaN when data absent (not 0.0)
     sector_returns = md.get("sector_returns", {})
     if sector_returns:
         from .macro import compute_sector_rotation_score
         rotation = compute_sector_rotation_score(sector_returns)
-        features["sector_dispersion"] = rotation.get("sector_dispersion", 0.0)
-        features["rotation_score"] = rotation.get("rotation_score", 0.0)
+        features["sector_dispersion"] = rotation.get("sector_dispersion") or float("nan")
+        features["rotation_score"]    = rotation.get("rotation_score") or float("nan")
     else:
-        features["sector_dispersion"] = 0.0
-        features["rotation_score"] = 0.0
+        features["sector_dispersion"] = float("nan")
+        features["rotation_score"]    = float("nan")
 
     # Volume
     vol = nifty_ohlcv["volume"]
@@ -482,20 +519,34 @@ def compute_regime_features(
     features["is_expiry_day"] = expiry_feats["is_expiry_day"]
     features["days_to_weekly_expiry"] = expiry_feats["days_to_weekly_expiry"]
 
-    # Clean NaN
+    # ─── Clean up Inf values only; preserve NaN as DATA_UNAVAILABLE ──────
     for key in list(features.keys()):
         val = features[key]
-        if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
-            features[key] = 0.0
+        if val is not None and isinstance(val, float) and np.isinf(val):
+            features[key] = float("nan")
 
     return features
 
 
 def _last(series: pd.Series) -> float:
-    """Safely get the last value from a series."""
+    """Safely get the last value from a series as float; returns 0.0 for NaN/None."""
     if series is None or len(series) == 0:
         return 0.0
     val = series.iloc[-1]
     if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
         return 0.0
+    return float(val)
+
+
+def _last_or_nan(series: pd.Series) -> float:
+    """
+    Safely get the last value from a series.
+    Returns NaN (not 0.0) when the last value is unavailable.
+    Use this for features where 0.0 or other numerics have economic meaning.
+    """
+    if series is None or len(series) == 0:
+        return float("nan")
+    val = series.iloc[-1]
+    if val is None or (isinstance(val, float) and np.isinf(val)):
+        return float("nan")
     return float(val)

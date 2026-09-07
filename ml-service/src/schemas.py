@@ -1,9 +1,11 @@
 """Pydantic schemas for API request/response validation."""
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+from .prediction_provenance import PredictionProvenance  # noqa: F401 (re-exported)
 
 
 # ─── Market Regime ────────────────────────────────────────────────────────────
@@ -51,6 +53,10 @@ class RegimePredictionResponse(BaseModel):
     )
     features_used: int
     model_version: str
+    provenance: PredictionProvenance = Field(
+        default=PredictionProvenance.HEURISTIC,
+        description="Source and evidence quality: TRAINED_MODEL | HEURISTIC | INSUFFICIENT_EVIDENCE | UNAVAILABLE",
+    )
 
 
 # ─── Stock Ranking ────────────────────────────────────────────────────────────
@@ -112,6 +118,10 @@ class RankingResponse(BaseModel):
     rankings: list[StockRank]
     model_version: str
     regime_used: MarketRegime
+    provenance: PredictionProvenance = Field(
+        default=PredictionProvenance.HEURISTIC,
+        description="Source and evidence quality of the ranking predictions",
+    )
 
 
 # ─── Strategy Selection ───────────────────────────────────────────────────────
@@ -188,6 +198,10 @@ class RiskResponse(BaseModel):
     suggested_position_size_pct: float = Field(description="Optimal position size %")
     risk_score: float = Field(ge=0, le=10, description="Overall risk score 0-10")
     factors: dict[str, float] = Field(description="Risk factor contributions")
+    provenance: PredictionProvenance = Field(
+        default=PredictionProvenance.HEURISTIC,
+        description="Source and evidence quality of the risk predictions",
+    )
 
 
 # ─── Portfolio Optimization ───────────────────────────────────────────────────

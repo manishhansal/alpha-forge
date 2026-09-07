@@ -1,0 +1,32 @@
+{
+  "artifact": "phase_3n_data_quality_report",
+  "branch": "refactor/improve-ml-service",
+  "checks": [
+    "session_calendar",
+    "freshness",
+    "ohlcv_quality",
+    "fno_metadata",
+    "option_chain",
+    "corporate_action_pit",
+    "historical_universe",
+    "no_lookahead"
+  ],
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "ohlcv_defects_detected": [
+    "FUTURE_TIMESTAMP",
+    "NEGATIVE_VOLUME",
+    "OHLC_HIGH_INVARIANT",
+    "OUT_OF_ORDER"
+  ],
+  "phase": "3N",
+  "result": "validators correctly reject malformed/PIT-violating data (fail-closed)",
+  "sample_size": 3,
+  "time_window": "N/A (no real session reachable)"
+}

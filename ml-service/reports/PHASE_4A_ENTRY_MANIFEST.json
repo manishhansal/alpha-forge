@@ -1,0 +1,89 @@
+{
+  "phase": "4A",
+  "title": "Real-Market Paper Trading & Alpha Evidence Validation — Entry Manifest",
+  "generated_at": "2026-09-06",
+  "repository": "alpha-forge",
+  "branch": "refactor/improve-ml-service",
+  "entry_status": "ENTRY_AUDIT_COMPLETE_EVIDENCE_WINDOW_NOT_EXECUTED",
+
+  "ml_service_status": {
+    "phase_3t_status": "PASS",
+    "ml_service_readiness": "PRODUCTION_READY_WITH_LIMITATIONS",
+    "alpha_evidence_at_entry": "INSUFFICIENT_EVIDENCE",
+    "live_trading_status": "DISABLED",
+    "frozen": true
+  },
+
+  "code_identity": {
+    "git_commit": "4b48088b8f36e91fc87b20456049eb3647669daf",
+    "git_commit_short": "4b48088",
+    "head_subject": "PHASE_3T: Final ML-Service Production Readiness, Security & Quant Certification"
+  },
+
+  "environment": {
+    "python_version": "3.14.6",
+    "os": "macOS (darwin)",
+    "dependencies_present": {
+      "numpy": "2.5.1",
+      "scipy": "1.18.1",
+      "pandas": "3.0.3",
+      "hypothesis": "6.112.1"
+    },
+    "dependencies_absent": ["talib", "torch", "sklearn (cloudpickle missing)"]
+  },
+
+  "paper_baseline_v1": {
+    "note": "Frozen baseline identity for the evidence window. All fields reference the certified 3A-3T architecture. Concrete artifact/calibrator/config hashes are populated at real session start from the live model registry; no trained-model artifact hash is asserted here because no real session has run.",
+    "model_version": "certified-3A-3T-champion (frozen)",
+    "model_hash": "NOT_ESTABLISHED_NO_REAL_SESSION",
+    "feature_version": "3D/3S feature registry (frozen)",
+    "label_version": "3C label registry (frozen)",
+    "calibration_version": "3F calibration (frozen)",
+    "calibration_hash": "NOT_ESTABLISHED_NO_REAL_SESSION",
+    "cost_version": "india-equity-2023 / india-fno-2023 (PIT registry, frozen)",
+    "slippage_version": "3G slippage model (frozen, default 5.0 bps)",
+    "portfolio_version": "3H portfolio/risk (frozen)",
+    "decision_version": "3M decision pipeline (frozen)",
+    "code_commit": "4b48088b8f36e91fc87b20456049eb3647669daf"
+  },
+
+  "provider_configuration": {
+    "canonical_chain": ["DataService/Scrapling", "AngelOne SmartAPI", "Upstox", "YahooFinance"],
+    "credentials_configured": false,
+    "credential_status": "All provider credentials in .env.docker are commented/unset; .env.example is a template. No live data provider is operational in this environment.",
+    "nse_direct_scraping_in_ts_production": false
+  },
+
+  "safety_verification": {
+    "live_order_primitives_in_ml_service_src": 0,
+    "live_order_grep_returncode": 1,
+    "live_trading_enabled_active": false,
+    "order_mode_boundary": "PAPER/SHADOW only; assert_not_live enforced; DecisionState has no BUY/SELL/LIVE",
+    "hardcoded_secrets_in_ml_service_src": 0,
+    "frontend_public_secrets": 0
+  },
+
+  "regression_at_entry": {
+    "command": "pytest -q -p no:cacheprovider (excluding 6 dependency-absence files)",
+    "result": "1570 passed / 28 skipped / 0 failed",
+    "excluded_files": ["test_validation.py", "test_talib_perf.py", "test_technical.py", "test_portfolio_optimizer.py", "test_gex.py", "test_data_pipeline.py"],
+    "excluded_reason": "pre-existing dependency absence (talib/torch/sklearn) — unchanged from baseline",
+    "frozen_system_intact": true
+  },
+
+  "accumulated_real_evidence_at_entry": {
+    "real_paper_sessions": 0,
+    "real_trades": 0,
+    "evidence_corpora_on_disk": 0,
+    "note": "No real Indian-market paper sessions have been run. No evidence corpus exists to aggregate."
+  },
+
+  "evidence_window": {
+    "planned": "multiple real Indian trading sessions (min sessions/trades/regimes TBD by operator)",
+    "executed": false,
+    "blocker": "Real-market evidence requires (a) live provider credentials and (b) real trading days to elapse in wall-clock time. Neither is available in this environment. Fabricating sessions would violate Phase 4A integrity rules (§14 do not hide bad sessions, §51 collect trustworthy evidence, §39 do not fabricate).",
+    "start_date": "NOT_STARTED"
+  },
+
+  "start_date": "2026-09-06"
+}

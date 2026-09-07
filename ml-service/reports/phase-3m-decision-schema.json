@@ -1,0 +1,309 @@
+{
+  "artifact": "phase-3m-decision-schema",
+  "description": "Canonical decision contract (spec \u00a74).",
+  "fields": {
+    "abstention_reason": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "abstention_state": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "alpha_rank": {
+      "required": false,
+      "type": "Optional[int]"
+    },
+    "alpha_rank_percentile": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "alpha_score": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "calibrated_probability": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "created_at": {
+      "required": false,
+      "type": "str"
+    },
+    "data_snapshot_id": {
+      "required": false,
+      "type": "str"
+    },
+    "dataset_version": {
+      "required": false,
+      "type": "str"
+    },
+    "decision_id": {
+      "required": true,
+      "type": "str"
+    },
+    "decision_state": {
+      "required": false,
+      "type": "str"
+    },
+    "decision_timestamp": {
+      "required": true,
+      "type": "str"
+    },
+    "deployment_mode": {
+      "required": false,
+      "type": "str"
+    },
+    "direction": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "evidence_level": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "execution_policy": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "execution_policy_version": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "expected_cost": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "expected_loss": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "expected_value": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "expected_win": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "feature_schema_hash": {
+      "required": false,
+      "type": "str"
+    },
+    "feature_version": {
+      "required": false,
+      "type": "str"
+    },
+    "instrument": {
+      "required": true,
+      "type": "str"
+    },
+    "instrument_type": {
+      "required": false,
+      "type": "str"
+    },
+    "latency_breakdown_ms": {
+      "required": false,
+      "type": "dict"
+    },
+    "market": {
+      "required": false,
+      "type": "str"
+    },
+    "market_regime": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "meta_label": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "model_hashes": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "model_ids": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "model_versions": {
+      "required": false,
+      "type": "list[str]"
+    },
+    "portfolio_target": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "position_size": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "prediction_provenance": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "provenance_id": {
+      "required": false,
+      "type": "str"
+    },
+    "raw_probability": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "regime_confidence": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "risk_budget": {
+      "required": false,
+      "type": "Optional[float]"
+    },
+    "rl_action": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "rl_action_allowed": {
+      "required": false,
+      "type": "Optional[bool]"
+    },
+    "rl_policy_id": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "rl_policy_version": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "strategy": {
+      "required": false,
+      "type": "Optional[str]"
+    },
+    "timeframe": {
+      "required": false,
+      "type": "str"
+    },
+    "trace_id": {
+      "required": false,
+      "type": "str"
+    }
+  },
+  "semantic_invariants": [
+    "alpha_score != probability",
+    "probability != expected_return",
+    "expected_return != expected_value",
+    "decision != prediction"
+  ],
+  "states": {
+    "all": [
+      "DATA_UNAVAILABLE",
+      "DATA_INVALID",
+      "FEATURES_UNAVAILABLE",
+      "REGIME_UNAVAILABLE",
+      "MODEL_UNAVAILABLE",
+      "MODEL_STALE",
+      "MODEL_REVOKED",
+      "MODEL_INCOMPATIBLE",
+      "CALIBRATION_UNAVAILABLE",
+      "PROVENANCE_INVALID",
+      "INSUFFICIENT_EVIDENCE",
+      "ABSTAIN",
+      "SKIP",
+      "CANDIDATE",
+      "VALIDATED",
+      "PORTFOLIO_REJECTED",
+      "RISK_REJECTED",
+      "EXECUTION_PLANNED",
+      "SHADOW_EXECUTED",
+      "PAPER_EXECUTED",
+      "EXPIRED",
+      "COMPLETED",
+      "CANCELLED",
+      "BLOCKED"
+    ],
+    "non_executable": [
+      "ABSTAIN",
+      "BLOCKED",
+      "CALIBRATION_UNAVAILABLE",
+      "CANCELLED",
+      "DATA_INVALID",
+      "DATA_UNAVAILABLE",
+      "EXPIRED",
+      "FEATURES_UNAVAILABLE",
+      "INSUFFICIENT_EVIDENCE",
+      "MODEL_INCOMPATIBLE",
+      "MODEL_REVOKED",
+      "MODEL_STALE",
+      "MODEL_UNAVAILABLE",
+      "PORTFOLIO_REJECTED",
+      "PROVENANCE_INVALID",
+      "REGIME_UNAVAILABLE",
+      "RISK_REJECTED",
+      "SKIP"
+    ],
+    "terminal": [
+      "ABSTAIN",
+      "BLOCKED",
+      "CALIBRATION_UNAVAILABLE",
+      "CANCELLED",
+      "COMPLETED",
+      "DATA_INVALID",
+      "DATA_UNAVAILABLE",
+      "EXPIRED",
+      "FEATURES_UNAVAILABLE",
+      "INSUFFICIENT_EVIDENCE",
+      "MODEL_INCOMPATIBLE",
+      "MODEL_REVOKED",
+      "MODEL_STALE",
+      "MODEL_UNAVAILABLE",
+      "PORTFOLIO_REJECTED",
+      "PROVENANCE_INVALID",
+      "REGIME_UNAVAILABLE",
+      "RISK_REJECTED",
+      "SKIP"
+    ],
+    "valid_transitions": {
+      "CANDIDATE": [
+        "ABSTAIN",
+        "BLOCKED",
+        "CALIBRATION_UNAVAILABLE",
+        "DATA_INVALID",
+        "DATA_UNAVAILABLE",
+        "EXPIRED",
+        "FEATURES_UNAVAILABLE",
+        "INSUFFICIENT_EVIDENCE",
+        "MODEL_INCOMPATIBLE",
+        "MODEL_REVOKED",
+        "MODEL_STALE",
+        "MODEL_UNAVAILABLE",
+        "PORTFOLIO_REJECTED",
+        "PROVENANCE_INVALID",
+        "REGIME_UNAVAILABLE",
+        "RISK_REJECTED",
+        "SKIP",
+        "VALIDATED"
+      ],
+      "EXECUTION_PLANNED": [
+        "BLOCKED",
+        "CANCELLED",
+        "EXPIRED",
+        "PAPER_EXECUTED",
+        "SHADOW_EXECUTED"
+      ],
+      "PAPER_EXECUTED": [
+        "COMPLETED",
+        "EXPIRED"
+      ],
+      "SHADOW_EXECUTED": [
+        "COMPLETED",
+        "EXPIRED"
+      ],
+      "VALIDATED": [
+        "ABSTAIN",
+        "BLOCKED",
+        "EXECUTION_PLANNED",
+        "PORTFOLIO_REJECTED",
+        "RISK_REJECTED"
+      ]
+    }
+  }
+}

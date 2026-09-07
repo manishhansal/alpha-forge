@@ -1,0 +1,50 @@
+{
+  "artifact": "phase-3m-test-results",
+  "phase": "3M",
+  "branch": "refactor/improve-ml-service",
+  "python": "3.14.6",
+  "environment_notes": [
+    "talib, torch, sklearn, gymnasium, riskfolio are ABSENT in this environment.",
+    "src/decision and src/shadow are import-clean and require none of them.",
+    "Heavy model classes (server.py, models.market_regime) are NOT imported by Phase 3M."
+  ],
+  "phase_3m_suite": {
+    "file": "tests/test_phase3m.py",
+    "passed": 64,
+    "failed": 0,
+    "classes": {
+      "TestDecisionPipeline": 5,
+      "TestFailClosed": 17,
+      "TestModelCompat": 7,
+      "TestReplay": 3,
+      "TestShadow": 6,
+      "TestReconciliation": 3,
+      "TestHealth": 7,
+      "TestAdversarial": 13,
+      "TestStaticAudit": 3
+    }
+  },
+  "reused_component_regression": {
+    "command": "pytest test_phase3a..3m + vpin + meta_engine + monitoring",
+    "passed": 1067,
+    "skipped": 28,
+    "failed": 0,
+    "conclusion": "Phase 3M introduced ZERO regressions in the phases it orchestrates."
+  },
+  "preexisting_failures_unrelated_to_phase_3m": {
+    "count": 78,
+    "root_causes": {
+      "sklearn_absent": "64 failures in tests/test_validation.py import sklearn (src/validation lazy-imports it).",
+      "stale_message_text": "1 failure: training leakage detector emits 'Structural leakage detected' but an old test expects 'Future leakage detected'.",
+      "scrapling_attribute": "2 failures in tests/test_data_pipeline.py: MarketDataClient missing _scrapling attribute (pre-existing).",
+      "stale_lot_size_constant": "3 failures in tests/test_gex.py: test expects LOT_SIZES['NIFTY']==50 but current value is 75.",
+      "talib_riskfolio_collection": "3 files fail at collection (talib/riskfolio absent): test_talib_perf, test_technical, test_portfolio_optimizer.",
+      "other": "remaining failures share the same sklearn/env root cause."
+    },
+    "proof_not_a_regression": [
+      "All Phase 3M work is in NEW untracked files (src/decision/, src/shadow/, tests/test_phase3m.py).",
+      "Zero existing tracked files were modified.",
+      "None of the failing test files import src.decision or src.shadow."
+    ]
+  }
+}

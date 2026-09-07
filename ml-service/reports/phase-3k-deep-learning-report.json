@@ -1,0 +1,40 @@
+{
+  "report_type": "phase-3k-deep-learning-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "verdict": "NO_INCREMENTAL_ALPHA",
+  "evidence": "INSUFFICIENT_EVIDENCE",
+  "framework": {
+    "backend": "numpy",
+    "deterministic": true,
+    "torch_available_in_interpreter": false,
+    "tensorflow_py314_wheel": false,
+    "rationale": "determinism + dependency-light robustness; see audit 3.1"
+  },
+  "architectures": [
+    {"name": "MLP", "family": "MLP", "params_example": 257, "causal": null},
+    {"name": "TemporalCNN", "family": "TEMPORAL_CNN", "params_example": 113, "causal": true},
+    {"name": "LSTM", "family": "LSTM", "params_example": 425, "causal": true},
+    {"name": "GRU", "family": "GRU", "params_example": 321, "causal": true},
+    {"name": "TransformerLite", "family": "TRANSFORMER_LITE", "params_example": 169, "causal": true}
+  ],
+  "large_transformer_or_llm": false,
+  "synthetic_oos_rank_ic_illustrative": {
+    "ridge": 0.975, "linear": 0.975, "mlp": 0.954,
+    "temporal_cnn": 0.61, "lstm": 0.80, "gru": 0.76, "transformer_lite": 0.32
+  },
+  "discipline": {
+    "pit_sequences": true,
+    "pit_normalization_train_fit_only": true,
+    "walk_forward_only": true,
+    "hpo_seed_checkpoint_validation_only": true,
+    "multi_seed_robustness": true,
+    "no_raw_sigmoid_as_calibrated": true,
+    "every_deep_model_is_phase3j_challenger": true,
+    "no_auto_promotion": true
+  },
+  "tests": {"phase_3k_passed": 55, "phase_3k_failed": 0,
+            "full_suite_passed": 820, "full_suite_failed": 0},
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

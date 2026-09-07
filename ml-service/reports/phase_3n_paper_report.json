@@ -1,0 +1,41 @@
+{
+  "artifact": "phase_3n_paper_report",
+  "branch": "refactor/improve-ml-service",
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "eod_reconciliation": {
+    "abstention_count": 0,
+    "blocked_count": 1,
+    "calibration_error": null,
+    "cancelled_count": 0,
+    "data_gaps": 0,
+    "decision_count": 2,
+    "ev_realization": null,
+    "filled_count": 1,
+    "generated_at": "2026-09-07T04:47:44.896102+00:00",
+    "gross_pnl": 8.0,
+    "model_failures": 0,
+    "net_pnl": 0.0,
+    "order_count": 1,
+    "paper_session_id": "evidence-sess",
+    "prediction_accuracy": null,
+    "provider_failures": 0,
+    "reconciliation_status": "RECONCILED",
+    "rejected_count": 0,
+    "risk_blocks": 0,
+    "signal_count": 1,
+    "total_cost": 8.0,
+    "total_slippage": 0.0,
+    "turnover": 100.0
+  },
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "one synthetic paper order filled; one blocked by kill switch (NO_NEW_PAPER_EXPOSURE). No fabricated fills; net_pnl derived from ledger only.",
+  "phase": "3N",
+  "sample_size": 0,
+  "time_window": "N/A (no real session reachable)"
+}

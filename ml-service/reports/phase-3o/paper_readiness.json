@@ -1,0 +1,50 @@
+{
+  "disclaimer": "PAPER_CONTINUE != LIVE_READY != profitable != confirmed alpha",
+  "economic_evidence": "INSUFFICIENT_EVIDENCE",
+  "evidence_level": "E1",
+  "final_status": "PAPER_CONTINUE_WITH_LIMITATIONS",
+  "gate": {
+    "blockers": [],
+    "dimensions": {
+      "ACCOUNTING_INTEGRITY": {
+        "dimension": "ACCOUNTING_INTEGRITY",
+        "reason": "reconciliation identity holds; idempotent",
+        "status": "PASS"
+      },
+      "DATA_INTEGRITY": {
+        "dimension": "DATA_INTEGRITY",
+        "reason": "PIT discipline + no-lookahead verified on synthetic",
+        "status": "PASS"
+      },
+      "DECISION_INTEGRITY": {
+        "dimension": "DECISION_INTEGRITY",
+        "reason": "abstention first-class; deterministic",
+        "status": "PASS"
+      },
+      "EXECUTION_INTEGRITY": {
+        "dimension": "EXECUTION_INTEGRITY",
+        "reason": "no fake fills; consistent sim",
+        "status": "PASS"
+      },
+      "OPERATIONAL_RELIABILITY": {
+        "dimension": "OPERATIONAL_RELIABILITY",
+        "reason": "failover safe; recovery fail-closed; monitoring works",
+        "status": "PASS"
+      },
+      "SECURITY": {
+        "dimension": "SECURITY",
+        "reason": "no broker tokens / no live path in paper3o",
+        "status": "PASS"
+      },
+      "STATISTICAL_EVIDENCE": {
+        "dimension": "STATISTICAL_EVIDENCE",
+        "reason": "no real-market observations reachable",
+        "status": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    "final_status": "PAPER_CONTINUE_WITH_LIMITATIONS",
+    "live_authorized": false,
+    "note": "PAPER_CONTINUE != LIVE_READY != profitable != confirmed alpha"
+  },
+  "live_authorized": false
+}

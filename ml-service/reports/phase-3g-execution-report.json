@@ -1,0 +1,70 @@
+{
+  "report_type": "phase-3g-execution-report",
+  "phase": "3G",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "status": "PASS",
+  "test_summary": {
+    "phase_3g_tests": 56,
+    "phase_3g_passed": 56,
+    "phase_3g_failed": 0,
+    "phase_3g_skipped": 0,
+    "full_suite_passed": 398,
+    "full_suite_skipped": 11,
+    "full_suite_failed": 0
+  },
+  "components_built": [
+    "src/execution/__init__.py",
+    "src/execution/schemas.py",
+    "src/execution/cost_model.py",
+    "src/execution/slippage.py",
+    "src/execution/market_calendar.py",
+    "src/execution/fill_engine.py",
+    "src/execution/position_accounting.py",
+    "src/execution/backtest_engine.py"
+  ],
+  "bugs_fixed": [
+    {
+      "id": "BUG-3G-01",
+      "file": "src/execution/position_accounting.py",
+      "line": 217,
+      "description": "add_position called with pos.position_id (str) instead of pos (Position)",
+      "fix": "Changed to add_position(pos); removed redundant duplicate line"
+    },
+    {
+      "id": "BUG-3G-02",
+      "file": "src/execution/backtest_engine.py",
+      "description": "config_hash crashes when execution_policy/ambiguity_policy passed as string",
+      "fix": "Added str→enum coercion in config_hash property"
+    },
+    {
+      "id": "BUG-3G-03",
+      "file": "tests/test_phase3g.py",
+      "description": "Test expected 2024-01-22 as next trading day but it is Republic Day (NSE holiday)",
+      "fix": "Corrected expected date to 2024-01-23"
+    },
+    {
+      "id": "BUG-3G-04",
+      "file": "tests/test_phase3g.py",
+      "description": "TradeRecord instantiation missing required fields: holding_bars, max_adverse_excursion, max_favourable_excursion",
+      "fix": "Added holding_bars=1, max_adverse_excursion=None, max_favourable_excursion=None"
+    },
+    {
+      "id": "BUG-3G-05",
+      "file": "tests/test_phase3g.py",
+      "description": "OOSDecisionRecord instantiation missing required fields: stop_price_hint, target_price_hint",
+      "fix": "Added stop_price_hint=None, target_price_hint=None"
+    }
+  ],
+  "static_audit": {
+    "same_bar_fill_unrestricted": "CLEAN",
+    "shift_negative_forward_look": "CLEAN",
+    "fillna_zero_financial_series": "CLEAN",
+    "center_true_rolling": "CLEAN",
+    "infinite_liquidity": "CLEAN",
+    "hardcoded_magic_costs": "CLEAN",
+    "hardcoded_lot_sizes_in_execution": "CLEAN",
+    "fake_fabricated_fills": "CLEAN",
+    "overall": "CLEAN"
+  }
+}

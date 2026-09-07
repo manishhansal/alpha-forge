@@ -1,0 +1,83 @@
+{
+  "phase": "PHASE_3P",
+  "title": "Independent Quant Validation, Red-Team Audit & Evidence Certification",
+  "branch": "refactor/improve-ml-service",
+  "git_commit": "ff31a69",
+  "generated_at": "2026-09-06",
+  "environment": {
+    "python": "3.14",
+    "present": ["numpy", "scipy", "pandas", "fastapi", "pydantic"],
+    "absent": ["talib", "torch", "sklearn", "yfinance", "sqlalchemy", "riskfolio", "_scrapling"],
+    "real_market_data_reachable": false,
+    "note": "No real Indian-market data / model artifacts / calibrators are reachable; all economic + predictive results are REPRODUCTION_INCOMPLETE and capped at evidence level E1. Machinery correctness/safety is validated on tagged SYNTHETIC data."
+  },
+  "test_results": {
+    "phase_3p": {"passed": 26, "failed": 0, "skipped": 0},
+    "full_regression_excluding_preexisting": {"passed": 1293, "failed": 0, "skipped": 28, "warnings": 2},
+    "preexisting_failures_excluded": [
+      "test_validation (sklearn absent)",
+      "test_talib_perf / test_technical (talib absent)",
+      "test_portfolio_optimizer (riskfolio absent)",
+      "test_gex (stale LOT_SIZES fixture)",
+      "test_data_pipeline (_scrapling absent)"
+    ],
+    "note": "Zero NEW regressions introduced by Phase 3P; prior phase tests unchanged."
+  },
+  "artifact_hashes": {
+    "status": "INDEPENDENTLY_CONFIRMED",
+    "method": "compute_artifact_hash vs independent hashlib.sha256 recompute (file + directory)",
+    "tamper_detection": "A != B on any content mutation; forbidden latest/current alias -> INTEGRITY_FAILURE; missing -> ARTIFACT_MISSING; safe_load_guard raises",
+    "real_artifacts_present": false
+  },
+  "dataset_hashes": {"status": "REPRODUCTION_INCOMPLETE", "reason": "no real dataset snapshots present in this environment"},
+  "configuration_hashes": {"status": "INDEPENDENTLY_CONFIRMED", "note": "evidence-package + promotion-manifest content hashing verified; mutation detected"},
+  "independent_metric_results": {
+    "sharpe": "INDEPENDENTLY_CONFIRMED (annualized recompute matches production within 1e-6)",
+    "brier": "INDEPENDENTLY_CONFIRMED (recompute matches within 1e-6)",
+    "expected_value": "INDEPENDENTLY_CONFIRMED (EV = P*win - (1-P)*|loss| - cost recompute matches)",
+    "execution_shortfall": "INDEPENDENTLY_CONFIRMED (VWAP-vs-arrival recompute matches)",
+    "small_sample": "0/1/2-obs -> UNAVAILABLE/INSUFFICIENT_EVIDENCE (no misleading numbers)"
+  },
+  "negative_control_results": {
+    "random_labels_cross_sectional_ic": "abs(mean_ic) < 0.1 (no spurious alpha)",
+    "verdict": "NEGATIVE_CONTROL_BEHAVES_CORRECTLY"
+  },
+  "mutation_test_results": {
+    "planted_future_data": "CAUGHT (PIT asserter flags LOOKAHEAD_LEAK)",
+    "planted_wrong_closing_equity": "CAUGHT (reconciliation -> UNEXPLAINED_MISMATCH)",
+    "verdict": "TEST_SUITE_DETECTS_PLANTED_DEFECTS"
+  },
+  "security_results": {
+    "secrets_in_ml_service_src": "NONE",
+    "live_order_primitives_in_ml_service_src": "NONE",
+    "frontend_next_public_secret_vars": "NONE",
+    "live_trading": "DISABLED",
+    "live_order_path": "UNREACHABLE",
+    "verdict": "SECURITY_CLEAN"
+  },
+  "reproducibility_results": {
+    "hash_integrity_machinery": "E1 (unit-verified + independently confirmed)",
+    "economic_predictive_results": "REPRODUCTION_INCOMPLETE (missing real dataset/model/calibrator artifacts)",
+    "replay_determinism": "deterministic baselines identical across 1x/2x/3x runs"
+  },
+  "red_team_results": {
+    "findings_total": 2,
+    "critical": 0,
+    "high": 2,
+    "high_all_fixed_and_regression_tested": true,
+    "medium": 0,
+    "low": 0,
+    "info": 1,
+    "detail_ref": "phase_3p_red_team_report.json"
+  },
+  "evidence_level": "E1",
+  "known_failures": [],
+  "limitations": [
+    "No real Indian-market data reachable -> economic/predictive edge is INSUFFICIENT / REPRODUCTION_INCOMPLETE, not disproven and not confirmed.",
+    "DL (torch) and sklearn-dependent paths are not executable in this environment; their leakage guards are validated by design + prior-phase tests, not re-executed here.",
+    "Coverage measured qualitatively via a critical-path invariant table (no pytest-cov in environment)."
+  ],
+  "final_status": "PHASE_3P_PASS",
+  "evidence_state": "PAPER_VALIDATED_WITH_LIMITATIONS",
+  "live_ready": false
+}

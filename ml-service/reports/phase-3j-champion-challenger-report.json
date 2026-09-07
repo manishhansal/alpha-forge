@@ -1,0 +1,43 @@
+{
+  "report_type": "phase-3j-champion-challenger-report",
+  "phase": "3J",
+  "generated": "2026-09-06",
+  "current_champions": [],
+  "champion_scoping": {
+    "scoped": true,
+    "scope_dimensions": ["asset_class", "market", "horizon", "strategy_family", "regime"],
+    "universal_champion": false
+  },
+  "challenger_statuses": [
+    "REGISTERED", "VALIDATING", "SHADOW", "PAPER",
+    "PROMOTION_ELIGIBLE", "PROMOTED", "REJECTED", "RETIRED"
+  ],
+  "shadow_mode": {
+    "generates_predictions": true,
+    "influences_champion": false,
+    "influence_enforced_false": true
+  },
+  "paper_mode": {
+    "uses_phase_3g_simulated_execution": true,
+    "isolated_from_live": true
+  },
+  "soak_config": {
+    "configurable": true,
+    "fields": ["min_shadow_days", "min_shadow_observations", "min_paper_days", "min_paper_trades"],
+    "hardcoded": false
+  },
+  "selection_bias_tracking": {
+    "number_tested": true,
+    "number_rejected": true,
+    "number_promoted": true,
+    "unsuccessful_hidden": false
+  },
+  "comparison": {
+    "frozen_eval_snapshot": true,
+    "same_invariants": ["same_universe", "same_period", "same_execution", "same_cost_model", "same_portfolio_constraints", "same_evaluation_horizon"],
+    "prediction_correlation_surfaced": true,
+    "near_identical_threshold": 0.99
+  },
+  "readiness_questions_answerable": true,
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

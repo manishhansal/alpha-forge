@@ -1,0 +1,47 @@
+{
+  "report_type": "phase-3g-sensitivity-report",
+  "phase": "3G",
+  "generated": "2026-09-06",
+  "nifty_reference": {
+    "lot_size": 75,
+    "reference_price": 21000.0,
+    "notional_inr": 1575000.0,
+    "round_trip_cost_base_inr": 369.0,
+    "round_trip_cost_bps": 2.34
+  },
+  "slippage_sensitivity": {
+    "fixed_bps_model": [
+      {"slippage_bps_one_way": 0, "round_trip_cost_inr": 0},
+      {"slippage_bps_one_way": 2, "round_trip_cost_inr": 315},
+      {"slippage_bps_one_way": 5, "round_trip_cost_inr": 787},
+      {"slippage_bps_one_way": 10, "round_trip_cost_inr": 1575},
+      {"slippage_bps_one_way": 20, "round_trip_cost_inr": 3150}
+    ],
+    "spread_proxy_model": [
+      {"hl_range_pct": 0.3, "implied_half_spread_bps": 15, "round_trip_slippage_inr": 2363},
+      {"hl_range_pct": 0.5, "implied_half_spread_bps": 25, "round_trip_slippage_inr": 3938},
+      {"hl_range_pct": 0.8, "implied_half_spread_bps": 40, "round_trip_slippage_inr": 6300}
+    ],
+    "vol_participation_model": {
+      "sigma_daily_pct": 1.0,
+      "coefficient": 0.5,
+      "scenarios": [
+        {"participation_pct": 0.1, "slippage_bps": 1.6, "round_trip_inr": 252},
+        {"participation_pct": 1.0, "slippage_bps": 5.0, "round_trip_inr": 788},
+        {"participation_pct": 5.0, "slippage_bps": 11.2, "round_trip_inr": 1764},
+        {"participation_pct": 10.0, "slippage_bps": 15.8, "round_trip_inr": 2494}
+      ]
+    }
+  },
+  "stt_change_2023": {
+    "pre_2023_stt_pct": 0.0001,
+    "post_2023_stt_pct": 0.000125,
+    "delta_pct": 25.0,
+    "impact_inr_per_lot_nifty": 39.375
+  },
+  "break_even_analysis": {
+    "nifty_futures_break_even_bps": 2.34,
+    "min_edge_required_bps": 5.0,
+    "conclusion": "Strategies with <5bps expected edge are marginal after costs"
+  }
+}

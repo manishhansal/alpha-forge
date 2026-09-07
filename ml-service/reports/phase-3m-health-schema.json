@@ -1,0 +1,37 @@
+{
+  "artifact": "phase-3m-health-schema",
+  "blocking_states": [
+    "UNSAFE",
+    "UNAVAILABLE"
+  ],
+  "description": "Structured health orchestration contract (spec \u00a714\u201319, \u00a728).",
+  "dimensions": [
+    "DATA",
+    "FEATURE",
+    "MODEL",
+    "CALIBRATION",
+    "ALPHA",
+    "RISK",
+    "EXECUTION",
+    "RL",
+    "SYSTEM_HEALTH"
+  ],
+  "insufficient_evidence_is_neutral_in_rollup": true,
+  "no_auto_recalibrate": true,
+  "no_auto_replace": true,
+  "states": [
+    "HEALTHY",
+    "WATCH",
+    "DEGRADED",
+    "UNSAFE",
+    "UNAVAILABLE",
+    "INSUFFICIENT_EVIDENCE"
+  ],
+  "system_contract_keys": [
+    "system_state",
+    "degraded",
+    "blocking",
+    "generated_at",
+    "dimensions"
+  ]
+}

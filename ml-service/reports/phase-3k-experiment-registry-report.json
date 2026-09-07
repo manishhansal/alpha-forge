@@ -1,0 +1,28 @@
+{
+  "report_type": "phase-3k-experiment-registry-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "experiment_fields": [
+    "experiment_id", "model_id", "architecture", "task_type", "status",
+    "dataset_version", "feature_version", "label_version", "label_config_hash",
+    "sequence_version", "scaler_version", "code_version", "seed",
+    "training_config", "validation_config", "results", "evidence_package_id",
+    "model_value_class", "contamination_status", "overfit_status", "rejection_reason",
+    "created_at", "updated_at", "status_history", "notes"
+  ],
+  "statuses": ["PLANNED", "RUNNING", "COMPLETED", "FAILED", "REJECTED",
+               "PROMOTION_ELIGIBLE", "PROMOTED", "RETIRED"],
+  "invalid_transition_raises": true,
+  "no_cherry_picking": true,
+  "failed_experiments_recorded": true,
+  "phase3j_integration": {
+    "register_as_challenger": true,
+    "requires_completed": true,
+    "blocks_final_oos_contaminated": true,
+    "no_auto_promotion": true,
+    "verified_contaminated_block": true,
+    "verified_clean_challenger_created": true
+  },
+  "current_state": {"experiments": 0, "promoted": 0, "challengers": 0},
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

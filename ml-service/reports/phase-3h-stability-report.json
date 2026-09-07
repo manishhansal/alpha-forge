@@ -1,0 +1,24 @@
+{
+  "report_type": "phase-3h-stability-report",
+  "phase": "3H",
+  "generated": "2026-09-06",
+  "stability_method": "deterministic_grid_perturbation",
+  "randomness_used": false,
+  "perturbation_grid": [-0.10, 0.10],
+  "metrics": {
+    "mean_weight_change_ev": "avg L1 distance under EV ±10% perturbation",
+    "mean_weight_change_vol": "avg L1 distance under vol ±10% perturbation",
+    "rank_stability": "Spearman rank correlation base vs perturbed",
+    "turnover_sensitivity": "d(turnover)/d(EV_shock)"
+  },
+  "expected_stability_by_objective": {
+    "EQUAL_WEIGHT": "perfect",
+    "HRP": "high",
+    "MIN_VARIANCE": "medium_ev_high_vol",
+    "CVaR_MINIMIZATION": "medium",
+    "EV_RISK_OPTIMIZATION": "low_ev_medium_vol",
+    "RISK_BUDGETING": "medium"
+  },
+  "oos_rolling_stability": "INSUFFICIENT_EVIDENCE",
+  "note": "Stability is a diagnostic. Objective selection must not use final OOS stability metrics."
+}

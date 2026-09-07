@@ -1,0 +1,116 @@
+feature,family,version,source,formula_id,lookback,frequency,PIT_safe,availability,missing_policy,cross_sectional,proxy,talib_required,status,deprecated_by,description
+advance_decline_ratio,breadth,breadth-v1,nse_bhavcopy,adv_dec_ratio,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"(advances - declines) / (advances + declines) in [-1, 1]."
+adx_14,trend,trend-v1,equity_ohlcv,adx_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,Average Directional Index over 14 bars.
+amihud_illiquidity,volume_liquidity,volume_liquidity-v1,equity_ohlcv,amihud_proxy_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,TRUE,FALSE,RESEARCH,,"Amihud illiquidity proxy: |return| / dollar_volume, 20-day average."
+atm_iv,options_iv,options_iv-v1,nse_options,atm_iv,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,At-the-money implied volatility.
+atr_14,volatility,volatility-v1,equity_ohlcv,atr_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,Wilder ATR over 14 bars (absolute price units).
+atr_expansion,volatility,volatility-v1,equity_ohlcv,atr_ratio_5_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,ATR(5) / ATR(20): >1 means volatility expanding.
+atr_pct,volatility,volatility-v1,equity_ohlcv,atr_pct_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,ATR(14) as % of close price. Cross-stock comparable.
+bank_nifty_spread,market_regime,market_regime-v1,"nifty_ohlcv,banknifty_ohlcv",bank_nifty_spread,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,BANKNIFTY change - NIFTY change (Bank outperformance = risk-on).
+banknifty_change_pct,market_regime,market_regime-v1,banknifty_ohlcv,banknifty_pct_change_1d,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,BANKNIFTY 1-day pct change.
+bearish_fvg_count,market_structure,market_structure-v1,equity_ohlcv,fvg_bear_count_10,12,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar count of bearish FVGs.
+bearish_ob_count,market_structure,market_structure-v1,equity_ohlcv,ob_bear_count_10,25,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar count of bearish order blocks.
+bollinger_position,mean_reversion,mean_reversion-v1,equity_ohlcv,bb_position_20_2,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Position within Bollinger Bands: 0=lower, 1=upper."
+bos_net,market_structure,market_structure-v1,equity_ohlcv,bos_trailing_swing_roll10,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar net BOS events (bullish minus bearish).
+breakout_score,momentum,momentum-v1,equity_ohlcv,breakout_vol_confirmed_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Breakout / breakdown score in [-1,1] with volume confirmation."
+bullish_fvg_count,market_structure,market_structure-v1,equity_ohlcv,fvg_bull_count_10,12,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar count of bullish FVGs.
+bullish_ob_count,market_structure,market_structure-v1,equity_ohlcv,ob_bull_count_10,25,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar count of bullish order blocks.
+cci,mean_reversion,mean_reversion-v1,equity_ohlcv,cci_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,Commodity Channel Index (20 bars).
+cdl_doji,market_structure,market_structure-v1,equity_ohlcv,cdl_doji,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Doji pattern: 1.0 if detected, else 0."
+cdl_engulfing,market_structure,market_structure-v1,equity_ohlcv,cdl_engulfing,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Engulfing pattern: 1.0 if detected on current bar, else 0."
+cdl_hammer,market_structure,market_structure-v1,equity_ohlcv,cdl_hammer,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Hammer pattern: 1.0 if detected, else 0."
+ce_wall_distance_pct,derivatives,derivatives-v1,nse_options,ce_wall_distance,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance from spot to highest CE OI strike (resistance wall).
+choch_net,market_structure,market_structure-v1,equity_ohlcv,choch_trailing_swing_roll10,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Rolling 10-bar net CHOCH events (potential reversals).
+cmf,volume_liquidity,volume_liquidity-v1,equity_ohlcv,cmf_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Chaikin Money Flow [-1, 1] over 20 bars."
+cs_return_20d_rank,cross_sectional,cross_sectional-v1,"equity_ohlcv,historical_universe",cs_pct_rank_return_20d,21,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,Cross-sectional percentile rank of return_20d within historical universe at t.
+cs_return_5d_rank,cross_sectional,cross_sectional-v1,"equity_ohlcv,historical_universe",cs_pct_rank_return_5d,6,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,Cross-sectional percentile rank of return_5d within historical universe at t.
+cs_rs_nifty_rank,cross_sectional,cross_sectional-v1,"equity_ohlcv,nifty_close,historical_universe",cs_pct_rank_rs_nifty,21,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,Cross-sectional percentile rank of relative_strength_vs_nifty at t.
+days_to_monthly_expiry,expiry_contract,expiry-v1,nse_expiry_calendar,days_to_monthly_expiry,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Calendar days to next monthly options expiry.
+days_to_weekly_expiry,expiry_contract,expiry-v1,nse_expiry_calendar,days_to_weekly_expiry,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Calendar days to next weekly options expiry.
+delivery_pct,volume_liquidity,volume_liquidity-v1,nse_bhavcopy,delivery_pct,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Delivery volume as % of total volume (NSE-specific).
+distance_from_52w_high,momentum,momentum-v1,equity_ohlcv,dist_from_252d_high,252,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance of close from the 252-day high (negative or zero).
+distance_from_52w_low,momentum,momentum-v1,equity_ohlcv,dist_from_252d_low,252,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance of close from the 252-day low (positive or zero).
+ema_stack_score,trend,trend-v1,equity_ohlcv,ema_stack_8_13_21_55_200,200,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"EMA alignment score [-1,1]: +1=bull stack(8>13>21>55>200)."
+force_index_norm,volume_liquidity,volume_liquidity-v1,equity_ohlcv,force_index_norm_13,13,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Elder Force Index (13-bar EMA), normalised by price*volume."
+fvg_score,market_structure,market_structure-v1,equity_ohlcv,fvg_3bar_roll10,12,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Net FVG score [-1,1]: rolling 10-bar bullish minus bearish FVGs."
+gap_pct,overnight_gap,momentum-v1,equity_ohlcv,gap_open_prev_close,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Overnight gap as % of previous close.
+gap_pct_nifty,overnight_gap,momentum-v1,nifty_ohlcv,gap_nifty_open_prev_close,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,NIFTY overnight gap % (open vs prev close).
+global_sentiment,intermarket,intermarket-v1,intermarket_data,global_sentiment_composite,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Composite global risk-on score: US futures + crude + USD/INR.
+higher_highs_lows,trend,momentum-v1,equity_ohlcv,hhhl_5,6,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Fraction of HH+HL minus LH+LL swings in last 5 bars, in [-1,1]."
+ht_trendline_dev,trend,trend-v1,equity_ohlcv,ht_trendline_dev,63,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,(close - HT_TRENDLINE) / HT_TRENDLINE. Hilbert Transform deviation.
+india_vix,market_regime,market_regime-v1,india_vix,india_vix_raw,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,India VIX level.
+is_expiry_day,expiry_contract,expiry-v1,nse_expiry_calendar,is_expiry_day,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"1 if today is NSE options expiry day, else 0."
+iv_rank,options_iv,options_iv-v1,nse_options,iv_rank_252,252,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"IV Rank [0,100]: where current IV sits in its 252-day range."
+iv_rank_status,options_iv,options_iv-v1,nse_options,iv_rank_status,252,1D,TRUE,DATA_UNAVAILABLE,RETURN_ZERO,FALSE,FALSE,FALSE,RESEARCH,,"IV Rank data quality flag: 0=OK, 1=insufficient history."
+liquidity_sweep,market_structure,market_structure-v1,equity_ohlcv,liq_sweep_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Liquidity sweep score: +1 bullish sweep, -1 bearish sweep, 0 none."
+macd_histogram,trend,trend-v1,equity_ohlcv,macd_12_26_9,34,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,MACD histogram (line - signal).
+macd_line,trend,trend-v1,equity_ohlcv,macd_12_26_9,34,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,MACD line (EMA12 - EMA26).
+macd_signal,trend,trend-v1,equity_ohlcv,macd_12_26_9,34,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,MACD 9-bar EMA signal line.
+market_breadth,breadth,breadth-v1,market_data_provider,breadth_composite,1,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Composite breadth score [0, 100] passed from market data provider."
+market_breadth_score,breadth,breadth-v1-deprecated,market_data_provider,breadth_composite,1,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,pct_above_sma20,DEPRECATED: market breadth score alias. Use pct_above_sma20.
+max_pain_distance_pct,derivatives,derivatives-v1,nse_options,max_pain_distance,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance from spot to max-pain strike.
+mfi,volume_liquidity,volume_liquidity-v1,equity_ohlcv,mfi_14,14,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Money Flow Index [0, 100] — volume-weighted RSI."
+monthly_theta_pressure,expiry_contract,expiry-v1,nse_expiry_calendar,theta_pressure_monthly,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"1 / max(days_to_monthly_expiry, 0.5) — theta acceleration proxy."
+nifty_adx,trend,trend-v1,nifty_ohlcv,nifty_adx_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,NIFTY ADX(14).
+nifty_atr_pct,volatility,volatility-v1,nifty_ohlcv,nifty_atr_pct_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,NIFTY ATR(14) as % of NIFTY close.
+nifty_change_pct,market_regime,market_regime-v1,nifty_ohlcv,nifty_pct_change_1d,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,NIFTY 50 1-day pct change.
+nifty_macd_hist,trend,trend-v1,nifty_ohlcv,nifty_macd_12_26_9,34,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,NIFTY MACD histogram.
+nifty_oi_delta_skew_norm,derivatives,derivatives-v1,nse_derivatives,nifty_oi_skew_norm,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Nifty total OI change skew (PE chg - CE chg), normalised."
+nifty_rsi,mean_reversion,mean_reversion-v1,nifty_ohlcv,nifty_rsi_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,NIFTY RSI(14).
+ob_score,market_structure,market_structure-v1,equity_ohlcv,ob_atr_impulse_roll10,25,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Net Order Block score [-1,1]: rolling 10-bar bullish minus bearish OBs."
+obv_last,volume_liquidity,volume_liquidity-v1,equity_ohlcv,obv,1,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,Raw On-Balance Volume (cumulative).
+obv_trend,volume_liquidity,volume_liquidity-v1,equity_ohlcv,obv_zscore_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,OBV z-score vs 20-bar rolling mean/std.
+oi_buildup_score,derivatives,derivatives-v1,nse_derivatives,oi_buildup_quadrant,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"OI build-up quadrant score [-1,1]: long/short buildup/covering."
+oi_delta_skew_norm,derivatives,derivatives-v1,nse_derivatives,oi_delta_skew_norm,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Normalised OI change skew: (PE_chg - CE_chg)/(|PE_chg|+|CE_chg|).
+oi_wall_score,derivatives,derivatives-v1,nse_options,oi_wall_score,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"OI wall score [-1,1]: +1 when PE wall nearby (support), -1 when CE wall nearby."
+parkinson_vol_20,volatility,volatility-v1,equity_ohlcv,parkinson_vol_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Parkinson (high-low) volatility estimator over 20 bars (annualised %).
+pcr_oi,derivatives,derivatives-v1,nse_derivatives,pcr_from_oi_totals,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Put/Call ratio from OI totals.
+pcr_raw,derivatives,derivatives-v1,nse_derivatives,pcr_oi_raw,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Raw Put/Call Ratio (OI-based).
+pcr_score,derivatives,derivatives-v1,nse_derivatives,pcr_normalised,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"PCR normalised to [-1,1]: PCR>1.3 → +1, PCR<0.7 → -1."
+pct_above_sma20,breadth,breadth-v1,"equity_ohlcv,historical_universe",breadth_pct_above_sma20,20,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,% of eligible stocks above their 20-day SMA at t.
+pct_above_sma200,breadth,breadth-v1,"equity_ohlcv,historical_universe",breadth_pct_above_sma200,200,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,% of eligible stocks above their 200-day SMA at t.
+pct_above_sma50,breadth,breadth-v1,"equity_ohlcv,historical_universe",breadth_pct_above_sma50,50,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,TRUE,FALSE,FALSE,RESEARCH,,% of eligible stocks above their 50-day SMA at t.
+pe_wall_distance_pct,derivatives,derivatives-v1,nse_options,pe_wall_distance,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance from spot to highest PE OI strike (support wall).
+put_call_ratio,derivatives,derivatives-v1,nse_derivatives,nifty_pcr_raw,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Raw NIFTY Put/Call OI ratio (pass-through from market data).
+rate_of_change_12,momentum,momentum-v1,equity_ohlcv,roc_12,13,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,12-bar price rate of change as a percentage.
+realized_vol_20,volatility,volatility-v1,equity_ohlcv,realized_vol_cc_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close realised volatility over 20 days (annualised %).
+regime_encoded,market_regime,market_regime-v1,model_market_regime,regime_model_output,0,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Market regime encoded label (from MarketRegimeClassifier).
+relative_strength_vs_nifty,momentum,momentum-v1,"equity_ohlcv,nifty_close",mansfield_rs_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Mansfield RS: (1+stock_ret_20d)/(1+nifty_ret_20d).
+relative_volume,volume_liquidity,volume_liquidity-v1,equity_ohlcv,rel_vol_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Today's volume / 20-day average volume.
+return_10d,momentum,momentum-v1,equity_ohlcv,pct_change_10,11,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 10 trading days.
+return_1d,momentum,momentum-v1,equity_ohlcv,pct_change_1,2,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 1 trading days.
+return_20d,momentum,momentum-v1,equity_ohlcv,pct_change_20,21,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 20 trading days.
+return_2d,momentum,momentum-v1,equity_ohlcv,pct_change_2,3,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 2 trading days.
+return_3d,momentum,momentum-v1,equity_ohlcv,pct_change_3,4,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 3 trading days.
+return_5d,momentum,momentum-v1,equity_ohlcv,pct_change_5,6,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 5 trading days.
+return_60d,momentum,momentum-v1,equity_ohlcv,pct_change_60,61,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Close-to-close pct return over 60 trading days.
+risk_reward_ratio,risk_tail,risk-v1-deprecated,unknown,unknown,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,atr_pct,DEPRECATED: risk/reward ratio. Not computed in engineer.py.
+rotation_score,sector,sector-v1,"equity_ohlcv,sector_master",sector_rotation_cyc_def,6,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Cyclical vs defensive sector return spread, clipped to [-5,5]."
+rsi_14,mean_reversion,mean_reversion-v1,equity_ohlcv,rsi_14,28,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Wilder RSI over 14 bars [0, 100]."
+rsi_7,mean_reversion,mean_reversion-v1,equity_ohlcv,rsi_7,14,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Wilder RSI over 7 bars [0, 100]. Faster oscillator."
+sector_dispersion,sector,sector-v1,"equity_ohlcv,sector_master",sector_return_dispersion,6,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Cross-sector return dispersion (std of sector returns at t).
+sector_momentum,sector,sector-v1,"equity_ohlcv,sector_master",sector_avg_return_5d,6,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Average 5-day return of sector peers (PIT sector membership).
+sector_relative_strength,sector,sector-v1,"equity_ohlcv,sector_master",stock_vs_sector_return_20d,21,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Stock 20d return relative to average sector peer 20d return.
+session_progress,time_of_day,time_of_day-v1,clock,session_progress_nse,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Session progress [0,1]: 0=open, 1=close. NSE: 09:15-15:30."
+stoch_rsi,mean_reversion,mean_reversion-v1,equity_ohlcv,stoch_rsi_14_14,42,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Stochastic RSI fastk [0, 100]."
+stop_distance_atr,risk_tail,risk-v1-deprecated,unknown,unknown,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,atr_pct,DEPRECATED: stop distance in ATR units. Not computed in engineer.py.
+structure_score,market_structure,market_structure-v1,equity_ohlcv,structure_score_bos_choch,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Combined structure score [-1,1]: 0.6*BOS + 0.4*CHOCH."
+supertrend,trend,trend-v1,equity_ohlcv,supertrend_10_3,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Supertrend direction: +1 uptrend, -1 downtrend."
+target_distance_atr,risk_tail,risk-v1-deprecated,unknown,unknown,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,atr_pct,DEPRECATED: target distance in ATR units. Not computed in engineer.py.
+trend_alignment,trend,trend-v1-deprecated,unknown,unknown,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,ema_stack_score,DEPRECATED: unspecified trend alignment. Use ema_stack_score.
+trend_strength,momentum,momentum-v1,equity_ohlcv,linreg_slope_norm_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Linear-regression slope over 20 bars, normalised to [-1,1]."
+vix_mean_reversion,market_regime,market_regime-v1,india_vix,vix_zscore_252,252,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"VIX z-score vs 252-day mean/std, clipped to [-3, 3]."
+vix_percentile,market_regime,market_regime-v1,india_vix,vix_percentile_252,252,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% of historical VIX readings below current VIX (rolling 252-day).
+vix_regime,market_regime,market_regime-v1,india_vix,vix_regime_thresholds,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"India VIX regime: 0=low(<13), 1=moderate(<18), 2=high(<25), 3=extreme."
+vol_regime,volatility,volatility-v1,equity_ohlcv,vol_regime_percentile_60,60,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Volatility regime: 0=low, 1=normal, 2=high, 3=extreme (rolling percentile)."
+volatility_rank,volatility,volatility-v1-deprecated,unknown,unknown,0,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,DEPRECATED,vol_regime,DEPRECATED: unspecified volatility rank. Use vol_regime or realized_vol_20.
+volume_breakout,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vol_breakout_20_1.5,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Binary: 1 if volume >= 1.5x 20-day avg.
+volume_oscillator,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vol_osc_5_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Volume Oscillator: (EMA5 - EMA20) / EMA20 × 100.
+volume_price_confirm,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vol_price_confirm_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Volume-price confirmation: +1 rising price+vol, -1 divergence."
+volume_profile_score,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vol_profile_score_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"Position relative to 20-bar volume-weighted price distribution, [-1,1]."
+volume_ratio_market,volume_liquidity,volume_liquidity-v1,nifty_ohlcv,nifty_rel_vol_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,NIFTY relative volume (today / 20-day avg).
+volume_trend,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vol_trend_10,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,Volume trend: recent 10-day avg / prior 10-day avg.
+vpin_score,microstructure,microstructure-v1,intraday_ohlcv,vpin_tick_rule,50,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,TRUE,FALSE,RESEARCH,,VPIN order-flow toxicity proxy (requires intraday bar data).
+vwap_distance_pct,volume_liquidity,volume_liquidity-v1,equity_ohlcv,vwap_distance_rolling_20,20,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,% distance from rolling 20-bar VWAP. Causal rolling window.
+weekly_theta_pressure,expiry_contract,expiry-v1,nse_expiry_calendar,theta_pressure_weekly,1,1D,TRUE,DATA_UNAVAILABLE,RETURN_NAN,FALSE,FALSE,FALSE,RESEARCH,,"1 / max(days_to_weekly_expiry, 0.5) — theta acceleration proxy."
+williams_r,mean_reversion,mean_reversion-v1,equity_ohlcv,willr_14,14,1D,TRUE,COMPUTABLE,RETURN_NAN,FALSE,FALSE,TRUE,RESEARCH,,"Williams %R [-100, 0]."

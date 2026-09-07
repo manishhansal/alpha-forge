@@ -25,6 +25,7 @@ import numpy as np
 import structlog
 
 from ..features.engineer import RISK_FEATURES
+from ..prediction_provenance import PredictionProvenance
 from ..schemas import MarketRegime, RiskResponse
 
 logger = structlog.get_logger()
@@ -179,6 +180,7 @@ class RiskPredictor:
             suggested_position_size_pct=round(position_size, 2),
             risk_score=round(risk_score, 1),
             factors=factors,
+            provenance=PredictionProvenance.TRAINED_MODEL,
         )
 
     def _predict_heuristic(self, features: dict[str, float]) -> RiskResponse:
@@ -305,6 +307,7 @@ class RiskPredictor:
             suggested_position_size_pct=round(float(position_size), 2),
             risk_score=round(float(risk_score), 1),
             factors=factors,
+            provenance=PredictionProvenance.HEURISTIC,
         )
 
     def _estimate_drawdown_heuristic(self, features: dict[str, float]) -> float:

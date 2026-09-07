@@ -1,0 +1,41 @@
+{
+  "branch": "refactor/improve-ml-service",
+  "evidence_files": [
+    "phase-3m-decision-schema.json",
+    "phase-3m-health-schema.json",
+    "phase-3m-monitoring-report.json",
+    "phase-3m-replay-manifest-example.json",
+    "phase-3m-shadow-schema.json",
+    "phase-3m-test-results.json",
+    "phase_3m_manifest.json"
+  ],
+  "guarantees": {
+    "append_only_audit": true,
+    "auto_promotion": false,
+    "auto_recalibration": false,
+    "auto_retraining": false,
+    "deterministic_replay": true,
+    "duplicate_model_registry": false,
+    "duplicate_provenance_system": false,
+    "fail_closed": true,
+    "import_clean_no_talib_torch_sklearn": true,
+    "live_broker_execution": false,
+    "second_execution_simulator": false
+  },
+  "new_packages": [
+    "src/decision",
+    "src/shadow"
+  ],
+  "phase": "3M",
+  "principle": "ORCHESTRATE phases 3A\u20133L; never duplicate.",
+  "reused_components": {
+    "execution_simulator": "3G BacktestEngine via 3L SimulatorBridge",
+    "lifecycle_registry_storage": "3J (_storage, model_registry)",
+    "meta_decision_engine": "3F (fusion)",
+    "portfolio": "3H",
+    "provenance": "prediction_provenance.DeploymentMode/resolve_action",
+    "rl_challenger": "3L",
+    "stability_drift": "3I"
+  },
+  "title": "Research-to-Production Integration, Shadow Execution & ML Operations"
+}

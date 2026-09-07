@@ -1,0 +1,21 @@
+{
+  "full_regression_excluding_preexisting": {
+    "excluded_preexisting_failures": [
+      "test_validation (sklearn absent)",
+      "test_talib_perf / test_technical (talib absent)",
+      "test_portfolio_optimizer (riskfolio absent)",
+      "test_gex (stale LOT_SIZES fixture)",
+      "test_data_pipeline (_scrapling absent)"
+    ],
+    "failed": 0,
+    "passed": 1267,
+    "skipped": 28
+  },
+  "note": "zero NEW regressions introduced by Phase 3O",
+  "phase_3o": {
+    "failed": 0,
+    "passed": 55,
+    "skipped": 0
+  },
+  "test_command": "python3 -m pytest tests/test_phase3o.py -q"
+}

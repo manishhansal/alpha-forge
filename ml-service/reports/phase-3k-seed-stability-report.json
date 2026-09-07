@@ -1,0 +1,18 @@
+{
+  "report_type": "phase-3k-seed-stability-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "seeds_recorded_in_provenance": ["master", "numpy_seed", "python_seed", "framework_seed"],
+  "multi_seed_reported": true,
+  "seed_selected_by_oos": false,
+  "seed_selected_by": "VALIDATION",
+  "robustness_statistics": ["mean", "median", "std", "worst", "best", "n_valid"],
+  "synthetic_5seed_mlp": {"mean": 0.942, "median": 0.942, "std": 0.003, "worst": 0.938, "best": 0.946},
+  "determinism": {
+    "same_seed_identical_predictions": true,
+    "backend": "numpy",
+    "bitwise_reproducible_on_numpy": true,
+    "gpu_determinism_limitation_documented": true
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

@@ -11,15 +11,20 @@ import pandas as pd
 
 def compute_market_breadth(
     stock_closes: dict[str, pd.Series], sma_period: int = 20
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """
     Market breadth indicators from the F&O universe.
 
+    Phase 3D fix: returns None for all breadth values when no eligible stocks
+    are available, instead of the previous silent 50.0 default.
+    50.0 is a real market state (exactly half the stocks above their SMA);
+    unknown is not.
+
     Returns:
-        pct_above_sma20: % of stocks above their 20-day SMA
-        pct_above_sma50: % of stocks above their 50-day SMA
-        pct_above_sma200: % of stocks above their 200-day SMA
-        breadth_thrust: rate of change of breadth (momentum of participation)
+        pct_above_sma20:  % of stocks above their 20-day SMA, or None
+        pct_above_sma50:  % of stocks above their 50-day SMA, or None
+        pct_above_sma200: % of stocks above their 200-day SMA, or None
+        breadth_thrust:   rate of change of breadth (requires historical data)
     """
     above_20 = 0
     above_50 = 0
@@ -39,18 +44,19 @@ def compute_market_breadth(
             above_200 += 1
 
     if total == 0:
+        # DATA_UNAVAILABLE — not fabricated as 50.0
         return {
-            "pct_above_sma20": 50.0,
-            "pct_above_sma50": 50.0,
-            "pct_above_sma200": 50.0,
-            "breadth_thrust": 0.0,
+            "pct_above_sma20":  None,
+            "pct_above_sma50":  None,
+            "pct_above_sma200": None,
+            "breadth_thrust":   None,
         }
 
     return {
-        "pct_above_sma20": (above_20 / total) * 100,
-        "pct_above_sma50": (above_50 / total) * 100,
+        "pct_above_sma20":  (above_20  / total) * 100,
+        "pct_above_sma50":  (above_50  / total) * 100,
         "pct_above_sma200": (above_200 / total) * 100,
-        "breadth_thrust": 0.0,  # Requires historical breadth data
+        "breadth_thrust":   None,  # requires historical breadth data — DATA_UNAVAILABLE
     }
 
 
@@ -101,19 +107,24 @@ def compute_sector_rotation_score(
 def compute_vix_features(
     current_vix: float | None,
     vix_history: list[float] | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """
     India VIX regime and derived features.
+
+    Phase 3D fix: returns None for all fields when VIX data is absent.
+    Previous defaults (vix_level=15.0, vix_regime=1.0, vix_percentile=50.0)
+    were silent substitutions that conflated unknown with a specific market state.
     """
-    features: dict[str, float] = {}
+    features: dict[str, float | None] = {}
 
     if current_vix is None:
+        # DATA_UNAVAILABLE — no fabrication
         return {
-            "vix_level": 15.0,
-            "vix_regime": 1.0,  # moderate
-            "vix_percentile": 50.0,
-            "vix_change_pct": 0.0,
-            "vix_mean_reversion": 0.0,
+            "vix_level":          None,
+            "vix_regime":         None,
+            "vix_percentile":     None,
+            "vix_change_pct":     None,
+            "vix_mean_reversion": None,
         }
 
     features["vix_level"] = current_vix
@@ -140,18 +151,22 @@ def compute_vix_features(
                 (current_vix - history[-2]) / history[-2]
             ) * 100
         else:
-            features["vix_change_pct"] = 0.0
+            features["vix_change_pct"] = None
 
-        # Mean reversion signal: how far from historical mean
+        # Mean reversion signal
         vix_mean = np.mean(history)
-        vix_std = np.std(history) if len(history) > 1 else 1.0
-        features["vix_mean_reversion"] = np.clip(
-            (current_vix - vix_mean) / vix_std, -3, 3
-        )
+        vix_std = np.std(history) if len(history) > 1 else 0.0
+        if vix_std > 0:
+            features["vix_mean_reversion"] = float(np.clip(
+                (current_vix - vix_mean) / vix_std, -3, 3
+            ))
+        else:
+            features["vix_mean_reversion"] = None
     else:
-        features["vix_percentile"] = 50.0
-        features["vix_change_pct"] = 0.0
-        features["vix_mean_reversion"] = 0.0
+        # Insufficient history — DATA_UNAVAILABLE
+        features["vix_percentile"]     = None
+        features["vix_change_pct"]     = None
+        features["vix_mean_reversion"] = None
 
     return features
 
@@ -223,21 +238,38 @@ def compute_expiry_features(
     days_to_weekly_expiry: int | None,
     days_to_monthly_expiry: int | None,
     is_expiry_day: bool = False,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """
-    Options expiry proximity features — decay effects intensify near expiry.
+    Options expiry proximity features.
+
+    Phase 3D fix: returns None for day-count fields when inputs are absent.
+    Previously defaulted to 5 and 20 respectively, conflating unknown with
+    a specific calendar position.
+
+    is_expiry_day defaults to False only because a missing value is
+    ambiguous for a boolean flag — the caller should supply this from
+    the historical contract calendar.
     """
-    features: dict[str, float] = {}
+    features: dict[str, float | None] = {}
 
     features["is_expiry_day"] = 1.0 if is_expiry_day else 0.0
-    features["days_to_weekly_expiry"] = float(days_to_weekly_expiry or 5)
-    features["days_to_monthly_expiry"] = float(days_to_monthly_expiry or 20)
 
-    # Theta decay acceleration (inverse relationship)
-    weekly = days_to_weekly_expiry or 5
-    features["weekly_theta_pressure"] = 1.0 / max(weekly, 0.5)
+    features["days_to_weekly_expiry"] = (
+        float(days_to_weekly_expiry) if days_to_weekly_expiry is not None else None
+    )
+    features["days_to_monthly_expiry"] = (
+        float(days_to_monthly_expiry) if days_to_monthly_expiry is not None else None
+    )
 
-    monthly = days_to_monthly_expiry or 20
-    features["monthly_theta_pressure"] = 1.0 / max(monthly, 0.5)
+    # Theta pressure: 1/days — None when days unknown
+    if days_to_weekly_expiry is not None:
+        features["weekly_theta_pressure"] = 1.0 / max(days_to_weekly_expiry, 0.5)
+    else:
+        features["weekly_theta_pressure"] = None
+
+    if days_to_monthly_expiry is not None:
+        features["monthly_theta_pressure"] = 1.0 / max(days_to_monthly_expiry, 0.5)
+    else:
+        features["monthly_theta_pressure"] = None
 
     return features

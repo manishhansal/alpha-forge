@@ -267,7 +267,12 @@ class DecisionPolicy:
         er = ensemble_result
 
         # ── 1. Confidence decomposition ──────────────────────────────────
-        signal_conf = float(np.clip(abs(er.weighted_score), 0.0, 1.0))
+        # Phase 3F fix (BUG #6): signal_confidence was abs(weighted_score),
+        # which is a score magnitude — NOT a probability.  Now uses
+        # weighted_confidence from EnsembleResult, which is the
+        # calibration-quality-weighted mean of calibrated model confidences.
+        # This is a proper [0,1] probability-like quantity.
+        signal_conf = float(np.clip(er.weighted_confidence, 0.0, 1.0))
         exec_quality = self._execution_quality(
             time_of_day_minutes=time_of_day_minutes,
             iv_regime=iv_regime,

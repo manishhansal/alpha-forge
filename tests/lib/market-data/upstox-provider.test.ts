@@ -295,6 +295,44 @@ describe("1. Token authentication", () => {
     await expect(p.getOptionChain("NIFTY")).rejects.toThrow(/not configured/i);
   });
 
+  it("activates via per-user DB Analytics Token when no env vars are set", async () => {
+    // No env token sources at all — this mirrors a user who configured Upstox
+    // purely from the frontend (Profile → API Keys), which the provider gate
+    // (isUpstoxConfigured) previously ignored, causing silent failover to Yahoo.
+    delete process.env.UPSTOX_ANALYTICS_TOKEN;
+    delete process.env.UPSTOX_ACCESS_TOKEN;
+    delete process.env.UPSTOX_CLIENT_ID;
+    delete process.env.UPSTOX_CLIENT_SECRET;
+
+    // The provider resolves the DB token by lazily importing the credentials
+    // module and calling getUpstoxTokenForRequest(). Mock it to return a token.
+    vi.doMock("@/features/settings/upstox-credentials", () => ({
+      getUpstoxTokenForRequest: vi
+        .fn()
+        .mockResolvedValue({ analyticsToken: "db-user-token" }),
+    }));
+
+    _fetchMock.mockResolvedValueOnce(
+      mockFetchOk({ "NSE_EQ|INE009A01021": makeRawQuote() }),
+    );
+
+    const p = new UpstoxProvider();
+    const q = await p.getLatestQuote("RELIANCE");
+
+    // Sync isUpstoxConfigured() is still false (env-only) ...
+    expect(isUpstoxConfigured()).toBe(false);
+    // ... but the method activated via the DB token and returned a quote.
+    expect(q).not.toBeNull();
+    expect(_fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer db-user-token" }),
+      }),
+    );
+
+    vi.doUnmock("@/features/settings/upstox-credentials");
+  });
+
   it("records auth_failure in health when API returns 401", async () => {
     _fetchMock.mockResolvedValueOnce(mockFetchError(401));
     const p = new UpstoxProvider();

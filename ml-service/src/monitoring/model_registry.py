@@ -146,6 +146,21 @@ class ModelRecord:
     training_period:    str
     deployment_date:    str
 
+    # -- Extended provenance (Phase 3A additions) --------------------------
+    # These fields make every model artifact fully reproducible and auditable.
+    label_version:      str = ""          # label generation version tag
+    validation_period:  str = ""          # OOS evaluation window "YYYY-MM-DD/YYYY-MM-DD"
+    oos_period:         str = ""          # final held-out test window
+    universe_version:   str = ""          # fingerprint of training universe
+    cv_method:          str = ""          # e.g. "walk_forward_5fold" | "cpcv_N6_k2"
+    purge_window:       int = 0           # label horizon used for purging (bars)
+    embargo_window:     int = 0           # embargo gap applied (bars)
+    random_seed:        int = 42          # random seed for reproducibility
+    git_commit:         str = ""          # git SHA at training time
+    hyperparameters:    dict = field(default_factory=dict)   # final HPO result
+    calibration_metrics: dict = field(default_factory=dict)  # OOS ECE/Brier
+    acceptance_status:  str = "PENDING"  # PENDING | ACCEPTED | REJECTED | INSUFFICIENT_EVIDENCE
+
     # -- Validation metrics -----------------------------------------------
     validation_metrics: dict[str, float] = field(default_factory=dict)
 
@@ -170,7 +185,19 @@ class ModelRecord:
             "modelVersion":       self.model_version,
             "datasetVersion":     self.dataset_version,
             "featureVersion":     self.feature_version,
+            "labelVersion":       self.label_version,
             "trainingPeriod":     self.training_period,
+            "validationPeriod":   self.validation_period,
+            "oosPeriod":          self.oos_period,
+            "universeVersion":    self.universe_version,
+            "cvMethod":           self.cv_method,
+            "purgeWindow":        self.purge_window,
+            "embargoWindow":      self.embargo_window,
+            "randomSeed":         self.random_seed,
+            "gitCommit":          self.git_commit,
+            "hyperparameters":    self.hyperparameters,
+            "calibrationMetrics": self.calibration_metrics,
+            "acceptanceStatus":   self.acceptance_status,
             "deploymentDate":     self.deployment_date,
             "validationMetrics":  self.validation_metrics,
             "state":              self.state.value,

@@ -867,6 +867,85 @@ class ModelAcceptanceGate:
             thresholds_checked=checks,
         )
 
+    def evaluate_from_arrays(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        strategy_correct_series: np.ndarray | None = None,
+        model_version: str = "unknown",
+    ) -> "AcceptanceDecision":
+        """
+        Convenience wrapper: evaluate the gate from raw prediction arrays.
+
+        Suitable for train_all.py where all OOS predictions have already been
+        aggregated into flat arrays rather than per-fold FoldResult objects.
+
+        Parameters
+        ----------
+        y_true                   : ground-truth labels (integer class or float)
+        y_pred                   : predicted labels or scores
+        strategy_correct_series  : binary/float array representing per-bar strategy
+                                   returns (1 = correct direction, 0 = wrong), used to
+                                   compute a Sharpe-like quality score.
+                                   If None, a zero series is used.
+        model_version            : identifier for logging.
+
+        Returns
+        -------
+        AcceptanceDecision
+        """
+        from sklearn.metrics import accuracy_score
+
+        n = len(y_true)
+        acc = float(accuracy_score(y_true, y_pred)) if n > 0 else 0.0
+
+        if strategy_correct_series is None:
+            strategy_correct_series = np.zeros(n, dtype=float)
+
+        evaluator = FinancialMetricsEvaluator()
+
+        clf = ClassificationMetrics(
+            accuracy=acc,
+            precision=acc,
+            recall=acc,
+            f1=acc,
+            roc_auc=None,
+            n_samples=n,
+            n_classes=int(np.max(y_true) + 1) if n > 0 else 2,
+        )
+
+        trd = evaluator.trading_metrics(
+            pd.Series(strategy_correct_series.astype(float))
+        )
+
+        fold = FoldResult(
+            fold_index=0,
+            classification=clf,
+            trading=trd,
+            n_train=0,
+            n_test=n,
+        )
+
+        stability = StabilityAnalysis(
+            mean_sharpe=trd.sharpe_ratio,
+            std_sharpe=0.0,
+            min_sharpe=trd.sharpe_ratio,
+            max_sharpe=trd.sharpe_ratio,
+            sharpe_decay=0.0,
+            mean_accuracy=acc,
+            std_accuracy=0.0,
+            min_accuracy=acc,
+            max_accuracy=acc,
+            mean_max_drawdown=trd.max_drawdown,
+            std_max_drawdown=0.0,
+            worst_max_drawdown=trd.max_drawdown,
+            max_fold_return_contribution=1.0,
+            is_dominated_by_single_period=True,
+            stability_score=0.5,
+        )
+
+        return self.evaluate([fold], stability, clf, trd)
+
 
 # ─── Result persistence ───────────────────────────────────────────────────────
 

@@ -1,0 +1,91 @@
+{
+  "artifact": "phase_3n_readiness_report",
+  "blocked_gates": [],
+  "branch": "refactor/improve-ml-service",
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "gates": [
+    {
+      "gate": "DATA",
+      "metrics": {},
+      "reasons": [
+        "real_market_data_reachable: unknown (INSUFFICIENT_EVIDENCE)"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "gate": "FEATURES",
+      "metrics": {},
+      "reasons": [
+        "feature_pipeline_available: unknown (INSUFFICIENT_EVIDENCE)"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "gate": "MODELS",
+      "metrics": {},
+      "reasons": [
+        "trained_models_loadable: unknown (INSUFFICIENT_EVIDENCE)"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "gate": "CALIBRATION",
+      "metrics": {},
+      "reasons": [
+        "calibration_available: unknown (INSUFFICIENT_EVIDENCE)"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "gate": "RISK",
+      "metrics": {},
+      "reasons": [
+        "all checks passed"
+      ],
+      "status": "READY"
+    },
+    {
+      "gate": "EXECUTION",
+      "metrics": {},
+      "reasons": [
+        "all checks passed"
+      ],
+      "status": "READY"
+    },
+    {
+      "gate": "PAPER",
+      "metrics": {},
+      "reasons": [
+        "all checks passed"
+      ],
+      "status": "READY"
+    },
+    {
+      "gate": "EVIDENCE",
+      "metrics": {},
+      "reasons": [
+        "official_real_market_evidence: unknown (INSUFFICIENT_EVIDENCE)"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE"
+    }
+  ],
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "insufficient_gates": [
+    "DATA",
+    "FEATURES",
+    "MODELS",
+    "CALIBRATION",
+    "EVIDENCE"
+  ],
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "DATA/FEATURES/MODELS/CALIBRATION/EVIDENCE gates are INSUFFICIENT_EVIDENCE (no real-market data / heavy models unavailable here). RISK/EXECUTION/PAPER gates READY (present + tested). No BLOCKED gate -> READY_WITH_LIMITATIONS. Readiness reflects correctness/safety, NOT profitability (spec \u00a747); LIVE is NOT authorized (spec \u00a761).",
+  "phase": "3N",
+  "readiness": "ALPHAFORGE_PAPER_READY_WITH_LIMITATIONS",
+  "sample_size": 0,
+  "time_window": "N/A (no real session reachable)"
+}

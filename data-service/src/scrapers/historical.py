@@ -8,7 +8,10 @@ This module is the outermost layer of the historical OHLCV pipeline:
 
 Fetch implementations:
   - _fetch_nse_daily / _fetch_bse_daily: NSE and BSE Bhavcopy archives (FetcherSession).
-  - _fetch_nse_intraday / _fetch_bse_intraday: NSE and BSE charting APIs (httpx).
+  - _fetch_nse_intraday: NSE api/chart-databyindex (current-day price series,
+    aggregated into OHLC bars). Ranged/multi-day intraday history is served by
+    Angel One (SmartAPI) upstream, not here.
+  - _fetch_bse_intraday: BSE StockReachGraph API (httpx).
 
 Cache architecture
 ------------------
@@ -529,20 +532,134 @@ def _parse_raw_row(
 
 
 # ---------------------------------------------------------------------------
-# NSE intraday fetch (charting.nseindia.com)
+# NSE intraday fetch (www.nseindia.com/api/chart-databyindex)
 # ---------------------------------------------------------------------------
+#
+# The old charting.nseindia.com/charts/getData endpoint was deprecated by NSE
+# (it now returns HTTP 404). NSE serves the intraday chart series from the same
+# NextApi-era host as the quote endpoints:
+#
+#     GET https://www.nseindia.com/api/chart-databyindex?index={SYMBOL}EQN
+#     GET https://www.nseindia.com/api/chart-databyindex?index={INDEX}&indices=true
+#
+# Response JSON:
+#     {"grapthData": [[timestamp_ms_ist, price], ...], "closePrice": <ref>, ...}
+#
+# Two important differences from the old endpoint:
+#   1. It returns a *price series* (2-element rows: [ts_ms, price]), NOT OHLCV
+#      tuples — we aggregate the ticks into OHLC bars per interval below.
+#   2. It only serves the *current* trading day's intraday series. Multi-day
+#      intraday history is no longer available here; ranged requests fall back
+#      to Angel One (SmartAPI) in the provider chain upstream.
 
-_NSE_CHARTING_URL = "https://charting.nseindia.com/charts/getData"
+_NSE_CHART_URL = "https://www.nseindia.com/api/chart-databyindex"
+_NSE_HOMEPAGE_URL = "https://www.nseindia.com/"
 
-_NSE_CHARTING_HEADERS = {
+_NSE_CHART_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0 Safari/537.36"
     ),
-    "Accept": "*/*",
+    "Accept": "application/json, text/plain, */*",
     "Referer": "https://www.nseindia.com/",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+
+# Index symbols served by the ``indices=true`` variant (NSE index names).
+_NSE_INDEX_NAME_MAP: dict[str, str] = {
+    "NIFTY": "NIFTY 50",
+    "NIFTY50": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "NIFTYBANK": "NIFTY BANK",
+    "FINNIFTY": "NIFTY FIN SERVICE",
+    "MIDCPNIFTY": "NIFTY MID SELECT",
+}
+
+# Interval → bar width in seconds, for aggregating the tick/price series.
+_INTERVAL_TO_SECONDS: dict[str, int] = {
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "30m": 30 * 60,
+    "1h": 60 * 60,
+}
+
+
+def _nse_chart_index_param(symbol: str) -> tuple[str, bool]:
+    """Return the ``(index, is_index)`` pair for the chart-databyindex query.
+
+    Equities use ``{SYMBOL}EQN``; indices use their NSE display name with
+    ``indices=true``.
+    """
+    upper = symbol.upper()
+    if upper in _NSE_INDEX_NAME_MAP:
+        return _NSE_INDEX_NAME_MAP[upper], True
+    return f"{upper}EQN", False
+
+
+def _aggregate_price_series(
+    rows: list, interval: str, source: str
+) -> list[OHLCVCandle]:
+    """Aggregate a ``[ts_ms_ist, price]`` tick series into OHLC bars.
+
+    The chart-databyindex endpoint returns a price series rather than OHLCV
+    tuples, so we bucket the ticks into fixed-width bars (5m/15m/30m/1h) and
+    derive open/high/low/close from the prices in each bucket. Volume is not
+    provided by this endpoint, so it is reported as 0 (Angel One provides
+    volume-bearing candles for the ranged/historical path).
+    """
+    bar_seconds = _INTERVAL_TO_SECONDS.get(interval)
+    if bar_seconds is None:
+        logger.error("nse_intraday_unknown_interval", interval=interval)
+        return []
+
+    # bucket_start_utc_s → list of prices (in tick order)
+    buckets: dict[int, list[float]] = {}
+    for row in rows:
+        try:
+            ts_ms_ist = row[0]
+            price = float(row[1])
+        except (IndexError, TypeError, ValueError) as exc:
+            logger.warning("intraday_row_parse_error", source=source, row=row, error=str(exc))
+            continue
+        if price <= 0:
+            continue
+        utc_s = _ist_ms_to_utc_s(ts_ms_ist)
+        bucket = utc_s - (utc_s % bar_seconds)
+        buckets.setdefault(bucket, []).append(price)
+
+    candles: list[OHLCVCandle] = []
+    for bucket_start in sorted(buckets):
+        prices = buckets[bucket_start]
+        if not prices:
+            continue
+        open_ = prices[0]
+        close = prices[-1]
+        high = max(prices)
+        low = min(prices)
+        if not _validate_candle_row(open_, high, low, close, 0):
+            logger.warning(
+                "intraday_candle_invalid",
+                source=source, bucket=bucket_start,
+                open=open_, high=high, low=low, close=close,
+            )
+            continue
+        candles.append(OHLCVCandle(
+            time=bucket_start, open=open_, high=high, low=low, close=close, volume=0,
+        ))
+    return candles
+
+
+async def _prime_nse_cookies(client: httpx.AsyncClient) -> None:
+    """Visit the NSE homepage once to obtain the session cookies (nsit /
+    nseappid) that the API host requires before it will return chart JSON.
+
+    Failures are non-fatal — the API call may still succeed if cookies were
+    already primed on the shared client from an earlier request.
+    """
+    try:
+        await client.get(_NSE_HOMEPAGE_URL, headers=_NSE_CHART_HEADERS)
+    except Exception as exc:
+        logger.debug("nse_cookie_prime_failed", error=str(exc))
 
 
 async def _fetch_nse_intraday(
@@ -551,38 +668,35 @@ async def _fetch_nse_intraday(
     from_date: date,
     to_date: date,
 ) -> list[OHLCVCandle]:
-    """Fetch NSE intraday OHLCV from the NSE charting API.
+    """Fetch NSE current-day intraday OHLCV from ``api/chart-databyindex``.
 
     URL pattern::
 
-        GET https://charting.nseindia.com/charts/getData
-            ?appid=chartiq&callback=&symbol={SYMBOL}&period={5|15|30|60}
-            &type=EQ&startDate={DD-MM-YYYY}&endDate={DD-MM-YYYY}
+        GET https://www.nseindia.com/api/chart-databyindex?index={SYMBOL}EQN
+        GET https://www.nseindia.com/api/chart-databyindex?index={INDEX}&indices=true
 
     Response JSON::
 
-        {"grapthData": [[timestamp_ms_ist, open, high, low, close, volume], ...]}
+        {"grapthData": [[timestamp_ms_ist, price], ...], "closePrice": <ref>}
 
-    Note: the key is ``grapthData`` — this is a typo in the NSE API; it is
-    preserved here intentionally.
+    The endpoint returns a *price series* for the **current trading day only**.
+    We aggregate the ticks into OHLC bars at the requested interval. Multi-day
+    intraday history is not available here; ranged requests are satisfied by
+    Angel One (SmartAPI) upstream in the provider chain.
+
+    ``from_date`` / ``to_date`` are accepted for signature compatibility and
+    used only for logging — the endpoint has no date-range parameter.
 
     All timestamps are converted from IST milliseconds to UTC epoch seconds.
-    Candles that fail the price-invariant check are logged and skipped.
     """
-    period = _INTERVAL_TO_PERIOD.get(interval)
-    if period is None:
+    if interval not in _INTERVAL_TO_SECONDS:
         logger.error("nse_intraday_unknown_interval", interval=interval)
         return []
 
-    params = {
-        "appid": "chartiq",
-        "callback": "",
-        "symbol": symbol,
-        "period": period,
-        "type": "EQ",
-        "startDate": from_date.strftime("%d-%m-%Y"),
-        "endDate": to_date.strftime("%d-%m-%Y"),
-    }
+    index_param, is_index = _nse_chart_index_param(symbol)
+    params: dict[str, str] = {"index": index_param}
+    if is_index:
+        params["indices"] = "true"
 
     log = logger.bind(
         source="nse_intraday",
@@ -592,17 +706,19 @@ async def _fetch_nse_intraday(
         to_date=to_date.isoformat(),
     )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         try:
-            # Rate-limit NSE charting API
+            # Rate-limit NSE API
             await _get_limiters()["nseindia.com"].acquire()
             _breaker = get_breaker("nse_charting")
             if not _breaker.allow_request():
                 raise RuntimeError("NSE charting circuit breaker OPEN")
+            # Prime session cookies (nsit / nseappid) then call the chart API.
+            await _prime_nse_cookies(client)
             response = await client.get(
-                _NSE_CHARTING_URL,
+                _NSE_CHART_URL,
                 params=params,
-                headers=_NSE_CHARTING_HEADERS,
+                headers=_NSE_CHART_HEADERS,
             )
             response.raise_for_status()
             _breaker.record_success()
@@ -629,14 +745,9 @@ async def _fetch_nse_intraday(
         log.warning("nse_intraday_unexpected_shape", keys=list(payload.keys()))
         return []
 
-    candles: list[OHLCVCandle] = []
-    for row in raw_rows:
-        candle = _parse_raw_row(row, source="nse_intraday")
-        if candle is not None:
-            candles.append(candle)
-
+    candles = _aggregate_price_series(raw_rows, interval, source="nse_intraday")
     candles.sort(key=lambda c: c.time)
-    log.info("nse_intraday_fetched", count=len(candles), skipped=len(raw_rows) - len(candles))
+    log.info("nse_intraday_fetched", count=len(candles), rows=len(raw_rows))
     if candles:
         lineage_store.record(
             instrument_id=symbol,

@@ -1,0 +1,91 @@
+{
+  "artifact": "phase-3m-monitoring-report",
+  "description": "Sample machine-readable system health rollup (spec \u00a728).",
+  "guarantees": {
+    "auto_promote": false,
+    "auto_recalibrate": false,
+    "auto_replace_model": false
+  },
+  "system_health": {
+    "blocking": false,
+    "degraded": true,
+    "dimensions": {
+      "ALPHA": {
+        "dimension": "ALPHA",
+        "metrics": {
+          "baseline_ic": 0.05,
+          "observed_ic": 0.045
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "CALIBRATION": {
+        "dimension": "CALIBRATION",
+        "metrics": {
+          "baseline_brier": 0.2,
+          "observed_brier": 0.21
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "DATA": {
+        "dimension": "DATA",
+        "metrics": {
+          "future_timestamps": 0,
+          "invalid_ohlc": 0,
+          "missing_bars": 0,
+          "negative_prices": 0
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "EXECUTION": {
+        "dimension": "EXECUTION",
+        "metrics": {
+          "cost_error_bps": 8.0
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "FEATURE": {
+        "dimension": "FEATURE",
+        "metrics": {
+          "n_drift": 0,
+          "n_severe": 0,
+          "n_watch": 1
+        },
+        "reasons": [
+          "watch: ['f2']"
+        ],
+        "state": "WATCH"
+      },
+      "MODEL": {
+        "dimension": "MODEL",
+        "metrics": {
+          "n_degraded": 0,
+          "n_disabled": 0
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "RISK": {
+        "dimension": "RISK",
+        "metrics": {
+          "n_breaches": 0
+        },
+        "reasons": [],
+        "state": "HEALTHY"
+      },
+      "RL": {
+        "dimension": "RL",
+        "metrics": {},
+        "reasons": [
+          "RL not in use"
+        ],
+        "state": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    "generated_at": "2026-01-01T00:00:00+00:00",
+    "system_state": "WATCH"
+  }
+}

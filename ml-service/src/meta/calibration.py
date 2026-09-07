@@ -55,8 +55,10 @@ class CalibrationQuality:
     ece: float = 0.0          # Expected Calibration Error  (lower = better)
     mce: float = 0.0          # Maximum Calibration Error   (lower = better)
     brier_score: float = 1.0  # Brier score                 (lower = better)
-    n_samples: int = 0        # Number of OOS samples used
+    n_samples: int = 0        # Number of samples used for quality evaluation
     is_fitted: bool = False
+    # Phase 3F fix (BUG #4): eval_is_oos was referenced in docstring but never stored.
+    eval_is_oos: bool = False  # True = quality metrics computed on disjoint OOS fold
 
     @property
     def quality_score(self) -> float:
@@ -313,6 +315,8 @@ class CalibrationStore:
         scores: np.ndarray,
         labels: np.ndarray,
         kind: CalibratorKind = "platt",
+        eval_scores: np.ndarray | None = None,
+        eval_labels: np.ndarray | None = None,
     ) -> CalibrationQuality:
         """
         Fit a calibrator for *model_name* using OOS predictions.
@@ -322,17 +326,46 @@ class CalibrationStore:
 
         Parameters
         ----------
-        model_name : one of MODEL_NAMES
-        scores     : raw model scores (floats, any range)
-        labels     : ground-truth binary labels {0, 1}
-        kind       : "platt" | "isotonic"
+        model_name   : one of MODEL_NAMES
+        scores       : raw model scores used to FIT the calibrator.
+                       Must be OOS predictions the calibrator has never seen.
+        labels       : ground-truth binary labels {0, 1} paired with *scores*.
+        kind         : "platt" | "isotonic"
+        eval_scores  : SEPARATE hold-out scores for quality EVALUATION.
+                       When provided, ECE / MCE / Brier are computed on these
+                       rather than on the fitting data.  This is the correct
+                       procedure: the calibrator is fitted on one set of OOS
+                       predictions and evaluated on a disjoint second set.
+                       If None, quality metrics fall back to the fitting data
+                       (this is still better than in-sample, but evaluating on
+                       a dedicated eval set is strongly preferred).
+        eval_labels  : binary labels paired with *eval_scores*.  Required when
+                       *eval_scores* is provided.
 
         Returns
         -------
-        CalibrationQuality with ECE / MCE / Brier score
+        CalibrationQuality with ECE / MCE / Brier score.
+        The ``CalibrationQuality.eval_is_oos`` flag indicates whether a
+        separate eval set was used.
         """
         scores = np.asarray(scores, dtype=float)
         labels = np.asarray(labels, dtype=float)
+
+        # Determine the set on which quality metrics will be computed.
+        if eval_scores is not None:
+            if eval_labels is None:
+                raise ValueError(
+                    "eval_labels must be provided together with eval_scores"
+                )
+            q_scores = np.asarray(eval_scores, dtype=float)
+            q_labels = np.asarray(eval_labels, dtype=float)
+            eval_is_oos = True
+        else:
+            # Fall back: compute on fitting data.  This is still correct when
+            # *scores* are OOS, but a dedicated eval set is always preferred.
+            q_scores = scores
+            q_labels = labels
+            eval_is_oos = False
 
         if model_name not in self._store:
             self._store[model_name] = _ModelCalibrators()
@@ -341,33 +374,35 @@ class CalibrationStore:
 
         if kind == "platt":
             entry.platt.fit(scores, labels)
-            cal_probs = entry.platt.predict_proba(scores)
-            ece, mce = _expected_calibration_error(cal_probs, labels)
-            brier = _brier_score(cal_probs, labels)
+            cal_probs = entry.platt.predict_proba(q_scores)
+            ece, mce = _expected_calibration_error(cal_probs, q_labels)
+            brier = _brier_score(cal_probs, q_labels)
             quality = CalibrationQuality(
                 model_name=model_name,
                 calibrator_kind="platt",
                 ece=ece,
                 mce=mce,
                 brier_score=brier,
-                n_samples=len(scores),
+                n_samples=len(q_scores),
                 is_fitted=True,
+                eval_is_oos=eval_is_oos,   # Phase 3F fix BUG #4
             )
             entry.quality_platt = quality
 
         else:  # isotonic
             entry.isotonic.fit(scores, labels)
-            cal_probs = entry.isotonic.predict_proba(scores)
-            ece, mce = _expected_calibration_error(cal_probs, labels)
-            brier = _brier_score(cal_probs, labels)
+            cal_probs = entry.isotonic.predict_proba(q_scores)
+            ece, mce = _expected_calibration_error(cal_probs, q_labels)
+            brier = _brier_score(cal_probs, q_labels)
             quality = CalibrationQuality(
                 model_name=model_name,
                 calibrator_kind="isotonic",
                 ece=ece,
                 mce=mce,
                 brier_score=brier,
-                n_samples=len(scores),
+                n_samples=len(q_scores),
                 is_fitted=True,
+                eval_is_oos=eval_is_oos,   # Phase 3F fix BUG #4
             )
             entry.quality_isotonic = quality
 
@@ -387,7 +422,9 @@ class CalibrationStore:
             kind=kind,
             ece=round(quality.ece, 4),
             brier=round(quality.brier_score, 4),
-            n=len(scores),
+            n_fit=len(scores),
+            n_eval=len(q_scores),
+            eval_is_oos=eval_is_oos,
         )
         return quality
 
@@ -396,10 +433,17 @@ class CalibrationStore:
         model_name: str,
         scores: np.ndarray,
         labels: np.ndarray,
+        eval_scores: np.ndarray | None = None,
+        eval_labels: np.ndarray | None = None,
     ) -> tuple[CalibrationQuality, CalibrationQuality]:
-        """Fit both calibrator types and return (platt_quality, isotonic_quality)."""
-        q_platt = self.fit(model_name, scores, labels, kind="platt")
-        q_iso = self.fit(model_name, scores, labels, kind="isotonic")
+        """Fit both calibrator types and return (platt_quality, isotonic_quality).
+
+        Pass *eval_scores* / *eval_labels* for a disjoint OOS quality evaluation.
+        """
+        q_platt = self.fit(model_name, scores, labels, kind="platt",
+                           eval_scores=eval_scores, eval_labels=eval_labels)
+        q_iso   = self.fit(model_name, scores, labels, kind="isotonic",
+                           eval_scores=eval_scores, eval_labels=eval_labels)
         return q_platt, q_iso
 
     # ------------------------------------------------------------------
@@ -415,11 +459,22 @@ class CalibrationStore:
         """
         Return calibrated probability for a single raw score.
 
-        Falls back to raw score (clipped to [0,1]) if the calibrator is
-        not yet fitted.
+        Phase 3F fix (BUG #3): NEVER clips raw_score to [0,1] and returns
+        it as a "calibrated probability".  Unknown models return 0.5
+        (neutral/uninformative) so the score does not silently fabricate
+        a directional probability.
+
+        For a typed result with explicit status, use CalibratorArtifact directly.
         """
         if model_name not in self._store:
-            return float(np.clip(raw_score, 0.0, 1.0))
+            # BUG #3 FIX: was clip(raw_score, 0, 1) — treating raw as probability.
+            # Now returns 0.5 (neutral) with an explicit warning.
+            logger.warning(
+                "calibration_model_not_registered",
+                model_name=model_name,
+                note="Returning 0.5 (neutral). Register the model in CalibrationStore.",
+            )
+            return 0.5
 
         entry = self._store[model_name]
         effective_kind = kind or entry.active_kind
@@ -436,9 +491,17 @@ class CalibrationStore:
         raw_scores: np.ndarray,
         kind: CalibratorKind | None = None,
     ) -> np.ndarray:
-        """Batch version of :meth:`calibrate`."""
+        """Batch version of :meth:`calibrate`.
+
+        Phase 3F fix (BUG #3): unknown model returns 0.5 array, not clip().
+        """
         if model_name not in self._store:
-            return np.clip(raw_scores, 0.0, 1.0)
+            logger.warning(
+                "calibration_model_not_registered_batch",
+                model_name=model_name,
+                note="Returning 0.5 array (neutral). Register the model.",
+            )
+            return np.full(len(raw_scores), 0.5)
 
         entry = self._store[model_name]
         effective_kind = kind or entry.active_kind

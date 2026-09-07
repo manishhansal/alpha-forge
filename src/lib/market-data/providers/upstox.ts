@@ -180,6 +180,30 @@ export function isUpstoxConfigured(): boolean {
 }
 
 /**
+ * Async availability check used by the provider's data methods.
+ *
+ * Unlike the sync {@link isUpstoxConfigured} (env-only), this also consults the
+ * signed-in user's per-user Analytics Token stored in the encrypted DB
+ * (`UserSetting.apiKeysEncrypted`, entered via Profile → API Keys). Without
+ * this, a user who configured Upstox purely from the frontend — with no env
+ * vars set — would have every provider method short-circuit and silently fail
+ * over to Yahoo, even though {@link resolveReadToken} could have loaded their
+ * DB token at the HTTP layer.
+ *
+ * Fast path: returns true immediately on any env-configured source (no I/O).
+ * Slow path: resolves the DB token (async `auth()` + Prisma read) only when no
+ * env source is present. Returns false when no token source is available.
+ */
+async function isUpstoxAvailable(): Promise<boolean> {
+  // Fast path — env / OAuth / client-credential sources (synchronous, no I/O).
+  if (isUpstoxConfigured()) return true;
+
+  // Slow path — per-user DB token (requires auth() + Prisma).
+  const token = await resolveReadToken();
+  return token !== null;
+}
+
+/**
  * Reset the in-memory OAuth state. Used in tests to prevent bleed between test cases.
  * @internal
  */
@@ -976,7 +1000,7 @@ export class UpstoxProvider implements MarketDataProvider {
     req: HistoricalCandleRequest,
     opts?: ProviderCallOptions,
   ): Promise<OHLCVCandle[]> {
-    if (!isUpstoxConfigured()) return [];
+    if (!(await isUpstoxAvailable())) return [];
 
     const interval = intervalToUpstox(req.interval);
     if (!interval) return [];
@@ -1021,7 +1045,7 @@ export class UpstoxProvider implements MarketDataProvider {
     symbol:  string,
     opts?:   ProviderCallOptions,
   ): Promise<MDQuote | null> {
-    if (!isUpstoxConfigured()) return null;
+    if (!(await isUpstoxAvailable())) return null;
 
     return memoQuote(symbol, PROVIDER_ID, async () => {
       const instrumentKey = toUpstoxInstrumentKey(symbol, "NSE");
@@ -1043,7 +1067,7 @@ export class UpstoxProvider implements MarketDataProvider {
     symbols: string[],
     opts?:   ProviderCallOptions,
   ): Promise<Array<MDQuote | null>> {
-    if (!isUpstoxConfigured() || symbols.length === 0) {
+    if (symbols.length === 0 || !(await isUpstoxAvailable())) {
       return symbols.map(() => null);
     }
 
@@ -1093,8 +1117,10 @@ export class UpstoxProvider implements MarketDataProvider {
     expiry?:    string,
     opts?:      ProviderCallOptions,
   ): Promise<OptionChain> {
-    if (!isUpstoxConfigured()) {
-      throw new Error("Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN");
+    if (!(await isUpstoxAvailable())) {
+      throw new Error(
+        "Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+      );
     }
 
     const cacheExpiry = expiry ?? "nearest";
@@ -1174,10 +1200,27 @@ export class UpstoxProvider implements MarketDataProvider {
     onTick:  (tick: LiveTick) => void,
     onError?: (err: unknown) => void,
   ): () => void {
-    if (!isUpstoxConfigured()) return () => {};
-
     const wsm = getUpstoxWsManager();
-    if (!wsm.isStarted) wsm.start();
+
+    // Start the WS manager only once a token source is confirmed available.
+    // We can't await here (the interface requires a sync unsubscribe closure),
+    // so we resolve availability asynchronously: the env fast-path resolves
+    // instantly, and the per-user DB token resolves shortly after. Tokens are
+    // registered into the manager below regardless — the socket authorizes via
+    // resolveReadToken() (which reads the DB token) and (re)subscribes all
+    // registered instrument keys on connect.
+    if (!wsm.isStarted) {
+      void isUpstoxAvailable().then((available) => {
+        if (available && !wsm.isStarted) wsm.start();
+        else if (!available) {
+          onError?.(
+            new Error(
+              "Upstox WebSocket: no auth token — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+            ),
+          );
+        }
+      });
+    }
 
     const unsubscribers: Array<() => void> = [];
 

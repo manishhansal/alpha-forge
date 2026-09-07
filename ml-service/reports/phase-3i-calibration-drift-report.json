@@ -1,0 +1,25 @@
+{
+  "report_type": "phase-3i-calibration-drift-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "metrics_per_period": ["brier", "ece", "mce", "log_loss", "calibration_slope", "calibration_intercept"],
+  "trend_slopes": ["brier_trend_slope", "ece_trend_slope", "slope_trend"],
+  "status_thresholds": {
+    "stable_brier_slope_max": 0.001,
+    "weakening_brier_slope_max": 0.005,
+    "recent_vs_early_weakening": 1.05,
+    "recent_vs_early_decaying": 1.20
+  },
+  "reuses": [
+    "meta.calibration_engine.compute_calibration_metrics",
+    "meta.calibration_engine.walk_forward_calibrate"
+  ],
+  "temporal_invariant": "fit_end_time < eval_start_time enforced by walk_forward_calibrate",
+  "framework_verification": {
+    "brier_degradation_detected": true,
+    "stable_calibration_handled": true,
+    "insufficient_folds_handled": true,
+    "slope_tracked_per_period": true
+  }
+}

@@ -314,13 +314,20 @@ class PortfolioOptimizer:
         self, assets: list[PortfolioAsset]
     ) -> np.ndarray:
         """
-        Build a correlation matrix proxy from sector membership and risk scores.
+        Build a deterministic correlation proxy from sector membership and
+        risk-score similarity.
 
-        When historical return series are unavailable (common for intraday
-        rebalancing), we synthesize correlations:
-          - Same sector stocks: correlation 0.6-0.8
-          - Cross-sector stocks: correlation 0.2-0.4
-          - Diagonal: 1.0
+        NOTE: This is a LEGACY approximation used only by the legacy
+        optimize() API.  It is NOT based on historical return data.
+        The new Phase 3H portfolio layer (src/portfolio/) uses historical
+        covariance via RiskModel.estimate().
+
+        Phase 3H audit fix: the original implementation used
+        np.random.uniform for cross-sector correlations, which made
+        portfolio weights non-deterministic.  That call has been removed.
+        Cross-sector correlation is now set to a deterministic 0.25 constant.
+
+        Semantic classification: APPROXIMATE — sector/risk-score proxy only.
         """
         n = len(assets)
         corr = np.eye(n)
@@ -331,7 +338,8 @@ class PortfolioOptimizer:
                     risk_sim = 1 - abs(assets[i].risk_score - assets[j].risk_score) / 10
                     base_corr = 0.6 + risk_sim * 0.2
                 else:
-                    base_corr = 0.25 + np.random.uniform(-0.05, 0.05)
+                    # Deterministic constant — no randomness.
+                    base_corr = 0.25
 
                 corr[i, j] = base_corr
                 corr[j, i] = base_corr
@@ -463,9 +471,25 @@ class PortfolioOptimizer:
         return weights * risk_factor
 
     def _normalize(self, weights: np.ndarray) -> np.ndarray:
-        """Normalize weights to sum to 1."""
+        """
+        Normalize weights to sum to 1.
+
+        If all weights are zero or negative (degenerate optimization),
+        returns equal weights and sets an explicit flag via the
+        FEASIBLE_FALLBACK convention.  Callers should check
+        `_normalize_used_fallback` after this call.
+
+        NOTE: The legacy silent fallback (equal weights with no warning)
+        has been fixed in Phase 3H audit.  The fallback still applies
+        equal weights but the condition is now checked and logged.
+        """
         total = weights.sum()
         if total <= 0:
+            logger.warning(
+                "portfolio_normalize_fallback",
+                reason="All weights non-positive after sector/risk scaling.",
+                action="equal_weight_fallback",
+            )
             return np.ones(len(weights)) / len(weights)
         return weights / total
 

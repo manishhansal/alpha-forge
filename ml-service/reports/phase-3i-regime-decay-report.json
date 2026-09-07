@@ -1,0 +1,25 @@
+{
+  "report_type": "phase-3i-regime-decay-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "regime_taxonomy": ["STRONG_BULL", "BULL", "SIDEWAYS", "VOLATILE", "BEAR", "CRASH"],
+  "per_regime_metrics": ["mean_ic", "mean_rank_ic", "icir", "positive_ic_pct", "mean_ev", "n_observations", "n_unique_dates", "evidence"],
+  "min_sample_per_regime": 10,
+  "transition_statuses": ["SURVIVES", "WEAKENS", "REVERSES", "INSUFFICIENT_EVIDENCE"],
+  "transition_thresholds": {
+    "survives_ratio": 0.90,
+    "transition_window": 5
+  },
+  "sector_analysis": {
+    "per_sector_ic": true,
+    "dominant_sector_detection": true
+  },
+  "framework_verification": {
+    "regime_ic_differs": true,
+    "regime_segmentation": true,
+    "transition_detected": true,
+    "insufficient_regime_sample_handled": true,
+    "sector_ic_computed": true
+  }
+}

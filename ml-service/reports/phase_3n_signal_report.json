@@ -1,0 +1,58 @@
+{
+  "aggregation_example": {
+    "conflict": "NONE",
+    "dominant_direction": "LONG",
+    "evidence_groups": [
+      "m"
+    ],
+    "families": [
+      "MOMENTUM"
+    ],
+    "instrument": "SYNTH",
+    "long_groups": 1,
+    "n_signals": 4,
+    "n_usable_groups": 1,
+    "net_signed_strength": 0.6,
+    "neutral_groups": 0,
+    "proposed_action": "TAKE",
+    "reasons": [
+      "aligned net=0.60 >= take_threshold 0.35"
+    ],
+    "short_groups": 0,
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  },
+  "artifact": "phase_3n_signal_report",
+  "branch": "refactor/improve-ml-service",
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "4 correlated momentum reads dedup to 1 evidence group (no double counting). Conflict classification + INSUFFICIENT_EVIDENCE outcomes verified in tests.",
+  "phase": "3N",
+  "sample_size": 0,
+  "signal_families_discovered": [
+    "CROSS_SECTIONAL_RANK",
+    "STRATEGY_SELECTION",
+    "MARKET_REGIME",
+    "IV_REGIME",
+    "PRICE_FORECAST",
+    "DERIVATIVES_GEX",
+    "GREEKS",
+    "OI_STRUCTURE",
+    "MOMENTUM",
+    "MEAN_REVERSION",
+    "BREAKOUT",
+    "MARKET_STRUCTURE",
+    "VWAP",
+    "VOLUME",
+    "NEWS_SENTIMENT",
+    "META_LABEL",
+    "RL_EXECUTION",
+    "UNKNOWN"
+  ],
+  "time_window": "N/A (no real session reachable)"
+}

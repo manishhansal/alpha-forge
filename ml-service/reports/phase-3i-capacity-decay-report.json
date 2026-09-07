@@ -1,0 +1,31 @@
+{
+  "report_type": "phase-3i-capacity-decay-report",
+  "phase": "3I",
+  "generated": "2026-09-06",
+  "oos_evidence": "INSUFFICIENT_EVIDENCE",
+  "liquidity_buckets": ["HIGH_ADV", "MEDIUM_ADV", "LOW_ADV"],
+  "cost_decay": {
+    "gross_vs_net_separated": true,
+    "cost_edge_ratio": "mean_cost / abs(gross_edge)",
+    "gross_positive_net_negative_surfaced": true
+  },
+  "turnover_decay": {
+    "turnover_trend_slope": "linregress over early/middle/recent",
+    "positive_slope_means_increasing": true
+  },
+  "capacity_decay": {
+    "adv_field": "adv_inr",
+    "aum_capacity_claimed": false
+  },
+  "framework_verification": {
+    "turnover_decay_tracked": true,
+    "concentration_tracked": true,
+    "cost_edge_ratio_computed": true,
+    "insufficient_sample_handled": true
+  },
+  "data_gaps": [
+    {"gap": "NSE ADV per instrument", "status": "DATA_UNAVAILABLE"},
+    {"gap": "Real execution cost/slippage", "status": "PROXY_ONLY"},
+    {"gap": "AUM capacity estimate", "status": "NOT_CLAIMED"}
+  ]
+}

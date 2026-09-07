@@ -26,11 +26,23 @@ import type { ProviderHealth, ProviderHealthStatus, ProviderId } from "./types";
 
 const CIRCUIT_OPEN_THRESHOLD = 20;   // score below this opens the circuit
 const DEGRADED_THRESHOLD = 60;        // score below this = degraded
-const CIRCUIT_RETRY_MS = 30_000;      // 30s half-open window
+const CIRCUIT_RETRY_MS = 30_000;      // base half-open window (first probe)
+const CIRCUIT_RETRY_MAX_MS = 5 * 60_000; // cap on the escalating half-open window
 const MAX_FAILURE_PENALTY = 40;       // maximum points removed per failure
 const RECOVERY_PER_SUCCESS = 10;      // points recovered per success
 const STALE_DATA_PENALTY = 15;        // flat penalty for stale data event
 const AUTH_FAILURE_PENALTY = 25;      // extra penalty for auth failures
+const HARD_BLOCK_PENALTY = 40;        // 403 / forbidden — treat as a hard, non-retryable block
+
+/**
+ * When a provider keeps failing, we don't want to emit a `provider_failure`
+ * line on every single attempt (3 per request, every poll) — that floods the
+ * logs into the thousands while telling us nothing new. Once a provider has
+ * failed this many times consecutively, we log only 1-in-N failures plus the
+ * circuit transitions.
+ */
+const LOG_THROTTLE_AFTER = 5;         // start throttling after this many consecutive failures
+const LOG_THROTTLE_EVERY = 20;        // then log only 1-in-N repeated failures
 
 /** Rolling window for latency percentile estimation (last N calls). */
 const LATENCY_WINDOW = 50;
@@ -136,7 +148,30 @@ export function recordSuccess(id: ProviderId, latencyMs: number): void {
   }
 }
 
-export type FailureKind = "api_error" | "auth_failure" | "ws_disconnect" | "timeout";
+export type FailureKind =
+  | "api_error"
+  | "auth_failure"
+  | "ws_disconnect"
+  | "timeout"
+  /** HTTP 403 / forbidden — an upstream WAF/gateway block. Non-retryable:
+   *  hammering it won't help and usually flags the IP further. */
+  | "hard_block";
+
+/** Escalating half-open window: the longer a provider stays down, the less
+ *  often we probe it — 30s, 60s, 120s … capped at CIRCUIT_RETRY_MAX_MS. This
+ *  is what stops the every-30s open/probe/re-open flapping loop. */
+function circuitRetryDelayMs(consecutiveFailures: number): number {
+  const openings = Math.max(0, consecutiveFailures - 4); // ~how many times it's re-opened
+  const delay = CIRCUIT_RETRY_MS * 2 ** openings;
+  return Math.min(CIRCUIT_RETRY_MAX_MS, delay);
+}
+
+/** True when this repeated failure should be suppressed from the log to avoid
+ *  flooding. We always log the first few, then only 1-in-N after that. */
+function shouldThrottleLog(consecutiveFailures: number): boolean {
+  if (consecutiveFailures <= LOG_THROTTLE_AFTER) return false;
+  return consecutiveFailures % LOG_THROTTLE_EVERY !== 0;
+}
 
 /**
  * Record a failed call. Increments consecutive failure count, applies a
@@ -156,24 +191,35 @@ export function recordFailure(
   // Progressive penalty: each additional failure hurts more.
   const base = Math.min(MAX_FAILURE_PENALTY, 5 * s.consecutiveFailures);
   const authExtra = kind === "auth_failure" ? AUTH_FAILURE_PENALTY : 0;
-  s.score = Math.max(0, s.score - base - authExtra);
+  // A hard block (403) is as bad as an auth failure — drive the score down
+  // fast so we open the circuit and stop retrying immediately.
+  const hardBlockExtra = kind === "hard_block" ? HARD_BLOCK_PENALTY : 0;
+  s.score = Math.max(0, s.score - base - authExtra - hardBlockExtra);
 
-  mdLog("provider_failure", {
-    providerId: id,
-    kind,
-    consecutiveFailures: s.consecutiveFailures,
-    score: s.score,
-    message,
-  });
+  if (!shouldThrottleLog(s.consecutiveFailures)) {
+    mdLog("provider_failure", {
+      providerId: id,
+      kind,
+      consecutiveFailures: s.consecutiveFailures,
+      score: s.score,
+      message,
+    });
+  }
 
   if (!s.circuitOpen && s.score < CIRCUIT_OPEN_THRESHOLD) {
     s.circuitOpen = true;
-    s.circuitRetryAt = Date.now() + CIRCUIT_RETRY_MS;
+    s.circuitRetryAt = Date.now() + circuitRetryDelayMs(s.consecutiveFailures);
     mdLog("provider_circuit_open", {
       providerId: id,
       score: s.score,
       retryAt: new Date(s.circuitRetryAt).toISOString(),
     });
+  } else if (s.circuitOpen) {
+    // A half-open probe just failed. Push the retry window out again (with
+    // escalating backoff) instead of re-probing every CIRCUIT_RETRY_MS — this
+    // is what prevents the open → probe → re-open flapping under a sustained
+    // outage. Not logged as a new circuit-open event to keep logs quiet.
+    s.circuitRetryAt = Date.now() + circuitRetryDelayMs(s.consecutiveFailures);
   }
 }
 

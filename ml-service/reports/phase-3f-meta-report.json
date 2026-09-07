@@ -1,0 +1,55 @@
+{
+  "report_id": "phase-3f-meta-report",
+  "phase": "3F",
+  "title": "Meta-Labeling & Ranker Report",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "oos_evidence_status": "INSUFFICIENT_EVIDENCE",
+
+  "meta_label_framework": {
+    "policies": {
+      "POLICY_A_POSITIVE_NET":   "meta_label=1 if net_return > threshold",
+      "POLICY_B_TRIPLE_BARRIER": "meta_label=1 if first_touch == TAKE_PROFIT",
+      "POLICY_C_RISK_ADJUSTED":  "meta_label=1 if net_return > min AND mae > mae_limit"
+    },
+    "stacking_leakage_enforcement": "build_meta_labels(require_oos=True) raises RuntimeError on in-sample predictions",
+    "outcome_feature_guard": "validate_no_outcome_features() raises ValueError if outcome columns appear in feature list",
+    "outcome_prefix_safety": "DataFrame output uses _outcome_ prefix on all target-derived columns"
+  },
+
+  "meta_models": {
+    "alpha_threshold_baseline": {
+      "type": "BASELINE_THRESHOLD",
+      "score_semantics": "Monotone transform of primary alpha_score",
+      "oos_roc_auc": null,
+      "verdict": "INSUFFICIENT_EVIDENCE"
+    },
+    "linear_meta_ranker": {
+      "type": "BASELINE_LINEAR",
+      "score_semantics": "Logistic regression raw probability estimate",
+      "oos_roc_auc": null,
+      "verdict": "INSUFFICIENT_EVIDENCE"
+    },
+    "lgbm_meta_ranker": {
+      "type": "TRAINED_MODEL",
+      "score_semantics": "LightGBM binary classifier raw P(success)",
+      "oos_roc_auc": null,
+      "verdict": "INSUFFICIENT_EVIDENCE"
+    },
+    "xgboost_meta_ranker": {
+      "type": "TRAINED_MODEL",
+      "score_semantics": "XGBoost binary classifier raw P(success)",
+      "oos_roc_auc": null,
+      "verdict": "INSUFFICIENT_EVIDENCE"
+    }
+  },
+
+  "class_imbalance": {
+    "status": "INSUFFICIENT_EVIDENCE",
+    "positive_rate": null,
+    "negative_rate": null,
+    "policy": "is_unbalance=True in LightGBM; scale_pos_weight in XGBoost"
+  },
+
+  "ml_dominance_verdict": "INSUFFICIENT_EVIDENCE",
+  "note": "ML_ADDS_NO_CLEAR_VALUE logic implemented in compare_meta_models(). Will be evaluated when real data is available."
+}

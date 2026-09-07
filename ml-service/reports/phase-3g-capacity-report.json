@@ -1,0 +1,31 @@
+{
+  "report_type": "phase-3g-capacity-report",
+  "phase": "3G",
+  "generated": "2026-09-06",
+  "participation_model": {
+    "default_max_participation_pct": 0.10,
+    "unit": "fraction_of_adv_inr",
+    "partial_fill_supported": true,
+    "unavailable_on_zero_lots": true,
+    "infinite_liquidity_assumed": false
+  },
+  "fno_constraints": {
+    "ban_period_new_positions": "REJECTED",
+    "ban_period_closing_positions": "ALLOWED",
+    "expired_contract": "REJECTED"
+  },
+  "slippage_capacity_models": {
+    "model_a_fixed_bps": {"capacity_sensitive": false},
+    "model_b_spread_proxy": {"capacity_sensitive": true, "mechanism": "volume_adjusted_spread"},
+    "model_c_vol_participation": {"capacity_sensitive": true, "mechanism": "sigma_sqrt_participation"},
+    "model_d_market_impact": {"capacity_sensitive": true, "mechanism": "eta_sigma_sqrt_q_over_adv"}
+  },
+  "known_gaps": [
+    {"gap": "ADV not verified against live data", "severity": "MEDIUM"},
+    {"gap": "No intraday volume profile for VWAP", "severity": "LOW"},
+    {"gap": "No Level 2 order book", "severity": "LOW"},
+    {"gap": "F&O ban list must be supplied by caller", "severity": "MEDIUM"},
+    {"gap": "Corporate actions not auto-adjusted", "severity": "MEDIUM"},
+    {"gap": "No intraday capacity model", "severity": "LOW"}
+  ]
+}

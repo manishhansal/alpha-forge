@@ -1,0 +1,42 @@
+{
+  "economic_evidence": "INSUFFICIENT_EVIDENCE",
+  "min_n": 30,
+  "note": "no real-market net returns \u2192 incremental value not measurable",
+  "stages": [
+    {
+      "incremental": null,
+      "n": 0,
+      "net_metric": null,
+      "stage": "raw_signal",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "incremental": null,
+      "n": 0,
+      "net_metric": null,
+      "stage": "ranking",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "incremental": null,
+      "n": 0,
+      "net_metric": null,
+      "stage": "meta",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "incremental": null,
+      "n": 0,
+      "net_metric": null,
+      "stage": "portfolio",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "incremental": null,
+      "n": 0,
+      "net_metric": null,
+      "stage": "execution",
+      "status": "INSUFFICIENT_EVIDENCE"
+    }
+  ]
+}

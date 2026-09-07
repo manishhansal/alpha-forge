@@ -1,0 +1,29 @@
+{
+  "report_type": "phase-3h-capacity-report",
+  "phase": "3H",
+  "generated": "2026-09-06",
+  "participation_model": {
+    "default_max_order_pct_adv": 0.10,
+    "default_max_position_pct_adv": 0.20,
+    "lot_size_aware": true,
+    "fractional_lots_produced": false,
+    "liquidity_field_in_target_order": "liquidity_requirement_pct_adv"
+  },
+  "eligibility_liquidity_check": {
+    "field": "adv_inr",
+    "threshold_configurable": true,
+    "default_min_adv_inr": 0.0,
+    "rejection_status": "INSUFFICIENT_LIQUIDITY"
+  },
+  "fno_constraints": {
+    "ban_period_new_positions": "REJECTED_BY_ELIGIBILITY_FILTER",
+    "expired_contracts": "REJECTED_BY_ELIGIBILITY_FILTER",
+    "lot_size_rounding": "FLOOR_TO_INTEGER_LOTS"
+  },
+  "known_gaps": [
+    {"gap": "ADV data not in service", "severity": "HIGH"},
+    {"gap": "No intraday volume profile", "severity": "LOW"},
+    {"gap": "FnOStateStore DATA_UNAVAILABLE", "severity": "MEDIUM"},
+    {"gap": "CorporateActionStore DATA_UNAVAILABLE", "severity": "MEDIUM"}
+  ]
+}

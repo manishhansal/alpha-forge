@@ -1,0 +1,19 @@
+{
+  "components": {
+    "CALIBRATION": "INSUFFICIENT_EVIDENCE",
+    "META": "INSUFFICIENT_EVIDENCE",
+    "PORTFOLIO": "INSUFFICIENT_EVIDENCE",
+    "RANKER": "INSUFFICIENT_EVIDENCE",
+    "RL": "INSUFFICIENT_EVIDENCE"
+  },
+  "note": "all components INSUFFICIENT_EVIDENCE without real net returns; NO_CONFIRMED_INCREMENTAL_VALUE is a valid honest outcome",
+  "safety_components_never_ablated": [
+    "DATA_QUALITY",
+    "KILL_SWITCH",
+    "NO_LOOKAHEAD",
+    "PROVENANCE",
+    "RECONCILIATION",
+    "RISK",
+    "RISK_LIMITS"
+  ]
+}

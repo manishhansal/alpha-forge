@@ -27,12 +27,18 @@ from __future__ import annotations
 # Canonical NSE lot sizes
 # ---------------------------------------------------------------------------
 
+# Phase 3G fix: LOT_SIZES was hardcoded with pre-SEBI Nov 2024 values.
+# This dict is kept for GEX computation which uses a snapshot lot size
+# passed by the caller. For any backtesting use, always use
+# InstrumentMasterStore.get_lot_size(symbol, date) — never this dict.
+# These are the post-SEBI Nov 2024 values (current).
 LOT_SIZES: dict[str, int] = {
-    "NIFTY": 50,
-    "BANKNIFTY": 15,
-    "FINNIFTY": 40,
-    "MIDCPNIFTY": 75,
+    "NIFTY":     75,   # post-SEBI Nov 2024 (was 50)
+    "BANKNIFTY": 30,   # post-SEBI Nov 2024 (was 15)
+    "FINNIFTY":  65,   # post-SEBI Nov 2024 (was 40)
+    "MIDCPNIFTY": 120, # post-SEBI Nov 2024 (was 75)
 }
+# NOTE: For historical backtesting use InstrumentMasterStore.get_lot_size()
 
 # ---------------------------------------------------------------------------
 # Public API

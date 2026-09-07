@@ -1,0 +1,49 @@
+{
+  "artifact": "phase_3n_test_results",
+  "phase": "3N",
+  "branch": "refactor/improve-ml-service",
+  "python": "3.14.6",
+  "data_source": "SYNTHETIC_DATA",
+  "environment_notes": [
+    "talib, torch, sklearn, yfinance, sqlalchemy ABSENT; DATA_SERVICE_URL unset.",
+    "src/paper is import-clean and needs none of them.",
+    "No REAL_MARKET_DATA tier reachable -> economic performance INSUFFICIENT_EVIDENCE."
+  ],
+  "phase_3n_suite": {
+    "file": "tests/test_phase3n.py",
+    "passed": 62,
+    "failed": 0,
+    "classes": {
+      "TestProvider": 6,
+      "TestDataQuality": 7,
+      "TestSignals": 5,
+      "TestPaperEngine": 8,
+      "TestSession": 5,
+      "TestEvidence": 6,
+      "TestReadiness": 5,
+      "TestNoLookahead": 6,
+      "TestSecurityStaticAudit": 5
+    }
+  },
+  "full_regression": {
+    "command": "pytest test_phase3n + test_phase3m + test_phase3a..3l + vpin + meta_engine + monitoring",
+    "passed": 1129,
+    "skipped": 28,
+    "failed": 0,
+    "conclusion": "Phase 3N introduced ZERO regressions (prior 3A-3M+vpin+meta+monitoring baseline 1067 + 62 new = 1129)."
+  },
+  "preexisting_failures_unrelated_to_phase_3n": {
+    "root_causes": {
+      "sklearn_absent": "tests/test_validation.py imports sklearn (src/validation lazy dep).",
+      "talib_absent": "tests/test_talib_perf.py, tests/test_technical.py fail at collection.",
+      "riskfolio_absent": "tests/test_portfolio_optimizer.py fails at collection.",
+      "stale_constant": "tests/test_gex.py expects LOT_SIZES['NIFTY']==50 but current value is 75.",
+      "scrapling_attr": "tests/test_data_pipeline.py: MarketDataClient missing _scrapling attribute."
+    },
+    "proof_not_a_regression": [
+      "All Phase 3N work is NEW untracked files (src/paper/, tests/test_phase3n.py, reports/phase-3n-*, reports/phase_3n_*, scripts/gen_phase3n_evidence.py).",
+      "Zero existing tracked files were modified.",
+      "No test outside test_phase3n.py imports src.paper."
+    ]
+  }
+}

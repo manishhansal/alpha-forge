@@ -1,0 +1,66 @@
+{
+  "report_type": "phase-3h-risk-report",
+  "phase": "3H",
+  "generated": "2026-09-06",
+  "covariance_methods": ["HISTORICAL", "EWMA", "LEDOIT_WOLF", "OAS"],
+  "default_method": "LEDOIT_WOLF",
+  "risk_model_version": "risk-model-v1",
+  "configuration": {
+    "min_observations": 60,
+    "max_condition_number": 1000000.0,
+    "psd_floor": 1e-08,
+    "ewma_lambda": 0.94,
+    "annualisation_factor": 252.0,
+    "max_missingness_pct": 0.10
+  },
+  "quality_checks": {
+    "symmetry": "ENFORCED",
+    "psd": "ENFORCED_WITH_DOCUMENTED_REPAIR",
+    "condition_number": "CHECKED",
+    "missingness": "CHECKED",
+    "sample_size": "CHECKED",
+    "pit_violation": "ENFORCED"
+  },
+  "shrinkage": {
+    "ledoit_wolf": {
+      "method": "analytical_oracle_lw2004",
+      "target": "scaled_identity",
+      "sklearn_dependency": false,
+      "coefficient_range": [0.0, 1.0]
+    },
+    "oas": {
+      "method": "analytical_oas_chen2010",
+      "target": "scaled_identity",
+      "sklearn_dependency": false,
+      "coefficient_range": [0.0, 1.0]
+    }
+  },
+  "psd_repair": {
+    "method": "eigenvalue_floor",
+    "floor_value": 1e-08,
+    "documented": true,
+    "fields": ["psd_repair_applied", "min_pre_eigenvalue", "min_post_eigenvalue", "projection_method"]
+  },
+  "risk_decomposition": {
+    "portfolio_variance": "w_T @ Sigma @ w",
+    "marginal_risk": "(Sigma @ w)_i / sigma_p",
+    "component_risk": "w_i * marginal_risk_i",
+    "euler_decomposition_verified": true,
+    "cvar_method": "historical_simulation",
+    "cvar_alpha_default": 0.05
+  },
+  "test_coverage": {
+    "symmetry": "test_covariance_is_symmetric",
+    "psd": "test_covariance_is_psd",
+    "psd_repair_documented": "test_psd_repair_documented",
+    "lw_shrinkage": "test_ledoit_wolf_shrinkage_coefficient_in_0_1",
+    "oas_shrinkage": "test_oas_shrinkage_coefficient_in_0_1",
+    "portfolio_volatility": "test_portfolio_volatility_matches_weights",
+    "component_risk_euler": "test_component_risk_sums_to_portfolio_risk",
+    "insufficient_sample": "test_insufficient_observations_returns_unavailable",
+    "pit_violation": "test_pit_violation_returns_unavailable",
+    "cvar_positive": "test_historical_cvar_is_positive",
+    "ewma": "test_ewma_covariance_produces_valid_matrix"
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

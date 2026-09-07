@@ -116,15 +116,40 @@ def detect_bos_choch(
     """
     Detect Break of Structure (BOS) and Change of Character (CHOCH).
 
-    BOS: Price breaks a swing high/low in the direction of the trend
-         (trend continuation confirmation).
-    CHOCH: Price breaks a swing high/low against the trend
-           (potential trend reversal).
+    Causal definitions — every value at bar t depends ONLY on bars ≤ t
+    ----------------------------------------------------------------
+    Swing high at bar t:
+        The highest high over the window [t - (lookback*2), t] (trailing).
+        This is the most recent "significant high" a trader could observe
+        at close of bar t without seeing any future data.
+
+    Swing low at bar t:
+        The lowest low over the window [t - (lookback*2), t] (trailing).
+
+    BOS (Break of Structure):
+        At bar t, if the local trend is UP (recent highs are rising) and
+        close[t] exceeds the swing-high level recorded lookback bars ago,
+        a bullish BOS is flagged.  Symmetric for DOWN trend / swing low.
+        Interpretation: trend continuation — existing momentum confirmed.
+
+    CHOCH (Change of Character):
+        At bar t, if the local trend is UP but close[t] breaks BELOW the
+        swing-low level recorded lookback bars ago, a bearish CHOCH is
+        flagged (potential reversal).  Symmetric for DOWN trend.
+
+    Why trailing windows are correct:
+        Using a centered rolling window incorporates bars AFTER t into the
+        "swing level" at t — those bars are unknowable at decision time.
+
+    Leakage guarantee:
+        After this fix, the feature value at position t cannot change if
+        any bar at position > t is modified.  Tests in test_phase3a.py
+        verify this invariant.
 
     Returns:
-        bos_count: net BOS events (positive = bullish BOS dominant)
-        choch_count: net CHOCH events (positive = bullish reversal signal)
-        structure_score: combined market structure score [-1, 1]
+        bos_net:       rolling net bullish minus bearish BOS events (10-bar)
+        choch_net:     rolling net bullish minus bearish CHOCH events (10-bar)
+        structure_score: combined market structure score in [-1, 1]
     """
     n = len(close)
     bos_bull = pd.Series(0, index=close.index)
@@ -132,48 +157,70 @@ def detect_bos_choch(
     choch_bull = pd.Series(0, index=close.index)
     choch_bear = pd.Series(0, index=close.index)
 
-    # Track swing highs and lows
-    swing_high = high.rolling(window=lookback * 2 + 1, center=True).max()
-    swing_low = low.rolling(window=lookback * 2 + 1, center=True).min()
+    # ── Causal swing levels ───────────────────────────────────────────────
+    # Trailing window of (lookback*2 + 1) bars ending at bar t.
+    # min_periods = lookback + 1 so early bars produce NaN rather than
+    # a meaningless single-bar "swing".
+    swing_window = lookback * 2 + 1
+    swing_high = high.rolling(window=swing_window, min_periods=lookback + 1).max()
+    swing_low  = low.rolling(window=swing_window,  min_periods=lookback + 1).min()
 
-    # Previous swing levels
+    # Reference level: the swing measured lookback bars ago (the level a
+    # trade would have been watching as a key structural reference).
     prev_swing_high = swing_high.shift(lookback)
-    prev_swing_low = swing_low.shift(lookback)
+    prev_swing_low  = swing_low.shift(lookback)
 
-    # Trend direction based on recent structure
+    # ── Local trend direction ─────────────────────────────────────────────
+    # Trend at bar t: compare the high/low at the START vs END of the
+    # trailing lookback window — purely backward-looking.
     trend = pd.Series(0, index=close.index)
     for i in range(lookback * 2, n):
-        recent_highs = high.iloc[i - lookback:i]
-        recent_lows = low.iloc[i - lookback:i]
-        if recent_highs.iloc[-1] > recent_highs.iloc[0]:
-            trend.iloc[i] = 1  # Uptrend
-        elif recent_lows.iloc[-1] < recent_lows.iloc[0]:
-            trend.iloc[i] = -1  # Downtrend
+        recent_highs = high.iloc[i - lookback : i]
+        recent_lows  = low.iloc[i - lookback : i]
+        if len(recent_highs) > 0:
+            if recent_highs.iloc[-1] > recent_highs.iloc[0]:
+                trend.iloc[i] = 1   # Uptrend structure
+            elif recent_lows.iloc[-1] < recent_lows.iloc[0]:
+                trend.iloc[i] = -1  # Downtrend structure
+
+    # ── BOS / CHOCH detection ─────────────────────────────────────────────
+    prev_high_arr = prev_swing_high.to_numpy()
+    prev_low_arr  = prev_swing_low.to_numpy()
+    close_arr     = close.to_numpy()
+    trend_arr     = trend.to_numpy()
 
     for i in range(lookback * 2, n):
-        # BOS: break in trend direction
-        if trend.iloc[i] == 1 and close.iloc[i] > prev_swing_high.iloc[i]:
+        ph = prev_high_arr[i]
+        pl = prev_low_arr[i]
+        c  = close_arr[i]
+        t  = trend_arr[i]
+
+        if np.isnan(ph) or np.isnan(pl):
+            continue
+
+        # BOS: break in the direction of the trend
+        if t == 1 and c > ph:
             bos_bull.iloc[i] = 1
-        elif trend.iloc[i] == -1 and close.iloc[i] < prev_swing_low.iloc[i]:
+        elif t == -1 and c < pl:
             bos_bear.iloc[i] = 1
 
-        # CHOCH: break against trend direction
-        if trend.iloc[i] == 1 and close.iloc[i] < prev_swing_low.iloc[i]:
+        # CHOCH: break AGAINST the trend (potential reversal)
+        if t == 1 and c < pl:
             choch_bear.iloc[i] = 1
-        elif trend.iloc[i] == -1 and close.iloc[i] > prev_swing_high.iloc[i]:
+        elif t == -1 and c > ph:
             choch_bull.iloc[i] = 1
 
     window = 10
-    bos_net = bos_bull.rolling(window).sum() - bos_bear.rolling(window).sum()
-    choch_net = choch_bull.rolling(window).sum() - choch_bear.rolling(window).sum()
+    bos_net   = bos_bull.rolling(window).sum()   - bos_bear.rolling(window).sum()
+    choch_net = choch_bull.rolling(window).sum()  - choch_bear.rolling(window).sum()
 
     # Structure score: BOS confirms trend, CHOCH signals reversal
-    max_events = window  # Normalize to [-1, 1]
+    max_events    = float(window)
     structure_score = ((bos_net * 0.6 + choch_net * 0.4) / max_events).clip(-1, 1)
 
     return {
-        "bos_net": bos_net,
-        "choch_net": choch_net,
+        "bos_net":        bos_net,
+        "choch_net":      choch_net,
         "structure_score": structure_score,
     }
 

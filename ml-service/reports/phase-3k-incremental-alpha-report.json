@@ -1,0 +1,25 @@
+{
+  "report_type": "phase-3k-incremental-alpha-report",
+  "phase": "3K",
+  "generated": "2026-09-06",
+  "verdict": "NO_INCREMENTAL_ALPHA",
+  "evidence": "INSUFFICIENT_EVIDENCE",
+  "incremental_ic": {
+    "method": "residual of challenger after removing champion linear component, rank IC vs realized",
+    "redundant_synthetic": {"pred_corr": 1.0, "near_identical": true, "incremental_ic": -0.175},
+    "complementary_synthetic": {"pred_corr": -0.05, "incremental_ic": 0.52}
+  },
+  "residual_model": {
+    "target": "realized - champion_prediction",
+    "synthetic_combined_ic": 0.907, "synthetic_champion_ic": 0.733, "improves": true,
+    "reported_separately": true
+  },
+  "ensemble": {
+    "weights_fit_on": "VALIDATION",
+    "synthetic_weights": [0.6, 0.4],
+    "synthetic_ensemble_oos_ic": 0.915, "synthetic_champion_oos_ic": 0.749,
+    "complementary_outcome_valid": true
+  },
+  "disagreement_feeds_abstention": true,
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

@@ -1,0 +1,54 @@
+{
+  "report_type": "phase-3j-model-registry-report",
+  "phase": "3J",
+  "generated": "2026-09-06",
+  "branch": "refactor/improve-ml-service",
+  "status": "PASS",
+  "champion_state": "NO_PROMOTION",
+  "champion_evidence": "INSUFFICIENT_EVIDENCE",
+  "components": [
+    "src/lifecycle/schemas.py",
+    "src/lifecycle/artifact_integrity.py",
+    "src/lifecycle/evidence.py",
+    "src/lifecycle/compatibility.py",
+    "src/lifecycle/_storage.py",
+    "src/lifecycle/registry.py",
+    "src/lifecycle/champion.py",
+    "src/lifecycle/challenger.py",
+    "src/lifecycle/gates.py",
+    "src/lifecycle/comparison.py",
+    "src/lifecycle/promotion.py"
+  ],
+  "lifecycle_states": [
+    "REGISTERED", "VALIDATING", "EVIDENCE_READY", "CANDIDATE",
+    "SHADOW", "PAPER", "PROMOTION_ELIGIBLE", "CHAMPION",
+    "REJECTED", "BLOCKED", "RETIRED", "ROLLED_BACK", "ABSTAINED"
+  ],
+  "immutability": {
+    "key": "model_id@model_version",
+    "artifact_hash_algorithm": "SHA-256",
+    "reregister_different_hash": "ImmutabilityViolation",
+    "reregister_same_hash": "idempotent_noop"
+  },
+  "concurrency": {
+    "lock": "os.O_CREAT|O_EXCL with stale-lock recovery",
+    "atomic_write": "temp-file + os.replace",
+    "audit_log": "append-only JSONL",
+    "external_dependency": "none"
+  },
+  "current_state": {
+    "registered_models": 0,
+    "champions": 0,
+    "challengers": 0,
+    "promotions": 0
+  },
+  "tests": {
+    "phase_3j_total": 82,
+    "phase_3j_passed": 81,
+    "phase_3j_skipped": 1,
+    "phase_3j_failed": 0,
+    "full_suite_passed": 534,
+    "full_suite_failed": 0
+  },
+  "oos_evidence": "INSUFFICIENT_EVIDENCE"
+}

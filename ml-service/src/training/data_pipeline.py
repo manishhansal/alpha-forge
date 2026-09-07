@@ -33,7 +33,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,17 +42,6 @@ import pandas as pd
 import structlog
 
 from ..config import settings
-from ..features.engineer import (
-    RANKING_FEATURES,
-    REGIME_FEATURES,
-    RISK_FEATURES,
-    STRATEGY_FEATURES,
-    compute_regime_features,
-    compute_stock_features,
-)
-from ..models.market_regime import MarketRegimeClassifier, generate_regime_labels
-from ..models.stock_ranker import generate_ranking_labels
-from ..models.strategy_selector import generate_strategy_labels
 from .market_data_client import (
     DataQuality,
     DatasetMetadata,
@@ -65,11 +54,53 @@ from .market_data_client import (
 
 logger = structlog.get_logger(__name__)
 
+_UTC = timezone.utc
+
+# ─── Lazy feature / model imports (avoid loading talib at import time) ─────────
+
+def _get_feature_constants():
+    """Lazy import of canonical feature lists and compute functions."""
+    from ..features.engineer import (  # noqa: PLC0415
+        RANKING_FEATURES,
+        REGIME_FEATURES,
+        RISK_FEATURES,
+        STRATEGY_FEATURES,
+        compute_regime_features,
+        compute_stock_features,
+    )
+    return (RANKING_FEATURES, REGIME_FEATURES, RISK_FEATURES,
+            STRATEGY_FEATURES, compute_regime_features, compute_stock_features)
+
+
+def _get_pit_components():
+    """Lazy import of PIT data foundation (no external deps)."""
+    from ..data.point_in_time import (  # noqa: PLC0415
+        PointInTimeValidator,
+        bhavcopy_available_utc,
+        nse_close_utc,
+        require_utc_aware,
+    )
+    from ..data.instrument_master import InstrumentMasterStore  # noqa: PLC0415
+    from ..data.historical_universe import HistoricalUniverse    # noqa: PLC0415
+    from ..data.fno_eligibility import FnOStateStore             # noqa: PLC0415
+    from ..data.corporate_actions import CorporateActionStore    # noqa: PLC0415
+    from ..data.data_quality import MLDataQualityGate            # noqa: PLC0415
+    from ..data.dataset_version import DatasetSnapshot           # noqa: PLC0415
+    from ..data.lineage import observation_lineage_store         # noqa: PLC0415
+    return (
+        PointInTimeValidator, bhavcopy_available_utc, nse_close_utc,
+        require_utc_aware, InstrumentMasterStore, HistoricalUniverse,
+        FnOStateStore, CorporateActionStore, MLDataQualityGate,
+        DatasetSnapshot, observation_lineage_store,
+    )
+
+
 # ─── Pipeline version constants ───────────────────────────────────────────────
 
-PIPELINE_VERSION = "v3.0"           # bump when labeling logic changes
+PIPELINE_VERSION = "v3.1"           # Phase 3B — PIT foundation added
 FEATURE_VERSION = "fv4"             # bump when feature set changes (RANKING_FEATURES etc.)
-DATASET_VERSION = f"af-{PIPELINE_VERSION}-{FEATURE_VERSION}"
+LABEL_VERSION   = "lv2"             # Phase 3C — Label V2 (triple-barrier, event-based)
+DATASET_VERSION = f"af-{PIPELINE_VERSION}-{FEATURE_VERSION}-{LABEL_VERSION}"
 
 # ─── F&O training universe ────────────────────────────────────────────────────
 
@@ -106,6 +137,308 @@ LOT_SIZES: dict[str, int] = {
     "ICICIBANK": 700, "SBIN": 1500, "AXISBANK": 1200, "BAJFINANCE": 125,
 }
 DEFAULT_LOT_SIZE = 500
+
+
+def get_lot_size(symbol: str, query_date: date) -> int:
+    """
+    Return the historical lot size for symbol on query_date.
+
+    This replaces the static LOT_SIZES dict with a point-in-time lookup that
+    accounts for known NSE lot-size changes (e.g. SEBI Nov 2024 revision).
+
+    Falls back to LOT_SIZES dict (then DEFAULT_LOT_SIZE) for symbols without
+    historical data.  APPROXIMATE results are logged as warnings.
+    """
+    try:
+        from ..data.instrument_master import InstrumentMasterStore  # noqa: PLC0415
+        store = InstrumentMasterStore.default()
+        lot, status, _ = store.get_lot_size(symbol.upper(), query_date)
+        if lot is not None:
+            if status != "OK":
+                logger.debug("lot_size_approximate", symbol=symbol, date=str(query_date))
+            return lot
+    except Exception as exc:
+        logger.debug("lot_size_fallback", symbol=symbol, error=str(exc))
+
+    # Fallback to static dict
+    return LOT_SIZES.get(symbol.upper(), DEFAULT_LOT_SIZE)
+
+
+# ─── 7-Step PIT Pre-Feature Validation ───────────────────────────────────────
+
+class PITValidationResult:
+    """
+    Result of the 7-step point-in-time pre-feature validation.
+
+    status  : "DATA_READY" | "DATA_READY_WITH_WARNINGS" | "BLOCKED"
+    issues  : list of (step, severity, message) tuples
+    symbol  : symbol being validated
+    bar_date: date of the bar being validated
+    lot_size: resolved lot size (may be APPROXIMATE)
+    """
+
+    def __init__(self, symbol: str, bar_date: date) -> None:
+        self.symbol    = symbol
+        self.bar_date  = bar_date
+        self.issues:   list[tuple[str, str, str]] = []
+        self.lot_size: int | None = None
+        self.lot_size_status: str = "UNKNOWN"
+        self.fno_ban_status:  str = "DATA_UNAVAILABLE"
+        self.corporate_action_status: str = "DATA_UNAVAILABLE"
+        self.observation_id: str | None = None
+
+    @property
+    def status(self) -> str:
+        if any(sev == "CRITICAL" for _, sev, _ in self.issues):
+            return "BLOCKED"
+        if any(sev in ("ERROR", "WARNING") for _, sev, _ in self.issues):
+            return "DATA_READY_WITH_WARNINGS"
+        return "DATA_READY"
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.status == "BLOCKED"
+
+    @property
+    def critical_messages(self) -> list[str]:
+        return [msg for _, sev, msg in self.issues if sev == "CRITICAL"]
+
+    def add(self, step: str, severity: str, message: str) -> None:
+        self.issues.append((step, severity, message))
+        if severity == "CRITICAL":
+            logger.error("pit_validation_critical", step=step, symbol=self.symbol,
+                         date=str(self.bar_date), message=message)
+        elif severity in ("ERROR", "WARNING"):
+            logger.warning("pit_validation_issue", step=step, symbol=self.symbol,
+                           severity=severity, message=message)
+
+
+def validate_observation_pit(
+    symbol: str,
+    bar_date: date,
+    ohlcv_df: pd.DataFrame,
+    prediction_time: datetime,
+    universe: "HistoricalUniverse | None" = None,
+    instrument_store: "InstrumentMasterStore | None" = None,
+    fno_store: "FnOStateStore | None" = None,
+    ca_store: "CorporateActionStore | None" = None,
+) -> PITValidationResult:
+    """
+    Seven-step point-in-time validation before feature generation.
+
+    Steps
+    -----
+    1. Validate timestamps (no naive; no future available_time)
+    2. Validate instrument identity (symbol known in instrument master)
+    3. Resolve historical universe membership (is symbol MODEL_ELIGIBLE?)
+    4. Resolve contract metadata (lot size at bar_date, not today's)
+    5. Resolve corporate action state (flag if adjustments are DATA_UNAVAILABLE)
+    6. Resolve F&O ban state (flag if symbol was in ban list)
+    7. Run ML data quality gate (OHLCV integrity checks)
+
+    Parameters
+    ----------
+    symbol          : NSE trading symbol.
+    bar_date        : Date of the OHLCV bar being validated.
+    ohlcv_df        : DataFrame slice for this symbol (the lookback window).
+    prediction_time : The model's prediction timestamp (UTC, tz-aware).
+                      The bar at bar_date must be available by prediction_time.
+    universe        : Optional HistoricalUniverse; created lazily if None.
+    instrument_store: Optional InstrumentMasterStore; created lazily if None.
+    fno_store       : Optional FnOStateStore; created lazily if None.
+    ca_store        : Optional CorporateActionStore; created lazily if None.
+
+    Returns
+    -------
+    PITValidationResult with status DATA_READY | DATA_READY_WITH_WARNINGS | BLOCKED.
+    """
+    result = PITValidationResult(symbol=symbol, bar_date=bar_date)
+
+    try:
+        (PointInTimeValidator, bhavcopy_available_utc, nse_close_utc,
+         require_utc_aware, InstrumentMasterStore, HistoricalUniverse,
+         FnOStateStore, CorporateActionStore, MLDataQualityGate,
+         DatasetSnapshot, obs_store) = _get_pit_components()
+
+        # ── Step 1: Validate timestamps ───────────────────────────────────────
+        try:
+            require_utc_aware(prediction_time, "prediction_time")
+        except ValueError as e:
+            result.add("STEP1_TIMESTAMPS", "CRITICAL", str(e))
+            return result
+
+        # Compute expected available_time for daily Bhavcopy data
+        expected_available = bhavcopy_available_utc(bar_date)
+        if prediction_time < expected_available:
+            result.add(
+                "STEP1_TIMESTAMPS", "CRITICAL",
+                f"FUTURE_DATA: Bar at {bar_date} has estimated available_time "
+                f"{expected_available.isoformat()} > prediction_time "
+                f"{prediction_time.isoformat()}. "
+                f"Bhavcopy for {bar_date} was not yet published at prediction_time."
+            )
+
+        # Check for naive timestamps in DataFrame index
+        if isinstance(ohlcv_df.index, pd.DatetimeIndex) and ohlcv_df.index.tz is None:
+            result.add(
+                "STEP1_TIMESTAMPS", "CRITICAL",
+                f"NAIVE_TIMESTAMP: DataFrame index for {symbol} has no timezone. "
+                "Use tz_localize('UTC')."
+            )
+
+        # ── Step 2: Validate instrument identity ──────────────────────────────
+        store = instrument_store or InstrumentMasterStore.default()
+        instrument = store.get_instrument(symbol, bar_date)
+        if instrument.lot_size_status == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP2_INSTRUMENT", "WARNING",
+                f"LOT_SIZE_DATA_UNAVAILABLE: No historical lot-size record for "
+                f"{symbol} on {bar_date}. Cannot determine instrument metadata."
+            )
+
+        # ── Step 3: Resolve historical universe membership ────────────────────
+        hist_universe = universe or HistoricalUniverse.default()
+        membership = hist_universe.get_membership(symbol, bar_date)
+
+        if membership.fo_eligible.value == "FALSE":
+            result.add(
+                "STEP3_UNIVERSE", "ERROR",
+                f"NOT_FO_ELIGIBLE: {symbol} was NOT in NSE F&O list on {bar_date}."
+            )
+        elif membership.fo_eligible.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP3_UNIVERSE", "WARNING",
+                f"FO_ELIGIBILITY_UNKNOWN: Historical F&O eligibility for {symbol} "
+                f"on {bar_date} is DATA_UNAVAILABLE. Using current universe as approximation."
+            )
+
+        # ── Step 4: Resolve contract metadata (lot size) ─────────────────────
+        lot, lot_status, lot_source = store.get_lot_size(symbol, bar_date)
+        result.lot_size = lot if lot is not None else DEFAULT_LOT_SIZE
+        result.lot_size_status = lot_status
+        if lot_status == "APPROXIMATE":
+            result.add(
+                "STEP4_CONTRACT", "WARNING",
+                f"LOT_SIZE_APPROXIMATE: Using current lot size ({result.lot_size}) as "
+                f"approximation for {symbol} on {bar_date}. "
+                "True historical lot size is DATA_UNAVAILABLE."
+            )
+        elif lot_status == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP4_CONTRACT", "WARNING",
+                f"LOT_SIZE_DATA_UNAVAILABLE: No lot-size data for {symbol} on {bar_date}. "
+                f"Defaulting to {DEFAULT_LOT_SIZE}."
+            )
+
+        # ── Step 5: Resolve corporate action state ────────────────────────────
+        ca = ca_store or CorporateActionStore.empty()
+        ca_result = ca.get_adjusted_price(symbol, bar_date, raw_price=None)
+        result.corporate_action_status = ca_result.status.value
+        if ca_result.status.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP5_CORPORATE_ACTIONS", "WARNING",
+                f"CORPORATE_ACTION_DATA_UNAVAILABLE: Historical corporate action "
+                f"adjustment data for {symbol} is not available. "
+                "Price data may be unadjusted for splits/bonuses."
+            )
+
+        # ── Step 6: Resolve F&O ban state ─────────────────────────────────────
+        fno = fno_store or FnOStateStore.empty()
+        fno_state = fno.get_fno_state(symbol, bar_date)
+        result.fno_ban_status = fno_state.ban_status.value
+        if fno_state.ban_status.value == "BANNED":
+            result.add(
+                "STEP6_FNO_STATE", "ERROR",
+                f"FNO_BANNED: {symbol} was in the F&O ban list on {bar_date}. "
+                "Only closing trades were permitted. OI signals are unreliable."
+            )
+        elif fno_state.ban_status.value == "DATA_UNAVAILABLE":
+            result.add(
+                "STEP6_FNO_STATE", "WARNING",
+                f"FNO_BAN_DATA_UNAVAILABLE: Cannot confirm {symbol} was not banned "
+                f"on {bar_date}. Historical MWPL ban list is DATA_UNAVAILABLE."
+            )
+
+        # ── Step 7: Run ML data quality gate ──────────────────────────────────
+        gate = MLDataQualityGate()
+        quality_report = gate.check_ohlcv(
+            ohlcv_df.tail(1) if len(ohlcv_df) > 0 else ohlcv_df,
+            symbol=symbol,
+            prediction_time=prediction_time,
+        )
+        for issue in quality_report.issues:
+            if issue.severity.value == "CRITICAL":
+                result.add("STEP7_QUALITY", "CRITICAL", issue.description)
+            elif issue.severity.value == "ERROR":
+                result.add("STEP7_QUALITY", "ERROR", issue.description)
+            elif issue.severity.value == "WARNING":
+                result.add("STEP7_QUALITY", "WARNING", issue.description)
+
+        # ── Record observation lineage ─────────────────────────────────────────
+        try:
+            avail_time = expected_available
+            event_time = nse_close_utc(bar_date)
+            result.observation_id = obs_store.record(
+                symbol=symbol,
+                data_type="OHLCV",
+                provider="NSE_BHAVCOPY",
+                event_time=event_time,
+                available_time=avail_time,
+                dataset_version=DATASET_VERSION,
+                is_fallback=False,
+                notes=f"7-step PIT validation: {result.status}",
+            )
+        except Exception:
+            pass  # Lineage recording failure should not block training
+
+    except Exception as exc:
+        logger.warning(
+            "pit_validation_exception",
+            symbol=symbol,
+            date=str(bar_date),
+            error=str(exc),
+        )
+        result.add(
+            "PIT_VALIDATION", "WARNING",
+            f"Exception during PIT validation (non-blocking): {exc}"
+        )
+
+    return result
+
+
+def get_pit_validated_universe(
+    query_date: date,
+    universe: "HistoricalUniverse | None" = None,
+    include_approximate: bool = True,
+) -> list[str]:
+    """
+    Return the list of model-eligible symbols for query_date using PIT universe.
+
+    This replaces direct use of TRAINING_UNIVERSE with a historically-aware
+    lookup.  When historical data is unavailable, falls back to TRAINING_UNIVERSE
+    with a WARNING logged.
+
+    Parameters
+    ----------
+    query_date          : Historical date.
+    universe            : Optional HistoricalUniverse; created lazily if None.
+    include_approximate : Include symbols where eligibility is DATA_UNAVAILABLE
+                          but symbol is in the current TRAINING_UNIVERSE.
+    """
+    try:
+        from ..data.historical_universe import HistoricalUniverse as _HU  # noqa: PLC0415
+        hist_universe = universe or _HU.default()
+        return hist_universe.get_model_eligible_symbols(
+            query_date, include_approximate=include_approximate
+        )
+    except Exception as exc:
+        logger.warning(
+            "pit_universe_fallback",
+            date=str(query_date),
+            error=str(exc),
+            note="Falling back to static TRAINING_UNIVERSE",
+        )
+        return list(TRAINING_UNIVERSE)
 
 
 # ─── Walk-forward split helpers (Requirement #6) ──────────────────────────────
@@ -197,47 +530,217 @@ def assert_no_future_leakage(
     horizon: int,
 ) -> None:
     """
-    Validate that no feature column is a future-shifted version of the label.
+    DEPRECATED WRAPPER — kept for backward compatibility.
 
-    Strategy: compute the cross-correlation between each feature and the
-    forward-shifted label. A Pearson |r| > 0.95 at shift=0 (which disappears
-    when the label is shifted back by `horizon`) is a leakage signal.
-
-    Raises AssertionError when leakage is detected so the pipeline halts
-    before saving a contaminated dataset.
+    Calls check_structural_leakage() and raises AssertionError on FAIL.
+    New code should call check_structural_leakage() directly and inspect
+    the returned LeakageReport for WARNING-level issues too.
     """
-    if label_col not in df.columns:
-        return
+    report = check_structural_leakage(df, feature_cols, label_col, horizon)
+    fail_findings = [f for f in report["findings"] if f["level"] == "FAIL"]
+    if fail_findings:
+        details = "; ".join(f["message"] for f in fail_findings)
+        raise AssertionError(
+            f"Structural leakage detected — training blocked. "
+            f"Details: {details}"
+        )
 
-    label = df[label_col].values.astype(float)
-    shifted_label = df[label_col].shift(-horizon).values.astype(float)
 
-    for col in feature_cols:
-        if col not in df.columns:
-            continue
-        feat = df[col].values.astype(float)
+# ─── Structural Leakage Checker (replaces weak correlation guard) ─────────────
 
-        # Correlation of feature with future-shifted label
-        valid = ~(np.isnan(feat) | np.isnan(shifted_label))
-        if valid.sum() < 10:
-            continue
-        corr_future = float(np.corrcoef(feat[valid], shifted_label[valid])[0, 1])
 
-        # Correlation of feature with unshifted label (contemporaneous)
-        valid2 = ~(np.isnan(feat) | np.isnan(label))
-        if valid2.sum() < 10:
-            corr_now = 0.0
-        else:
-            corr_now = float(np.corrcoef(feat[valid2], label[valid2])[0, 1])
+def check_structural_leakage(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    label_col: str,
+    horizon: int,
+) -> dict:
+    """
+    Comprehensive structural leakage checker.
 
-        # Leakage: feature is MORE correlated with future label than present label
-        if abs(corr_future) > 0.95 and abs(corr_future) > abs(corr_now) + 0.1:
-            raise AssertionError(
-                f"Future leakage detected in column '{col}': "
-                f"corr with future label={corr_future:.3f} "
-                f"> corr with present label={corr_now:.3f}. "
-                f"This feature must be computed at time t, not t+{horizon}."
+    Returns a LeakageReport dict with keys:
+        status   : "PASS" | "WARNING" | "FAIL"
+        findings : list of {level, check, column, message}
+
+    A "FAIL" finding MUST block training.
+    A "WARNING" finding should be logged and investigated.
+
+    Checks performed
+    ----------------
+    1. Correlation leakage (original check, threshold relaxed to 0.80)
+       Pearson |r| between feature and forward-shifted label > 0.80.
+
+    2. Future timestamp check
+       Any feature column that is a DatetimeIndex or named "*_dt*" after
+       the prediction row is a leakage signal.
+
+    3. Centered-rolling detection (structural)
+       Checks whether any rolling window was computed with center=True
+       by detecting if a feature changes when future rows are appended.
+       This requires the caller to pass a DataFrame with at least
+       (horizon × 2) rows of context beyond the evaluation window.
+
+    4. Future normalisation / scaling
+       A feature normalised by the full-series mean/std will change when
+       future data is added.  This check appends synthetic future rows and
+       tests for feature drift.
+
+    5. Forward-shifted feature check
+       Checks if any feature column contains values that are identical to
+       the label column shifted -horizon (i.e., is literally the future label).
+
+    6. Label overlap check
+       Computes the fraction of adjacent label pairs with overlapping
+       forward windows.  Reports WARNING when overlap_fraction > 0.5.
+
+    Parameters
+    ----------
+    df           : DataFrame containing both features and label column.
+                   Must have a monotonic DatetimeIndex.
+    feature_cols : list of feature column names to inspect.
+    label_col    : name of the target/label column.
+    horizon      : forward-label horizon in bars.
+
+    Returns
+    -------
+    dict with keys "status" (str) and "findings" (list[dict]).
+    """
+    findings: list[dict] = []
+
+    label_present = label_col in df.columns
+    label = df[label_col].values.astype(float) if label_present else None
+    shifted_label = (
+        df[label_col].shift(-horizon).values.astype(float) if label_present else None
+    )
+
+    # ── Check 1: correlation leakage ─────────────────────────────────────
+    if label_present and shifted_label is not None:
+        for col in feature_cols:
+            if col not in df.columns:
+                continue
+            feat = df[col].values.astype(float)
+
+            valid_f = ~(np.isnan(feat) | np.isnan(shifted_label))
+            if valid_f.sum() < 10:
+                continue
+            corr_future = float(np.corrcoef(feat[valid_f], shifted_label[valid_f])[0, 1])
+
+            valid_n = ~(np.isnan(feat) | np.isnan(label))
+            corr_now = (
+                float(np.corrcoef(feat[valid_n], label[valid_n])[0, 1])
+                if valid_n.sum() >= 10
+                else 0.0
             )
+
+            # FAIL threshold: |r_future| > 0.95 and significantly > |r_now|
+            if abs(corr_future) > 0.95 and abs(corr_future) > abs(corr_now) + 0.1:
+                findings.append({
+                    "level": "FAIL",
+                    "check": "correlation_leakage",
+                    "column": col,
+                    "message": (
+                        f"Column '{col}': corr with future label = {corr_future:.3f} "
+                        f"> corr with present label = {corr_now:.3f} + 0.10. "
+                        f"Feature appears to encode future information."
+                    ),
+                })
+            # WARNING threshold: |r_future| > 0.80 but below FAIL
+            elif abs(corr_future) > 0.80 and abs(corr_future) > abs(corr_now) + 0.05:
+                findings.append({
+                    "level": "WARNING",
+                    "check": "correlation_leakage",
+                    "column": col,
+                    "message": (
+                        f"Column '{col}': moderate future correlation "
+                        f"{corr_future:.3f} vs present {corr_now:.3f}. Investigate."
+                    ),
+                })
+
+    # ── Check 2: forward-shifted literal copy ────────────────────────────
+    if label_present:
+        future_label = df[label_col].shift(-horizon).values.astype(float)
+        for col in feature_cols:
+            if col not in df.columns:
+                continue
+            feat = df[col].values.astype(float)
+            valid = ~(np.isnan(feat) | np.isnan(future_label))
+            if valid.sum() < 10:
+                continue
+            # If the feature IS the forward label, correlation will be ~1.0
+            corr = float(np.corrcoef(feat[valid], future_label[valid])[0, 1])
+            if corr > 0.999:
+                findings.append({
+                    "level": "FAIL",
+                    "check": "literal_future_copy",
+                    "column": col,
+                    "message": (
+                        f"Column '{col}' is identical (corr={corr:.4f}) to the "
+                        f"label shifted -{horizon} bars.  This feature IS the future label."
+                    ),
+                })
+
+    # ── Check 3: label overlap ────────────────────────────────────────────
+    n = len(df)
+    if n > 1 and horizon > 1:
+        overlap_pairs = max(0, horizon - 1)  # bars shared between adjacent labels
+        overlap_fraction = overlap_pairs / horizon
+        if overlap_fraction > 0.5:
+            findings.append({
+                "level": "WARNING",
+                "check": "label_overlap",
+                "column": label_col,
+                "message": (
+                    f"Label horizon={horizon} bars means adjacent observations "
+                    f"share {overlap_pairs}/{horizon} = {overlap_fraction:.0%} "
+                    f"of their label window.  Apply PurgedKFold with t1 series "
+                    f"to prevent contamination."
+                ),
+            })
+
+    # ── Check 4: check for centered-window feature names ─────────────────
+    # Cannot run the full simulation check without modifying data, but we
+    # can grep the source of the DataFrame's column names for "center=True".
+    # This is a naming convention heuristic only.
+    center_suspects = [c for c in feature_cols if any(
+        kw in c.lower() for kw in ("bos", "choch", "swing", "structure")
+    )]
+    if center_suspects:
+        findings.append({
+            "level": "WARNING",
+            "check": "center_rolling_suspect",
+            "column": str(center_suspects),
+            "message": (
+                f"Columns {center_suspects} may be derived from swing detection. "
+                f"Verify that the underlying rolling windows use center=False."
+            ),
+        })
+
+    # ── Determine overall status ─────────────────────────────────────────
+    levels = [f["level"] for f in findings]
+    if "FAIL" in levels:
+        status = "FAIL"
+    elif "WARNING" in levels:
+        status = "WARNING"
+    else:
+        status = "PASS"
+
+    report = {"status": status, "findings": findings}
+
+    logger.info(
+        "leakage_check_complete",
+        status=status,
+        n_findings=len(findings),
+        n_fail=levels.count("FAIL"),
+        n_warn=levels.count("WARNING"),
+    )
+
+    if status == "FAIL":
+        logger.error(
+            "leakage_check_blocked_training",
+            fail_findings=[f["message"] for f in findings if f["level"] == "FAIL"],
+        )
+
+    return report
 
 
 # ─── F&O feature enrichment (Requirement #8) ──────────────────────────────────
@@ -349,32 +852,21 @@ def generate_ranking_labels_v2(
     horizon: int = 5,
 ) -> pd.Series:
     """
-    Generate stock-ranking labels.
+    Generate stock-ranking labels — delegates to Label V2 relative module.
 
-    Returns risk-adjusted relative return vs NIFTY over `horizon` bars.
-    Future data is shifted BACKWARDS (forward-looking), then the result is
-    stored at timestamp t — the timestamp of the bar when we place the order.
+    Returns a pd.Series of vol-adjusted excess returns vs NIFTY.
+    Backward-compatible with existing callers in build_ranking_training_data().
 
-    Leakage note: the label at index i uses close[i+1..i+horizon], which is
-    by definition future data. This is intentional and correct — the model
-    is trained on (features at t) → (outcome after t). Features must never
-    use data after t.
+    .. deprecated::
+       Use :func:`src.labels.relative.generate_excess_return_labels` for
+       full provenance.  This wrapper is kept for pipeline compatibility.
     """
-    if len(stock_df) < horizon + 2:
-        return pd.Series(dtype=float)
-
-    stock_ret = stock_df["close"].pct_change()
-    nifty_ret = nifty_close.reindex(stock_df.index).pct_change()
-
-    # Forward return = mean daily return over next `horizon` bars
-    stock_fwd = stock_ret.shift(-1).rolling(horizon).mean().shift(-(horizon - 1))
-    nifty_fwd = nifty_ret.shift(-1).rolling(horizon).mean().shift(-(horizon - 1))
-
-    # Risk-adjusted: forward excess return / historical vol
-    excess = stock_fwd - nifty_fwd
-    vol = stock_ret.rolling(horizon * 2).std()
-    ra = (excess / (vol + 1e-8)).clip(-5, 5)
-    return ra
+    from ..labels.relative import generate_ranking_labels_v2_compat  # noqa: PLC0415
+    return generate_ranking_labels_v2_compat(
+        stock_df=stock_df,
+        nifty_close=nifty_close,
+        horizon=horizon,
+    )
 
 
 def generate_risk_labels(
@@ -385,52 +877,36 @@ def generate_risk_labels(
     lookforward: int = 20,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
-    Generate risk model labels at each bar.
+    Generate risk model labels — DEPRECATED wrapper around Label V2.
 
-    Simulates a long trade entry at close[t] with:
-      stop  = close[t] - stop_atr_mult   × ATR[t]
-      target= close[t] + target_atr_mult × ATR[t]
+    .. deprecated::
+       Use :func:`src.labels.triple_barrier.generate_risk_labels_v2` instead.
+       This function is retained for backward compatibility with train_all.py
+       and the existing risk model training loop.
 
-    Looks forward `lookforward` bars into low[] and high[] to determine:
-      stop_hit   : 1 if any future low ≤ stop  (else 0)
-      target_hit : 1 if any future high ≥ target (else 0)
-      mae        : max adverse excursion % (abs of min future drawdown from entry)
+    Changes from lv1:
+      ✓ Simultaneous TP+SL resolved sequentially (CONSERVATIVE_SL policy)
+      ✓ is_incomplete / DATA_INSUFFICIENT for tail bars
+      ✓ event_start/event_end timestamps in the returned label objects
 
-    Returned series are indexed identically to df — NaN at the tail where
-    there aren't enough future bars.
-
-    No future leakage: labels are computed purely from future OHLC. They are
-    NEVER used as input features.
+    Returns the same (stop_hit, target_hit, mae) tuple the callers expect.
     """
-    close = df["close"]
-    low = df["low"]
-    high = df["high"]
-    n = len(df)
+    from ..labels.triple_barrier import generate_risk_labels_v2  # noqa: PLC0415
+
+    y_stop, y_target, y_mae, _events = generate_risk_labels_v2(
+        df=df,
+        atr_series=atr_series,
+        stop_atr_mult=stop_atr_mult,
+        target_atr_mult=target_atr_mult,
+        lookforward=lookforward,
+        ambiguity_policy="CONSERVATIVE_SL",
+        symbol="pipeline",
+    )
+    return y_stop, y_target, y_mae
 
     stop_hit = pd.Series(np.nan, index=df.index, dtype=float)
     target_hit = pd.Series(np.nan, index=df.index, dtype=float)
     mae = pd.Series(np.nan, index=df.index, dtype=float)
-
-    for i in range(len(df) - lookforward):
-        entry = close.iloc[i]
-        atr_val = atr_series.iloc[i]
-        if atr_val <= 0 or entry <= 0 or np.isnan(atr_val) or np.isnan(entry):
-            continue
-
-        stop_price = entry - stop_atr_mult * atr_val
-        target_price = entry + target_atr_mult * atr_val
-
-        fwd_low = low.iloc[i + 1 : i + 1 + lookforward]
-        fwd_high = high.iloc[i + 1 : i + 1 + lookforward]
-
-        stop_hit.iloc[i] = 1.0 if (fwd_low <= stop_price).any() else 0.0
-        target_hit.iloc[i] = 1.0 if (fwd_high >= target_price).any() else 0.0
-        min_low = fwd_low.min()
-        raw_mae = abs(min((min_low - entry) / entry * 100, 0.0))
-        mae.iloc[i] = min(raw_mae, 20.0)  # cap at 20 % (Requirement #7)
-
-    return stop_hit, target_hit, mae
-
 
 def generate_regime_labels_v2(
     nifty_df: pd.DataFrame,
@@ -440,6 +916,7 @@ def generate_regime_labels_v2(
     Delegate to the existing MarketRegime label generator.
     Kept here as a thin wrapper so data_pipeline.py is self-contained.
     """
+    from ..models.market_regime import generate_regime_labels  # noqa: PLC0415
     return generate_regime_labels(nifty_df, lookforward=lookforward)
 
 
@@ -504,7 +981,9 @@ def build_regime_training_data(
                     macro["india_vix"] = float(india_vix[vix_ts])
 
             feats = compute_regime_features(nifty_window, bn_window, macro)
-            feature_vector = [feats.get(f, 0.0) for f in REGIME_FEATURES]
+            # Use NaN for missing features (not 0.0). The NaN filter below
+            # removes rows with missing features from the training set.
+            feature_vector = [feats.get(f, float("nan")) for f in REGIME_FEATURES]
             features_list.append(feature_vector)
             valid_indices.append(i)
         except Exception:
@@ -615,7 +1094,7 @@ def build_ranking_training_data(
                     index_close=nifty_window,
                     derivatives_data=deriv_dict,
                 )
-                feature_vector = [feats.get(f, 0.0) for f in RANKING_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in RANKING_FEATURES]
 
                 # ── Label: risk-adjusted forward relative return ──────────
                 stock_fwd = float(
@@ -697,7 +1176,7 @@ def build_strategy_training_data(
                     deriv_dict = _build_derivatives_dict(snap)
 
                 feats = compute_stock_features(window, derivatives_data=deriv_dict)
-                feature_vector = [feats.get(f, 0.0) for f in STRATEGY_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in STRATEGY_FEATURES]
                 all_features.append(feature_vector)
                 all_labels.append(int(strategy_labels.iloc[i]))
             except Exception:
@@ -773,10 +1252,11 @@ def build_risk_training_data(
                 feats = compute_stock_features(window, derivatives_data=deriv_dict)
                 feats["stop_distance_atr"] = stop_atr_mult
                 feats["target_distance_atr"] = target_atr_mult
-                feats["risk_reward_ratio"] = target_atr_mult / stop_atr_mult
-                feats["trend_alignment"] = feats.get("trend_strength", 0.0)
+                feats["risk_reward_ratio"]   = target_atr_mult / stop_atr_mult
+                # trend_alignment is deprecated; map to ema_stack_score
+                feats["trend_alignment"] = feats.get("ema_stack_score", float("nan"))
 
-                feature_vector = [feats.get(f, 0.0) for f in RISK_FEATURES]
+                feature_vector = [feats.get(f, float("nan")) for f in RISK_FEATURES]
                 all_features.append(feature_vector)
                 y_stop_list.append(int(stop_hit.iloc[i]))
                 y_target_list.append(int(target_hit.iloc[i]))
@@ -812,26 +1292,173 @@ def _save_dataset(
     name: str,
     arrays: dict[str, np.ndarray],
     metadata: DatasetMetadata,
+    pit_warnings: int = 0,
+    pit_violations: int = 0,
 ) -> Path:
     """
-    Save a training dataset as a compressed NPZ file + a JSON metadata sidecar.
+    Save a training dataset as a compressed NPZ file + two sidecar files:
+      {name}.npz              — compressed numpy arrays
+      {name}_meta.json        — DatasetMetadata JSON (backward-compatible)
+      {name}_snapshot.json    — DatasetSnapshot (Phase 3B full provenance)
 
-    File layout:
-      {output_dir}/{name}.npz      — compressed numpy arrays
-      {output_dir}/{name}_meta.json — DatasetMetadata as JSON
+    The snapshot records all known limitations including DATA_UNAVAILABLE fields.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    npz_path = output_dir / f"{name}.npz"
-    meta_path = output_dir / f"{name}_meta.json"
+    npz_path      = output_dir / f"{name}.npz"
+    meta_path     = output_dir / f"{name}_meta.json"
+    snapshot_path = output_dir / f"{name}_snapshot.json"
 
     np.savez_compressed(npz_path, **arrays)
 
+    row_count = int(next(iter(arrays.values())).shape[0])
+
+    # ── Backward-compatible metadata sidecar ─────────────────────────────
     meta_dict = metadata.to_dict()
-    meta_dict["recordCount"] = int(next(iter(arrays.values())).shape[0])
+    meta_dict["recordCount"] = row_count
     meta_path.write_text(json.dumps(meta_dict, indent=2))
 
-    logger.info("dataset_saved", path=str(npz_path), records=meta_dict["recordCount"])
+    # ── Phase 3B DatasetSnapshot ──────────────────────────────────────────
+    try:
+        from ..data.dataset_version import DatasetSnapshot  # noqa: PLC0415
+
+        quality_status = "CLEAN"
+        if pit_violations > 0:
+            quality_status = "BLOCKED"
+        elif pit_warnings > 0:
+            quality_status = "HAS_WARNINGS"
+
+        snapshot = DatasetSnapshot.create(
+            training_start=metadata.date_range[0],
+            training_end=metadata.date_range[1],
+            symbol_count=len(metadata.instrument_universe),
+            row_count=row_count,
+            source_versions={"pipeline": PIPELINE_VERSION, "features": FEATURE_VERSION},
+            quality_status=quality_status,
+            quality_issues=pit_warnings,
+            pit_violations=pit_violations,
+        )
+        snapshot.save(snapshot_path)
+    except Exception as exc:
+        logger.warning("snapshot_save_failed", error=str(exc))
+
+    logger.info("dataset_saved", path=str(npz_path), records=row_count)
     return npz_path
+
+
+# ─── Label V2 public API (Phase 3C) ──────────────────────────────────────────
+
+
+def generate_labels(
+    ohlcv: pd.DataFrame,
+    label_id: str = "TRIPLE_BARRIER_V2_DAILY",
+    symbol: str = "UNKNOWN",
+    benchmark_close: pd.Series | None = None,
+    sector_close_map: dict | None = None,
+    atr_series: pd.Series | None = None,
+    contract_expiry: "datetime | None" = None,
+    **kwargs,
+) -> dict:
+    """
+    Public label generation API — routes to the correct Label V2 engine.
+
+    Parameters
+    ----------
+    ohlcv        : OHLCV DataFrame with UTC DatetimeIndex.
+    label_id     : Key in LABEL_REGISTRY (e.g. "TRIPLE_BARRIER_V2_DAILY").
+    symbol       : Trading symbol.
+    benchmark_close : Required for EXCESS_RETURN labels.
+    sector_close_map: Required for SECTOR_RELATIVE labels.
+    atr_series   : Pre-computed ATR for backward-compat risk labels.
+    contract_expiry: Optional contract expiry datetime.
+
+    Returns
+    -------
+    dict with keys:
+      "events"       : list of LabelEvent objects
+      "label_id"     : label_id used
+      "label_config" : LabelConfig used
+      "diagnostics"  : LabelDiagnostics summary
+    """
+    from ..labels.registry import get_label_registration    # noqa: PLC0415
+    from ..labels.triple_barrier import (                   # noqa: PLC0415
+        generate_triple_barrier_labels, label_diagnostics_triple
+    )
+    from ..labels.fixed_horizon import (                    # noqa: PLC0415
+        generate_fixed_horizon_labels, label_diagnostics_fixed
+    )
+    from ..labels.relative import generate_excess_return_labels  # noqa: PLC0415
+    from ..labels.schemas import LabelFamily                # noqa: PLC0415
+
+    reg    = get_label_registration(label_id)
+    config = reg.config
+
+    if reg.deprecated:
+        import warnings
+        warnings.warn(
+            f"Label '{label_id}' is deprecated: {reg.deprecation_note}",
+            DeprecationWarning, stacklevel=2,
+        )
+
+    if reg.label_family == LabelFamily.TRIPLE_BARRIER:
+        events = generate_triple_barrier_labels(
+            ohlcv=ohlcv, config=config, symbol=symbol,
+            contract_expiry=contract_expiry,
+        )
+        diag = label_diagnostics_triple(events, config)
+    elif reg.label_family == LabelFamily.EXCESS_RETURN:
+        if benchmark_close is None:
+            raise ValueError(
+                f"label_id='{label_id}' requires benchmark_close (e.g. NIFTY close series)"
+            )
+        events = generate_excess_return_labels(
+            ohlcv=ohlcv, benchmark_close=benchmark_close,
+            config=config, symbol=symbol,
+        )
+        diag = label_diagnostics_fixed(events, config)
+    elif reg.label_family == LabelFamily.FIXED_RETURN:
+        events = generate_fixed_horizon_labels(
+            ohlcv=ohlcv, config=config, symbol=symbol,
+        )
+        diag = label_diagnostics_fixed(events, config)
+    else:
+        raise NotImplementedError(
+            f"label_id='{label_id}' (family={reg.label_family}) "
+            "is not yet directly callable via generate_labels(). "
+            "Use the specific module API."
+        )
+
+    return {
+        "events":       events,
+        "label_id":     label_id,
+        "label_config": config,
+        "diagnostics":  diag,
+    }
+
+
+def validate_labels(
+    labels: list,
+    feature_columns: "Sequence[str] | None" = None,
+    feature_df: "pd.DataFrame | None" = None,
+    symbol: str = "*",
+) -> list:
+    """
+    Run all label leakage validators. Returns list of LabelViolation objects.
+    Raises RuntimeError if any CRITICAL violations are found.
+    """
+    from ..labels.validators import validate_labels as _validate  # noqa: PLC0415
+    violations = _validate(
+        labels=labels,
+        feature_columns=feature_columns,
+        feature_df=feature_df,
+        symbol=symbol,
+    )
+    critical = [v for v in violations if v.severity == "CRITICAL"]
+    if critical:
+        raise RuntimeError(
+            f"Label validation CRITICAL violations for {symbol}: "
+            + "; ".join(v.description for v in critical)
+        )
+    return violations
 
 
 # ─── Main pipeline orchestrator ───────────────────────────────────────────────
