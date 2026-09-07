@@ -1,0 +1,64 @@
+{
+  "artifact": "phase_3n_provider_report",
+  "branch": "refactor/improve-ml-service",
+  "chain_result": {
+    "events": [
+      {
+        "provider": "data_service",
+        "reason": "unconfigured",
+        "response_status": "UNAVAILABLE",
+        "role": "FAILED_OVER",
+        "source_status": "UNCONFIGURED",
+        "timestamp": "2026-09-07T04:47:44.894700+00:00"
+      },
+      {
+        "provider": "angel_one",
+        "reason": "unreachable",
+        "response_status": "UNAVAILABLE",
+        "role": "FAILED_OVER",
+        "source_status": "UNAVAILABLE",
+        "timestamp": "2026-09-07T04:47:44.894710+00:00"
+      },
+      {
+        "provider": "upstox",
+        "reason": "unreachable",
+        "response_status": "UNAVAILABLE",
+        "role": "FAILED_OVER",
+        "source_status": "UNAVAILABLE",
+        "timestamp": "2026-09-07T04:47:44.894715+00:00"
+      },
+      {
+        "provider": "yahoo",
+        "reason": "unreachable",
+        "response_status": "UNAVAILABLE",
+        "role": "FAILED_OVER",
+        "source_status": "UNAVAILABLE",
+        "timestamp": "2026-09-07T04:47:44.894718+00:00"
+      }
+    ],
+    "failed_over": true,
+    "ok": false,
+    "provider_used": null,
+    "request_key": "SYNTH:1d",
+    "resolved_at": "2026-09-07T04:47:44.894721+00:00",
+    "selected": null
+  },
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "hierarchy": [
+    "data_service",
+    "angel_one",
+    "upstox",
+    "yahoo"
+  ],
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "all providers UNAVAILABLE in this environment -> fail-closed (selected=None). Fallback semantics + recording verified; no silent merge; no fabricated data.",
+  "phase": "3N",
+  "sample_size": 0,
+  "time_window": "N/A (no real session reachable)"
+}

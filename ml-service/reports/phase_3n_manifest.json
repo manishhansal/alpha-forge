@@ -1,0 +1,55 @@
+{
+  "branch": "refactor/improve-ml-service",
+  "economic_evidence_level": "INSUFFICIENT_EVIDENCE",
+  "environment": {
+    "absent": [
+      "talib",
+      "torch",
+      "sklearn",
+      "yfinance",
+      "sqlalchemy"
+    ],
+    "data_service_url": "unset",
+    "present": [
+      "numpy",
+      "scipy",
+      "pandas",
+      "httpx",
+      "fastapi",
+      "pydantic"
+    ],
+    "python": "3.14.6",
+    "real_market_data_reachable": false
+  },
+  "evidence_files": [
+    "phase_3n_data_quality_report.json",
+    "phase_3n_decision_report.json",
+    "phase_3n_paper_report.json",
+    "phase_3n_provider_report.json",
+    "phase_3n_readiness_report.json",
+    "phase_3n_reconciliation_report.json",
+    "phase_3n_signal_report.json",
+    "phase_3n_manifest.json",
+    "phase_3n_test_results.json"
+  ],
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "guarantees": {
+    "auto_promotion": false,
+    "auto_recalibration": false,
+    "auto_retraining": false,
+    "broker_order_path": false,
+    "broker_secrets_in_frontend": false,
+    "import_clean_no_talib_torch_sklearn": true,
+    "live_execution": false,
+    "no_lookahead": true,
+    "no_silent_provider_merge": true,
+    "point_in_time_enforced": true,
+    "provider_hierarchy": "data_service -> angel_one -> upstox -> yahoo (no new NSE scraper)",
+    "synthetic_never_official_evidence": true
+  },
+  "new_package": "src/paper (providers/data_quality/signals/paper_engine/session/evidence/readiness)",
+  "phase": "3N",
+  "principle": "VALIDATION phase \u2014 orchestrate + validate 3A\u20133M; no new model.",
+  "readiness": "ALPHAFORGE_PAPER_READY_WITH_LIMITATIONS",
+  "title": "Indian Market Paper-Trading Validation & Production-Readiness Gate"
+}

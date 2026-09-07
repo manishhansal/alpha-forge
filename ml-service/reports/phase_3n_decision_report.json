@@ -1,0 +1,21 @@
+{
+  "artifact": "phase_3n_decision_report",
+  "blocked_by_kill_switch": 1,
+  "branch": "refactor/improve-ml-service",
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "decisions": 2,
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "example_decision_state": "EXECUTION_PLANNED",
+  "execution_planned": 1,
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "decision->paper flow exercised on synthetic data; fail-closed + kill-switch honored.",
+  "phase": "3N",
+  "provenance_complete_required": true,
+  "sample_size": 0,
+  "time_window": "N/A (no real session reachable)"
+}

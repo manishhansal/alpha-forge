@@ -1,0 +1,23 @@
+{
+  "artifact": "phase_3n_reconciliation_report",
+  "branch": "refactor/improve-ml-service",
+  "config": {},
+  "data_source": "SYNTHETIC_DATA",
+  "evidence_level": "INSUFFICIENT_EVIDENCE",
+  "excluded_from_official": {
+    "incomplete_provenance": 0,
+    "not_official": 0,
+    "synthetic_or_replay": 1
+  },
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "limitations": [
+    "No reachable Indian-market data tier in this environment (DATA_SERVICE_URL unset; Angel One/Upstox/Yahoo/NSE/BSE unreachable; yfinance/sklearn/talib absent). No REAL_MARKET_DATA session is possible here; economic performance is INSUFFICIENT_EVIDENCE. Reports validate correctness + safety of the Phase 3N machinery on tagged SYNTHETIC_DATA only."
+  ],
+  "model_versions": [],
+  "note": "SYNTHETIC_DATA can never become official evidence (spec \u00a757) -> 0 official records.",
+  "official_evidence_records": 0,
+  "phase": "3N",
+  "reconciliation_status": "RECONCILED",
+  "sample_size": 0,
+  "time_window": "N/A (no real session reachable)"
+}

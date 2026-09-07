@@ -4,6 +4,74 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3N: Indian Market Paper-Trading Validation & Production-Readiness Gate
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Files changed:** 8 new source files (`src/paper/`) + 1 test file + 13 reports/docs (2 audit md, 9 evidence JSON, 1 evidence generator, 2 docs) + 1 CHANGES entry
+**Tests (Phase 3N):** 62 passed / 0 failed / 0 skipped
+**Full regression (3A–3N + vpin + meta + monitoring):** 1129 passed / 0 failed / 28 skipped (pre-existing) — **zero regressions**
+**Security audit:** CLEAN — no broker-call tokens in `src/paper`; no `NEXT_PUBLIC_*` secrets in the frontend; no live-order path reachable; `assert_not_live` at every paper entrypoint; no `LIVE_READY` state
+**Phase result:** `PHASE_3N_PASS`
+**Readiness verdict:** `ALPHAFORGE_PAPER_READY_WITH_LIMITATIONS`
+
+### Summary
+
+Phase 3N is a VALIDATION phase — no new model. It adds `src/paper/`, an
+import-clean package that ORCHESTRATES and VALIDATES the Phase 3A–3M stack against
+(tagged) Indian-market data and produces honest, reproducible evidence for a
+production-readiness decision. Everything is reused, nothing reimplemented: the
+provider hierarchy (Data Service → Angel One → Upstox → Yahoo, no new NSE scraper),
+the `execution` cost/fill/slippage engines, the `shadow.ShadowLedger`, the
+`decision.DecisionPipeline`, the `src/data` PIT stores, and `NSECalendar`.
+
+### New package: `src/paper/`
+
+| Module | Purpose |
+|--------|---------|
+| `providers.py` | canonical provider-response contract + explicit fallback semantics (PRIMARY/FALLBACK/PARTIAL/STALE/INVALID/UNAVAILABLE, every event recorded, no silent merge) + config-driven cross-provider consistency |
+| `data_quality.py` | market-calendar / freshness / OHLCV / F&O metadata / option-chain / corporate-action / historical-universe validation + no-lookahead asserter (all fail-closed, PIT-correct) |
+| `signals.py` | `CanonicalSignal` contract, dedup by `evidence_group`, conflict classification; final resolution owned by the DecisionPipeline (no new voting scheme) |
+| `paper_engine.py` | `PaperOrder` state machine (CREATED→…→CLOSED, illegal transitions rejected), idempotent multi-order book, partial-fill accounting; reuses the 3G FillEngine; NO broker |
+| `session.py` | reproducible session manifest + deterministic EOD reconciliation + replay + restart recovery + kill switch (→ NO_NEW_PAPER_EXPOSURE) |
+| `evidence.py` | metrics with sample-size / effective-n / CI / status (INSUFFICIENT_EVIDENCE below policy) + conditional breakdowns + bootstrap/block-bootstrap + multiple-testing (BH/Bonferroni) + official-vs-diagnostic-vs-degraded-vs-untrusted separation |
+| `readiness.py` | 8 gates (DATA/FEATURES/MODELS/CALIBRATION/RISK/EXECUTION/PAPER/EVIDENCE) → ALPHAFORGE_PAPER_READY / _READY_WITH_LIMITATIONS / _NOT_READY (no LIVE_READY) |
+
+### Honest verdict
+
+This environment has no reachable Indian-market data tier (`DATA_SERVICE_URL`
+unset; Angel/Upstox/Yahoo/NSE/BSE unreachable; `yfinance`/`sklearn`/`talib` absent),
+so **no `REAL_MARKET_DATA` session is possible here** — fabricating one would be a
+hard-stop violation. Correctness, safety, PIT discipline, idempotency, recovery,
+and the gate logic are fully validated on tagged `SYNTHETIC_DATA`; the economic
+readiness question is reported as `INSUFFICIENT_EVIDENCE`. No readiness gate is
+BLOCKED (RISK/EXECUTION/PAPER READY; DATA/FEATURES/MODELS/CALIBRATION/EVIDENCE
+INSUFFICIENT_EVIDENCE) → `ALPHAFORGE_PAPER_READY_WITH_LIMITATIONS`. Readiness
+reflects correctness/safety, not profitability; LIVE is not authorized.
+
+### Guarantees (reconfirmed)
+
+live broker execution DISABLED · broker secrets in frontend NONE · automatic
+promotion DISABLED (human-gated) · automatic retraining DISABLED
+(recommendation-only) · automatic recalibration DISABLED · synthetic data can never
+become official evidence · package import-clean (no talib/torch/sklearn).
+
+### Scope stop
+
+No Phase 3O, no live trading, no automatic promotion/retraining/recalibration, no
+new predictive model.
+
+### Evidence & docs
+
+`reports/phase_3n_manifest.json` + decision/data-quality/provider/signal/paper/
+reconciliation/readiness reports + `phase_3n_test_results.json` (generator
+`scripts/gen_phase3n_evidence.py`); audits `reports/phase-3n-current-audit.md` +
+`reports/phase-3n-security-frontend-audit.md`; docs
+`docs/ml-audit/phase-3n-paper-validation.md` +
+`docs/ml-operations/phase-3n-paper-runbook.md`.
+
+---
+
 ## [Unreleased] — Phase 3M: Research-to-Production Integration, Shadow Execution & ML Operations
 
 **Date:** 2026-09-06
