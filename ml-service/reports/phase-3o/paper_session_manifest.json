@@ -1,0 +1,34 @@
+{
+  "calibration_versions": [
+    "cal@1.0.0"
+  ],
+  "code_version": "phase-3o",
+  "configuration_hash": "cfg-synth-1",
+  "created_at": "2026-09-07T05:22:01.964099+00:00",
+  "data_snapshot_ids": [
+    "synth-snap-1"
+  ],
+  "data_tag": "SYNTHETIC_DATA",
+  "dataset_version": "",
+  "environment_version": "",
+  "execution_version": "ex@1.0.0",
+  "feature_schema_hash": "",
+  "feature_version": "fv-1",
+  "git_commit": "611b4f7",
+  "market_date": "2025-01-27",
+  "mode": "paper",
+  "model_hashes": [],
+  "model_versions": [
+    "m1@1.0.0"
+  ],
+  "paper_session_id": "paper-3o-synth-001",
+  "portfolio_version": "pf@1.0.0",
+  "random_seed": 42,
+  "replay_complete": true,
+  "replay_id": "b9e36520fc2d63bf",
+  "revision": 0,
+  "rl_policy_version": "rl@1.0.0",
+  "session_end": "",
+  "session_start": "",
+  "supersedes": null
+}

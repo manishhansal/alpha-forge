@@ -1,0 +1,87 @@
+{
+  "dimensions": [
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "implementation_shortfall_bps",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "slippage_bps",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "fill_rate",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "completion_rate",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "cost_bps",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "risk",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "inventory",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "baseline": null,
+      "ci_high": null,
+      "ci_low": null,
+      "delta": null,
+      "dimension": "deadline_adherence",
+      "n": 0,
+      "rl": null,
+      "status": "INSUFFICIENT_EVIDENCE"
+    }
+  ],
+  "economic_evidence": "INSUFFICIENT_EVIDENCE",
+  "min_n": 30,
+  "note": "execution-quality only; gross PnL is NOT a valid RL metric here"
+}

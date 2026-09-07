@@ -1,0 +1,23 @@
+{
+  "calibration": {
+    "brier": null,
+    "data_tag": "SYNTHETIC_DATA",
+    "ece": null,
+    "intercept": null,
+    "log_loss": null,
+    "mce": null,
+    "min_n": 100,
+    "n": 0,
+    "note": "auto-recalibration is out of scope for this phase",
+    "slope": null,
+    "status": "CALIBRATION_INSUFFICIENT_EVIDENCE"
+  },
+  "economic_evidence": "INSUFFICIENT_EVIDENCE",
+  "note": "no real-market observations \u2192 statistical evidence INSUFFICIENT",
+  "reporting_rules": {
+    "calibration": "requires n >= min_observations",
+    "rl": "requires baseline + paired deltas + uncertainty",
+    "sharpe": "requires window + n + frequency + cost basis (spec \u00a768)",
+    "win_rate": "requires trade count"
+  }
+}

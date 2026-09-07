@@ -4,6 +4,53 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Phase 3O: Paper-Trading Evidence Accumulation, Reliability & Go/No-Go Gate
+
+**Date:** 2026-09-06
+**Branch:** `refactor/improve-ml-service`
+**Files changed:** 8 new source files (`ml-service/src/paper3o/`) + 1 test file + 1 evidence generator + 13 evidence JSON + 2 docs + 1 audit md + 1 CHANGES entry — **all additive; zero tracked files modified**
+**Tests (Phase 3O):** 55 passed / 0 failed / 0 skipped
+**Full regression (3A–3O + vpin + meta + monitoring):** 1267 passed / 0 failed / 28 skipped (pre-existing) — **zero new regressions**
+**Security audit:** CLEAN — no broker-call tokens in `src/paper3o`; no live-order path reachable; `assert_not_live` at session construction; `live_authorized` is always `false`; no `LIVE_READY` state
+**Evidence level:** `E1` (all sessions SYNTHETIC in this environment)
+**Economic evidence:** `INSUFFICIENT_EVIDENCE` (no real-market data reachable — reported honestly, never fabricated)
+**Final status:** `PAPER_CONTINUE_WITH_LIMITATIONS`
+
+### Summary
+
+Phase 3O is a VALIDATION/EVIDENCE phase — no new model, no retrain, no recalibration,
+no threshold tuning. It adds `src/paper3o/`, an import-clean package that ORCHESTRATES
+the Phase 3A–3N stack to establish whether AlphaForge is operationally reliable,
+statistically credible, economically meaningful after costs, reproducible, robust
+across regimes, safe under failure, and sufficiently evidenced. Phase 3N's `src/paper`
+is left untouched.
+
+### New package: `src/paper3o/`
+
+| Module | Purpose |
+|--------|---------|
+| `session_lifecycle.py` | formal PaperSession state machine (CREATED…RECONCILED + FAILED/BLOCKED, illegal transitions rejected), full replay manifest, immutability + revisions, chronological (no-lookahead) guard |
+| `journals.py` | append-only decision/order/position journals; abstention first-class (TAKE/SKIP/ABSTAIN/INSUFFICIENT_EVIDENCE/BLOCKED/UNAVAILABLE); no fake fills; F&O position fields |
+| `evidence_store.py` | multi-session accumulation; tiers E0–E5; OFFICIAL/DIAGNOSTIC/FAILED/INVALID/SYNTHETIC separation; contamination → INVALID (never deleted); experiment registry |
+| `analysis.py` | deterministic baselines; alpha attribution; ablation (never on safety, NO_CONFIRMED_INCREMENTAL_VALUE valid); RL execution comparison (never gross PnL); cost→net attribution; turnover; capacity (INSUFFICIENT unless real ADV) |
+| `quality.py` | calibration (no auto-recalibrate); EV validation; decile monotonicity (tested, not assumed); cross-sectional IC; regime/signal-family/drift; alpha decay; latency; session-quality dimensions; stability |
+| `reliability.py` | failure tracking; observed provider reliability (no fabricated uptime); safe failover (never CORRUPTED); fail-closed recovery; accounting identity; idempotency |
+| `gate.py` | 7-dimension Go/No-Go gate + final `Phase3OManifest` (fail-closed, never authorises live) |
+
+### Honest verdict
+
+The machinery is deterministic, safe, recoverable and fully tested on tagged
+SYNTHETIC data. Because no real Indian-market data source is reachable in this
+environment, the Statistical evidence dimension is `INSUFFICIENT_EVIDENCE` and the
+economic result is not claimed — hence `PAPER_CONTINUE_WITH_LIMITATIONS`, not
+`PAPER_CONTINUE`. **`PAPER_CONTINUE` ≠ `LIVE_READY` ≠ profitable ≠ confirmed alpha.**
+
+Docs: `docs/ml-audit/phase-3o-paper-evidence.md`,
+`docs/ml-operations/phase-3o-evidence-runbook.md`. Audit:
+`reports/phase-3o-current-audit.md`. Evidence: `reports/phase-3o/*.json`.
+
+---
+
 ## [Unreleased] — Phase 3N: Indian Market Paper-Trading Validation & Production-Readiness Gate
 
 **Date:** 2026-09-06

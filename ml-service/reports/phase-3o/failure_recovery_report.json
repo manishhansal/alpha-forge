@@ -1,0 +1,84 @@
+{
+  "by_category": {
+    "CALIBRATION": {
+      "category": "CALIBRATION",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "DATA": {
+      "category": "DATA",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "EXECUTION": {
+      "category": "EXECUTION",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "FEATURE": {
+      "category": "FEATURE",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "MODEL": {
+      "category": "MODEL",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "PORTFOLIO": {
+      "category": "PORTFOLIO",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "PROVIDER": {
+      "category": "PROVIDER",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "RECONCILIATION": {
+      "category": "RECONCILIATION",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    },
+    "RL": {
+      "category": "RL",
+      "failure_count": 0,
+      "failure_rate": null,
+      "mean_recovery_seconds": null,
+      "recovery_count": 0,
+      "recovery_rate": null
+    }
+  },
+  "failover_semantics": {
+    "all_unavailable": "NO_NEW_DECISIONS"
+  },
+  "note": "no failures observed in this environment; semantics verified in tests",
+  "recovery_semantics": {
+    "no_state": "FAILED_CLOSED",
+    "would_duplicate": "FAILED_CLOSED"
+  }
+}

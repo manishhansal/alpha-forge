@@ -1,0 +1,9 @@
+{
+  "data_tag": "SYNTHETIC_DATA",
+  "economic_result": "INSUFFICIENT_EVIDENCE",
+  "market_date": "2025-01-27",
+  "note": "SYNTHETIC session \u2014 validates machinery only; no real-market economic claim (no real data reachable in this environment)",
+  "paper_session_id": "paper-3o-synth-001",
+  "replay_complete": true,
+  "replay_id": "b9e36520fc2d63bf"
+}

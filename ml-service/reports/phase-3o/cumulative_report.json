@@ -1,0 +1,17 @@
+{
+  "aggregate_tier": "E1",
+  "by_class": {
+    "DIAGNOSTIC": 0,
+    "FAILED": 0,
+    "INVALID": 0,
+    "OFFICIAL": 0,
+    "SYNTHETIC": 3
+  },
+  "note": "all sessions SYNTHETIC \u2192 SYNTHETIC class, tier E1; no OFFICIAL real-market evidence exists yet",
+  "official_series": {
+    "homogeneous": true,
+    "n_official_sessions": 0,
+    "n_series": 0,
+    "series": {}
+  }
+}

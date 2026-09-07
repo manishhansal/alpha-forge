@@ -1,0 +1,9 @@
+{
+  "accounting_identity": "opening+flows+realized+unrealized-costs=closing (verified)",
+  "idempotency": "duplicate decision/order/fill/reconcile are no-ops (verified)",
+  "live_authorized": false,
+  "live_trading": "DISABLED",
+  "no_fake_fills": "unfilled orders keep execution_price=None (verified)",
+  "no_lookahead": "enforced (chronology guard + adversarial tests)",
+  "note": "production-safety checks validated on SYNTHETIC data in tests"
+}
