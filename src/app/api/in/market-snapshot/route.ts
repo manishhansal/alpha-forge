@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { pickBrokerChain } from "@/services/india/broker/factory";
+import { pickBrokerChain, getBrokerById } from "@/services/india/broker/factory";
 import { resolveQuotes } from "@/services/india/resolve";
+import { resolveQuotesViaRegistry } from "@/services/india/registry-resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
 import type { DataSourceId } from "@/features/settings/data-sources-shared";
 import {
@@ -32,7 +33,8 @@ const ALL_INDICES = [...FNO_INDICES, ...SUPPLEMENTARY_INDICES];
 
 export async function GET() {
   const selections = await getActiveSelections();
-  const chain = pickBrokerChain(selections.india.selected);
+  const selected = selections.india.selected;
+  const chain = pickBrokerChain(selected);
 
   const indexSyms = ALL_INDICES.map((i) => i.symbol);
   const sectorSyms = SECTORS.map((s) => s.symbol);
@@ -44,9 +46,36 @@ export async function GET() {
   const indexQuotes = indexRes.quotes;
   const sectorQuotes = sectorRes.quotes;
 
+  // Registry-only sources (Upstox today) have no legacy BrokerAdapter, so the
+  // adapter chain above silently skips them and falls back to Yahoo. When the
+  // user actually selected such a source, resolve those quotes through the
+  // ProviderRegistry so the snapshot carries genuine provenance (e.g. Upstox)
+  // instead of mislabelling Yahoo data.
+  const registryOnlySelected = selected.filter((id) => getBrokerById(id) == null);
+  const wantsRegistry = registryOnlySelected.length > 0;
+
+  if (wantsRegistry) {
+    const [regIdx, regSec] = await Promise.all([
+      resolveQuotesViaRegistry(indexSyms, registryOnlySelected),
+      resolveQuotesViaRegistry(sectorSyms, registryOnlySelected),
+    ]);
+    // Prefer registry values (they carry the user-selected source) but keep
+    // legacy-chain values for anything the registry couldn't serve.
+    indexSyms.forEach((sym, i) => {
+      const q = regIdx.bySymbol.get(sym);
+      if (q) indexQuotes[i] = q;
+    });
+    sectorSyms.forEach((sym, i) => {
+      const q = regSec.bySymbol.get(sym);
+      if (q) sectorQuotes[i] = q;
+    });
+  }
+
+  // Rebuild the distinct source list from the FINAL, merged quotes so the badge
+  // reflects exactly what served each value (post registry override).
   const sources: DataSourceId[] = [];
-  for (const s of [...indexRes.sources, ...sectorRes.sources]) {
-    if (!sources.includes(s)) sources.push(s);
+  for (const q of [...indexQuotes, ...sectorQuotes]) {
+    if (q.source && !sources.includes(q.source)) sources.push(q.source);
   }
 
   const indices: IndexQuote[] = ALL_INDICES.map((m, i) => {
@@ -71,7 +100,7 @@ export async function GET() {
     indices,
     sectors,
     fetchedAt: new Date().toISOString(),
-    source: (chain[0]?.id ?? "yahoo") as DataSourceId,
+    source: sources[0] ?? (chain[0]?.id ?? "yahoo") as DataSourceId,
     sources,
   };
 
