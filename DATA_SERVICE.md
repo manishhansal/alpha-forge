@@ -1,10 +1,12 @@
 # AlphaForge Data Service
 
-**Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED (certification completed 2026-09-03)  
+**Version: 3.1.0** — LEVEL 2 — INTEGRATION CERTIFIED · RELIABILITY & FAILOVER CERTIFIED (2026-09-07) · API CONFORMANCE VALIDATED (2026-09-08)  
 **Role: Tier-0 market data provider** for the TypeScript layer (V3.0.0, 2026-09-04)  
-**Last updated:** 2026-09-04, commit `<pending>` (reconnect + duplicate-const fixes)
+**Last updated:** 2026-09-08, branch `refactor/data-service` (PR #29) — reliability hardening + Angel/Upstox live-WS + API conformance
 
 Standalone reference for the `data-service` Python microservice — the canonical, validated, low-latency NSE market-data foundation for AlphaForge.
+
+> **V3.1 Summary (`refactor/data-service`, PR #29):** V3.1 is a production-grade reliability & failover upgrade applied to **both** layers of the acquisition chain `data-service → Angel One → Upstox → Yahoo`. In the Python service it adds a typed provider-error core (`core/provider_http.py`) with HTTP-status classification, an exponential-backoff ladder that honours `Retry-After`, and pooled keep-alive clients; wires the previously **dead** Upstox client into `brokers/router.py` (`/brokers/upstox/*`); adds a capability-aware `GET /health/providers`; adds cache-first historical fetch with validated gap repair (`scrapers/historical_repair.py`); wires duplicate-tick suppression + gap detection into the publish loop; and widens the canonical `ProviderId` so Upstox/Angel/Yahoo data no longer fails schema validation. On the TypeScript side it adds capability-aware circuit breakers, status-driven error classification, cross-provider reconciliation, a signal-engine data gate, never-silent provider switches, the Upstox **v3** Protobuf WebSocket feed, and an `resolveAngelWsSession()` fix that lets the Angel SmartStream WS actually start. See [`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md) and [`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md) for full evidence. New sections: [§21](#21-reliability--failover-core-v31), [§22](#22-v31-bug-fix-log).
 
 > **V3.0 context:** All direct NSE data acquisition was removed from the TypeScript layer in V3.0.0 (commit `1c8235f`). The `data-service` is now the **tier-0 provider** in the `ProviderRegistry` via `ScraplingProvider`. The TypeScript `ProviderId` union no longer includes `"nse"` — all NSE scraping runs here. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
 
@@ -36,6 +38,8 @@ Standalone reference for the `data-service` Python microservice — the canonica
 18. [V2 Bug-Fix Log](#18-v2-bug-fix-log)
 19. [Known Limitations (Updated V2)](#19-known-limitations-updated-v2)
 20. [Development Guide (Full)](#20-development-guide-full)
+21. [Reliability & Failover Core (V3.1)](#21-reliability--failover-core-v31)
+22. [V3.1 Bug-Fix Log](#22-v31-bug-fix-log)
 
 ---
 
@@ -66,7 +70,12 @@ The data service provides NSE market data without requiring any broker credentia
 | Instrument master | `httpx` → NSE instrument CSV | — |
 | **DataQualityGate** | `POST /data/gate` — evaluates freshness, completeness, provider health | **V2.1 NEW** |
 | **Lineage API** | `GET /data/lineage/*` — records and retrieves observation provenance | **V2.1 NEW** |
-| **Upstox broker client** | `src/brokers/upstox_client.py` — quotes + historical candles via Upstox API | **V3.0 NEW** |
+| **Upstox broker client** | `src/brokers/upstox_client.py` — quotes + historical candles via Upstox API, **wired via `brokers/router.py`** | **V3.1 wired** |
+| **Provider fallback API** | `GET /brokers/upstox/{status,quotes,historical}` — authorized Upstox as a classified, non-crashing fallback source | **V3.1 NEW** |
+| **Capability-aware provider health** | `GET /health/providers` — per-provider, per-capability health from circuit-breaker state | **V3.1 NEW** |
+| **Resilient HTTP core** | `src/core/provider_http.py` — typed errors, status classification, backoff + `Retry-After`, pooled clients | **V3.1 NEW** |
+| **Cache-first historical + gap repair** | `src/scrapers/historical_repair.py` — fingerprinted cache, gap detection, validated repair | **V3.1 NEW** |
+| **Duplicate-tick protection** | `tick_publisher` dedup + gap detection wired into the publish loop | **V3.1 NEW** |
 
 ---
 
@@ -88,8 +97,14 @@ The data service provides NSE market data without requiring any broker credentia
 │  ├── historical.py     → NSE/BSE archive CDN (httpx)     │
 │  └── instrument_master.py → NSE instrument CSV (httpx)   │
 │                                                          │
-│  Brokers (V3.0)                                          │
-│  └── upstox_client.py  → Upstox v2 API (httpx)          │
+│  Brokers (V3.1 — wired)                                  │
+│  ├── router.py         → /brokers/upstox/{status,...}    │
+│  ├── upstox_client.py  → Upstox v2 API (httpx, pooled)   │
+│  └── upstox_instruments.py → symbol→ISIN resolver (12h)  │
+│                                                          │
+│  Reliability core (V3.1)                                 │
+│  └── core/provider_http.py → typed errors + backoff +    │
+│         Retry-After + pooled keep-alive clients          │
 │                                                          │
 │  Anti-ban                                                │
 │  ├── proxy_manager.py  (optional proxy pool)             │
@@ -120,7 +135,12 @@ The data service provides NSE market data without requiring any broker credentia
 | `src/scrapers/instrument_master.py` | NSE/BSE instrument master download and parsing |
 | `src/publisher/tick_publisher.py` | 5s poll loop + Redis `PUBLISH` + Redis Streams (V2.1) |
 | `src/publisher/router.py` | `GET /publisher/*` monitoring endpoints |
-| `src/brokers/upstox_client.py` | **NEW V3.0** — Upstox v2 API client (quotes, historical candles, lineage) |
+| `src/brokers/router.py` | **NEW V3.1** — `/brokers/upstox/{status,quotes,historical}`; maps typed provider errors to 401/403/429/503/502 (never a 500) |
+| `src/brokers/upstox_client.py` | Upstox v2 API client (quotes, historical candles); pooled + typed errors; **wired via `router.py` in V3.1** (was dead code) |
+| `src/brokers/upstox_instruments.py` | **NEW V3.1** — symbol→ISIN instrument-key resolver (raw-gzip instrument master, 12h cache) |
+| `src/core/provider_http.py` | **NEW V3.1** — typed `ProviderError` hierarchy, `classify_status`, `parse_retry_after_ms`, backoff ladder, `resilient_get`, pooled clients |
+| `src/scrapers/historical_repair.py` | **NEW V3.1** — provider-independent cache key + data fingerprint + gap detection + validated gap-repair coordinator |
+| `src/monitoring/health_router.py` | `/health/{live,ready,data}` + **`/health/providers`** (capability-aware, V3.1) |
 | `src/core/gate_router.py` | **NEW V2.1** — `POST /data/gate` + lineage endpoints |
 | `src/anti_ban/proxy_manager.py` | Optional proxy pool with rotation |
 | `src/anti_ban/ban_detector.py` | Body-content ban heuristics |
@@ -196,8 +216,9 @@ All configuration is read from environment variables. The `Settings` dataclass i
 | `BSE_RATE_LIMIT` | `2` | Requests/second to `bseindia.com` |
 | `BAN_BACKOFF_SECONDS` | `60` | Cooldown after ban detection |
 | `SYMBOLS` | 20 NSE symbols | Comma-separated symbols for tick publisher |
-| `UPSTOX_CLIENT_ID` | _(empty)_ | Upstox client ID (broker client, V3.0) |
-| `UPSTOX_ACCESS_TOKEN` | _(empty)_ | Upstox bearer token (broker client, V3.0) |
+| `UPSTOX_ANALYTICS_TOKEN` | _(empty)_ | **Preferred** — long-lived read-only Upstox bearer (broker client). Server-side only, never exposed to the browser. |
+| `UPSTOX_ACCESS_TOKEN` | _(empty)_ | Legacy Upstox bearer token (backward-compat fallback if the analytics token is unset) |
+| `UPSTOX_CLIENT_ID` | _(empty)_ | Upstox client ID (broker client) |
 
 In `docker-compose.yml` these are passed via the `environment:` block on the `data-service` service.
 
@@ -257,7 +278,8 @@ Chromium is downloaded at **image build time** (`scrapling install` runs during 
 | `GET` | `/health` | Always HTTP 200. `status: "healthy"` or `"degraded"` with component map. |
 | `GET` | `/health/live` | Liveness probe — always 200 if process running. |
 | `GET` | `/health/ready` | Readiness probe — checks Redis + publisher. |
-| `GET` | `/health/data` | Data quality health — freshness, gaps, circuit breaker states. |
+| `GET` | `/health/data` | Data quality health — freshness, gaps, circuit breaker states, duplicate rate, clock skew. |
+| `GET` | `/health/providers` | **V3.1** — capability-aware provider health (per provider × capability, derived from circuit-breaker state). Overall is `HEALTHY`/`DEGRADED` — a single degraded capability never makes the service `DOWN`. |
 | `GET` | `/scraping/status` | Capability flags (chromium, redis, proxy, each scraper path). |
 
 ### DataQualityGate (V2.1)
@@ -312,6 +334,19 @@ Response:
 | Method | Path | Query params |
 |---|---|---|
 | `GET` | `/scraping/instruments` | `exchange` (NSE\|BSE) |
+
+### Broker fallback — Upstox (V3.1)
+
+The data-service's own authorized Upstox integration, surfaced as a classified
+fallback source. Every provider-level failure is mapped to a clean HTTP status
+(`401`/`403`/`429`/`503`, else `502`) with `retryable` + `retryAfterMs` — never
+an unhandled `500` — so the TypeScript failover layer can classify identically.
+
+| Method | Path | Query params |
+|---|---|---|
+| `GET` | `/brokers/upstox/status` | — · reports `configured` + per-capability circuit-breaker state |
+| `GET` | `/brokers/upstox/quotes` | `symbols` (comma-separated), `exchange` (NSE\|BSE) |
+| `GET` | `/brokers/upstox/historical` | `symbol`, `interval`, `from`, `to` (YYYY-MM-DD), `exchange` |
 
 ### Publisher / Monitoring
 
@@ -898,19 +933,31 @@ symbol_normalizer.normalize("RELIANCE.NS")    # → "RELIANCE"
 symbol_normalizer.normalize("NIFTY 50")       # → "NIFTY"
 ```
 
-### Upstox Broker Client (V3.0)
+### Upstox Broker Client (wired in V3.1)
 
-`src/brokers/upstox_client.py` — new Python broker API client for fallback data when NSE scraping is unavailable:
+`src/brokers/upstox_client.py` — the Python broker API client for fallback data
+when NSE scraping is unavailable. It exposes **module-level async functions**
+(not a `UpstoxClient` class) and reads its bearer token from
+`UPSTOX_ANALYTICS_TOKEN` (preferred) or `UPSTOX_ACCESS_TOKEN`. Callers pass plain
+symbols — equity symbols are resolved to Upstox ISIN instrument keys internally
+by `upstox_instruments.py`, so you never build `NSE_EQ|...` keys by hand:
 
 ```python
-from src.brokers.upstox_client import UpstoxClient
+from src.brokers import upstox_client
 
-client = UpstoxClient(client_id=..., access_token=...)
-quotes = await client.get_quotes(["NSE_EQ|INE009A01021"])   # INFOSYS
-candles = await client.get_historical_candles("NSE_EQ|INE009A01021", "1D", from_date, to_date)
+# Plain symbols in — ISIN resolution + interval mapping happen internally.
+quotes = await upstox_client.get_quotes(["NIFTY", "RELIANCE"])   # {sym: MDQuote}
+candles = await upstox_client.get_historical_candles(
+    "RELIANCE", "1d", from_date, to_date, exchange="NSE",
+)
 ```
 
-Full lineage recording per observation. Circuit breaker integration. Used by the data-service as a secondary quote source when NSE endpoints are degraded.
+**V3.1 changes:** this client was previously **dead code** (nothing imported it).
+It is now wired via `brokers/router.py` and hardened with pooled keep-alive
+clients and the typed `ProviderError` hierarchy (`core/provider_http.py`). When no
+token is configured every method returns empty results (no crash). See §21 for
+the reliability core and the API-conformance report for the Upstox v2/v3
+deviations that were fixed.
 
 ---
 
@@ -973,7 +1020,8 @@ Session warmer created an ephemeral browser; production singletons were never re
 | No adjusted historical prices | NSE Bhavcopy is raw exchange prices | Use Yahoo for adjusted |
 | 5s polling = near-real-time | Not exchange tick-by-tick | Documented |
 | BSE daily is slow (per-day downloads) | ~260s for 5 years on one symbol | Use Yahoo for BSE history |
-| GATE-001 — TS signal engine not wired to DataQualityGate | `POST /data/gate` implemented in Python but not called by TypeScript signal engine | **Open — blocks LEVEL 3 cert** |
+| GATE-001 — TS signal engine not wired to the Python `POST /data/gate` | The Python HTTP gate is still not called by the TS signal engine. V3.1 added an **in-process** TS gate (`evaluateSignalGate` in `reconciliation.service.ts`) that blocks STALE/INVALID data from SIGNAL/ML/EXECUTION, which mitigates but does not replace the server-side gate. | **Partially mitigated (V3.1); still open for LEVEL 3 cert** |
+| Live provider scenarios not exercised (V3.1) | Real 403/429/503 over the wire, live dual-WS hot-failover latency, and production cache-hit % are verified deterministically with mocks, not against live providers. | **NOT EXECUTED — credentials/market-hours required** (see §21.7) |
 
 ---
 
@@ -1033,3 +1081,165 @@ print(gate.signalEngineAllowed)  # True if all gates pass
 print(gate.confidenceScore)      # 0–95
 print(gate.blockReason)          # None or explanation
 ```
+
+---
+
+## 21. Reliability & Failover Core (V3.1)
+
+V3.1 hardens the acquisition chain `data-service → Angel One → Upstox → Yahoo`
+against provider-level failures. The upgrade was applied to **both** layers: the
+Python `data-service` (this microservice) and the TypeScript `src/lib/market-data/`
+provider chain that consumes it. Full deterministic evidence lives in
+[`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md).
+
+> **Where the provider chain actually lives.** The failover / circuit-breaker /
+> registry logic runs in the **TypeScript** layer (`Scrapling(data-service, prio 0)
+> → Angel One → Upstox → Yahoo`). The Python `data-service` is the credential-free
+> NSE/BSE scraper surfaced as the `scrapling` tier-0 provider, plus an authorized
+> Upstox REST client used as a classified fallback source.
+
+### 21.1 Python — `core/provider_http.py`
+
+A typed HTTP core shared by the broker + historical-repair paths:
+
+| Piece | Behaviour |
+|---|---|
+| `ProviderError` hierarchy | `ProviderAuthenticationError` (401), `ProviderAuthorizationError` (403), `InstrumentNotFoundError` (404), `ProviderRateLimitError` (429), `ProviderUnavailableError` (503), `ProviderTimeoutError`, `ProviderNetworkError`, `ProviderMalformedResponseError` — each carries `retryable` + `retry_after_ms` |
+| `classify_status(code)` | Status-code-driven classification (not fragile string matching) |
+| `parse_retry_after_ms(...)` | Honours a provider `Retry-After` header (seconds or HTTP-date), capped at 60s |
+| Backoff ladder | `1s → 2s → 4s → 8s → 16s → 30s → 60s` with jitter; provider `Retry-After` wins |
+| `resilient_get(...)` | **Never retries** 403/401/404; retries 503/timeout/network with backoff; `sleep` is injectable so tests are deterministic (no real time) |
+| Pooled clients | Keep-alive `httpx.AsyncClient` pools instead of a new TLS connection per call |
+
+### 21.2 Python — capability-aware `GET /health/providers`
+
+Reports each provider's health per capability (`live` / `historical` /
+`option_chain`) derived from circuit-breaker state, so a `503` on NSE/Angel
+*historical* marks only that capability `DEGRADED` while `live` stays `HEALTHY`.
+The overall status is `HEALTHY`/`DEGRADED` — **never `DOWN` just because one
+provider capability is down**. Untouched capabilities appear as `UNKNOWN` rather
+than silently missing.
+
+### 21.3 Python — cache-first historical + validated gap repair
+
+`scrapers/historical_repair.py`:
+
+- **Provider-independent cache key** (same key regardless of provider/case) + a
+  **data fingerprint** so identical validated data is never re-downloaded.
+- **Gap detection** flags missing intervals (none for contiguous series).
+- A **gap-repair coordinator** validates every repaired candle before use;
+  invalid repairs are rejected and the next provider is tried. When there are no
+  gaps, **zero provider requests** are made.
+
+### 21.4 Python — duplicate-tick protection
+
+The tick publisher computes a deterministic event id per observation and skips
+duplicates (`event_dedup.is_duplicate`) before publishing, so a provider failover
+or a repeated poll returning an unchanged quote never double-counts a tick. A
+continuity gap detector (`tick_gap_detector`) records gaps without blocking the
+tick that *is* available. Duplicate rate + recent gaps are surfaced on
+`/health/data`.
+
+### 21.5 Schema — `ProviderId` widened
+
+`data-service/src/schemas.py` previously declared `provider: Literal["scrapling"]`,
+which rejected **every** `MDQuote(provider="upstox", …)` with a `ValidationError`
+— silently breaking the Upstox path. `ProviderId` is now
+`Literal["scrapling", "angel_one", "upstox", "yahoo"]` (mirroring the TypeScript
+`ProviderId`) on `MDQuote`, `LiveTick`, and `OptionChain`; the default stays
+`"scrapling"` for the NSE/BSE scraper paths.
+
+### 21.6 TypeScript side (`src/lib/market-data/`) — summary
+
+The consuming layer gained: status-driven error classification with `httpStatus`
++ `retryAfterMs`, a `Retry-After`-honouring backoff ladder, **capability-aware
+circuit breakers** (keyed by `providerId` *and* `providerId::capability`), a
+shared single-flight cache + token-bucket rate limiter on the Scrapling provider,
+never-silent `PROVIDER_SWITCH` records, a signal-engine data gate
+(`evaluateSignalGate` blocks STALE/INVALID data from SIGNAL/ML/EXECUTION while the
+UI may show a flagged last-known value), and tiered cross-provider reconciliation
+(`reconcileQuotes` → MATCH / WITHIN_TOLERANCE / MINOR_MISMATCH / MAJOR_MISMATCH /
+INVALID).
+
+**Live WebSocket fixes (see [`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md)):**
+
+- **Upstox** migrated to the **v3** feed — the v2 authorize endpoint now returns
+  HTTP 410 (`UDAPI1153`). The v3 feed streams binary **Protobuf** frames, decoded
+  in-process by a dependency-free wire-format decoder
+  (`src/lib/market-data/providers/upstox-proto.ts`), and the `sub` control frame
+  must be sent as **binary**. Live-validated at 158 ticks/20s.
+- **Angel One** SmartStream WS never started because the provider imported the
+  module-private `resolveConfig`/`sessions` bindings (always `undefined`) and so
+  never obtained the feed token. Fixed by exporting `resolveAngelWsSession()`.
+  Live-validated at 143 ticks/20s with a measured Angel→Upstox failover.
+
+### 21.7 What was NOT executed
+
+Live, credential-gated end-to-end scenarios (real 403/429/503 over the wire, live
+dual-WS hot-failover latency, live cross-provider reconciliation, production
+cache-hit %) are exercised **deterministically** via mocked transports and fault
+injection, but were **NOT EXECUTED** against real providers in the certification.
+They are reported honestly as pending access, not as passing. See §5 of the
+reliability certification report.
+
+---
+
+## 22. V3.1 Bug-Fix Log
+
+Defects found and fixed on `refactor/data-service` (PR #29). Every fix carries a
+regression test. See the two certification reports for the full evidence matrices.
+
+### BUG-UPSTOX-DEADCODE-01 — `brokers/upstox_client.py` was never wired [HIGH, FIXED V3.1]
+
+`DATA_SERVICE.md` (V3.0) claimed the Upstox client was "wired in" as a secondary
+quote source. It was in fact **dead code** — nothing imported it. **Fixed:** wired
+via `brokers/router.py` (`/brokers/upstox/{status,quotes,historical}`) and
+hardened with pooled clients + the typed `ProviderError` hierarchy.
+
+**Files:** `data-service/src/brokers/router.py` (new), `data-service/src/brokers/upstox_client.py`, `data-service/src/server.py`
+
+### BUG-PROVIDER-LITERAL-01 — Upstox quotes silently rejected by schema [HIGH, FIXED V3.1]
+
+`schemas.py` declared `provider: Literal["scrapling"]`, so the Upstox client
+constructing `MDQuote(provider="upstox", …)` raised a `ValidationError` for
+**every** quote — the Upstox quote path silently returned nothing. **Fixed:**
+widened `ProviderId` to `["scrapling","angel_one","upstox","yahoo"]` on
+`MDQuote`/`LiveTick`/`OptionChain` (default stays `"scrapling"`).
+
+**Files:** `data-service/src/schemas.py`
+
+### BUG-UPSTOX-CHANGEPCT-01 — Python client read a non-existent field [MEDIUM, FIXED V3.1]
+
+The Python Upstox client read `net_change_percentage` (absent from the live API)
+→ always null. **Fixed:** compute `changePct = net_change / ohlc.close × 100`
+(matching the TS provider), correct `prevClose`, and populate
+`totalBuyQty/totalSellQty` from `total_buy_quantity/total_sell_quantity`.
+
+**Files:** `data-service/src/brokers/upstox_client.py`
+
+### BUG-UPSTOX-KEYS-01 — Wrong equity keys + unsupported intervals [MEDIUM, FIXED V3.1]
+
+The Python client built symbol-based equity keys (`NSE_EQ|RELIANCE`, which Upstox
+rejects) and its interval map contained values Upstox v2 rejects (`3m/5m/10m/15m/1h/60minute`
+→ HTTP 400 `UDAPI1020`). **Fixed:** added `upstox_instruments.py` (symbol→ISIN
+resolver, 12h cache); restricted the interval map to the verified set
+(`1minute/30minute/day/week/month`); unsupported intervals now return `[]` so the
+chain fails over instead of 400-ing.
+
+**Files:** `data-service/src/brokers/upstox_instruments.py` (new), `data-service/src/brokers/upstox_client.py`
+
+### BUG-DEDUP-01 — Ticks could be double-counted across failover [MEDIUM, FIXED V3.1]
+
+A failover between providers (or a repeated poll returning the same unchanged
+quote) produced duplicate observations for the same event. **Fixed:** a
+deterministic event id + `event_dedup.is_duplicate` guard in the publish loop
+suppresses duplicates; a gap detector records continuity gaps without blocking
+the available tick.
+
+**Files:** `data-service/src/publisher/tick_publisher.py`
+
+*(TypeScript-side reliability and live-WebSocket fixes — capability-aware
+breakers, Retry-After backoff, reconciliation, the Upstox v3 Protobuf feed, and
+the Angel `resolveAngelWsSession()` fix — are documented in
+[`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md) and
+[`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md).)*

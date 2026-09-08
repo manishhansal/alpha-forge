@@ -4,6 +4,49 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — Data-Service Reliability & Failover Hardening + Angel/Upstox Live-WS + API Conformance
+
+**Date:** 2026-09-07 → 2026-09-08
+**Branch:** `refactor/data-service` (PR #29, merged `dd9c286`)
+**Type:** Production reliability & failover upgrade of the market-data chain `data-service → Angel One → Upstox → Yahoo` — applied to **both** the Python `data-service` and the TypeScript `src/lib/market-data/` layer; correctness/integrity fixes + additive reliability core (no strategy logic)
+**Scope note:** Certifies that *provider-level access failures (403/503/429/timeout/network) from any single provider are classified, isolated, and do not cause a data-service-wide failure* — the chain degrades, fails over, recovers, and reconciles. It does **not** claim AlphaForge can never be blocked.
+
+### Added — Python `data-service/`
+- `src/core/provider_http.py` — typed `ProviderError` hierarchy (401/403/404/429/503/timeout/network/malformed, each with `retryable`+`retry_after_ms`), `classify_status`, `parse_retry_after_ms`, exponential-backoff ladder (1→2→4→8→16→30→60s + jitter, honours `Retry-After`), pooled keep-alive clients, and `resilient_get` (never retries 403/401/404; injectable sleep for deterministic tests)
+- `src/brokers/router.py` — wires the previously **dead** Upstox client: `GET /brokers/upstox/{status,quotes,historical}`, mapping typed errors to 401/403/429/503 (else 502) — never an unhandled 500
+- `src/brokers/upstox_instruments.py` — symbol→ISIN instrument-key resolver (raw-gzip instrument master, 12h cache)
+- `src/monitoring/health_router.py` — `GET /health/providers` (capability-aware per provider × capability from circuit-breaker state; overall HEALTHY/DEGRADED, never DOWN for a single degraded capability)
+- `src/scrapers/historical_repair.py` — provider-independent cache key + data fingerprint (no re-download of identical validated data) + gap detection + validated gap-repair coordinator (0 provider requests when data is complete)
+- Duplicate-tick protection + gap detection wired into `publisher/tick_publisher.py`
+
+### Added — TypeScript `src/lib/market-data/`
+- Status-driven error classification (`MarketDataError.httpStatus`/`retryAfterMs`), Retry-After backoff ladder, **capability-aware circuit breakers** (keyed by `providerId` and `providerId::capability`), shared single-flight cache + token-bucket rate limiter on the Scrapling provider, never-silent `PROVIDER_SWITCH` records, `evaluateSignalGate` (blocks STALE/INVALID data from SIGNAL/ML/EXECUTION; UI gets flagged last-known), and tiered cross-provider reconciliation (`reconciliation.service.ts`: MATCH/WITHIN_TOLERANCE/MINOR_MISMATCH/MAJOR_MISMATCH/INVALID)
+- Upstox **v3** Protobuf WebSocket feed: `providers/upstox-proto.ts` (dependency-free wire decoder), v3 authorize (v2 → HTTP 410 `UDAPI1153`), binary `sub` frame — live-validated 158 ticks/20s
+- Angel One SmartStream WS fix: exported `resolveAngelWsSession()` so the feed token is obtained and the WS actually starts (previously imported module-private bindings, always `undefined`) — live-validated 143 ticks/20s + measured Angel→Upstox failover (275ms)
+
+### Fixed (each regression-guarded)
+- **BUG-UPSTOX-DEADCODE-01** [HIGH] — Upstox client was dead code; now wired via `brokers/router.py`
+- **BUG-PROVIDER-LITERAL-01** [HIGH] — `provider: Literal["scrapling"]` rejected every `MDQuote(provider="upstox")` with a `ValidationError`; widened `ProviderId` to `["scrapling","angel_one","upstox","yahoo"]`
+- **BUG-UPSTOX-CHANGEPCT-01** [MEDIUM] — Python client read non-existent `net_change_percentage`; now computes `changePct` + corrects `prevClose` + adds buy/sell qty
+- **BUG-UPSTOX-KEYS-01** [MEDIUM] — wrong symbol-based equity keys + Upstox-rejected intervals (400 `UDAPI1020`); ISIN resolver + verified interval set (`1minute/30minute/day/week/month`), unsupported intervals return `[]` to fail over
+- **BUG-DEDUP-01** [MEDIUM] — ticks could double-count across failover; deterministic event-id dedup in the publish loop
+- **TS Upstox quote fields** — `total_buy_qty`/`total_sell_qty` → `total_buy_quantity`/`total_sell_quantity` (were always null)
+- **Test-side (no production change):** 2 `max_pain` PBT float-precision failures fixed with relative+absolute tolerance (production `compute_max_pain` unchanged); market-open soak flake now retries 3× then skips per the file's own convention
+
+### Tests
+- TS typecheck **PASS**; TS market-data **553 passed** (546 baseline + 7 new WS-Protobuf); TS resilience matrix **22 passed**; TS integration/gate-client **55 passed**
+- Python data-service **671 passed / 18 skipped / 0 failed**; new reliability suites (`core/test_provider_http.py`, `scrapers/test_historical_repair.py`, `publisher/test_publish_dedup.py`, `monitoring/test_health_providers.py`) **23 passed**; new conformance test `brokers/test_upstox_quote_conformance.py`
+- New live/deterministic harness `scripts/real-provider-validation.ts` (`--ws`) + `tests/lib/market-data/resilience-matrix.test.ts`
+
+### Docs
+- Added `DATA_SERVICE_RELIABILITY_CERTIFICATION.md`, `DATA_SERVICE_API_CONFORMANCE.md`, `DATA_SERVICE_FAILOVER_REPORT.md`, `DATA_SERVICE_PROVIDER_HEALTH_REPORT.md`, `DATA_SERVICE_CERTIFICATION.md`, `DATA_SERVICE_REAL_DATA_VALIDATION.md`
+- Updated `DATA_SERVICE.md` → **V3.1** (new §21 Reliability & Failover Core, §22 V3.1 Bug-Fix Log; corrected the stale "Upstox client wired" claim; new endpoints/config/component entries)
+
+**Live-validated (market open, 2026-09-08 IST):** Angel + Upstox WS ticks, Python Upstox quotes (`provider="upstox"`, computed `changePct`). **NOT EXECUTED (honest):** real 403/429/503 over the wire, live dual-WS hot-failover latency, production cache-hit % — verified deterministically with mocks/fault-injection, pending live-credential/market-hours confirmation.
+**Final status:** `DATA_SERVICE_RELIABILITY_CERTIFIED` (deterministic) · `API_CONFORMANCE_VALIDATED` (live, read-only) · live credential-gated scenarios `NOT_EXECUTED`
+
+---
+
 ## [Unreleased] — Phase 4B: Frozen Real-Market Paper Evidence Collection (Entry Gate)
 
 **Date:** 2026-09-06

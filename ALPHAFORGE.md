@@ -314,24 +314,35 @@ When a provider's env vars are absent it is silently registered as `enabled: fal
 3. 10s cooldown prevents provider oscillation
 4. Every failover emits a structured log event (`from`, `to`, `reason`, `attempt`)
 
+**V3.1 reliability hardening.** Error classification is now HTTP-status-driven — `MarketDataError` carries `httpStatus` + `retryAfterMs`, so 403/401/404 are hard blocks (no retry, immediate failover) while 429/503/timeout/network back off. The 429/503 backoff ladder (1→2→4→8→16→30→60s + jitter) honours a provider `Retry-After` header (capped at 60s). Provider switches are **never silent** — each emits a structured `PROVIDER_SWITCH` record (`from`/`to`/`reason`/`instrument`/`gapMs`/`timestamp`).
+
 ### 5.3 Circuit Breaker
 
 Health scores start at 100. Each consecutive failure subtracts up to 40 pts; each success recovers 10 pts. Auth failures add an extra −25 pt penalty. Circuit opens at < 20 pts, attempts half-open after 30s.
 
-### 5.4 Canonical Types
+**V3.1 — capability-aware circuits.** Breakers are now keyed by `providerId` **and** `providerId::capability` (`isCapabilityCircuitOpen`), so "Angel historical DEGRADED" does not take down "Angel live" — live routes to Angel while historical fails over to Upstox. Recovery is gradual via a HALF_OPEN probe.
+
+### 5.4 Cross-Provider Reconciliation & Signal Gate (V3.1)
+
+`services/reconciliation.service.ts`:
+- **`reconcileQuotes(...)`** — tiered agreement across providers: `MATCH` / `WITHIN_TOLERANCE` / `MINOR_MISMATCH` / `MAJOR_MISMATCH` / `INVALID` (negative/absurd fields).
+- **`evaluateSignalGate(quality, consumer)`** — an in-process gate that **blocks STALE/INVALID data from the SIGNAL_ENGINE / ML_INFERENCE / EXECUTION consumers** while allowing the UI a flagged last-known value. (This is distinct from, and complements, the data-service's server-side `POST /data/gate`.)
+
+### 5.5 Canonical Types
 
 `src/lib/market-data/types.ts` — the single source of truth:
 
 ```ts
-type ProviderId = "angel_one" | "upstox" | "nse" | "yahoo"
+type ProviderId = "scrapling" | "angel_one" | "upstox" | "yahoo"  // "nse" removed in V3.0.0
 type Exchange = "NSE" | "NFO" | "BSE" | "BFO" | "MCX" | "CDS"
 type MDQuote      // normalized quote: ltp, OHLCV, OI, 52W, circuits, depth
 type OHLCVCandle  // OHLCV + interval + UTC timestamp
 type OptionChain  // per-strike CE/PE with greeks + PCR/max-pain/ATM IV analytics
 type LiveTick     // normalized streaming tick: LTP, OI, bid/ask
+type MarketDataError  // typed error: httpStatus + retryAfterMs (V3.1 status-driven classification)
 ```
 
-### 5.5 CandleBuilder Service
+### 5.6 CandleBuilder Service
 
 `src/lib/market-data/services/candle-builder.service.ts` — real-time OHLCV candle assembly:
 - Assembles candles for all 8 NSE-aligned timeframes: `1m`, `3m`, `5m`, `10m`, `15m`, `30m`, `1h`, `1d`
@@ -341,23 +352,23 @@ type LiveTick     // normalized streaming tick: LTP, OI, bid/ask
 - Configurable late-tick tolerance (default 2s); closed candles never mutated
 - Backfill gap detection on reconnect; caller-supplied `loader` fills gaps
 
-### 5.6 Validation
+### 5.7 Validation
 
 `candle-validator.ts` — rejects zero/negative prices, `high < low`, `close` outside `[low, high]`.
 `tick-validator.ts` — rejects negative LTP, future timestamps (> 5s ahead), extreme single-bar moves (> 20%).
 
-### 5.7 Angel One SmartAPI Integration
+### 5.8 Angel One SmartAPI Integration
 
 Beyond the data layer, the Angel One adapter (`services/india/angelone/`) provides:
 - **First-party F&O scanners** — gainers/losers, PCR, OI buildup from the `marketData/v1/` API
 - **Full option greeks** — delta, gamma, theta, vega per strike (not just IV)
 - **Real ΔOI** — diffs live OI against a session-open baseline cached until midnight IST
 - **FULL-mode quotes** — OI, 52W high/low, daily circuit limits, order-book imbalance ∈ [−1, 1]
-- **SmartStream WebSocket 2.0** — binary tick stream; decodes LTP/Quote/SnapQuote little-endian frames; exponential-backoff reconnect; falls back to 5s FULL-quote poll on failure
+- **SmartStream WebSocket 2.0** — binary tick stream; decodes LTP/Quote/SnapQuote little-endian frames; exponential-backoff reconnect; falls back to 5s FULL-quote poll on failure. **V3.1 fix:** the WS provider imported the module-private `resolveConfig`/`sessions` bindings (always `undefined`) and so never obtained the feed token — the stream never started. An exported `resolveAngelWsSession()` accessor now supplies the feed token; live-validated at 143 ticks/20s with a measured Angel→Upstox failover.
 - **Read-only account layer** — funds/margin, holdings, net positions (all number-typed, string-parsed)
 - **BSE (BFO) option chain** — for SENSEX expiry-day Gamma Blast / Hero Zero plays
 
-### 5.8 Upstox OAuth BFF (V3.0)
+### 5.9 Upstox OAuth BFF (V3.0)
 
 **Files:** `src/app/api/in/providers/upstox/connect/route.ts`, `src/app/api/in/providers/upstox/callback/route.ts`, `src/app/api/in/providers/upstox/disconnect/route.ts`, `src/app/api/in/providers/upstox/status/route.ts`, `src/lib/market-data/providers/upstox-token-state.ts`
 
@@ -379,7 +390,7 @@ Complete server-side OAuth Backend-for-Frontend for Upstox:
 - Token values never appear in URLs, logs, browser devtools, or client responses
 - Frontend receives only: lifecycle state + timestamps (not token values)
 
-### 5.9 Upstox Analytics API Credentials UI
+### 5.10 Upstox Analytics API Credentials UI
 
 **Files:** `src/features/settings/api-keys-shared.ts`, `src/features/settings/api-keys.ts`, `src/features/settings/upstox-credentials.ts`, `src/lib/market-data/providers/upstox.ts`, `src/services/india/broker/factory.ts`, `src/components/settings/api-keys-form.tsx`
 
@@ -392,6 +403,14 @@ Users who cannot set server-side environment variables (shared deployments, clou
 - **Max length:** `apiKey` input accepts up to 2048 characters (JWT bearer tokens run 500–1500 chars).
 - **Worker safety:** `upstox-credentials.ts` does not use `import "server-only"` — `auth()` returns `null` outside request context so the worker process is safe.
 
+### 5.11 Upstox Live WebSocket — v3 Protobuf feed (V3.1)
+
+`src/lib/market-data/providers/upstox.ts` + `providers/upstox-proto.ts`. The Upstox live tick feed was migrated to the **v3** endpoint and three defects were fixed (found by probing the real feed, all live-validated at 158 ticks/20s):
+
+- **v2 authorize discontinued** — `/v2/feed/market-data-feed/authorize` returns HTTP 410 (`UDAPI1153`). Now authorizes against `/v3/feed/market-data-feed/authorize` (parses `data.authorizedRedirectUri`), works with the Analytics Token.
+- **Feed is Protobuf, not JSON** — the v3 feed streams binary `FeedResponse` frames. A dependency-free wire-format decoder (`upstox-proto.ts`) decodes the fields we consume (instrument key + LTPC + flat vtt/oi); `handleMessage` detects binary vs JSON. The v3 schema flattened volume/OI onto `MarketFullFeed` and renamed `Feed.ff`→`fullFeed`.
+- **Subscribe must be binary** — the v3 feed ignores a text control frame; the `sub` frame is now sent as a binary frame.
+
 ---
 
 ## 6. Data Service (Credential-Free NSE Scraper — Tier-0 Provider)
@@ -399,10 +418,10 @@ Users who cannot set server-side environment variables (shared deployments, clou
 `data-service/` — a standalone Python 3.11 / FastAPI microservice that scrapes NSE market data without broker credentials. It runs at port **8200** and is the **tier-0 data provider** for the TypeScript layer via `ScraplingProvider`. All NSE scraping has been moved here from the TypeScript codebase (V3.0.0).
 
 > Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)  
-> Certification: [`data-service/reports/V2_1_CERTIFICATION_MATRIX.md`](./data-service/reports/V2_1_CERTIFICATION_MATRIX.md)
+> Certification: [`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md) · [`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md)
 
-**Current Version: 2.1.0** — LEVEL 2 — INTEGRATION CERTIFIED  
-448 tests pass (335 V2.0 baseline + 113 new integration tests)
+**Current Version: 3.1.0** — LEVEL 2 — INTEGRATION CERTIFIED · RELIABILITY & FAILOVER CERTIFIED (2026-09-07) · API CONFORMANCE VALIDATED (2026-09-08)  
+Python data-service: **671 passed / 18 skipped / 0 failed**; TS market-data: **553 passed**. V3.1 adds a typed reliability core, capability-aware provider health, cache-first historical gap repair, tick dedup, and wires the Upstox broker client as a classified fallback source.
 
 ### 6.1 What it provides
 
@@ -416,6 +435,11 @@ Users who cannot set server-side environment variables (shared deployments, clou
 | Instrument master | `httpx` → NSE instrument CSV | — |
 | **DataQualityGate** | `POST /data/gate` — evaluates freshness, completeness, provider health | **V2.1 NEW** |
 | **Lineage API** | `GET /data/lineage/*` — records and retrieves observation provenance | **V2.1 NEW** |
+| **Upstox fallback API** | `GET /brokers/upstox/{status,quotes,historical}` — authorized Upstox as a classified, non-crashing fallback source (was dead code, now wired via `brokers/router.py`) | **V3.1 NEW** |
+| **Capability-aware provider health** | `GET /health/providers` — per-provider × per-capability health from circuit-breaker state | **V3.1 NEW** |
+| **Resilient HTTP core** | `core/provider_http.py` — typed errors, status classification, backoff + `Retry-After`, pooled clients | **V3.1 NEW** |
+| **Cache-first historical + gap repair** | `scrapers/historical_repair.py` — fingerprinted cache, gap detection, validated repair | **V3.1 NEW** |
+| **Duplicate-tick protection** | dedup + gap detection wired into the tick publisher | **V3.1 NEW** |
 
 ### 6.2 NSE NextApi (live quotes)
 
@@ -473,7 +497,8 @@ data-service:
 GET  /health                                    always 200; degraded flag
 GET  /health/live                               liveness probe
 GET  /health/ready                              readiness probe
-GET  /health/data                               data quality + circuit breaker states
+GET  /health/data                               data quality + circuit breaker states + dup rate
+GET  /health/providers                          capability-aware provider health (V3.1)
 
 # DataQualityGate (V2.1) — signal engine MUST call before generating signals
 POST /data/gate                                 evaluate gate; returns signalEngineAllowed
@@ -490,6 +515,11 @@ GET  /scraping/historical?symbol=...            OHLCV candles (daily + intraday)
 GET  /scraping/option-chain?underlying=NIFTY    option chain (browser)
 GET  /scraping/instruments?exchange=NSE         instrument master
 
+# Broker fallback — Upstox (V3.1; classified errors, never a 500)
+GET  /brokers/upstox/status                     configured? + breaker state
+GET  /brokers/upstox/quotes?symbols=A,B         live quotes via Upstox
+GET  /brokers/upstox/historical?symbol=...      historical candles via Upstox
+
 # Publisher / Monitoring
 GET  /publisher/status                          tick publisher stats
 POST /publisher/symbols                         add symbols to tick publisher
@@ -504,7 +534,7 @@ GET  /api/in/data/forensics/:tradeId            full data-to-trade forensics cha
 **Every signal generation path MUST check `signalEngineAllowed` before proceeding.**
 
 ```typescript
-// TypeScript signal engine — required pattern (not yet wired)
+// TypeScript signal engine — required pattern (server-side gate not yet wired)
 const gate = await fetch(`${DATA_SERVICE_URL}/data/gate`, {
   method: "POST",
   body: JSON.stringify({ symbol, quoteAgeMs, strategyId, requiresOI }),
@@ -514,6 +544,8 @@ if (!signalEngineAllowed) return; // HARD BLOCK — no exceptions
 ```
 
 The gate evaluates: freshness · completeness · provider health (circuit breaker) · timestamp validity · semantic integrity · strategy-specific requirements.
+
+**GATE-001 status (V3.1).** The TS signal engine still does not call the Python `POST /data/gate` HTTP endpoint. V3.1 added an **in-process** TS gate (`evaluateSignalGate`, §5.4) that blocks STALE/INVALID data from SIGNAL/ML/EXECUTION — this mitigates but does not replace the server-side gate, so GATE-001 remains open for LEVEL 3 certification.
 
 ---
 
