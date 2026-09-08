@@ -87,6 +87,7 @@ export class ProviderRegistry {
       providers,
       (p) => p.getHistoricalCandles(req, opts),
       "getHistoricalCandles",
+      "historicalCandles",
     );
   }
 
@@ -99,6 +100,7 @@ export class ProviderRegistry {
       providers,
       (p) => p.getLatestQuote(symbol, opts),
       "getLatestQuote",
+      "liveQuotes",
     );
   }
 
@@ -111,6 +113,7 @@ export class ProviderRegistry {
       providers,
       (p) => p.getQuotes(symbols, opts),
       "getQuotes",
+      "liveQuotes",
     );
   }
 
@@ -124,6 +127,7 @@ export class ProviderRegistry {
       providers,
       (p) => p.getOptionChain(underlying, expiry, opts),
       "getOptionChain",
+      "optionChain",
     );
   }
 
@@ -136,6 +140,7 @@ export class ProviderRegistry {
       providers,
       (p) => p.getInstrumentMaster(filter, opts),
       "getInstrumentMaster",
+      "instrumentMaster",
     );
   }
 

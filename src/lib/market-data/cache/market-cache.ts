@@ -126,3 +126,24 @@ export async function invalidateInstrumentMaster(provider: ProviderId): Promise<
   // Invalidate the common "all" filter key used by most callers.
   await cache.invalidate(key("instruments", provider, "all"));
 }
+
+// ── Batch quote cache (request coalescing for bulk quote endpoints) ────────────
+
+/**
+ * Coalesce + cache a batch quote fetch.
+ *
+ * The cache key is the EXACT ordered, upper-cased symbol list. Keying on the
+ * ordered list (rather than a sorted set) keeps the returned array correctly
+ * aligned with the caller's `symbols` order — two callers requesting the same
+ * symbols in the same order share one in-flight request and one cached payload,
+ * which is the common polling case (the tick loop always uses a stable order).
+ */
+export async function memoQuoteBatch(
+  symbols: string[],
+  provider: ProviderId,
+  loader: () => Promise<Array<MDQuote | null>>,
+): Promise<Array<MDQuote | null>> {
+  if (symbols.length === 0) return [];
+  const orderedKey = symbols.map((s) => s.toUpperCase()).join(",");
+  return cache.memo(key("quotes-batch", provider, orderedKey), TTL.liveQuote, loader);
+}

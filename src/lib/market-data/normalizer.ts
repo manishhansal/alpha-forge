@@ -256,14 +256,16 @@ export function intervalToSmartApi(interval: Interval): string | null {
 
 /** Map a canonical `Interval` to the Upstox historical API interval string. */
 export function intervalToUpstox(interval: Interval): string | null {
+  // Upstox v2 historical-candle API accepts ONLY these interval units
+  // (verified against the live API — everything else returns HTTP 400
+  // "UDAPI1020 Interval accepts one of (1minute, 30minute, day, week, month)").
+  // For unsupported intervals (3m/5m/10m/15m/1h) we return null so the failover
+  // engine skips Upstox and routes the request to a provider that DOES support
+  // them (Angel One serves 5m/15m/1h; Yahoo serves 1h). Returning a bogus
+  // interval here would cause a real 400 instead of a clean failover.
   const map: Partial<Record<Interval, string>> = {
     "1m": "1minute",
-    "3m": "3minute",
-    "5m": "5minute",
-    "10m": "10minute",
-    "15m": "15minute",
     "30m": "30minute",
-    "1h": "1hour",
     "1d": "day",
     "1w": "week",
     "1M": "month",

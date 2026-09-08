@@ -339,6 +339,189 @@ export function checkOptionChainStaleness(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2b. Cross-provider reconciliation (multi-field, tiered classification)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reconciliation verdict tiers (spec §28). Provider timestamps naturally differ,
+ * so we never require bit-perfect equality — small divergences are expected.
+ */
+export type ReconciliationTier =
+  | "MATCH"             // effectively identical
+  | "WITHIN_TOLERANCE"  // differs but inside the per-category tolerance band
+  | "MINOR_MISMATCH"    // outside tolerance, below the major threshold
+  | "MAJOR_MISMATCH"    // large divergence — do not trust either blindly
+  | "INVALID";          // a field was structurally impossible (NaN, negative)
+
+/** A minimal quote snapshot from one provider used for reconciliation. */
+export type ReconcilableQuote = {
+  provider: ProviderId;
+  ltp: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  volume?: number | null;
+  oi?: number | null;
+  /** UTC epoch ms of the exchange/quote timestamp. */
+  timestampMs?: number | null;
+};
+
+export type FieldComparison = {
+  field: "ltp" | "open" | "high" | "low" | "close" | "volume" | "oi" | "timestamp";
+  a: number | null;
+  b: number | null;
+  percentageDiff: number | null;
+  tier: ReconciliationTier;
+};
+
+export type ReconciliationReport = {
+  symbol: string;
+  providerA: ProviderId;
+  providerB: ProviderId;
+  category: InstrumentCategory;
+  /** The worst tier across all compared fields — the report's headline verdict. */
+  tier: ReconciliationTier;
+  fields: FieldComparison[];
+  /** Timestamp skew between the two providers (ms), null when either is missing. */
+  timestampSkewMs: number | null;
+  evaluatedAt: string;
+};
+
+/** Multiplier above the per-category divergence threshold that counts as MAJOR. */
+const MAJOR_MISMATCH_MULTIPLIER = 4;
+/** Below this % difference two prices are treated as an exact MATCH. */
+const MATCH_EPSILON_PCT = 0.02;
+/** Acceptable timestamp skew between providers before it's flagged (ms). */
+const TIMESTAMP_SKEW_TOLERANCE_MS = 3_000;
+
+function tierRank(t: ReconciliationTier): number {
+  return ["MATCH", "WITHIN_TOLERANCE", "MINOR_MISMATCH", "MAJOR_MISMATCH", "INVALID"].indexOf(t);
+}
+
+function classifyFieldDiff(
+  a: number | null | undefined,
+  b: number | null | undefined,
+  tolerancePct: number,
+): { pct: number | null; tier: ReconciliationTier } {
+  // Missing on one side is not a mismatch — it's simply not comparable.
+  if (a == null || b == null) return { pct: null, tier: "MATCH" };
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) {
+    return { pct: null, tier: "INVALID" };
+  }
+  const base = Math.min(Math.abs(a), Math.abs(b));
+  const pct = base > 0 ? (Math.abs(a - b) / base) * 100 : (a === b ? 0 : Infinity);
+  let tier: ReconciliationTier;
+  if (pct <= MATCH_EPSILON_PCT) tier = "MATCH";
+  else if (pct <= tolerancePct) tier = "WITHIN_TOLERANCE";
+  else if (pct <= tolerancePct * MAJOR_MISMATCH_MULTIPLIER) tier = "MINOR_MISMATCH";
+  else tier = "MAJOR_MISMATCH";
+  return { pct, tier };
+}
+
+/**
+ * Reconcile two providers' quotes for the same instrument across LTP, OHLC,
+ * volume, OI and timestamp. Returns a tiered report; the headline `tier` is the
+ * WORST field verdict. Emits a `data_mismatch` log for anything worse than
+ * WITHIN_TOLERANCE so ops can see cross-provider divergence.
+ */
+export function reconcileQuotes(
+  symbol: string,
+  a: ReconcilableQuote,
+  b: ReconcilableQuote,
+  category: InstrumentCategory = "STOCK",
+  config?: ReconciliationConfig,
+  now = Date.now(),
+): ReconciliationReport {
+  const tolerances: Record<InstrumentCategory, number> = {
+    ...DEFAULT_DIVERGENCE_THRESHOLDS_PCT,
+    ...config?.divergenceThresholdsPct,
+  };
+  const tol = tolerances[category];
+
+  const fieldDefs: Array<[FieldComparison["field"], number | null | undefined, number | null | undefined, number]> = [
+    ["ltp", a.ltp, b.ltp, tol],
+    ["open", a.open, b.open, tol],
+    ["high", a.high, b.high, tol],
+    ["low", a.low, b.low, tol],
+    ["close", a.close, b.close, tol],
+    // Volume/OI move in large integer steps; allow a wider band before flagging.
+    ["volume", a.volume, b.volume, tol * 5],
+    ["oi", a.oi, b.oi, tol * 5],
+  ];
+
+  const fields: FieldComparison[] = fieldDefs.map(([field, av, bv, fieldTol]) => {
+    const { pct, tier } = classifyFieldDiff(av, bv, fieldTol);
+    return { field, a: av ?? null, b: bv ?? null, percentageDiff: pct, tier };
+  });
+
+  // Timestamp skew — informational; only flagged beyond the tolerance.
+  let timestampSkewMs: number | null = null;
+  if (a.timestampMs != null && b.timestampMs != null) {
+    timestampSkewMs = Math.abs(a.timestampMs - b.timestampMs);
+    const skewTier: ReconciliationTier =
+      timestampSkewMs <= TIMESTAMP_SKEW_TOLERANCE_MS ? "WITHIN_TOLERANCE" : "MINOR_MISMATCH";
+    fields.push({
+      field: "timestamp",
+      a: a.timestampMs,
+      b: b.timestampMs,
+      percentageDiff: null,
+      tier: skewTier,
+    });
+  }
+
+  const worst = fields.reduce<ReconciliationTier>(
+    (acc, f) => (tierRank(f.tier) > tierRank(acc) ? f.tier : acc),
+    "MATCH",
+  );
+
+  const report: ReconciliationReport = {
+    symbol,
+    providerA: a.provider,
+    providerB: b.provider,
+    category,
+    tier: worst,
+    fields,
+    timestampSkewMs,
+    evaluatedAt: new Date(now).toISOString(),
+  };
+
+  if (tierRank(worst) >= tierRank("MINOR_MISMATCH")) {
+    mdLog("data_mismatch", {
+      operationId: "reconcileQuotes",
+      symbol,
+      providerA: a.provider,
+      providerB: b.provider,
+      tier: worst,
+      fields: fields
+        .filter((f) => tierRank(f.tier) >= tierRank("MINOR_MISMATCH"))
+        .map((f) => ({ field: f.field, a: f.a, b: f.b, pct: f.percentageDiff })),
+    });
+  }
+
+  return report;
+}
+
+/**
+ * Map a reconciliation report's headline tier to a cross-provider agreement
+ * score (0–1), suitable for feeding the data quality score / gate.
+ */
+export function reconciliationAgreementScore(tier: ReconciliationTier): number {
+  switch (tier) {
+    case "MATCH":
+      return 1.0;
+    case "WITHIN_TOLERANCE":
+      return 0.9;
+    case "MINOR_MISMATCH":
+      return 0.6;
+    case "MAJOR_MISMATCH":
+      return 0.2;
+    case "INVALID":
+      return 0.0;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. Cross-provider price validation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -799,6 +982,115 @@ export function evaluateSafetyGate(
     allowPaperTrade: !blockedForPaper,
     reason: reasons.length > 0 ? reasons.join("; ") : "data quality acceptable",
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8b. Signal-engine data gate — STALE data must NEVER feed trading signals
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The consumer surface requesting data. UI may tolerate stale; signals must not. */
+export type DataConsumer = "UI" | "SIGNAL_ENGINE" | "ML_INFERENCE" | "EXECUTION";
+
+export type SignalGateDecision = {
+  /** True only when the data is safe for the requested consumer. */
+  allowed: boolean;
+  /** Machine-readable reasons the data was blocked (empty when allowed). */
+  reasons: string[];
+  /** The consumer this decision was evaluated for. */
+  consumer: DataConsumer;
+  /** The quality envelope this decision was based on. */
+  quality: QualityEnvelope;
+};
+
+/**
+ * Authoritative gate deciding whether a market observation may reach a given
+ * consumer.
+ *
+ * Hard rule (spec §19): the signal engine, ML inference, and execution logic
+ * MUST require fresh, valid data. STALE or INVALID data is blocked for those
+ * consumers regardless of anything else. The UI is the ONLY consumer allowed to
+ * display a stale "last known" value during an outage — and even then it is
+ * flagged, never presented as live.
+ *
+ * This is intentionally strict and fail-safe: an unknown/degraded status blocks
+ * trading consumers.
+ */
+export function evaluateSignalGate(
+  quality: QualityEnvelope,
+  consumer: DataConsumer,
+): SignalGateDecision {
+  const reasons: string[] = [];
+  const tradingConsumer = consumer !== "UI";
+
+  if (quality.validationStatus === "INVALID") {
+    reasons.push("data_invalid");
+  }
+  if (tradingConsumer && quality.validationStatus === "STALE") {
+    reasons.push("data_stale_blocked_for_signals");
+  }
+  if (tradingConsumer && quality.validationStatus === "SUSPICIOUS") {
+    reasons.push("data_suspicious_blocked_for_signals");
+  }
+  // Execution is the most conservative: it additionally rejects UNVERIFIED
+  // (single-provider, uncorroborated) data.
+  if (consumer === "EXECUTION" && quality.validationStatus === "UNVERIFIED") {
+    reasons.push("data_unverified_blocked_for_execution");
+  }
+
+  const allowed = reasons.length === 0;
+  if (!allowed) {
+    mdLog("stale_data", {
+      operationId: "evaluateSignalGate",
+      consumer,
+      provider: quality.source,
+      validationStatus: quality.validationStatus,
+      qualityScore: quality.qualityScore,
+      reasons,
+    });
+  }
+  return { allowed, reasons, consumer, quality };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8c. Provider-switch audit record (traceable hot-failover, spec §30)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProviderSwitchEvent = {
+  event: "PROVIDER_SWITCH";
+  from: ProviderId;
+  to: ProviderId;
+  reason: string;
+  timestamp: string;
+  instrument: string | null;
+  /** Live data gap introduced by the switch, in milliseconds (0 for hot failover). */
+  gapMs: number;
+};
+
+/**
+ * Record a provider switch for a specific instrument. Unlike the failover
+ * engine's generic `provider_switch` log (which is instrument-agnostic), this
+ * captures the instrument and the measured data gap — used by the live-feed /
+ * hot-failover path so every switch is traceable per the spec. Never silent.
+ */
+export function recordProviderSwitch(opts: {
+  from: ProviderId;
+  to: ProviderId;
+  reason: string;
+  instrument?: string | null;
+  gapMs?: number;
+  now?: number;
+}): ProviderSwitchEvent {
+  const evt: ProviderSwitchEvent = {
+    event: "PROVIDER_SWITCH",
+    from: opts.from,
+    to: opts.to,
+    reason: opts.reason,
+    timestamp: new Date(opts.now ?? Date.now()).toISOString(),
+    instrument: opts.instrument ?? null,
+    gapMs: opts.gapMs ?? 0,
+  };
+  mdLog("provider_switch", { ...evt });
+  return evt;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
