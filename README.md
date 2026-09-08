@@ -2,7 +2,7 @@
 
 A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js 16, a Python ML microservice, and an institutional-grade research platform.
 
-**Current state (2026-09-04, commit `c551e21`):** 3090 tests passing · 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent)
+**Current state (2026-09-08, branch `refactor/data-service`):** 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent) · data-service **RELIABILITY & FAILOVER CERTIFIED** + **API CONFORMANCE VALIDATED** (Angel One / Upstox v2+v3). TS market-data: 553 tests · Python data-service: 671 tests.
 
 ---
 
@@ -33,7 +33,7 @@ The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep
 | Database | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern) |
 | Realtime | Active broker WebSocket (Delta Exchange India or Binance) |
 | ML Engine | **Python 3.11** + FastAPI + XGBoost + LightGBM + CatBoost + PPO (SB3) + SHAP + Riskfolio-Lib + TA-Lib + mibian |
-| Data Service | **Python 3.11** + FastAPI + Scrapling 0.4.x (Playwright / Chromium) + httpx — credential-free NSE market data, port 8200 |
+| Data Service | **Python 3.11** + FastAPI + Scrapling 0.4.x (Playwright / Chromium) + httpx — credential-free NSE market data, port 8200; V3.1 typed reliability core (backoff + `Retry-After` + pooled clients), capability-aware provider health, cache-first gap repair, tick dedup, wired Upstox fallback |
 
 ---
 
@@ -167,15 +167,20 @@ A separate Node process (`worker/src/`) runs 14 background jobs:
 
 ### Data Service
 
-A standalone Python / FastAPI microservice (`data-service/`, port 8200) — the **tier-0 provider** for all NSE market data. All NSE scraping was moved here from the TypeScript layer in V3.0.0. **Current version: 2.1.0, LEVEL 2 INTEGRATION CERTIFIED** (448 tests).
+A standalone Python / FastAPI microservice (`data-service/`, port 8200) — the **tier-0 provider** for all NSE market data. All NSE scraping was moved here from the TypeScript layer in V3.0.0. **Current version: 3.1.0** — LEVEL 2 INTEGRATION CERTIFIED · RELIABILITY & FAILOVER CERTIFIED (2026-09-07) · API CONFORMANCE VALIDATED (2026-09-08). Python: 671 tests passing.
 
 - **Live quotes** — `httpx` against the NSE `NextApi` endpoints (no browser required; NSE migrated to Next.js in 2026).
-- **Tick publisher** — 5s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams (AT_LEAST_ONCE delivery). The Next.js `useLiveQuotes` hook subscribes to these channels.
+- **Tick publisher** — 5s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams (AT_LEAST_ONCE delivery). The Next.js `useLiveQuotes` hook subscribes to these channels. **V3.1:** duplicate-tick suppression + continuity-gap detection wired into the publish loop.
 - **Option chain** — Headless Chromium via Scrapling `AsyncDynamicSession`; captures `api/option-chain` XHR; computes PCR, max pain, ATM IV, OI walls.
-- **Historical OHLCV** — Daily candles from NSE Bhavcopy CDN; intraday from NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings.
+- **Historical OHLCV** — Daily candles from NSE Bhavcopy CDN; intraday from NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings. **V3.1:** cache-first with data fingerprinting + validated gap repair (`scrapers/historical_repair.py`).
 - **DataQualityGate** (`POST /data/gate`) — evaluates freshness, completeness, provider health before allowing signal generation.
 - **Lineage API** (`GET /data/lineage/*`) — records and retrieves observation provenance for every fetch.
 - **Instrument master** — Full NSE/BSE instrument list.
+- **Reliability core (V3.1)** — `core/provider_http.py`: typed `ProviderError` hierarchy, HTTP-status classification, exponential backoff honouring `Retry-After`, and pooled keep-alive clients. Never retries 403/401/404; backs off 429/503/timeout/network.
+- **Provider health (V3.1)** — `GET /health/providers`: capability-aware per-provider × per-capability status from circuit-breaker state; a single degraded capability never marks the whole service DOWN.
+- **Upstox fallback (V3.1)** — `GET /brokers/upstox/{status,quotes,historical}`: the authorized Upstox client (previously dead code) wired via `brokers/router.py`, surfacing 403/429/503 as clean classified errors rather than crashing.
+
+The consuming TypeScript layer (`src/lib/market-data/`) gained matching hardening: capability-aware circuit breakers, cross-provider reconciliation, a signal-engine data gate, never-silent `PROVIDER_SWITCH` records, the Upstox **v3** Protobuf WebSocket feed, and an Angel SmartStream `resolveAngelWsSession()` fix. See [`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md) and [`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md).
 
 ```bash
 # Start
@@ -194,6 +199,12 @@ curl "http://localhost:8200/scraping/historical?symbol=RELIANCE&exchange=NSE&int
 curl -X POST http://localhost:8200/data/gate \
   -H "Content-Type: application/json" \
   -d '{"symbol":"NIFTY","quoteAgeMs":5000,"strategyId":"RANGE_EXPANSION"}'
+
+# Capability-aware provider health (V3.1)
+curl http://localhost:8200/health/providers
+
+# Upstox fallback source (V3.1)
+curl http://localhost:8200/brokers/upstox/status
 ```
 
 > The service requires `dns: [8.8.8.8, 8.8.4.4]` in `docker-compose.yml` because Chromium's built-in DNS resolver rejects Docker's loopback nameserver `127.0.0.11`.
@@ -331,7 +342,7 @@ All Indian market data flows through a **provider-agnostic data layer** (`src/li
 |---|---|---|---|
 | 0 | **Data Service** (`data-service/`) | Live quotes, tick stream, option chain, historical, instrument master — **no credentials required**. All NSE scraping runs here. | `docker compose up data-service` |
 | 1 | **Angel One SmartAPI** | Quotes, historical, option chain, live stream, greeks, GEX, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
-| 2 | **Upstox Analytics v2** | Quotes, historical, option chain. Full OAuth BFF at `/api/in/providers/upstox/*` | `UPSTOX_ANALYTICS_TOKEN` (data-only) or `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` (full OAuth) |
+| 2 | **Upstox Analytics** | REST quotes/historical/option chain (v2) + **live WebSocket (v3 Protobuf feed, V3.1)**. Full OAuth BFF at `/api/in/providers/upstox/*` | `UPSTOX_ANALYTICS_TOKEN` (data-only) or `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` (full OAuth) |
 | 3 | **Yahoo Finance** | Historical OHLCV, quotes | Always available (last resort) |
 
 `INDIA_BROKER=nse` is no longer valid — it falls back to yahoo. The `"nse"` `ProviderId` has been removed from the TypeScript type system entirely. The `"nse"` `DataSourceId` has also been removed from the settings UI, type system, and broker factory — `DataSourceId` no longer includes `"nse"` anywhere. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
@@ -532,7 +543,14 @@ ml-service/
     greeks.py                Black-76/BS greeks + Newton-Raphson IV solver
     gex.py                   Dealer GEX engine
     vol_surface.py           SVI IV surface + term structure
-    brokers/                 NEW (V3.0) — upstox_client.py Python broker API client
+data-service/
+  src/
+    scrapers/                NSE NextApi quotes, Bhavcopy/charting historical,
+                             option chain, instrument master, historical_repair.py (V3.1)
+    brokers/                 upstox_client.py + router.py (V3.1 — wired Upstox fallback)
+                             + upstox_instruments.py (symbol→ISIN resolver)
+    core/                    provider_http.py (V3.1 — typed errors + backoff + pooling)
+    monitoring/              health_router.py — /health/{live,ready,data,providers}
 prisma/schema.prisma         18 models
 docker-compose.yml           Postgres 17 + Redis 7 + ML service + data-service
 tests/                       Vitest suite — 3090 tests
@@ -596,4 +614,6 @@ Users can configure their Upstox Analytics Token directly in the UI without requ
 > Full product spec and architecture deep-dive: [ALPHAFORGE.md](./ALPHAFORGE.md)  
 > Chronological changelog: [CHANGES.md](./CHANGES.md)  
 > Data service reference: [DATA_SERVICE.md](./DATA_SERVICE.md)  
+> Data service reliability & failover: [DATA_SERVICE_RELIABILITY_CERTIFICATION.md](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md)  
+> Angel One / Upstox API conformance: [DATA_SERVICE_API_CONFORMANCE.md](./DATA_SERVICE_API_CONFORMANCE.md)  
 > Phase 2 expert quant design: [PHASE2.md](./PHASE2.md)
