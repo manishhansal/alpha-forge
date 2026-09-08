@@ -11,7 +11,7 @@
  * Capabilities:
  *   ✓ Historical candles  (NSE EQ + NFO, all supported intervals)
  *   ✓ Live quotes         (single + bulk, REST)
- *   ✓ WebSocket stream    (wss://api.upstox.com/v2/feed/market-data-feed)
+ *   ✓ WebSocket stream    (v3 feed — authorize via /v3/feed/market-data-feed/authorize)
  *   ✓ Option chain        (full Greeks, bid/ask, OI, IV, delta, gamma, theta, vega)
  *   ✓ Instrument resolution (NSE symbol → Upstox instrument key)
  *   ✗ Instrument master   (Upstox has no full dump; Angel One owns this)
@@ -35,12 +35,13 @@
  *   md:provider-health:upstox                                      TTL 5s
  *
  * WebSocket:
- *   Upstox v2 WebSocket sends Protobuf-encoded frames.  Because the browser
- *   environment cannot load the Protobuf runtime and this code runs server-side
- *   only, we decode the binary payload via the Upstox JSON WebSocket endpoint
- *   (wss://api.upstox.com/v2/feed/market-data-feed/authorize) which returns
- *   JSON frames instead of Protobuf, avoiding the need for a generated proto
- *   schema at runtime.
+ *   The Upstox v2 WS authorize endpoint was discontinued (HTTP 410 UDAPI1153).
+ *   We authorize against the v3 endpoint (/v3/feed/market-data-feed/authorize),
+ *   which returns `data.authorizedRedirectUri` and works with the Analytics
+ *   Token.  The v3 feed streams binary Protobuf FeedResponse frames, decoded
+ *   in-process by the dependency-free reader in ./upstox-proto.ts (no protobufjs
+ *   runtime / generated schema needed).  Control acks arrive as JSON and take
+ *   the JSON fallback path.
  *
  * SECURITY: Do NOT add NEXT_PUBLIC_ environment variables for any Upstox credential.
  * Do NOT import from this file in client components or client-side code.
@@ -76,6 +77,7 @@ import {
   memoCandles,
   memoOptionChain,
   memoQuote,
+  memoQuoteBatch,
 } from "../cache/market-cache";
 import {
   finiteOrNull,
@@ -84,12 +86,16 @@ import {
   normaliseCandlesFromUpstox,
 } from "../normalizer";
 import { filterValidCandles } from "../validation/candle-validator";
+import { decodeFeedResponse } from "./upstox-proto";
 
 // ── Provider constant ─────────────────────────────────────────────────────────
 
 const PROVIDER_ID: ProviderId = "upstox";
 const UPSTOX_BASE = "https://api.upstox.com";
-const UPSTOX_WS_AUTH_URL = "https://api.upstox.com/v2/feed/market-data-feed/authorize";
+// v2 authorize is DISCONTINUED (HTTP 410 UDAPI1153 "use /v3/feed/market-data-feed",
+// verified live). v3 authorize returns 200 with `data.authorizedRedirectUri` and
+// works with the Analytics Token.
+const UPSTOX_WS_AUTH_URL = "https://api.upstox.com/v3/feed/market-data-feed/authorize";
 const TIMEOUT_MS = 10_000;
 
 // ── TTLs (ms) — exported so tests can assert against them ────────────────────
@@ -371,6 +377,42 @@ export function toUpstoxInstrumentKey(symbol: string, exchange: Exchange): strin
 }
 
 /**
+ * Async instrument-key resolver — the CORRECT path for equities.
+ *
+ * Upstox rejects symbol-based equity keys (`NSE_EQ|RELIANCE` → HTTP 400
+ * "Invalid Instrument key") and requires the ISIN-based key
+ * (`NSE_EQ|INE002A01018`). Indices (`NSE_INDEX|…`) and F&O keys are already
+ * correct via the sync builder, so we only need to resolve the ISIN for NSE/BSE
+ * equities. Falls back to the sync symbol form when the master is unavailable.
+ */
+export async function resolveUpstoxInstrumentKey(
+  symbol: string,
+  exchange: Exchange,
+): Promise<string> {
+  const clean = symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
+
+  // Index / F&O / non-equity segments keep the sync (name/token) form.
+  if (INDEX_KEYS[clean] || (exchange === "NSE" && INDEX_KEYS[symbol])) {
+    return toUpstoxInstrumentKey(symbol, exchange);
+  }
+  if (exchange === "NFO" || exchange === "BFO" || exchange === "MCX") {
+    return toUpstoxInstrumentKey(symbol, exchange);
+  }
+
+  // Equity: resolve the ISIN-based key from the instrument master.
+  if (exchange === "NSE" || exchange === "BSE") {
+    try {
+      const { resolveEquityInstrumentKey } = await import("./upstox-instruments");
+      const resolved = await resolveEquityInstrumentKey(clean, exchange);
+      if (resolved) return resolved;
+    } catch {
+      /* fall through to the sync fallback */
+    }
+  }
+  return toUpstoxInstrumentKey(symbol, exchange);
+}
+
+/**
  * Resolve a canonical symbol to an Upstox instrument key for the option chain
  * endpoint.  The option chain requires the underlying's instrument key, which
  * for indices uses the special NSE_INDEX form.
@@ -402,8 +444,14 @@ interface UpstoxQuoteItem {
   oi_day_low?: number;
   upper_circuit_limit?: number;
   lower_circuit_limit?: number;
+  // 52-week fields are NOT returned by /v2/market-quote/quotes (verified live);
+  // kept optional for forward-compat but will be null in practice.
   week_high_52?: number;
   week_low_52?: number;
+  // Upstox returns these as *_quantity (verified against the live API). The
+  // legacy *_qty aliases are kept only as a defensive fallback.
+  total_buy_quantity?: number;
+  total_sell_quantity?: number;
   total_buy_qty?: number;
   total_sell_qty?: number;
   last_trade_time?: string;
@@ -449,7 +497,10 @@ interface UpstoxOptionLeg {
 
 /** WebSocket authorize endpoint response */
 interface UpstoxWsAuthorizeResponse {
-  authorized_redirect_uri: string;
+  /** v3 authorize returns camelCase `authorizedRedirectUri`. */
+  authorizedRedirectUri?: string;
+  /** v2 (discontinued) used snake_case; kept as a defensive fallback. */
+  authorized_redirect_uri?: string;
 }
 
 /** Upstox WebSocket JSON feed frame */
@@ -461,7 +512,8 @@ interface UpstoxWsFeedFrame {
 interface UpstoxWsInstrumentFeed {
   ff?: {
     marketFF?: {
-      ltpc?: { ltp?: number; ltt?: string; ltq?: number; cp?: number };
+      // `ltt` is epoch-ms (number) on the v3 Protobuf feed, ISO string on legacy JSON.
+      ltpc?: { ltp?: number; ltt?: number | string; ltq?: number; cp?: number };
       marketOHLC?: {
         ohlc?: Array<{ interval: string; open: number; high: number; low: number; close: number; volume: number; ts: string }>;
       };
@@ -476,9 +528,17 @@ interface UpstoxWsInstrumentFeed {
       };
     };
     indexFF?: {
-      ltpc?: { ltp?: number; ltt?: string; ltq?: number; cp?: number };
+      ltpc?: { ltp?: number; ltt?: number | string; ltq?: number; cp?: number };
     };
   };
+}
+
+/** Normalise a ws RawData payload into a single Buffer (or null if not bytes). */
+function toBuffer(raw: WebSocket.RawData): Buffer | null {
+  if (Buffer.isBuffer(raw)) return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw);
+  if (Array.isArray(raw)) return Buffer.concat(raw);
+  return null;
 }
 
 // ── WebSocket manager ─────────────────────────────────────────────────────────
@@ -615,7 +675,6 @@ export class UpstoxWsManager {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept:        "application/json",
-        "Api-Version": "2.0",
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -626,7 +685,10 @@ export class UpstoxWsManager {
     if (envelope.status !== "success") {
       throw new Error(`Upstox WS auth: status=${envelope.status}`);
     }
-    return envelope.data.authorized_redirect_uri;
+    // v3 → authorizedRedirectUri (camelCase); v2 fallback → authorized_redirect_uri.
+    const wsUrl = envelope.data.authorizedRedirectUri ?? envelope.data.authorized_redirect_uri;
+    if (!wsUrl) throw new Error("Upstox WS auth: no redirect URI in response");
+    return wsUrl;
   }
 
   private openSocket(url: string): void {
@@ -698,12 +760,15 @@ export class UpstoxWsManager {
 
   private sendSubscribeMessage(tokens: string[]): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // The v3 feed expects the control message as a BINARY frame (UTF-8 bytes of
+    // the JSON), not a text frame — a text frame is silently ignored and no
+    // ticks are delivered.  `mode: "full"` maps to the v3 full_d5 request mode.
     const msg = JSON.stringify({
       guid:             crypto.randomUUID(),
       method:           "sub",
       data:             { mode: "full", instrumentKeys: tokens },
     });
-    this.ws.send(msg);
+    this.ws.send(Buffer.from(msg, "utf8"));
   }
 
   private sendUnsubscribeMessage(tokens: string[]): void {
@@ -713,19 +778,39 @@ export class UpstoxWsManager {
       method: "unsub",
       data:   { mode: "full", instrumentKeys: tokens },
     });
-    this.ws.send(msg);
+    this.ws.send(Buffer.from(msg, "utf8"));
   }
 
   // ── Internal: message handling ────────────────────────────────────────────
 
   private handleMessage(raw: WebSocket.RawData): void {
+    const nowMs = Date.now();
+
+    // The Upstox v3 feed sends market data as binary Protobuf frames and only
+    // uses JSON for control/ack messages.  Try binary first, JSON as fallback.
+    const buf = toBuffer(raw);
+    if (buf && buf.length > 0) {
+      // A JSON control frame begins with '{' (0x7b) or '[' (0x5b).  Everything
+      // else is treated as a Protobuf FeedResponse.
+      const first = buf[0];
+      if (first !== 0x7b && first !== 0x5b) {
+        try {
+          const { feeds } = decodeFeedResponse(buf);
+          for (const [instrumentKey, feed] of Object.entries(feeds)) {
+            this.dispatchFeed(instrumentKey, feed as UpstoxWsInstrumentFeed, nowMs);
+          }
+        } catch {
+          // Malformed binary frame — silently skip.
+        }
+        return;
+      }
+    }
+
+    // JSON path (control acks, or a legacy/JSON deployment).
     try {
-      const text = raw instanceof Buffer ? raw.toString("utf8") : String(raw);
+      const text = buf ? buf.toString("utf8") : String(raw);
       const frame = JSON.parse(text) as UpstoxWsFeedFrame;
       if (!frame.feeds) return;
-
-      const nowMs = Date.now();
-
       for (const [instrumentKey, feed] of Object.entries(frame.feeds)) {
         this.dispatchFeed(instrumentKey, feed, nowMs);
       }
@@ -761,9 +846,13 @@ export class UpstoxWsManager {
     const volume = eFeed?.vtt ?? null;
     const oi     = eFeed?.oi ?? null;
 
-    // Exchange timestamp from ltt (last trade time — ISO string from Upstox)
+    // Exchange timestamp from ltt (last trade time).
+    //   - v3 Protobuf feed: epoch milliseconds (int64) as a number.
+    //   - legacy JSON feed:  ISO-8601 string.
     let exchangeTimestampMs = nowMs;
-    if (ltpc.ltt) {
+    if (typeof ltpc.ltt === "number" && Number.isFinite(ltpc.ltt) && ltpc.ltt > 0) {
+      exchangeTimestampMs = ltpc.ltt;
+    } else if (typeof ltpc.ltt === "string" && ltpc.ltt) {
       const parsed = Date.parse(ltpc.ltt);
       if (Number.isFinite(parsed)) exchangeTimestampMs = parsed;
     }
@@ -865,8 +954,8 @@ function translateQuoteItem(symbol: string, item: UpstoxQuoteItem): MDQuote {
     weekLow52:      finiteOrNull(item.week_low_52 ?? null),
     upperCircuit:   finiteOrNull(item.upper_circuit_limit ?? null),
     lowerCircuit:   finiteOrNull(item.lower_circuit_limit ?? null),
-    totalBuyQty:    finiteOrNull(item.total_buy_qty ?? null),
-    totalSellQty:   finiteOrNull(item.total_sell_qty ?? null),
+    totalBuyQty:    finiteOrNull(item.total_buy_quantity ?? item.total_buy_qty ?? null),
+    totalSellQty:   finiteOrNull(item.total_sell_quantity ?? item.total_sell_qty ?? null),
     lastTradeTime:  item.last_trade_time ?? null,
     provider:       PROVIDER_ID,
     fetchedAt:      new Date().toISOString(),
@@ -1013,7 +1102,7 @@ export class UpstoxProvider implements MarketDataProvider {
       req.to,
       PROVIDER_ID,
       async () => {
-        const instrumentKey = toUpstoxInstrumentKey(req.symbol, req.exchange);
+        const instrumentKey = await resolveUpstoxInstrumentKey(req.symbol, req.exchange);
         const toDate   = req.to.slice(0, 10);   // YYYY-MM-DD
         const fromDate = req.from.slice(0, 10);
 
@@ -1048,13 +1137,18 @@ export class UpstoxProvider implements MarketDataProvider {
     if (!(await isUpstoxAvailable())) return null;
 
     return memoQuote(symbol, PROVIDER_ID, async () => {
-      const instrumentKey = toUpstoxInstrumentKey(symbol, "NSE");
+      const instrumentKey = await resolveUpstoxInstrumentKey(symbol, "NSE");
       const data = await upstoxGet<Record<string, UpstoxQuoteItem>>(
         "/v2/market-quote/quotes",
         { instrument_key: instrumentKey },
         opts?.signal,
       );
-      const item = data[instrumentKey] ?? Object.values(data)[0];
+      // Upstox echoes the key back with either delimiter (NSE_EQ|X or NSE_EQ:X),
+      // so match on either form before falling back to the first row.
+      const item =
+        data[instrumentKey] ??
+        data[instrumentKey.replace("|", ":")] ??
+        Object.values(data)[0];
       if (!item) return null;
       recordSuccess(PROVIDER_ID, 0);
       return translateQuoteItem(symbol, item);
@@ -1071,6 +1165,17 @@ export class UpstoxProvider implements MarketDataProvider {
       return symbols.map(() => null);
     }
 
+    // Cache-first + request coalescing (single-flight): identical concurrent
+    // batch polls share ONE provider request and a short-TTL cached payload, so
+    // N consumers asking for the same symbol set produce 1 Upstox call, not N.
+    return memoQuoteBatch(symbols, PROVIDER_ID, () => this._fetchQuotes(symbols, opts));
+  }
+
+  /** Raw bulk quote fetch against Upstox (uncached; used by the memo layer). */
+  private async _fetchQuotes(
+    symbols: string[],
+    opts?:   ProviderCallOptions,
+  ): Promise<Array<MDQuote | null>> {
     // Upstox allows up to 500 instrument keys per request.
     const CHUNK_SIZE = 500;
     const results: Array<MDQuote | null> = new Array(symbols.length).fill(null);
@@ -1079,11 +1184,17 @@ export class UpstoxProvider implements MarketDataProvider {
       const chunk      = symbols.slice(i, i + CHUNK_SIZE);
       const keyToIndex = new Map<string, number>();
 
-      const keys = chunk.map((s, idx) => {
-        const k = toUpstoxInstrumentKey(s, "NSE");
-        keyToIndex.set(k, i + idx);
-        return k;
-      });
+      // Resolve ISIN-based equity keys (index/F&O keep their static form).
+      const keys = await Promise.all(
+        chunk.map(async (s, idx) => {
+          const k = await resolveUpstoxInstrumentKey(s, "NSE");
+          // Index BOTH delimiter forms so we can match whatever Upstox echoes.
+          keyToIndex.set(k, i + idx);
+          keyToIndex.set(k.replace("|", ":"), i + idx);
+          keyToIndex.set(k.replace(":", "|"), i + idx);
+          return k;
+        }),
+      );
 
       try {
         const data = await upstoxGet<Record<string, UpstoxQuoteItem>>(
@@ -1094,7 +1205,12 @@ export class UpstoxProvider implements MarketDataProvider {
         recordSuccess(PROVIDER_ID, 0);
 
         for (const [key, item] of Object.entries(data)) {
-          const globalIdx = keyToIndex.get(key);
+          // Match on the response key directly, or via the instrument_token the
+          // item carries (which is the |-delimited canonical key).
+          let globalIdx = keyToIndex.get(key);
+          if (globalIdx == null && item?.instrument_token) {
+            globalIdx = keyToIndex.get(item.instrument_token);
+          }
           if (globalIdx != null) {
             const symbol = symbols[globalIdx]!;
             results[globalIdx] = translateQuoteItem(symbol, item);

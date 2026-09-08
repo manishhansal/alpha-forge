@@ -105,6 +105,7 @@ import {
   getProviderHealth,
   isTickStale,
 } from "@/lib/market-data/health";
+import { _resetUpstoxInstrumentCache } from "@/lib/market-data/providers/upstox-instruments";
 import { withFailover } from "@/lib/market-data/failover";
 import type { RegisteredProvider } from "@/lib/market-data/provider";
 import type {
@@ -211,10 +212,44 @@ function makeCandle(
 
 // ── Shared env setup / teardown ───────────────────────────────────────────────
 
-beforeEach(() => {
+// Test symbol → ISIN instrument key map. Upstox equities MUST use the
+// ISIN-based key (NSE_EQ|INE…), NOT NSE_EQ|SYMBOL, so we seed the instrument
+// master cache here to (a) avoid a stray network fetch in unit tests and (b)
+// exercise the same resolution the real provider uses. The `_ISIN` map below is
+// the single source of truth these tests key their mocked responses on.
+const TEST_ISIN: Record<string, string> = {
+  RELIANCE: "NSE_EQ|INE002A01018",
+  TCS:      "NSE_EQ|INE467B01029",
+  INFY:     "NSE_EQ|INE009A01021",
+  INFOSYS:  "NSE_EQ|INE009A01021",
+  HDFCBANK: "NSE_EQ|INE040A01034",
+  TEST:     "NSE_EQ|INETEST00001",
+  BAD:      "NSE_EQ|INEBAD000001",
+  MIN:      "NSE_EQ|INEMIN000001",
+};
+
+/** The ISIN instrument key the provider will use for a test symbol. */
+function isinKey(symbol: string): string {
+  return TEST_ISIN[symbol.toUpperCase()] ?? `NSE_EQ|${symbol.toUpperCase()}`;
+}
+
+/** Seed the instrument-master cache so equity ISIN resolution needs no fetch. */
+function seedInstrumentMaster(): void {
+  const nseEntries: Array<[string, string]> = Object.entries(TEST_ISIN).map(
+    ([sym, key]) => [sym, key],
+  );
+  _cacheStore.set("md:upstox:instrmap:NSE_EQ", nseEntries);
+  _cacheStore.set("md:upstox:instrmap:BSE_EQ", []);
+}
+
+beforeEach(async () => {
   resetAllHealth();
   _cacheStore.clear();
   vi.clearAllMocks();
+  // Clear the instrument-master in-process memo, THEN seed the cache so equity
+  // ISIN resolution reads the seed (no network fetch).
+  await _resetUpstoxInstrumentCache();
+  seedInstrumentMaster();
   // Reset the global WS manager singleton between tests
   globalThis.__upstoxWsManager = undefined;
   // Reset any in-memory OAuth state so tests don't bleed tokens
@@ -536,11 +571,14 @@ describe("2. Quote normalisation", () => {
   });
 
   it("getQuotes returns array aligned with input symbols", async () => {
+    // Upstox echoes results keyed by the ISIN-based instrument key; each item's
+    // instrument_token is that same key. The provider resolves symbol→ISIN and
+    // matches on either the response key or the item's instrument_token.
     _fetchMock.mockResolvedValueOnce(
       mockFetchOk({
-        "NSE_EQ|RELIANCE": makeRawQuote({ last_price: 2_950 }),
-        "NSE_EQ|TCS":      makeRawQuote({ last_price: 3_500 }),
-        "NSE_EQ|INFOSYS":  makeRawQuote({ last_price: 1_800 }),
+        [isinKey("RELIANCE")]: makeRawQuote({ last_price: 2_950, instrument_token: isinKey("RELIANCE") }),
+        [isinKey("TCS")]:      makeRawQuote({ last_price: 3_500, instrument_token: isinKey("TCS") }),
+        [isinKey("INFOSYS")]:  makeRawQuote({ last_price: 1_800, instrument_token: isinKey("INFOSYS") }),
       }),
     );
 
@@ -553,7 +591,9 @@ describe("2. Quote normalisation", () => {
 
   it("getQuotes returns null for symbols not present in the response", async () => {
     _fetchMock.mockResolvedValueOnce(
-      mockFetchOk({ "NSE_EQ|RELIANCE": makeRawQuote({ last_price: 2_950 }) }),
+      mockFetchOk({
+        [isinKey("RELIANCE")]: makeRawQuote({ last_price: 2_950, instrument_token: isinKey("RELIANCE") }),
+      }),
     );
 
     const results = await provider.getQuotes(["RELIANCE", "UNKNOWN"]);
@@ -1253,6 +1293,39 @@ describe("7. WebSocket manager", () => {
     expect(wsm.registrySize).toBe(0);
   });
 
+  it("handleMessage decodes a binary v3 Protobuf frame into a LiveTick", () => {
+    // Build a real-wire FeedResponse{ feeds{ "NSE_INDEX|Nifty 50" -> ff.indexFF.ltpc } }.
+    const varint = (n: number): number[] => {
+      const o: number[] = []; let v = n;
+      while (v > 0x7f) { o.push((v & 0x7f) | 0x80); v = Math.floor(v / 128); }
+      o.push(v & 0x7f); return o;
+    };
+    const tag = (f: number, w: number) => varint(f * 8 + w);
+    const dbl = (f: number, v: number) => { const b = Buffer.alloc(8); b.writeDoubleLE(v, 0); return [...tag(f, 1), ...b]; };
+    const vf  = (f: number, v: number) => [...tag(f, 0), ...varint(v)];
+    const lf  = (f: number, p: number[]) => [...tag(f, 2), ...varint(p.length), ...p];
+    const sf  = (f: number, s: string) => lf(f, [...Buffer.from(s, "utf8")]);
+    const nowMs = Date.now();
+    const ltpc = [...dbl(1, 24_050.5), ...vf(2, nowMs), ...dbl(4, 23_900.25)];
+    // Feed{ ff{ indexFF{ ltpc } } } — 3 nested length wrappers.
+    const feedMsg = lf(2, lf(2, lf(1, ltpc))); // Feed.ff -> FullFeed.indexFF -> IndexFullFeed.ltpc
+    // map entry: field1=key, field2=Feed message; whole entry is FeedResponse.feeds (field 2).
+    const entry = lf(2, [...sf(1, "NSE_INDEX|Nifty 50"), ...lf(2, feedMsg)]);
+    const bin = Buffer.from([...vf(1, 1), ...entry]);
+
+    const wsm = new UpstoxWsManager();
+    const ticks: LiveTick[] = [];
+    wsm.subscribe("NSE_INDEX|Nifty 50", "NIFTY", "NSE", (t) => ticks.push(t));
+
+    (wsm as unknown as { handleMessage(raw: Buffer): void }).handleMessage(bin);
+
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.ltp).toBeCloseTo(24_050.5, 2);
+    expect(ticks[0]!.symbol).toBe("NIFTY");
+    expect(ticks[0]!.changePct).toBeCloseTo(((24_050.5 - 23_900.25) / 23_900.25) * 100, 4);
+    expect(ticks[0]!.provider).toBe("upstox");
+  });
+
   it("getUpstoxWsManager() returns the same singleton on repeated calls", () => {
     const a = getUpstoxWsManager();
     const b = getUpstoxWsManager();
@@ -1361,21 +1434,19 @@ describe("8. Historical candles", () => {
     expect(candles.every((c) => Number.isFinite(c.open))).toBe(true);
   });
 
-  it("correctly maps all supported intervals to Upstox API strings", async () => {
-    const intervals = [
+  it("maps only Upstox-v2-supported intervals to API strings", async () => {
+    // Verified against the live Upstox v2 API: only these interval units are
+    // accepted (1minute / 30minute / day / week / month). Everything else
+    // returns HTTP 400, so the provider must NOT send those to Upstox.
+    const supported = [
       ["1m",  "1minute"],
-      ["3m",  "3minute"],
-      ["5m",  "5minute"],
-      ["10m", "10minute"],
-      ["15m", "15minute"],
       ["30m", "30minute"],
-      ["1h",  "1hour"],
       ["1d",  "day"],
       ["1w",  "week"],
       ["1M",  "month"],
     ] as const;
 
-    for (const [interval, expected] of intervals) {
+    for (const [interval, expected] of supported) {
       _fetchMock.mockResolvedValueOnce(
         mockFetchOk({ candles: [makeCandle("2026-08-31T05:30:00Z", 100, 110, 95, 105, 500)] }),
       );
@@ -1385,9 +1456,27 @@ describe("8. Historical candles", () => {
         from: "2026-08-01T00:00:00Z", to: "2026-08-31T00:00:00Z",
       });
 
-      // The URL must contain the mapped interval string
       const calledUrl = (_fetchMock.mock.calls.at(-1)![0] as string);
       expect(calledUrl).toContain(expected);
+    }
+  });
+
+  it("returns [] and does NOT call Upstox for unsupported intervals (5m/15m/1h)", async () => {
+    // These intervals aren't supported by Upstox v2 — the provider must skip the
+    // API call entirely so the failover engine routes to Angel One / Yahoo,
+    // rather than issuing a request that would 400.
+    for (const interval of ["5m", "15m", "1h"] as const) {
+      _fetchMock.mockClear();
+      const candles = await provider.getHistoricalCandles({
+        symbol: "NIFTY", exchange: "NSE", interval,
+        from: "2026-08-01T00:00:00Z", to: "2026-08-31T00:00:00Z",
+      });
+      expect(candles).toEqual([]);
+      // No historical-candle request should have been issued to Upstox.
+      const histCalls = _fetchMock.mock.calls.filter((c) =>
+        String(c[0]).includes("/historical-candle/"),
+      );
+      expect(histCalls).toHaveLength(0);
     }
   });
 
