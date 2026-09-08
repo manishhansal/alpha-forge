@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { ScraplingProvider } from "@/lib/market-data/providers/scrapling";
 import { MarketDataError } from "@/lib/market-data/types";
+import { cache } from "@/services/india/cache";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,10 +31,14 @@ function mockOkResponse(body: unknown): Response {
 }
 
 /** Create a mock Response with a specific error status. */
-function mockErrorResponse(status: number): Response {
+function mockErrorResponse(status: number, retryAfter?: string): Response {
   return {
     ok: false,
     status,
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === "retry-after" ? (retryAfter ?? null) : null,
+    },
     json: async () => ({ error: `HTTP ${status}` }),
   } as unknown as Response;
 }
@@ -88,11 +93,15 @@ describe("ScraplingProvider", () => {
    */
   const originalDataServiceUrl = process.env.DATA_SERVICE_URL;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     provider  = new ScraplingProvider();
     fetchSpy  = vi.spyOn(globalThis, "fetch") as unknown as Mock;
     // Default: provider is enabled with a test base URL.
     process.env.DATA_SERVICE_URL = "http://localhost:8200";
+    // The provider now caches + coalesces requests (market-cache). Clear the
+    // shared cache between tests so a success in one test can't leak into the
+    // next (which would otherwise mask an expected error path).
+    await cache.clear();
   });
 
   afterEach(() => {
@@ -145,7 +154,10 @@ describe("ScraplingProvider", () => {
     ).rejects.toSatisfy((err: unknown) => {
       if (!(err instanceof MarketDataError)) return false;
       expect(err.providerId).toBe("scrapling");
-      expect(err.code).toBe("INVALID_RESPONSE");
+      // 503 is now classified distinctly as UNAVAILABLE (was INVALID_RESPONSE),
+      // so the failover engine can apply 503-specific backoff and Retry-After.
+      expect(err.code).toBe("UNAVAILABLE");
+      expect(err.httpStatus).toBe(503);
       return true;
     });
   });
@@ -393,11 +405,16 @@ describe("ScraplingProvider", () => {
   });
 
   it("dsGet throws MarketDataError with RATE_LIMIT code on HTTP 429", async () => {
-    fetchSpy.mockResolvedValue(mockErrorResponse(429));
+    fetchSpy.mockResolvedValue(mockErrorResponse(429, "5"));
 
-    await expect(provider.getQuotes(["NIFTY"])).rejects.toSatisfy((err: unknown) => {
+    // Use a unique symbol so no cached success from another test (the provider
+    // now caches/coalesces quote batches) can mask the expected error path.
+    await expect(provider.getQuotes(["__RL_TEST__"])).rejects.toSatisfy((err: unknown) => {
       if (!(err instanceof MarketDataError)) return false;
       expect(err.code).toBe("RATE_LIMIT");
+      expect(err.httpStatus).toBe(429);
+      // Retry-After: 5 seconds → parsed to 5000ms and attached to the error.
+      expect(err.retryAfterMs).toBe(5_000);
       return true;
     });
   });
@@ -405,9 +422,10 @@ describe("ScraplingProvider", () => {
   it("dsGet throws MarketDataError with AUTH_FAILURE code on HTTP 401", async () => {
     fetchSpy.mockResolvedValue(mockErrorResponse(401));
 
-    await expect(provider.getQuotes(["NIFTY"])).rejects.toSatisfy((err: unknown) => {
+    await expect(provider.getQuotes(["__AUTH_TEST__"])).rejects.toSatisfy((err: unknown) => {
       if (!(err instanceof MarketDataError)) return false;
       expect(err.code).toBe("AUTH_FAILURE");
+      expect(err.httpStatus).toBe(401);
       return true;
     });
   });

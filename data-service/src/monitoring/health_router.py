@@ -150,6 +150,113 @@ async def health_ready() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# GET /health/providers
+# ---------------------------------------------------------------------------
+
+# Maps the internal circuit-breaker names to a (provider, capability) pair.
+# The data-service's own upstreams are the NSE/BSE scrapers (surfaced under the
+# "scrapling" provider, matching the TypeScript ProviderId) and the authorized
+# Upstox broker client.
+_BREAKER_TO_PROVIDER_CAP: dict[str, tuple[str, str]] = {
+    "nse_nextapi": ("scrapling", "live"),
+    "nse_charting": ("scrapling", "historical"),
+    "bse_charting": ("scrapling", "historical"),
+    "upstox_quotes": ("upstox", "live"),
+    "upstox_historical": ("upstox", "historical"),
+}
+
+# The capabilities we report per provider, so an untouched capability still
+# appears (as UNKNOWN) rather than silently missing.
+_PROVIDER_CAPABILITIES: dict[str, list[str]] = {
+    "scrapling": ["live", "historical", "option_chain"],
+    "upstox": ["live", "historical"],
+    "yahoo": ["historical"],
+}
+
+
+def _circuit_to_status(circuit_state: str) -> str:
+    """Map a circuit-breaker state to a capability health status."""
+    if circuit_state == "OPEN":
+        return "DEGRADED"
+    if circuit_state == "HALF_OPEN":
+        return "DEGRADED"
+    return "HEALTHY"
+
+
+@health_router.get("/providers", response_class=JSONResponse)
+async def health_providers() -> JSONResponse:
+    """Capability-aware provider health (spec §37).
+
+    Reports each provider's health per capability (live / historical /
+    option_chain) derived from the circuit-breaker states, plus per-endpoint
+    latency/error stats when available. This is the authoritative view that lets
+    the overall service be HEALTHY/DEGRADED even when one provider capability is
+    down — a 503 on Angel/NSE historical must NOT make the whole service DOWN.
+    """
+    from src.core.circuit_breaker import all_breakers
+
+    breakers = all_breakers()
+
+    # Seed every provider/capability as UNKNOWN so untouched ones still show.
+    providers: dict[str, dict[str, Any]] = {}
+    for provider, caps in _PROVIDER_CAPABILITIES.items():
+        providers[provider] = {cap: {"status": "UNKNOWN"} for cap in caps}
+
+    # Pull rolling latency stats when the monitoring router is available.
+    try:
+        from src.monitoring.router import rolling_stats  # type: ignore[attr-defined]
+        all_stats = rolling_stats.get_all_stats()
+    except Exception:
+        all_stats = {}
+
+    for name, breaker in breakers.items():
+        mapping = _BREAKER_TO_PROVIDER_CAP.get(name)
+        if mapping is None:
+            continue
+        provider, capability = mapping
+        stats = breaker.stats
+        entry = {
+            "status": _circuit_to_status(stats.get("state", "CLOSED")),
+            "circuitState": stats.get("state"),
+            "errorRate": stats.get("failure_rate"),
+            "totalRequests": stats.get("total_requests"),
+            "lastFailureReason": stats.get("last_failure_reason"),
+        }
+        providers.setdefault(provider, {})[capability] = entry
+
+    # Attach latency from rolling stats where endpoint names line up.
+    _endpoint_latency = {
+        ("scrapling", "live"): "/scraping/quotes",
+        ("scrapling", "historical"): "/scraping/historical",
+        ("scrapling", "option_chain"): "/scraping/option-chain",
+    }
+    for (provider, cap), endpoint in _endpoint_latency.items():
+        s = all_stats.get(endpoint) if isinstance(all_stats, dict) else None
+        if s is not None and provider in providers and cap in providers[provider]:
+            providers[provider][cap]["latencyP50Ms"] = getattr(s, "p50_ms", None)
+            providers[provider][cap]["latencyP99Ms"] = getattr(s, "p99_ms", None)
+
+    # Overall status: DEGRADED if any capability is degraded, but NEVER DOWN
+    # just because one provider capability is degraded — as long as at least one
+    # provider can serve each capability class the service is operational.
+    any_degraded = any(
+        cap.get("status") == "DEGRADED"
+        for prov in providers.values()
+        for cap in prov.values()
+    )
+    overall = "DEGRADED" if any_degraded else "HEALTHY"
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": overall,
+            "providers": providers,
+            "timestamp": _utc_now_iso(),
+        },
+    )
+
+
 @health_router.get("/data", response_class=JSONResponse)
 async def health_data() -> JSONResponse:
     """Data quality health check.

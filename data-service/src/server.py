@@ -36,6 +36,7 @@ from src.scrapers.instrument_master import instrument_router
 from src.scrapers.live_quotes import quotes_router
 from src.scrapers.option_chain import option_chain_router
 from src.core.gate_router import gate_router
+from src.brokers.router import brokers_router
 
 logger = structlog.get_logger(__name__)
 
@@ -196,6 +197,14 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     except Exception as exc:  # pragma: no cover
         shutdown_log.warning("http_client_close_error", error=str(exc))
 
+    # Close pooled broker/provider HTTP clients
+    try:
+        from src.core.provider_http import close_all_clients
+        await close_all_clients()
+        shutdown_log.info("provider_http_clients_closed")
+    except Exception as exc:  # pragma: no cover
+        shutdown_log.warning("provider_http_close_error", error=str(exc))
+
     # Stop the session warmer background task
     try:
         from src.monitoring.router import _session_warmer as _sw
@@ -355,6 +364,7 @@ app.include_router(publisher_router)
 app.include_router(monitoring_router)
 app.include_router(health_router)
 app.include_router(gate_router)
+app.include_router(brokers_router)
 
 
 # ---------------------------------------------------------------------------

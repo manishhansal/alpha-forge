@@ -28,12 +28,18 @@ import structlog
 from src.core.circuit_breaker import get_breaker
 from src.core.lineage import lineage_store
 from src.core.schemas_v2 import DataSource
+from src.core.provider_http import (
+    ProviderError,
+    ProviderRateLimitError,
+    resilient_get,
+)
 from src.schemas import MDQuote, OHLCVCandle
 
 logger = structlog.get_logger(__name__)
 
 _UPSTOX_BASE = "https://api.upstox.com"
 _TIMEOUT_S = 10.0
+_PROVIDER = "upstox"
 
 # ---------------------------------------------------------------------------
 # Well-known Upstox index instrument keys
@@ -51,15 +57,15 @@ _INDEX_KEYS: dict[str, str] = {
     "^NSEBANK":     "NSE_INDEX|Nifty Bank",
 }
 
-# Map Upstox v2 intervals to canonical names
+# Canonical interval -> Upstox v2 historical interval unit.
+# Upstox v2 historical-candle accepts ONLY these units (verified against the live
+# API — everything else returns HTTP 400 "UDAPI1020 Interval accepts one of
+# (1minute, 30minute, day, week, month)"). Unsupported canonical intervals
+# (3m/5m/10m/15m/1h) map to None so the caller returns empty and the wider chain
+# falls over to a provider that DOES support them.
 _INTERVAL_MAP: dict[str, str] = {
     "1m":  "1minute",
-    "3m":  "3minute",
-    "5m":  "5minute",
-    "10m": "10minute",
-    "15m": "15minute",
     "30m": "30minute",
-    "1h":  "60minute",
     "1d":  "day",
     "1w":  "week",
     "1M":  "month",
@@ -76,7 +82,12 @@ def _is_configured() -> bool:
 
 
 def _to_instrument_key(symbol: str, exchange: str = "NSE") -> str:
-    """Convert canonical symbol + exchange to Upstox instrument key."""
+    """Convert canonical symbol + exchange to Upstox instrument key (sync form).
+
+    NOTE: for NSE/BSE equities this returns the SYMBOL-based key, which Upstox
+    REJECTS. Prefer the async ``_resolve_instrument_key`` which resolves the
+    ISIN-based key from the instrument master; this sync form is the fallback.
+    """
     clean = symbol.upper().replace(".NS", "").replace(".BO", "")
     if clean in _INDEX_KEYS:
         return _INDEX_KEYS[clean]
@@ -85,6 +96,28 @@ def _to_instrument_key(symbol: str, exchange: str = "NSE") -> str:
     if exchange == "BSE":
         return f"BSE_EQ|{clean}"
     return f"NSE_EQ|{clean}"
+
+
+async def _resolve_instrument_key(symbol: str, exchange: str = "NSE") -> str:
+    """Async key resolver — the CORRECT path.
+
+    Indices / F&O keep the sync (name/token) form. NSE/BSE equities resolve the
+    ISIN-based key from the instrument master (Upstox rejects symbol-based equity
+    keys), falling back to the sync form when the master is unavailable.
+    """
+    clean = symbol.upper().replace(".NS", "").replace(".BO", "")
+    if clean in _INDEX_KEYS or exchange in ("NFO", "NSE_FO"):
+        return _to_instrument_key(symbol, exchange)
+    if exchange in ("NSE", "BSE"):
+        try:
+            from src.brokers.upstox_instruments import resolve_equity_instrument_key
+
+            resolved = await resolve_equity_instrument_key(clean, exchange)
+            if resolved:
+                return resolved
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return _to_instrument_key(symbol, exchange)
 
 
 def _utc_now_iso() -> str:
@@ -96,29 +129,44 @@ def _utc_now_iso() -> str:
 # ---------------------------------------------------------------------------
 
 async def _upstox_get(path: str, params: dict | None = None) -> Any:
-    """Execute an authenticated GET request to the Upstox API."""
+    """Execute an authenticated GET request to the Upstox API.
+
+    Uses the shared resilient HTTP layer: a pooled keep-alive client, typed
+    error classification (403 / 503 / 429 / timeout / network / malformed),
+    Retry-After honouring, and exponential backoff + jitter on transient
+    failures. Non-retryable failures (401 / 403 / 404) are raised immediately —
+    we never retry a 403 or hammer an auth failure.
+
+    Raises a ``ProviderError`` subclass on failure.
+    """
     token = _get_bearer_token()
     if not token:
-        raise RuntimeError("Upstox: no bearer token configured (UPSTOX_ANALYTICS_TOKEN)")
+        raise ProviderError("Upstox: no bearer token configured (UPSTOX_ANALYTICS_TOKEN)", _PROVIDER)
 
-    url = f"{_UPSTOX_BASE}{path}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "Api-Version": "2.0",
     }
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-        resp = await client.get(url, headers=headers, params=params or {})
+    result = await resilient_get(
+        provider=_PROVIDER,
+        base_url=_UPSTOX_BASE,
+        path=path,
+        headers=headers,
+        params=params or {},
+        timeout_s=_TIMEOUT_S,
+    )
 
-    if resp.status_code == 401:
-        raise RuntimeError(f"Upstox {path}: HTTP 401 unauthorized — check UPSTOX_ANALYTICS_TOKEN")
-    if not resp.is_success:
-        raise RuntimeError(f"Upstox {path}: HTTP {resp.status_code}")
+    envelope = result.json
+    if not isinstance(envelope, dict) or envelope.get("status") != "success":
+        from src.core.provider_http import ProviderMalformedResponseError
 
-    envelope = resp.json()
-    if envelope.get("status") != "success":
-        raise RuntimeError(f"Upstox {path}: status={envelope.get('status')}, errors={envelope.get('errors')}")
+        errors = envelope.get("errors") if isinstance(envelope, dict) else None
+        status = envelope.get("status") if isinstance(envelope, dict) else None
+        raise ProviderMalformedResponseError(
+            f"Upstox {path}: status={status}, errors={errors}", _PROVIDER, result.status
+        )
 
     return envelope.get("data")
 
@@ -143,7 +191,7 @@ async def get_quotes(symbols: list[str], exchange: str = "NSE") -> dict[str, MDQ
         logger.warning("upstox_quotes_circuit_open")
         return {}
 
-    instrument_keys = [_to_instrument_key(sym, exchange) for sym in symbols]
+    instrument_keys = [await _resolve_instrument_key(sym, exchange) for sym in symbols]
     received_at_ms = int(time.time() * 1000)
 
     try:
@@ -161,35 +209,59 @@ async def get_quotes(symbols: list[str], exchange: str = "NSE") -> dict[str, MDQ
     results: dict[str, MDQuote] = {}
     fetched_at = _utc_now_iso()
 
+    # Upstox echoes the instrument key back with EITHER delimiter — the request
+    # uses "SEGMENT|VALUE" but the response keys use "SEGMENT:VALUE" (verified
+    # against the live API). Build a lookup from BOTH forms of each requested key
+    # → the canonical symbol so we remap reliably regardless of delimiter.
+    key_to_symbol: dict[str, str] = {}
+    for sym, k in zip(symbols, instrument_keys):
+        key_to_symbol[k] = sym.upper()
+        key_to_symbol[k.replace("|", ":")] = sym.upper()
+
     for instrument_key, item in (data or {}).items():
-        # Resolve back to canonical symbol
-        # instrument_key format: NSE_EQ|RELIANCE or NSE_INDEX|Nifty 50
-        parts = instrument_key.split("|", 1)
-        sym = parts[1].upper() if len(parts) == 2 else instrument_key.upper()
-        # For indices, map display name back to trading symbol
-        for canon_sym, key in _INDEX_KEYS.items():
-            if key == instrument_key:
-                sym = canon_sym
-                break
+        # Prefer the exact requested-key mapping; fall back to splitting on either
+        # delimiter, then to the index display-name reverse map.
+        sym = key_to_symbol.get(instrument_key)
+        if sym is None:
+            parts = instrument_key.replace(":", "|").split("|", 1)
+            sym = parts[1].upper() if len(parts) == 2 else instrument_key.upper()
+            for canon_sym, key in _INDEX_KEYS.items():
+                if key == instrument_key or key.replace("|", ":") == instrument_key:
+                    sym = canon_sym
+                    break
 
         try:
             ltp = item.get("last_price")
             ohlc = item.get("ohlc") or {}
-            prev_close = item.get("net_change", None)
+            # prevClose comes from ohlc.close (the previous session close).
+            prev_close = ohlc.get("close")
+            net_change = item.get("net_change")
+
+            # Upstox /v2/market-quote/quotes does NOT return net_change_percentage
+            # (verified against the live API). Compute changePct from net_change
+            # and the previous close, matching the TypeScript provider.
+            change_pct = None
+            if net_change is not None and prev_close not in (None, 0):
+                try:
+                    change_pct = (float(net_change) / float(prev_close)) * 100.0
+                except (TypeError, ValueError, ZeroDivisionError):
+                    change_pct = None
 
             quote = MDQuote(
                 symbol=sym,
                 token=instrument_key,
                 exchange=exchange,
                 ltp=float(ltp) if ltp is not None else None,
-                change=float(item["net_change"]) if item.get("net_change") is not None else None,
-                changePct=float(item["net_change_percentage"]) if item.get("net_change_percentage") is not None else None,
+                change=float(net_change) if net_change is not None else None,
+                changePct=change_pct,
                 open=float(ohlc["open"]) if ohlc.get("open") is not None else None,
                 high=float(ohlc["high"]) if ohlc.get("high") is not None else None,
                 low=float(ohlc["low"]) if ohlc.get("low") is not None else None,
-                prevClose=float(ohlc["close"]) if ohlc.get("close") is not None else None,
+                prevClose=float(prev_close) if prev_close is not None else None,
                 volume=int(item["volume"]) if item.get("volume") is not None else None,
                 oi=float(item["oi"]) if item.get("oi") is not None else None,
+                totalBuyQty=int(item["total_buy_quantity"]) if item.get("total_buy_quantity") is not None else None,
+                totalSellQty=int(item["total_sell_quantity"]) if item.get("total_sell_quantity") is not None else None,
                 upperCircuit=float(item["upper_circuit_limit"]) if item.get("upper_circuit_limit") else None,
                 lowerCircuit=float(item["lower_circuit_limit"]) if item.get("lower_circuit_limit") else None,
                 provider="upstox",
@@ -238,13 +310,19 @@ async def get_historical_candles(
     if not _is_configured():
         return []
 
+    # Skip intervals Upstox v2 doesn't support (would 400). Empty return lets the
+    # wider chain fall over to a provider that serves them (Angel/Yahoo).
+    upstox_interval = _INTERVAL_MAP.get(interval)
+    if upstox_interval is None:
+        logger.debug("upstox_historical_unsupported_interval", symbol=symbol, interval=interval)
+        return []
+
     breaker = get_breaker("upstox_historical")
     if not breaker.allow_request():
         logger.warning("upstox_historical_circuit_open", symbol=symbol)
         return []
 
-    instrument_key = _to_instrument_key(symbol, exchange)
-    upstox_interval = _INTERVAL_MAP.get(interval, "day")
+    instrument_key = await _resolve_instrument_key(symbol, exchange)
 
     # Upstox date format: YYYY-MM-DD
     from_str = from_date.strftime("%Y-%m-%d")

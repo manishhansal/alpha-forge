@@ -33,6 +33,7 @@ const RECOVERY_PER_SUCCESS = 10;      // points recovered per success
 const STALE_DATA_PENALTY = 15;        // flat penalty for stale data event
 const AUTH_FAILURE_PENALTY = 25;      // extra penalty for auth failures
 const HARD_BLOCK_PENALTY = 40;        // 403 / forbidden — treat as a hard, non-retryable block
+const RATE_PRESSURE_PENALTY = 15;     // 429 / 503 — transient provider pressure; back off fast
 
 /**
  * When a provider keeps failing, we don't want to emit a `provider_failure`
@@ -73,14 +74,41 @@ function freshState(): HealthState {
   };
 }
 
-// Global registry of per-provider states, keyed by ProviderId.
-const states = new Map<ProviderId, HealthState>();
+/**
+ * Capability dimension for capability-aware circuit breaking.
+ *
+ * A provider is NOT a single monolithic health unit. Angel One's historical
+ * endpoint can be returning 503 while its live WebSocket is perfectly healthy.
+ * The reliability spec requires that we degrade only the affected capability
+ * ("Angel historical = DEGRADED, Angel live = HEALTHY") and route accordingly,
+ * rather than downing the whole provider.
+ */
+export type Capability =
+  | "liveQuotes"
+  | "historicalCandles"
+  | "optionChain"
+  | "instrumentMaster"
+  | "webSocket";
 
-function getState(id: ProviderId): HealthState {
-  let s = states.get(id);
+/**
+ * Composite state key. When `capability` is omitted the key is the bare
+ * provider id — this is the provider-wide circuit and preserves the original
+ * behaviour for every existing caller. When a capability is supplied the key
+ * becomes `${id}::${capability}`, giving that endpoint its own circuit.
+ */
+function stateKey(id: ProviderId, capability?: Capability): string {
+  return capability ? `${id}::${capability}` : id;
+}
+
+// Global registry of health states, keyed by provider id or provider+capability.
+const states = new Map<string, HealthState>();
+
+function getState(id: ProviderId, capability?: Capability): HealthState {
+  const key = stateKey(id, capability);
+  let s = states.get(key);
   if (!s) {
     s = freshState();
-    states.set(id, s);
+    states.set(key, s);
   }
   return s;
 }
@@ -106,8 +134,8 @@ function recordLatency(state: HealthState, ms: number): void {
  * Returns true if the circuit is currently open AND the half-open retry
  * window has not yet elapsed — meaning the provider should be skipped.
  */
-export function isCircuitOpen(id: ProviderId, now = Date.now()): boolean {
-  const s = getState(id);
+export function isCircuitOpen(id: ProviderId, now = Date.now(), capability?: Capability): boolean {
+  const s = getState(id, capability);
   if (!s.circuitOpen) return false;
   if (s.circuitRetryAt != null && now >= s.circuitRetryAt) {
     // Half-open: allow one probe call through.
@@ -116,9 +144,22 @@ export function isCircuitOpen(id: ProviderId, now = Date.now()): boolean {
   return true;
 }
 
+/**
+ * Capability-aware circuit check. A capability is considered unavailable when
+ * EITHER its own capability circuit is open OR the provider-wide circuit is
+ * open (a provider-wide hard failure — e.g. auth — takes everything down).
+ */
+export function isCapabilityCircuitOpen(
+  id: ProviderId,
+  capability: Capability,
+  now = Date.now(),
+): boolean {
+  return isCircuitOpen(id, now) || isCircuitOpen(id, now, capability);
+}
+
 /** Reset health state (used in tests and after manual provider re-enable). */
-export function resetHealth(id: ProviderId): void {
-  states.set(id, freshState());
+export function resetHealth(id: ProviderId, capability?: Capability): void {
+  states.set(stateKey(id, capability), freshState());
 }
 
 /** Reset all provider health states (used in tests). */
@@ -132,8 +173,8 @@ export function resetAllHealth(): void {
  * Record a successful call. Reduces consecutive failure count, recovers score,
  * and closes the circuit if it was in half-open state.
  */
-export function recordSuccess(id: ProviderId, latencyMs: number): void {
-  const s = getState(id);
+export function recordSuccess(id: ProviderId, latencyMs: number, capability?: Capability): void {
+  const s = getState(id, capability);
   s.consecutiveFailures = 0;
   s.consecutiveSuccesses += 1;
   s.lastSuccessAt = Date.now();
@@ -144,7 +185,7 @@ export function recordSuccess(id: ProviderId, latencyMs: number): void {
   if (s.circuitOpen) {
     s.circuitOpen = false;
     s.circuitRetryAt = null;
-    mdLog("provider_recovery", { providerId: id, score: s.score });
+    mdLog("provider_recovery", { providerId: id, capability: capability ?? null, score: s.score });
   }
 }
 
@@ -153,9 +194,48 @@ export type FailureKind =
   | "auth_failure"
   | "ws_disconnect"
   | "timeout"
+  /** HTTP 429 — rate limited. Retryable only after the Retry-After cooldown. */
+  | "rate_limit"
+  /** HTTP 503 / 5xx — provider temporarily unavailable. Backoff + fail over. */
+  | "unavailable"
+  /** Network-level failure: ECONNRESET / DNS / connection refused. */
+  | "network"
+  /** Body present but failed validation/parse. */
+  | "malformed"
   /** HTTP 403 / forbidden — an upstream WAF/gateway block. Non-retryable:
    *  hammering it won't help and usually flags the IP further. */
   | "hard_block";
+
+/**
+ * Map a MarketDataError code to the health-layer FailureKind.
+ * Falls back to `api_error` for anything unmapped.
+ */
+export function codeToFailureKind(code: string | undefined): FailureKind {
+  switch (code) {
+    case "AUTH_FAILURE":
+      return "auth_failure";
+    case "AUTHORIZATION_FAILURE":
+      return "hard_block";
+    case "RATE_LIMIT":
+      return "rate_limit";
+    case "UNAVAILABLE":
+      return "unavailable";
+    case "TIMEOUT":
+      return "timeout";
+    case "NETWORK":
+      return "network";
+    case "MALFORMED_RESPONSE":
+    case "INVALID_RESPONSE":
+      return "malformed";
+    default:
+      return "api_error";
+  }
+}
+
+/** Failure kinds that must NOT be retried within the same provider. */
+export function isNonRetryableWithinProvider(kind: FailureKind): boolean {
+  return kind === "auth_failure" || kind === "hard_block";
+}
 
 /** Escalating half-open window: the longer a provider stays down, the less
  *  often we probe it — 30s, 60s, 120s … capped at CIRCUIT_RETRY_MAX_MS. This
@@ -182,8 +262,9 @@ export function recordFailure(
   id: ProviderId,
   kind: FailureKind,
   message?: string,
+  capability?: Capability,
 ): void {
-  const s = getState(id);
+  const s = getState(id, capability);
   s.consecutiveSuccesses = 0;
   s.consecutiveFailures += 1;
   s.lastFailureAt = Date.now();
@@ -194,11 +275,19 @@ export function recordFailure(
   // A hard block (403) is as bad as an auth failure — drive the score down
   // fast so we open the circuit and stop retrying immediately.
   const hardBlockExtra = kind === "hard_block" ? HARD_BLOCK_PENALTY : 0;
-  s.score = Math.max(0, s.score - base - authExtra - hardBlockExtra);
+  // Rate-limit (429) and unavailable (503) are transient provider-pressure
+  // signals. We still want to back off and eventually open the circuit under a
+  // sustained storm, so apply a moderate extra penalty — enough that a burst of
+  // 429/503 opens the circuit quickly (protecting the provider from a request
+  // storm) without permanently condemning it the way a 403/auth failure does.
+  const pressureExtra =
+    kind === "rate_limit" || kind === "unavailable" ? RATE_PRESSURE_PENALTY : 0;
+  s.score = Math.max(0, s.score - base - authExtra - hardBlockExtra - pressureExtra);
 
   if (!shouldThrottleLog(s.consecutiveFailures)) {
     mdLog("provider_failure", {
       providerId: id,
+      capability: capability ?? null,
       kind,
       consecutiveFailures: s.consecutiveFailures,
       score: s.score,
@@ -209,8 +298,9 @@ export function recordFailure(
   if (!s.circuitOpen && s.score < CIRCUIT_OPEN_THRESHOLD) {
     s.circuitOpen = true;
     s.circuitRetryAt = Date.now() + circuitRetryDelayMs(s.consecutiveFailures);
-    mdLog("provider_circuit_open", {
+    mdLog(capability ? "capability_circuit_open" : "provider_circuit_open", {
       providerId: id,
+      capability: capability ?? null,
       score: s.score,
       retryAt: new Date(s.circuitRetryAt).toISOString(),
     });
@@ -227,17 +317,22 @@ export function recordFailure(
  * Record a stale data event (data received but timestamps are too old).
  * Applies a flat score penalty without opening the circuit immediately.
  */
-export function recordStaleData(id: ProviderId, ageMs: number, thresholdMs: number): void {
-  const s = getState(id);
+export function recordStaleData(
+  id: ProviderId,
+  ageMs: number,
+  thresholdMs: number,
+  capability?: Capability,
+): void {
+  const s = getState(id, capability);
   s.score = Math.max(0, s.score - STALE_DATA_PENALTY);
-  mdLog("stale_data", { providerId: id, ageMs, thresholdMs, score: s.score });
+  mdLog("stale_data", { providerId: id, capability: capability ?? null, ageMs, thresholdMs, score: s.score });
 }
 
 // ── Snapshot ─────────────────────────────────────────────────────────────────
 
-/** Return a read-only health snapshot for a provider. */
-export function getProviderHealth(id: ProviderId): ProviderHealth {
-  const s = getState(id);
+/** Return a read-only health snapshot for a provider (optionally a capability). */
+export function getProviderHealth(id: ProviderId, capability?: Capability): ProviderHealth {
+  const s = getState(id, capability);
   const sorted = [...s.latencySamples].sort((a, b) => a - b);
   const status: ProviderHealthStatus =
     s.circuitOpen
@@ -265,7 +360,45 @@ export function getProviderHealth(id: ProviderId): ProviderHealth {
 /** Return health snapshots for all known providers. */
 export function getAllProviderHealth(): ProviderHealth[] {
   const allIds: ProviderId[] = ["scrapling", "angel_one", "upstox", "yahoo"];
-  return allIds.map(getProviderHealth);
+  return allIds.map((id) => getProviderHealth(id));
+}
+
+/** The capabilities we track independent circuits for, per provider. */
+export const TRACKED_CAPABILITIES: readonly Capability[] = [
+  "liveQuotes",
+  "historicalCandles",
+  "optionChain",
+  "instrumentMaster",
+  "webSocket",
+];
+
+/**
+ * Return a capability-resolved health map for a provider:
+ *   { provider: <provider-wide>, capabilities: { liveQuotes: <health>, ... } }
+ *
+ * A capability's effective status is the WORSE of its own circuit and the
+ * provider-wide circuit, so a provider-wide outage correctly shows every
+ * capability as unhealthy even if that capability was never individually hit.
+ */
+export function getProviderCapabilityHealth(id: ProviderId): {
+  provider: ProviderHealth;
+  capabilities: Record<Capability, ProviderHealth>;
+} {
+  const provider = getProviderHealth(id);
+  const capabilities = {} as Record<Capability, ProviderHealth>;
+  for (const cap of TRACKED_CAPABILITIES) {
+    const capHealth = getProviderHealth(id, cap);
+    // Effective status/circuit is the worse of the two.
+    const circuitOpen = provider.circuitOpen || capHealth.circuitOpen;
+    const score = Math.min(provider.score, capHealth.score);
+    const status: ProviderHealthStatus = circuitOpen
+      ? "unhealthy"
+      : score < DEGRADED_THRESHOLD
+        ? "degraded"
+        : "healthy";
+    capabilities[cap] = { ...capHealth, status, score, circuitOpen };
+  }
+  return { provider, capabilities };
 }
 
 // ── Staleness detection ──────────────────────────────────────────────────────
@@ -318,8 +451,12 @@ type LogEvent =
   | "provider_selected"
   | "provider_failure"
   | "provider_failover"
+  | "provider_switch"
   | "provider_recovery"
   | "provider_circuit_open"
+  | "provider_degraded"
+  | "rate_limited"
+  | "capability_circuit_open"
   | "stale_data"
   | "data_mismatch";
 

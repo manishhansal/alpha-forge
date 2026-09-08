@@ -301,21 +301,95 @@ export type SubscribeRequest = {
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
+/**
+ * The canonical taxonomy of failure modes a provider can surface.
+ *
+ * These map 1:1 to the failover engine's handling policy:
+ *   - AUTHENTICATION / AUTHORIZATION (401 / 403): non-retryable within the
+ *     provider. Attempt a legitimate token/session recovery once, else degrade
+ *     the capability and fail over.
+ *   - RATE_LIMIT (429): honour Retry-After, reduce concurrency, fail over.
+ *   - UNAVAILABLE (5xx incl. 503): exponential backoff + jitter, then fail over.
+ *   - TIMEOUT / NETWORK: transient — retry with backoff, then fail over.
+ *   - MALFORMED_RESPONSE: provider replied but the body failed validation.
+ *   - CAPABILITY: the provider cannot serve this capability at all.
+ *   - INSTRUMENT_NOT_FOUND: the symbol/token is unknown to this provider.
+ *   - STALE_DATA: data returned but its timestamp is past the freshness bound.
+ *
+ * Legacy codes (INVALID_RESPONSE, NO_PROVIDER, NOT_CONFIGURED, CIRCUIT_OPEN)
+ * are retained for backward compatibility with existing call sites and tests.
+ */
+export type MarketDataErrorCode =
+  | "AUTH_FAILURE"          // 401 — invalid/expired credentials
+  | "AUTHORIZATION_FAILURE" // 403 — forbidden / WAF / gateway block
+  | "RATE_LIMIT"            // 429 — too many requests
+  | "UNAVAILABLE"           // 503 / 5xx — provider temporarily degraded
+  | "TIMEOUT"               // request exceeded deadline
+  | "NETWORK"               // ECONNRESET / DNS / connection refused
+  | "MALFORMED_RESPONSE"    // body present but failed validation/parse
+  | "CAPABILITY"            // provider does not support this capability
+  | "INSTRUMENT_NOT_FOUND"  // symbol/token unknown to this provider
+  | "STALE_DATA"            // data too old to trust
+  | "NOT_CONFIGURED"        // provider disabled / no credentials
+  | "INVALID_RESPONSE"      // legacy alias — prefer MALFORMED_RESPONSE
+  | "CIRCUIT_OPEN"          // provider circuit is open, call was skipped
+  | "NO_PROVIDER";          // every provider in the chain was exhausted
+
 export class MarketDataError extends Error {
   constructor(
     message: string,
     public readonly providerId: ProviderId | null,
-    public readonly code?:
-      | "AUTH_FAILURE"
-      | "RATE_LIMIT"
-      | "STALE_DATA"
-      | "TIMEOUT"
-      | "NOT_CONFIGURED"
-      | "INVALID_RESPONSE"
-      | "CIRCUIT_OPEN"
-      | "NO_PROVIDER",
+    public readonly code?: MarketDataErrorCode,
+    /**
+     * The upstream HTTP status when the failure originated from an HTTP call.
+     * Drives status-code-based classification instead of fragile string matching.
+     */
+    public readonly httpStatus?: number,
+    /**
+     * When the provider supplied a Retry-After (429/503), the parsed cooldown
+     * in milliseconds. The failover engine honours this before retrying.
+     */
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "MarketDataError";
   }
+}
+
+/**
+ * Parse an HTTP `Retry-After` header into milliseconds.
+ * Supports both the delta-seconds form ("120") and the HTTP-date form.
+ * Returns null when the header is absent or unparseable.
+ */
+export function parseRetryAfterMs(
+  headerValue: string | null | undefined,
+  now = Date.now(),
+): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  // delta-seconds
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1_000;
+  }
+  // HTTP-date
+  const dateMs = Date.parse(trimmed);
+  if (Number.isFinite(dateMs)) {
+    return Math.max(0, dateMs - now);
+  }
+  return null;
+}
+
+/**
+ * Map an HTTP status code to a MarketDataErrorCode. This is the authoritative
+ * classifier — callers should prefer it over inspecting error message strings.
+ */
+export function httpStatusToErrorCode(status: number): MarketDataErrorCode {
+  if (status === 401) return "AUTH_FAILURE";
+  if (status === 403) return "AUTHORIZATION_FAILURE";
+  if (status === 404) return "INSTRUMENT_NOT_FOUND";
+  if (status === 408) return "TIMEOUT";
+  if (status === 429) return "RATE_LIMIT";
+  if (status === 503) return "UNAVAILABLE";
+  if (status >= 500) return "UNAVAILABLE";
+  return "MALFORMED_RESPONSE";
 }

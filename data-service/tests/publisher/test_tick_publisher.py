@@ -20,6 +20,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.schemas import LiveTick, MDQuote
+from src.core.deduplication import event_dedup
+
+
+# ---------------------------------------------------------------------------
+# Test isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_dedup_state():
+    """Reset the global event-deduplication cache before each test.
+
+    The publisher now deduplicates identical ticks (spec §27) using a global
+    LRU cache. Several tests here publish the SAME fixture quote, so without a
+    per-test reset the second test's identical tick would be (correctly)
+    suppressed as a duplicate and never reach the mock Redis.
+    """
+    event_dedup.reset()
+    yield
+    event_dedup.reset()
 
 
 # ---------------------------------------------------------------------------

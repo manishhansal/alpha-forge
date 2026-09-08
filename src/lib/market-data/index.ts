@@ -34,7 +34,14 @@ export type {
   SubscribeRequest,
 } from "./types";
 
-export { PROVIDER_PRIORITY, MarketDataError } from "./types";
+export {
+  PROVIDER_PRIORITY,
+  MarketDataError,
+  parseRetryAfterMs,
+  httpStatusToErrorCode,
+} from "./types";
+
+export type { MarketDataErrorCode } from "./types";
 
 // ── Provider interface ────────────────────────────────────────────────────────
 export type {
@@ -51,19 +58,24 @@ export { registry, bootstrapRegistry } from "./registry";
 export {
   getProviderHealth,
   getAllProviderHealth,
+  getProviderCapabilityHealth,
   recordSuccess,
   recordFailure,
   recordStaleData,
   isCircuitOpen,
+  isCapabilityCircuitOpen,
   resetHealth,
   resetAllHealth,
+  codeToFailureKind,
+  isNonRetryableWithinProvider,
   isStale,
   isTickStale,
   mdLog,
   STALE_THRESHOLDS_MS,
+  TRACKED_CAPABILITIES,
 } from "./health";
 
-export type { FailureKind, StaleDataType } from "./health";
+export type { FailureKind, StaleDataType, Capability } from "./health";
 
 // ── Normalizer ────────────────────────────────────────────────────────────────
 export {
@@ -182,6 +194,8 @@ export {
 export {
   reconcileTick,
   reconcileCandle,
+  reconcileQuotes,
+  reconciliationAgreementScore,
   checkQuoteStaleness,
   checkTickStaleness,
   checkOptionChainStaleness,
@@ -191,6 +205,8 @@ export {
   comparePrices,
   buildQualityEnvelope,
   evaluateSafetyGate,
+  evaluateSignalGate,
+  recordProviderSwitch,
   computeProviderHealthScore,
   resetProviderStats,
 } from "./services/reconciliation.service";
@@ -206,8 +222,15 @@ export type {
   PriceComparisonResult,
   OutlierResult,
   SafetyGateResult,
+  SignalGateDecision,
+  DataConsumer,
+  ProviderSwitchEvent,
   ProviderHealthSnapshot,
   ReconciliationConfig,
+  ReconciliationTier,
+  ReconcilableQuote,
+  FieldComparison,
+  ReconciliationReport,
 } from "./services/reconciliation.service";
 
 // ── Cache ─────────────────────────────────────────────────────────────────────
