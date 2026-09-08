@@ -17,6 +17,16 @@ from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+# ── Provider identity ────────────────────────────────────────────────────────
+# Must mirror the TypeScript `ProviderId` union in src/lib/market-data/types.ts.
+# The data-service historically only produced "scrapling" data, but it now also
+# serves authorized broker data (Upstox via brokers/upstox_client.py, and
+# Angel/Yahoo via the wider chain), so the canonical provider field must accept
+# every real provider — not just "scrapling". Default stays "scrapling" for
+# backward compatibility with the NSE/BSE scraper paths.
+ProviderId = Literal["scrapling", "angel_one", "upstox", "yahoo"]
+
+
 # ── OHLCVCandle ──────────────────────────────────────────────────────────────
 
 
@@ -113,7 +123,7 @@ class OptionChain(BaseModel):
     expiries: list[str]                   # All available expiries, nearest-first
     rows: list[OptionChainRow]
     analytics: OptionChainAnalytics
-    provider: Literal["scrapling"] = "scrapling"
+    provider: ProviderId = "scrapling"
     fetchedAt: str                        # UTC ISO-8601
 
 
@@ -143,7 +153,7 @@ class MDQuote(BaseModel):
     totalBuyQty: Optional[int] = None
     totalSellQty: Optional[int] = None
     lastTradeTime: Optional[str] = None  # UTC ISO-8601
-    provider: Literal["scrapling"] = "scrapling"
+    provider: ProviderId = "scrapling"
     fetchedAt: str                       # UTC ISO-8601
 
 
@@ -163,7 +173,7 @@ class LiveTick(BaseModel):
     oi: Optional[int] = None
     exchangeTimestampMs: int             # UTC epoch milliseconds (exchange side)
     receivedAtMs: int                    # UTC epoch milliseconds (received by us)
-    provider: Literal["scrapling"] = "scrapling"
+    provider: ProviderId = "scrapling"
 
 
 # ── Instrument ───────────────────────────────────────────────────────────────
