@@ -52,6 +52,31 @@ function biasToRegime(bias: string): MarketRegime {
   return "UNKNOWN";
 }
 
+/**
+ * Fallback regime derived from the already-loaded snapshot when the nifty-bias
+ * API hasn't produced a usable string ("-" / "ERROR" / anything unmapped).
+ *
+ * The bias route can return "-" or "ERROR" (e.g. the registry can't serve
+ * ^NSEI), which would otherwise pin the core card on "LOADING" indefinitely
+ * even though the index/sector snapshot is fully populated. Deriving the
+ * regime from NIFTY 50's move + overall breadth keeps the card meaningful.
+ */
+function regimeFromSnapshot(
+  niftyChangePct: number | null,
+  breadth: number,
+  hasData: boolean,
+): MarketRegime {
+  if (!hasData) return "UNKNOWN"; // genuinely still loading — show "LOADING"
+  const chg = niftyChangePct ?? 0;
+  // Clear directional move on the headline index wins outright.
+  if (chg >= 0.15) return "BULL";
+  if (chg <= -0.15) return "BEAR";
+  // Flat NIFTY: let market breadth break the tie, else call it sideways.
+  if (breadth >= 0.6) return "BULL";
+  if (breadth <= 0.4) return "BEAR";
+  return "SIDEWAYS";
+}
+
 /* ── VIX normalisation (clamp 10–40 → 0–1) ─────────────────────────────── */
 function normaliseVix(vix: number | null): number {
   if (vix == null) return 0.25;
@@ -86,9 +111,19 @@ export function MarketCoreWidget({ niftyBias, height = 220 }: MarketCoreWidgetPr
   );
   const vixValue = vixQuote?.price ?? 15;
 
-  const regime    = biasToRegime(niftyBias);
   const volatility = normaliseVix(vixValue);
   const breadth    = computeBreadth(indices, sectors);
+
+  // Prefer the authoritative nifty-bias string; fall back to snapshot-derived
+  // regime so the card never stays stuck on "LOADING" once data has arrived.
+  const biasRegime = biasToRegime(niftyBias);
+  const niftyChangePct =
+    indices.find((i) => i.name?.toUpperCase() === "NIFTY 50")?.changePct ?? null;
+  const hasData = indices.length > 0 || sectors.length > 0;
+  const regime =
+    biasRegime !== "UNKNOWN"
+      ? biasRegime
+      : regimeFromSnapshot(niftyChangePct, breadth, hasData);
 
   // Only show stats row when there's enough vertical space (height > 140)
   const stats = height > 140 ? [
