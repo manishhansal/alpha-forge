@@ -38,6 +38,7 @@ import structlog
 
 from src.config import settings
 from src.schemas import LiveTick, MDQuote
+from src.core.deduplication import compute_event_id, event_dedup, tick_gap_detector
 
 logger = structlog.get_logger(__name__)
 
@@ -258,6 +259,35 @@ class TickPublisher:
                     symbol=quote.symbol if hasattr(quote, "symbol") else "unknown",
                 )
                 continue
+
+            # ── Deduplication ─────────────────────────────────────────────
+            # A failover between providers (or a repeated poll returning the
+            # same unchanged quote) can produce duplicate observations for the
+            # same event. Compute a deterministic event id and skip duplicates
+            # so downstream consumers never double-count a tick.
+            event_id = compute_event_id(
+                instrument_id=tick.symbol,
+                event_time_ms=tick.exchangeTimestampMs,
+                source=tick.provider,
+                ltp=tick.ltp,
+                volume=tick.volume,
+            )
+            if event_dedup.is_duplicate(event_id):
+                logger.debug("tick_deduplicated", symbol=tick.symbol, event_id=event_id)
+                continue
+
+            # ── Gap detection ─────────────────────────────────────────────
+            # Record the event against the tick-stream gap detector. A gap
+            # (missing expected ticks) is logged and surfaced via /health/data;
+            # it does not block publishing the tick we DO have.
+            try:
+                tick_gap_detector.record_event(
+                    instrument_id=tick.symbol,
+                    event_time_ms=tick.receivedAtMs,
+                    stream_type="TICK",
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.debug("gap_detector_error", symbol=tick.symbol, error=str(exc))
 
             published = await self._publish_tick(tick)
             if published:
