@@ -106,6 +106,46 @@ const SCRIP_MASTER_URL =
   "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json";
 const SMARTAPI_TIMEOUT_MS = 10_000;
 const SCRIP_MASTER_TTL_MS = 12 * 60 * 60 * 1_000; // 12h
+
+// ── Historical rate limiter ───────────────────────────────────────────────────
+// Angel One's historical (getCandleData) endpoint is rate-limited to ~3 req/s.
+// Exceeding it returns **HTTP 403 "Access denied because of exceeding access
+// rate"** (NOT 429). Without throttling, a burst of historical requests (e.g.
+// multiple intervals/symbols fetched back-to-back) trips this and the failover
+// engine mistakes the 403 for a permanent WAF/auth block and opens the circuit.
+// We serialize historical calls through a token bucket to stay under the limit.
+const HIST_RATE_CAPACITY = 3;
+const HIST_RATE_WINDOW_MS = 1_100; // slightly over 1s for safety margin
+
+class HistTokenBucket {
+  private tokens = HIST_RATE_CAPACITY;
+  private lastRefill = Date.now();
+  private queue: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastRefill >= HIST_RATE_WINDOW_MS) {
+      this.tokens = HIST_RATE_CAPACITY;
+      this.lastRefill = now;
+    }
+    if (this.tokens > 0) {
+      this.tokens -= 1;
+      return;
+    }
+    // Wait for the window to roll over, then retry.
+    const wait = HIST_RATE_WINDOW_MS - (now - this.lastRefill);
+    await new Promise<void>((r) => setTimeout(r, Math.max(0, wait)));
+    return this.acquire();
+  }
+}
+
+const histRateLimiter = new HistTokenBucket();
+
+/** True when a SmartAPI error is Angel's historical rate-limit 403 (transient). */
+function isAngelRateLimitError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return m.includes("exceeding access rate") || (m.includes("403") && m.includes("access denied"));
+}
 const QUOTE_BATCH_SIZE = 50; // SmartAPI hard cap
 
 const INDEX_UNDERLYINGS = new Set([
@@ -245,7 +285,13 @@ async function smartApiPost<T>(
     body: JSON.stringify(body),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`SmartAPI ${path}: HTTP ${res.status}`);
+  if (!res.ok) {
+    // Include the response body so callers can distinguish Angel's transient
+    // rate-limit 403 ("Access denied because of exceeding access rate") from a
+    // genuine auth/WAF block. The body is plain text for gateway rejections.
+    const detail = await res.text().catch(() => "");
+    throw new Error(`SmartAPI ${path}: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 160)}` : ""}`);
+  }
   const env = (await res.json()) as SmartApiEnvelope<T>;
   if (!env.status) {
     throw new Error(
@@ -353,6 +399,44 @@ async function login(cfg: SmartApiConfig): Promise<string> {
       message,
     });
     throw e;
+  }
+}
+
+/** SmartStream (WebSocket 2.0) credentials, resolved from a live login session. */
+export interface AngelWsSession {
+  apiKey:     string;
+  clientCode: string;
+  jwt:        string;
+  feedToken:  string;
+}
+
+/**
+ * Resolve the SmartStream WebSocket credentials for the currently-configured
+ * Angel One account.  Resolves config (env or per-user DB), performs a login if
+ * one isn't cached (populating `jwt` + `feedToken`), and returns the session or
+ * `null` when Angel is unconfigured / the login yielded no feed token.
+ *
+ * This is the single supported way for the market-data WS manager to obtain the
+ * feed token — `resolveConfig`/`sessions` are module-private on purpose.  Exposing
+ * one purpose-built accessor keeps the login plumbing in one place and makes the
+ * WS provider work identically in the app, the worker, and validation scripts.
+ */
+export async function resolveAngelWsSession(): Promise<AngelWsSession | null> {
+  try {
+    const cfg = await resolveConfig();
+    if (!cfg) return null;
+    await login(cfg); // populates sessions.get(clientCode) with jwt + feedToken
+    const session = sessions.get(cfg.clientCode);
+    if (!session?.jwt || !session?.feedToken) return null;
+    return {
+      apiKey:     cfg.apiKey,
+      clientCode: cfg.clientCode,
+      jwt:        session.jwt,
+      feedToken:  session.feedToken,
+    };
+  } catch {
+    // Unconfigured or login failed — caller falls back (Yahoo / polling).
+    return null;
   }
 }
 
@@ -877,19 +961,41 @@ async function fetchCandleData(
   fromMs: number,
   toMs: number,
 ): Promise<AngelCandleTuple[]> {
-  const data = await smartApiPost<AngelCandleTuple[]>(
-    cfg,
-    "/rest/secure/angelbroking/historical/v1/getCandleData",
-    {
-      exchange: ins.exchange,
-      symboltoken: ins.token,
-      interval: smartInterval,
-      fromdate: toSmartApiDateTime(fromMs),
-      todate: toSmartApiDateTime(toMs),
-    },
-    jwt,
-  );
-  return Array.isArray(data) ? data : [];
+  const body = {
+    exchange: ins.exchange,
+    symboltoken: ins.token,
+    interval: smartInterval,
+    fromdate: toSmartApiDateTime(fromMs),
+    todate: toSmartApiDateTime(toMs),
+  };
+
+  // Angel's historical endpoint allows ~3 req/s and returns HTTP 403 "exceeding
+  // access rate" when breached. Throttle through the token bucket, and if we
+  // still hit the rate-limit 403 (concurrent processes, bursty callers), back
+  // off and retry a couple of times rather than surfacing it as a hard block.
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await histRateLimiter.acquire();
+    try {
+      const data = await smartApiPost<AngelCandleTuple[]>(
+        cfg,
+        "/rest/secure/angelbroking/historical/v1/getCandleData",
+        body,
+        jwt,
+      );
+      return Array.isArray(data) ? data : [];
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      // Only retry the transient rate-limit 403; everything else propagates.
+      if (!isAngelRateLimitError(msg) || attempt === MAX_ATTEMPTS - 1) throw e;
+      // Back off ~1 window with jitter before the next attempt.
+      const backoff = HIST_RATE_WINDOW_MS * (attempt + 1) + Math.floor(Math.random() * 300);
+      await new Promise<void>((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function fetchGreeks(

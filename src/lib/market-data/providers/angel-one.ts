@@ -1130,23 +1130,24 @@ export class AngelOneProvider implements MarketDataProvider {
   private async ensureWsStarted(wsm: AngelOneWsManager): Promise<void> {
     if (wsm.isStarted) return;
     try {
-      const { resolveConfig: rc } = await import("@/services/india/angelone") as {
-        resolveConfig?: () => Promise<{ apiKey: string; clientCode: string } | null>;
+      // Resolve the SmartStream feed token via the service's dedicated accessor,
+      // which resolves config + performs a login (populating jwt + feedToken).
+      // NOTE: `resolveConfig`/`sessions` are module-private in the service — the
+      // earlier code imported them directly and always got `undefined`, so the
+      // Angel WS never started.  `resolveAngelWsSession` is the supported path.
+      const { resolveAngelWsSession } = await import("@/services/india/angelone") as {
+        resolveAngelWsSession?: () => Promise<{
+          apiKey: string; clientCode: string; jwt: string; feedToken: string;
+        } | null>;
       };
-      if (!rc) return;
-      const cfg = await rc();
-      if (!cfg) return;
+      if (!resolveAngelWsSession) return;
 
-      // We need the feedToken from a live session.
-      const { sessions: s } = await import("@/services/india/angelone") as {
-        sessions?: Map<string, { jwt: string; feedToken: string }>;
-      };
-      const sess = s?.get(cfg.clientCode);
+      const sess = await resolveAngelWsSession();
       if (!sess?.jwt || !sess?.feedToken) return;
 
       wsm.start({
-        apiKey:     cfg.apiKey,
-        clientCode: cfg.clientCode,
+        apiKey:     sess.apiKey,
+        clientCode: sess.clientCode,
         jwt:        sess.jwt,
         feedToken:  sess.feedToken,
       });
