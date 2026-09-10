@@ -362,8 +362,17 @@ async def get_historical_candles(
                 oi=float(oi) if oi else None,
             )
 
-            # Basic OHLC validation
-            if candle.high < candle.low or candle.open <= 0 or candle.close <= 0:
+            # RCA-D09: full OHLC invariant validation (was weaker — only
+            # high<low + open/close<=0, which let internally-crossed candles
+            # such as high<open pass). Match the canonical Bhavcopy validator:
+            #   all prices > 0, high >= max(open, close), low <= min(open, close),
+            #   volume >= 0. Reject (skip) — never silently repair.
+            if (
+                candle.open <= 0 or candle.high <= 0 or candle.low <= 0 or candle.close <= 0
+                or candle.volume < 0
+                or candle.high < max(candle.open, candle.close)
+                or candle.low > min(candle.open, candle.close)
+            ):
                 logger.warning("upstox_invalid_candle", symbol=symbol, time=ts_epoch)
                 continue
 

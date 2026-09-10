@@ -78,6 +78,13 @@ class OptionContract(BaseModel):
     oi: int
     oiChange: int
     volume: int
+    # Provenance flags (Absolute Rules 2, 5, 46). When True the corresponding
+    # numeric field above is a PLACEHOLDER (0) because the source omitted it —
+    # NOT a genuine measured zero. Analytics / quality gates MUST exclude
+    # placeholder fields rather than treat a fabricated 0 as real data.
+    oiMissing: bool = False
+    oiChangeMissing: bool = False
+    volumeMissing: bool = False
     greeks: Greeks
     fetchedAt: str           # UTC ISO-8601
 

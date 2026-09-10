@@ -178,6 +178,17 @@ export type OptionContract = {
   oiChange: number;
   volume: number;
   greeks: Greeks;
+  /**
+   * Provenance flags for the numeric fields that MUST NOT be silently defaulted
+   * to 0 when the provider omitted them (Absolute Rules 2, 5, 46). When true,
+   * the corresponding numeric field is a PLACEHOLDER (0) because the source did
+   * not supply a value — it is NOT a genuine measured zero. Analytics and
+   * quality gates MUST exclude placeholder fields rather than treat them as real.
+   * Absent/false means the numeric value is a genuine reading.
+   */
+  oiMissing?: boolean;
+  oiChangeMissing?: boolean;
+  volumeMissing?: boolean;
   /** UTC ISO-8601 */
   fetchedAt: string;
 };
@@ -242,6 +253,20 @@ export type LiveTick = {
   /** UTC epoch milliseconds when we received this tick. */
   receivedAtMs: number;
   provider: ProviderId;
+  /**
+   * True when this tick came from a polled / delayed source that does NOT
+   * supply a real exchange timestamp (e.g. Yahoo ~15-min-delayed, or a REST
+   * polling adapter). For synthetic ticks `exchangeTimestampMs` is the poll
+   * time, NOT an exchange time — freshness checks MUST NOT treat it as live
+   * (Absolute Rule 7). Absent/false means a genuine exchange timestamp.
+   */
+  synthetic?: boolean;
+  /**
+   * Known minimum feed delay in milliseconds for this provider, when the source
+   * is delayed by design (e.g. Yahoo). Consumers can add this to the staleness
+   * budget instead of trusting the poll time as an exchange time.
+   */
+  feedDelayMs?: number;
 };
 
 // ── Historical Request ───────────────────────────────────────────────────────

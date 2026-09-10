@@ -122,3 +122,57 @@ Baseline: commit `1c2941b`, branch `refactor/signals`, 208 files / 3280 tests pa
   builder is the remaining P0 step; it was deferred to avoid destabilising the one
   working path without a runtime-verifiable environment. The integration layer + guards
   make that hook a small, safe, well-tested follow-up.
+
+---
+
+## [Data Foundation] Forensic data audit + integrity remediation
+
+Data-first remediation of the Indian market data layer. No ML / signal-threshold
+/ A+ / profitability code changed. No data fabricated. No gate weakened. All
+changes additive and backward-compatible.
+
+Reports produced:
+- `reports/ALPHAFORGE_DATA_FORENSIC_AUDIT.md`
+- `reports/ALPHAFORGE_DATA_ROOT_CAUSE_REPORT.md`
+- `reports/ALPHAFORGE_DATA_PROVIDER_CERTIFICATION.md`
+- `reports/ALPHAFORGE_DATA_GAP_REPORT.md`
+- `reports/ALPHAFORGE_DATA_COVERAGE_REPORT.md`
+- `reports/ALPHAFORGE_DATA_READINESS_CERTIFICATION.md`
+
+Code changes:
+- RCA-D01 `src/lib/market-data/providers/upstox.ts` — stop fabricating option
+  OI/oiChange/volume as `0`; set `oiMissing`/`oiChangeMissing`/`volumeMissing`
+  flags; exclude missing legs from `computeAnalytics` totals + max-pain.
+- RCA-D01 `src/lib/market-data/types.ts` — added optional missing-flags to
+  `OptionContract`; added `synthetic`/`feedDelayMs` to `LiveTick`.
+- RCA-D02 `data-service/src/scrapers/option_chain.py` — NSE + BSE contracts flag
+  source-missing OI/oiChange/volume; added `_first_present` helper.
+- RCA-D02 `data-service/src/schemas.py` — added `oiMissing`/`oiChangeMissing`/
+  `volumeMissing` (default `False`) to `OptionContract`.
+- RCA-D03 `src/lib/market-data/providers/yahoo.ts` — mark delayed ticks
+  `synthetic: true` + `feedDelayMs = 15min`; no fresh exchange timestamp.
+- RCA-D03 `src/lib/market-data/providers/scrapling.ts` — polled ticks marked
+  `synthetic`; use `fetchedAt` as data timestamp, not poll instant.
+- RCA-D04 `src/lib/market-data/validation/candle-validator.ts` — added
+  `filterValidCandlesWithReport`; `filterValidCandles` now delegates (no
+  behaviour change for existing callers).
+- RCA-D05 `src/lib/market-data/services/historical.service.ts` — swallow path
+  emits `PROVIDER_FAILED`; dropped candles logged with counts.
+- RCA-D08 `data-service/src/brokers/__init__.py` — corrected the false
+  "no direct NSE acquisition" comment.
+- RCA-D09 `data-service/src/brokers/upstox_client.py` — full OHLC invariant
+  validation (was high<low + price<=0 only).
+
+Verification: tsc (app + worker) PASS; vitest lib 1780 + features/services/worker
+885 PASS; data-service pytest 671 passed / 18 skipped; py_compile OK; eslint
+0 errors.
+
+Intentionally NOT done (reasons):
+- RCA-D06 (attach a DataAvailability quality envelope to every read path) —
+  broad blast radius; designed in the readiness certification for incremental
+  rollout.
+- RCA-D07 (add `DataGap` / `DataQualityIncident` / `ProviderObservation` models
+  + `CandleBar.provider`) — production schema change; additive migration
+  designed in the readiness certification, awaiting review. No migration run.
+- Numeric coverage figures — require a live session/DB query; marked
+  NOT VERIFIED rather than fabricated (brief §88).

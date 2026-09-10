@@ -976,10 +976,23 @@ function normaliseOptionLeg(
   const md     = leg.market_data ?? {};
   const greeks = leg.option_greeks ?? {};
 
-  // OI change: if prev_oi available compute the delta; otherwise 0
-  const oi       = md.oi       ?? 0;
-  const prevOi   = md.prev_oi  ?? null;
-  const oiChange = prevOi != null ? oi - prevOi : 0;
+  // RCA-D01: NEVER silently fabricate OI / OI-change / volume as a genuine 0.
+  // A missing field is recorded as a PLACEHOLDER (0) with an explicit *Missing
+  // flag so analytics and quality gates can exclude it instead of treating a
+  // fabricated zero as a real reading (Absolute Rules 2, 5, 46).
+  const oiRaw       = finiteOrNull(md.oi ?? null);
+  const oiMissing   = oiRaw === null;
+  const oi          = oiRaw ?? 0;
+
+  const prevOi      = finiteOrNull(md.prev_oi ?? null);
+  // OI-change is only real when BOTH current and previous OI are known.
+  const oiChangeKnown = !oiMissing && prevOi != null;
+  const oiChange      = oiChangeKnown ? oi - prevOi! : 0;
+  const oiChangeMissing = !oiChangeKnown;
+
+  const volumeRaw     = finiteOrNull(md.volume ?? null);
+  const volumeMissing = volumeRaw === null;
+  const volume        = volumeRaw ?? 0;
 
   return {
     token:         leg.instrument_key,
@@ -993,7 +1006,10 @@ function normaliseOptionLeg(
     ask:    finiteOrNull(md.ask_price ?? null),
     oi,
     oiChange,
-    volume: md.volume ?? 0,
+    volume,
+    ...(oiMissing ? { oiMissing: true } : {}),
+    ...(oiChangeMissing ? { oiChangeMissing: true } : {}),
+    ...(volumeMissing ? { volumeMissing: true } : {}),
     greeks: {
       iv:    finiteOrNull(greeks.iv    ?? null),
       delta: finiteOrNull(greeks.delta ?? null),
@@ -1019,18 +1035,26 @@ function computeAnalytics(
   let maxCeOiStrike: number | null = null;
   let maxPeOiStrike: number | null = null;
 
+  // RCA-D01: placeholder (source-missing) OI/OI-change/volume must NOT be summed
+  // as real zeros. Legs flagged *Missing carry a fabricated 0 for type
+  // compatibility only — exclude them from every aggregate so PCR / max-pain /
+  // OI-walls reflect actual data, not fabricated zeros.
   for (const row of rows) {
     if (row.ce) {
-      totalCeOi       += row.ce.oi;
-      totalCeOiChange += row.ce.oiChange;
-      totalCeVol      += row.ce.volume;
-      if (row.ce.oi > maxCeOi) { maxCeOi = row.ce.oi; maxCeOiStrike = row.strike; }
+      if (!row.ce.oiMissing) {
+        totalCeOi += row.ce.oi;
+        if (row.ce.oi > maxCeOi) { maxCeOi = row.ce.oi; maxCeOiStrike = row.strike; }
+      }
+      if (!row.ce.oiChangeMissing) totalCeOiChange += row.ce.oiChange;
+      if (!row.ce.volumeMissing)   totalCeVol      += row.ce.volume;
     }
     if (row.pe) {
-      totalPeOi       += row.pe.oi;
-      totalPeOiChange += row.pe.oiChange;
-      totalPeVol      += row.pe.volume;
-      if (row.pe.oi > maxPeOi) { maxPeOi = row.pe.oi; maxPeOiStrike = row.strike; }
+      if (!row.pe.oiMissing) {
+        totalPeOi += row.pe.oi;
+        if (row.pe.oi > maxPeOi) { maxPeOi = row.pe.oi; maxPeOiStrike = row.strike; }
+      }
+      if (!row.pe.oiChangeMissing) totalPeOiChange += row.pe.oiChange;
+      if (!row.pe.volumeMissing)   totalPeVol      += row.pe.volume;
     }
   }
 
@@ -1057,8 +1081,8 @@ function computeAnalytics(
     for (const candidate of rows) {
       let pain = 0;
       for (const row of rows) {
-        if (row.ce) pain += row.ce.oi * Math.max(0, row.strike - candidate.strike);
-        if (row.pe) pain += row.pe.oi * Math.max(0, candidate.strike - row.strike);
+        if (row.ce && !row.ce.oiMissing) pain += row.ce.oi * Math.max(0, row.strike - candidate.strike);
+        if (row.pe && !row.pe.oiMissing) pain += row.pe.oi * Math.max(0, candidate.strike - row.strike);
       }
       if (pain < minPain) { minPain = pain; maxPain = candidate.strike; }
     }

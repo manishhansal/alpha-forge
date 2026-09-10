@@ -317,6 +317,12 @@ export class ScraplingProvider implements MarketDataProvider {
           const now = Date.now();
           for (const quote of quotes) {
             if (!quote || quote.ltp == null) continue;
+            // RCA-D03: this is a REST-polled quote, not a real-time exchange
+            // tick. It has no exchange-side timestamp, so mark it synthetic and
+            // use the data-service fetch time (quote.fetchedAt) rather than the
+            // local poll instant as the best-available data timestamp. Freshness
+            // checks MUST NOT treat this as an exchange-fresh tick (Rule 7).
+            const dataTsMs = quote.fetchedAt ? Date.parse(quote.fetchedAt) : now;
             onTick({
               token:               quote.token ?? quote.symbol,
               symbol:              quote.symbol,
@@ -326,9 +332,10 @@ export class ScraplingProvider implements MarketDataProvider {
               changePct:           quote.changePct,
               volume:              quote.volume,
               oi:                  quote.oi,
-              exchangeTimestampMs: now,
+              exchangeTimestampMs: Number.isFinite(dataTsMs) ? dataTsMs : now,
               receivedAtMs:        now,
               provider:            PROVIDER_ID,
+              synthetic:           true,
             });
           }
         } catch (err) {

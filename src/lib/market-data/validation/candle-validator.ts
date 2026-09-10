@@ -175,19 +175,65 @@ export function validateCandleSequence(candles: OHLCVCandle[]): SequenceValidati
   };
 }
 
+/** A candle dropped by the filter, with the reason it was rejected. */
+export type DroppedCandle = {
+  index: number;
+  time: number;
+  error: CandleValidationError | "TIMESTAMP_NOT_ASCENDING";
+  detail?: string;
+};
+
+/** Result of filtering with a full report of what was dropped and why. */
+export type FilterCandlesReport = {
+  candles: OHLCVCandle[];
+  dropped: DroppedCandle[];
+  droppedCount: number;
+  inputCount: number;
+};
+
+/**
+ * Filter a candle array, dropping any candles that fail validation, AND report
+ * exactly which candles were dropped and why.
+ *
+ * RCA-D04: silently dropping bad candles makes a "repaired" series
+ * indistinguishable from a clean one (violates Absolute Rules 15/44 — no
+ * silent repair, every failure has a reason). Callers should log/persist the
+ * report so drops are observable. `filterValidCandles` is retained as a thin
+ * wrapper for backward compatibility.
+ */
+export function filterValidCandlesWithReport(candles: OHLCVCandle[]): FilterCandlesReport {
+  const out: OHLCVCandle[] = [];
+  const dropped: DroppedCandle[] = [];
+  let prevTime = -Infinity;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i]!;
+    const r = validateCandle(c);
+    if (!r.valid) {
+      dropped.push({ index: i, time: c.time, error: r.error, detail: r.detail });
+      continue;
+    }
+    if (c.time <= prevTime) {
+      dropped.push({
+        index: i,
+        time: c.time,
+        error: "TIMESTAMP_NOT_ASCENDING",
+        detail: `time=${c.time} prevTime=${prevTime}`,
+      });
+      continue;
+    }
+    out.push(c);
+    prevTime = c.time;
+  }
+  return { candles: out, dropped, droppedCount: dropped.length, inputCount: candles.length };
+}
+
 /**
  * Filter a candle array, dropping any candles that fail validation.
  * Returns only valid candles with strictly ascending timestamps.
+ *
+ * Backward-compatible wrapper around `filterValidCandlesWithReport`. Prefer the
+ * reporting variant when you can surface the drop count for observability.
  */
 export function filterValidCandles(candles: OHLCVCandle[]): OHLCVCandle[] {
-  const out: OHLCVCandle[] = [];
-  let prevTime = -Infinity;
-  for (const c of candles) {
-    const r = validateCandle(c);
-    if (r.valid && c.time > prevTime) {
-      out.push(c);
-      prevTime = c.time;
-    }
-  }
-  return out;
+  return filterValidCandlesWithReport(candles).candles;
 }

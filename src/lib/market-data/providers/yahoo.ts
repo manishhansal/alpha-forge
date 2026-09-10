@@ -43,6 +43,13 @@ import type { Quote as LegacyQuote } from "@/types/india";
 
 const PROVIDER_ID: ProviderId = "yahoo";
 
+/**
+ * Yahoo Finance quotes for NSE equities are delayed by design (~15 minutes).
+ * Declared so live ticks are marked synthetic with an honest feed delay rather
+ * than masquerading as exchange-fresh (RCA-D03 / Absolute Rule 7).
+ */
+const YAHOO_FEED_DELAY_MS = 15 * 60_000;
+
 // ── Translation helpers ───────────────────────────────────────────────────────
 
 function translateQuote(legacy: LegacyQuote): MDQuote {
@@ -175,6 +182,11 @@ export class YahooProvider implements MarketDataProvider {
       symbols,
       (q) => {
         if (q.price == null) return;
+        // RCA-D03: Yahoo is delayed (~15 min) and provides NO exchange timestamp.
+        // We MUST NOT stamp a fresh exchange time and let a delayed quote pass the
+        // liveness check (Absolute Rule 7). Mark the tick synthetic + declare the
+        // known feed delay so consumers judge freshness honestly.
+        const nowMs = Date.now();
         onTick({
           token: toYahooSymbol(q.symbol),
           symbol: q.symbol,
@@ -184,9 +196,11 @@ export class YahooProvider implements MarketDataProvider {
           changePct: finiteOrNull(q.changePct),
           volume: finiteOrNull(q.volume ?? null),
           oi: null,
-          exchangeTimestampMs: Date.now(),
-          receivedAtMs: Date.now(),
+          exchangeTimestampMs: nowMs,
+          receivedAtMs: nowMs,
           provider: PROVIDER_ID,
+          synthetic: true,
+          feedDelayMs: YAHOO_FEED_DELAY_MS,
         });
       },
       5_000,

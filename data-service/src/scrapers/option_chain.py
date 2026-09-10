@@ -286,6 +286,19 @@ def _normalize_expiry_to_iso(expiry_str: str) -> str:
     return expiry_str  # already ISO or unrecognised — return as-is
 
 
+def _first_present(raw: dict[str, Any], *keys: str) -> Any:
+    """Return the first key's value that is actually present in ``raw``.
+
+    Distinguishes a genuine source value (including a real 0) from an absent
+    field. Returns ``None`` only when NONE of the aliases exist in the dict —
+    which the caller treats as "source-missing" (RCA-D02), not as a zero.
+    """
+    for k in keys:
+        if k in raw and raw[k] is not None:
+            return raw[k]
+    return None
+
+
 def _build_option_contract(
     raw: dict[str, Any],
     underlying: str,
@@ -312,9 +325,14 @@ def _build_option_contract(
         ltp=raw.get("lastPrice") or None,
         bid=raw.get("bidprice") or None,
         ask=raw.get("askPrice") or None,
-        oi=int(raw.get("openInterest", 0)),
-        oiChange=int(raw.get("changeinOpenInterest", 0)),
-        volume=int(raw.get("totalTradedVolume", 0)),
+        # RCA-D02: a missing key must NOT become a real 0. Record the placeholder
+        # 0 (schema requires int) but flag it so downstream excludes it.
+        oi=int(raw.get("openInterest") or 0),
+        oiChange=int(raw.get("changeinOpenInterest") or 0),
+        volume=int(raw.get("totalTradedVolume") or 0),
+        oiMissing=raw.get("openInterest") is None,
+        oiChangeMissing=raw.get("changeinOpenInterest") is None,
+        volumeMissing=raw.get("totalTradedVolume") is None,
         greeks=greeks,
         fetchedAt=fetched_at,
     )
@@ -934,13 +952,17 @@ def _build_rows_from_bse_data(
         ) -> OptionContract:
             # BSE field names differ slightly from NSE
             ltp = raw.get("LastPrice") or raw.get("lastPrice") or raw.get("LTP") or None
-            oi = int(raw.get("OpenInterest") or raw.get("openInterest") or raw.get("OI") or 0)
-            oi_change = int(
-                raw.get("ChangeInOI") or raw.get("changeinOpenInterest") or 0
-            )
-            volume = int(
-                raw.get("TotalTradedVolume") or raw.get("totalTradedVolume") or raw.get("Volume") or 0
-            )
+            # RCA-D02: distinguish source-missing from a genuine 0. A field is
+            # "missing" only when NONE of the known aliases are present.
+            _oi_raw = _first_present(raw, "OpenInterest", "openInterest", "OI")
+            _oichg_raw = _first_present(raw, "ChangeInOI", "changeinOpenInterest")
+            _vol_raw = _first_present(raw, "TotalTradedVolume", "totalTradedVolume", "Volume")
+            oi = int(_oi_raw or 0)
+            oi_change = int(_oichg_raw or 0)
+            volume = int(_vol_raw or 0)
+            oi_missing = _oi_raw is None
+            oi_change_missing = _oichg_raw is None
+            volume_missing = _vol_raw is None
             iv = raw.get("ImpliedVolatility") or raw.get("impliedVolatility") or None
             identifier = raw.get("token") or raw.get("Token") or (
                 f"{underlying}{selected_expiry_iso}{strike}{otype}"
@@ -958,6 +980,9 @@ def _build_rows_from_bse_data(
                 oi=oi,
                 oiChange=oi_change,
                 volume=volume,
+                oiMissing=oi_missing,
+                oiChangeMissing=oi_change_missing,
+                volumeMissing=volume_missing,
                 greeks=Greeks(iv=float(iv) if iv is not None else None),
                 fetchedAt=fetched_at,
             )
