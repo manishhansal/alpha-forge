@@ -706,3 +706,105 @@ model SignalIntelligenceRecord {
   @@index([reportingBucket, sessionDate])
   @@map("signal_intelligence_record")
 }
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// Closed-loop learning: durable prediction/resolution records (remediation).
+/// These back the `SignalRecordStore` interface in
+/// `src/lib/india/signal-learning-loop.ts` with real persistence, replacing the
+/// in-memory-only store. A PredictionRecord is written ONCE at signal creation
+/// and is IMMUTABLE (unique `signalId`); a ResolutionRecord is appended ONCE at
+/// close (unique `signalId` → no double-resolution). The full creation-time
+/// scoring snapshot is preserved so historical quality/grade/probability are
+/// never recomputed with a later algorithm.
+/// ─────────────────────────────────────────────────────────────────────────
+model IndiaPredictionRecord {
+  /// Stable signal id — primary key AND idempotency key (immutable snapshot).
+  signalId          String   @id
+  symbol            String
+  strategy          String
+  direction         String
+  /// Signal generation time (UTC ms).
+  timestampMs       BigInt
+  entry             Float
+  stop              Float
+  /// Target ladder (first target resolves).
+  targets           Float[]
+  timeframe         String
+  regime            String
+  instrumentType    String
+  sector            String?
+
+  // ── scoring provenance (immutable at creation) ──
+  signalQuality           Float
+  grade                   String
+  rawConfidence           Float
+  calibratedProbability   Float
+  expectedValue           Float
+  /// per-model contribution map.
+  modelContributions      Json
+  /// per-component quality attribution.
+  qualityComponents       Json
+  abstentionDecision      Boolean
+
+  // ── immutable evidence snapshots at signal time ──
+  featureSnapshot     Json
+  derivativesSnapshot Json
+  marketContext       Json
+
+  // ── data / execution quality at signal time ──
+  dataQuality       Float
+  liquidity         Float
+  costEstimate      Float
+  slippageEstimate  Float
+
+  // ── engine + model provenance (versioned so scores are reproducible) ──
+  modelVersion         String
+  qualityEngineVersion String?
+  gradingEngineVersion String?
+  calibrationVersion   String?
+  featureVersion       String?
+  datasetVersion       String?
+  provider             String?
+  providerTimestampMs  BigInt?
+
+  /// IST calendar day key (YYYY-MM-DD) — same-day retrain embargo.
+  tradeDate         String
+  createdAt         DateTime @default(now())
+
+  resolution        IndiaResolutionRecord?
+
+  @@index([symbol, tradeDate])
+  @@index([strategy, tradeDate])
+  @@index([grade, tradeDate])
+  @@map("india_prediction_record")
+}
+
+/// Appended ONCE at trade close. `signalId` is unique → a signal can never
+/// resolve twice (idempotency). `ambiguous = true` marks a resolution whose
+/// intrabar ordering could not be determined (both stop & target touched in one
+/// candle) — such rows are EXCLUDED from win-rate/expectancy aggregation.
+model IndiaResolutionRecord {
+  signalId          String   @id
+  outcome           String
+  exit              Float?
+  exitTimeMs        BigInt?
+  returnPct         Float?
+  returnR           Float?
+  mfe               Float
+  mae               Float
+  holdingTimeMs     BigInt?
+  targetReached     Boolean
+  stopReached       Boolean
+  costActual        Float
+  slippageActual    Float
+  netReturn         Float?
+  regimeDuringTrade String
+  ambiguous         Boolean  @default(false)
+  resolvedAtMs      BigInt
+  createdAt         DateTime @default(now())
+
+  prediction        IndiaPredictionRecord @relation(fields: [signalId], references: [signalId], onDelete: Cascade)
+
+  @@index([outcome, resolvedAtMs])
+  @@map("india_resolution_record")
+}
