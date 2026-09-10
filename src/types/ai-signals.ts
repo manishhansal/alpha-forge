@@ -129,13 +129,45 @@ export interface AiSignal {
   positionSizingPct: number;
   riskLevel: AiRiskLevel;
 
-  /** Composite [0, 1] confidence in the signal's direction. */
+  /**
+   * Composite [0, 1] CONFIDENCE (heuristic conviction) in the signal's
+   * direction. This is NOT a probability of profit — see `calibratedProbability`.
+   * Confidence and probability are deliberately separate fields.
+   */
   confidence: number;
-  /** 0–100 representation used by the UI ring. */
+  /** 0–100 representation of `confidence` used by the UI ring. */
   confidenceScore: number;
   grade: AiGrade;
-  /** Calibrated win-probability in [0, 1] (TP1 hit before SL). */
+  /**
+   * Win-probability in [0, 1] (TP1 hit before SL). When the ML meta-decision
+   * layer is available this is the empirically OOS-calibrated
+   * `calibratedProbability`; otherwise it is the legacy heuristic transform
+   * (see `probabilitySource`).
+   */
   winProbability: number;
+
+  // ── ML meta-decision (empirically calibrated P(profitable trade)) ───────────
+  // All optional: present only when the ML meta layer produced a decision.
+  // These are SEPARATE from `confidence` and must never be conflated with it.
+  /** Empirically OOS-calibrated probability of a profitable, cost-adjusted trade. */
+  calibratedProbability?: number;
+  /** Where `winProbability` came from: the calibrated meta layer, or the heuristic. */
+  probabilitySource?: "ml_calibrated" | "heuristic";
+  /** Lower/upper bound of the calibrated probability (Wilson + model-spread). */
+  probabilityLowerBound?: number;
+  probabilityUpperBound?: number;
+  /** Calibration method actually used by the dominant model ("platt"|"isotonic"|"beta"|"raw"). */
+  calibrationMethod?: string;
+  /** OOS sample count backing the dominant calibrator. */
+  calibrationSampleCount?: number;
+  /** Blended OOS calibration quality of the contributing models [0,1]. */
+  calibrationQuality?: number;
+  /** Agreement across independent models [0,1]. */
+  modelAgreement?: number;
+  /** Prediction uncertainty [0,1] (interval width + model spread). */
+  predictionUncertainty?: number;
+  /** True when the meta layer abstained (evidence insufficient/unreliable). */
+  mlAbstained?: boolean;
 
   timing: AiTimingWindow;
 

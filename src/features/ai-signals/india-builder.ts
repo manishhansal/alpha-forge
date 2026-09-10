@@ -67,6 +67,7 @@ import {
   type MLContextInputs,
 } from "@/lib/india/ml-enhanced-context";
 import type { MLStockRank } from "@/lib/india/ml-client";
+import { loadIndiaMetaArtifact } from "@/lib/india/ml-meta-artifact-store";
 import { computeSuperConfluence } from "@/features/india/indicators/super-confluence";
 import {
   buildPriceForecasterInput,
@@ -666,8 +667,36 @@ interface IndiaSignalInputs {
    * top-20 ML-ranked stocks, slightly negative for bottom-ranked ones.
    * Applied after the confluence math so the signal's internal factors are
    * not altered, only the final confidence is nudged.
+   *
+   * IMPORTANT: this boost is GATED by `rankerAddsValue`. If the ML ranker has
+   * NOT been shown to improve outcomes on OOS data, the boost is zeroed — a
+   * heuristic ranker delta must never override statistically stronger evidence.
    */
   mlRankBoost?: number;
+  /**
+   * Whether the ML stock ranker has been empirically validated (OOS) to add
+   * value — win rate / expectancy / top-decile lift. When false or undefined,
+   * `mlRankBoost` is suppressed. This converts the old arbitrary confidence
+   * delta into an evidence-gated contribution.
+   */
+  rankerAddsValue?: boolean;
+  /**
+   * Optional ML meta-decision result (empirically OOS-calibrated
+   * P(profitable trade) + uncertainty). When present, it — not the heuristic —
+   * supplies `winProbability`/`calibratedProbability` on the signal. Confidence
+   * is still carried separately.
+   */
+  metaDecision?: {
+    calibratedProbability: number;
+    probabilityLowerBound: number;
+    probabilityUpperBound: number;
+    calibrationMethod: string;
+    calibrationSampleCount: number;
+    calibrationQuality: number;
+    modelAgreement: number;
+    predictionUncertainty: number;
+    abstained: boolean;
+  } | null;
   /**
    * Super Confluence Engine score in [-1, 1].
    * +1 = fresh UT Buy + AI trend bullish + SMC bullish (triple agreement).
@@ -1176,7 +1205,10 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
   // so the board naturally surfaces higher-predictability names. Indices
   // always pass (quantPrefilterPassed = true when not supplied for indices).
   const prefilterPassed = args.quantPrefilterPassed ?? true;
-  const mlBoost = args.mlRankBoost ?? 0;
+  // Evidence gate: only apply the ranker's confidence delta if the ranker has
+  // been OOS-validated to add value. Otherwise the heuristic delta is zeroed so
+  // it can never override statistically stronger evidence.
+  const mlBoost = args.rankerAddsValue ? (args.mlRankBoost ?? 0) : 0;
 
   // Blend pre-filter penalty + ML rank boost into a single confidence scalar.
   // The formula keeps everything in [0, 0.98] and never turns a low-confidence
@@ -1242,10 +1274,16 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
 
   const confidenceScore = Math.round(adjustedComposite.confidence * 100);
   const grade = gradeFromConfidence(adjustedComposite.confidence);
-  const winProbability = calibrateWinProbability(
+  // Win-probability: prefer the empirically OOS-calibrated meta-decision
+  // probability. Fall back to the legacy heuristic transform ONLY when the ML
+  // meta layer is unavailable or abstained. Confidence stays SEPARATE.
+  const meta = args.metaDecision ?? null;
+  const heuristicWinProbability = calibrateWinProbability(
     Math.abs(adjustedComposite.score),
     adjustedComposite.confidence,
   );
+  const useCalibrated = meta != null && !meta.abstained;
+  const winProbability = useCalibrated ? meta!.calibratedProbability : heuristicWinProbability;
 
   const positionSizingPct = isWait
     ? 0
@@ -1324,6 +1362,20 @@ function buildIndiaSignal(args: IndiaSignalInputs): AiSignal {
     confidenceScore,
     grade,
     winProbability,
+    probabilitySource: useCalibrated ? "ml_calibrated" : "heuristic",
+    ...(meta
+      ? {
+          calibratedProbability: meta.calibratedProbability,
+          probabilityLowerBound: meta.probabilityLowerBound,
+          probabilityUpperBound: meta.probabilityUpperBound,
+          calibrationMethod: meta.calibrationMethod,
+          calibrationSampleCount: meta.calibrationSampleCount,
+          calibrationQuality: meta.calibrationQuality,
+          modelAgreement: meta.modelAgreement,
+          predictionUncertainty: meta.predictionUncertainty,
+          mlAbstained: meta.abstained,
+        }
+      : {}),
     timing,
     confluences: factors,
     bullishCount: adjustedComposite.bullishCount,
@@ -1769,6 +1821,13 @@ async function computeIndiaUniverse(
     blendedRegimeScore = clamp(context.regimeScore * 0.65 + mlScore * 0.35, -1, 1);
   }
 
+  // Load the frozen ML meta-decision artifact (calibration + OOS-validated
+  // contributions). Until an OOS-trained artifact is persisted this returns the
+  // safe default whose ranker `addsValue = false`, so the ranker boost is
+  // suppressed — the ranker earns its influence only once validated.
+  const metaArtifact = await loadIndiaMetaArtifact();
+  const rankerAddsValue = metaArtifact.contribution.stockRanker.addsValue;
+
   const signals: AiSignal[] = universe.map((u, idx) => {
     const quote = quoteList[idx] ?? null;
     const dailies = dailiesByYf.get(u.symbol) ?? [];
@@ -1811,6 +1870,7 @@ async function computeIndiaUniverse(
         : null,
       quantPrefilterPassed: prefilter.passes,
       mlRankBoost,
+      rankerAddsValue,
       superConfluenceScore: (() => {
         // Compute on demand — daily candles already in memory. Fail-soft so
         // a single symbol's indicator warmup failure never blocks the board.
