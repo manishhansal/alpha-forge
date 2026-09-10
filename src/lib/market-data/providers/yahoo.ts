@@ -117,7 +117,9 @@ export class YahooProvider implements MarketDataProvider {
           high: c.high,
           low: c.low,
           close: c.close,
+          // G-06: flag placeholder-0 when Yahoo omitted volume for this bar.
           volume: c.volume ?? 0,
+          ...(c.volume == null ? { volumeUnavailable: true } : {}),
         }));
 
         return filterValidCandles(ohlcv);

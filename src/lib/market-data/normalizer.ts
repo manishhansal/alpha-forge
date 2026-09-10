@@ -197,7 +197,14 @@ export function normaliseCandlesFromAngel(
     ) {
       continue;
     }
-    out.push({ time: utcSec, open, high, low, close, volume: volume ?? 0 });
+    // G-06: flag placeholder-0 volume so a source-missing volume is never
+    // mistaken for a genuine zero-volume bar (Absolute Rules 2/4).
+    const volumeUnavailable = !Number.isFinite(volume);
+    out.push({
+      time: utcSec, open, high, low, close,
+      volume: Number.isFinite(volume) ? volume : 0,
+      ...(volumeUnavailable ? { volumeUnavailable: true } : {}),
+    });
   }
   return out;
 }
@@ -223,13 +230,15 @@ export function normaliseCandlesFromUpstox(
   for (const r of rows) {
     const ms = Date.parse(r.timestamp);
     if (!Number.isFinite(ms)) continue;
+    const volumeUnavailable = !Number.isFinite(r.volume);
     out.push({
       time: Math.floor(ms / 1_000),
       open: r.open,
       high: r.high,
       low: r.low,
       close: r.close,
-      volume: r.volume,
+      volume: Number.isFinite(r.volume) ? r.volume : 0,
+      ...(volumeUnavailable ? { volumeUnavailable: true } : {}),
       ...(r.oi != null ? { oi: r.oi } : {}),
     });
   }

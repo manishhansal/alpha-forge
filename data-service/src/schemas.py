@@ -44,6 +44,10 @@ class OHLCVCandle(BaseModel):
     close: float
     volume: int
     oi: Optional[int] = None
+    # G-07: True when `volume` is a placeholder 0 because the source did not
+    # supply volume (e.g. NSE intraday chart-databyindex is a price series with
+    # no volume). NOT a genuine zero-volume bar (Absolute Rules 2/4).
+    volumeUnavailable: bool = False
 
 
 # ── Greeks ───────────────────────────────────────────────────────────────────

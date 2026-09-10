@@ -126,6 +126,14 @@ export type OHLCVCandle = {
   volume: number;
   /** Open interest at candle close. Present for F&O candles. */
   oi?: number;
+  /**
+   * True when `volume` is a PLACEHOLDER (0) because the source did not supply a
+   * volume for this candle — NOT a genuine zero-volume bar (Absolute Rules 2/4;
+   * G-06/G-07). Persistence copies this to `CandleBar.volumeUnavailable` so a
+   * synthesized-OHLC bar (e.g. NSE intraday price-series) is never mistaken for
+   * a real zero-volume observation. Absent/false means the volume is real.
+   */
+  volumeUnavailable?: boolean;
 };
 
 // ── Market Depth ─────────────────────────────────────────────────────────────
@@ -267,6 +275,16 @@ export type LiveTick = {
    * budget instead of trusting the poll time as an exchange time.
    */
   feedDelayMs?: number;
+  /**
+   * True when this tick was past its freshness bound at the moment it was
+   * forwarded (only ever set when the consumer opted into `allowStaleTicks`).
+   * A consumer MUST NOT treat a `stale: true` tick as a live exchange tick
+   * (Absolute Rule 8 — never treat delayed data as live). Absent/false means
+   * the tick was within its freshness bound when forwarded.
+   */
+  stale?: boolean;
+  /** Age (ms) of the tick at the moment it was forwarded, when known. */
+  staleAgeMs?: number;
 };
 
 // ── Historical Request ───────────────────────────────────────────────────────

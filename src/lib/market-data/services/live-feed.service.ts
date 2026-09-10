@@ -74,6 +74,12 @@ export function subscribeLiveFeed(
       const age = Date.now() - tick.exchangeTimestampMs;
       recordStaleData(tick.provider, age, STALE_THRESHOLDS_MS.liveTick);
       if (!allowStale) return;
+      // G-10: when the consumer opts into stale ticks, it MUST still be able to
+      // tell the tick is stale. Thread the stale marker + age onto the tick so a
+      // downstream consumer can never mistake it for a live exchange tick
+      // (Absolute Rule 8). Preserve any existing synthetic/feedDelay provenance.
+      onTick({ ...tick, stale: true, staleAgeMs: age });
+      return;
     }
 
     onTick(tick);

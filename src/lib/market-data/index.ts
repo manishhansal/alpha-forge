@@ -107,6 +107,7 @@ export {
   validateCandle,
   validateCandleSequence,
   filterValidCandles,
+  filterValidCandlesWithReport,
 } from "./validation/candle-validator";
 
 export type {
@@ -114,6 +115,8 @@ export type {
   CandleValidationResult,
   SequenceValidationError,
   SequenceValidationResult,
+  DroppedCandle,
+  FilterCandlesReport,
 } from "./validation/candle-validator";
 
 export {
@@ -190,6 +193,70 @@ export {
   getOptionInstruments,
   getFutureInstruments,
 } from "./services/instrument-master.service";
+
+// ── DataAvailability contract (V2) ────────────────────────────────────────────
+export {
+  buildAvailability,
+  newRequestId,
+  worstStatus,
+  isTradableStatus,
+  NON_TRADABLE_STATUSES,
+  DATASET_VERSION,
+} from "./data-availability";
+
+export type {
+  DataAvailability,
+  DataAvailabilityStatus,
+  IntervalWindow,
+  BuildAvailabilityInput,
+} from "./data-availability";
+
+// ── Status-returning read APIs (V2, non-breaking) ─────────────────────────────
+export {
+  getHistoricalCandlesWithStatus,
+  getOptionChainWithStatus,
+  getInstrumentsWithStatus,
+  getQuotesWithStatus,
+  failureKindToStatus,
+  errorToStatus,
+} from "./services/read-with-status.service";
+
+export type {
+  HistoricalWithStatusOptions,
+  QuoteResult,
+} from "./services/read-with-status.service";
+
+// ── Data gates (V2): snapshot consistency + global DATA state (fail-closed) ────
+export {
+  evaluateSnapshotConsistency,
+  evaluateGlobalDataState,
+  strategyMayOperate,
+  DEFAULT_MAX_SNAPSHOT_SKEW_MS,
+} from "./data-gate";
+
+export type {
+  SnapshotField,
+  SnapshotConsistencyResult,
+  GlobalDataState,
+  DataDependency,
+  GlobalDataDecision,
+} from "./data-gate";
+
+// ── Coverage + history sufficiency (V2) ───────────────────────────────────────
+export {
+  buildCoverageMatrix,
+  checkHistorySufficiency,
+  expectedBars,
+  tradingDaysInRange,
+} from "./services/coverage.service";
+
+export type {
+  CoverageCell,
+  CoverageQuery,
+  HistorySufficiencyStatus,
+  HistorySufficiencyResult,
+  HistorySufficiencyQuery,
+} from "./services/coverage.service";
 
 export {
   reconcileTick,

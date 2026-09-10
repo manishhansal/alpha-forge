@@ -27,6 +27,13 @@ export interface PersistCandlesOptions {
   prisma?: PrismaClient;
   /** Skip records that already exist (default: false — upsert updates). */
   skipExisting?: boolean;
+  /**
+   * Provider that supplied these candles (V2 provenance). Stamped onto
+   * `CandleBar.provider` so coverage/reconciliation can report lineage.
+   */
+  provider?: string;
+  /** Dataset/normalization version stamped onto `CandleBar.datasetVersion`. */
+  datasetVersion?: string;
 }
 
 export interface PersistCandlesResult {
@@ -87,8 +94,14 @@ export async function persistCandles(
           high: candle.high,
           low: candle.low,
           close: candle.close,
+          // G-06/G-07: preserve a real 0 but flag placeholder-0 volume so a
+          // synthesized bar is never mistaken for a genuine zero-volume bar.
           volume: candle.volume ?? 0,
+          volumeUnavailable: candle.volumeUnavailable ?? false,
           oi: candle.oi ?? null,
+          ...(opts.provider ? { provider: opts.provider } : {}),
+          ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+          receivedAt: new Date(),
         },
         create: {
           instrumentId,
@@ -100,7 +113,11 @@ export async function persistCandles(
           low: candle.low,
           close: candle.close,
           volume: candle.volume ?? 0,
+          volumeUnavailable: candle.volumeUnavailable ?? false,
           oi: candle.oi ?? null,
+          ...(opts.provider ? { provider: opts.provider } : {}),
+          ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+          receivedAt: new Date(),
         },
       });
       result.upserted += 1;
