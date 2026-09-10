@@ -1,0 +1,74 @@
+{
+  "generated_at": "2026-09-09T14:28:29.499825+00:00",
+  "n_folds": 4,
+  "config": {
+    "train_bars": 504,
+    "val_bars": 63,
+    "test_bars": 63,
+    "step_bars": 63,
+    "min_train_bars": 504,
+    "expanding": false
+  },
+  "folds": [
+    {
+      "fold_index": 0,
+      "train_start": 0,
+      "train_end": 504,
+      "val_start": 504,
+      "val_end": 567,
+      "test_start": 567,
+      "test_end": 630,
+      "train_start_dt": null,
+      "train_end_dt": null,
+      "val_start_dt": null,
+      "val_end_dt": null,
+      "test_start_dt": null,
+      "test_end_dt": null
+    },
+    {
+      "fold_index": 1,
+      "train_start": 63,
+      "train_end": 567,
+      "val_start": 567,
+      "val_end": 630,
+      "test_start": 630,
+      "test_end": 693,
+      "train_start_dt": null,
+      "train_end_dt": null,
+      "val_start_dt": null,
+      "val_end_dt": null,
+      "test_start_dt": null,
+      "test_end_dt": null
+    },
+    {
+      "fold_index": 2,
+      "train_start": 126,
+      "train_end": 630,
+      "val_start": 630,
+      "val_end": 693,
+      "test_start": 693,
+      "test_end": 756,
+      "train_start_dt": null,
+      "train_end_dt": null,
+      "val_start_dt": null,
+      "val_end_dt": null,
+      "test_start_dt": null,
+      "test_end_dt": null
+    },
+    {
+      "fold_index": 3,
+      "train_start": 189,
+      "train_end": 693,
+      "val_start": 693,
+      "val_end": 756,
+      "test_start": 756,
+      "test_end": 819,
+      "train_start_dt": null,
+      "train_end_dt": null,
+      "val_start_dt": null,
+      "val_end_dt": null,
+      "test_start_dt": null,
+      "test_end_dt": null
+    }
+  ]
+}
