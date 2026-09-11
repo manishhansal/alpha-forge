@@ -34,6 +34,32 @@ export interface PersistCandlesOptions {
   provider?: string;
   /** Dataset/normalization version stamped onto `CandleBar.datasetVersion`. */
   datasetVersion?: string;
+  /**
+   * When true, record a `DataQualityIncident` (failureType PERSISTENCE_FAILED)
+   * if any candle fails to persist, so a provider-success/DB-failure never
+   * looks like clean data (V3 §37). Default false to keep the hot path light;
+   * the write-through + backfill callers enable it.
+   */
+  recordIncidentOnFailure?: boolean;
+  /**
+   * When true, reject candles that violate OHLC invariants
+   * (high < max(open,close,low) or low > min(open,close,high)) instead of
+   * skipping silently — the rejection is counted as an error (V3 §41).
+   */
+  strictOhlc?: boolean;
+}
+
+/** OHLC integrity check (V3 §41). Returns true when the candle is self-consistent. */
+export function isOhlcConsistent(c: {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}): boolean {
+  if (![c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v) && v > 0)) return false;
+  const hi = Math.max(c.open, c.close, c.low);
+  const lo = Math.min(c.open, c.close, c.high);
+  return c.high >= hi && c.low <= lo && c.high >= c.low;
 }
 
 export interface PersistCandlesResult {
@@ -66,6 +92,7 @@ export async function persistCandles(
 ): Promise<PersistCandlesResult> {
   const prisma = opts.prisma ?? getPrisma();
   const result: PersistCandlesResult = { upserted: 0, errors: 0 };
+  let persistFailures = 0;
 
   for (const candle of candles) {
     // Guard: skip structurally invalid candles.
@@ -76,6 +103,13 @@ export async function persistCandles(
       !Number.isFinite(candle.close) || candle.close <= 0 ||
       !Number.isFinite(candle.time) || candle.time <= 0
     ) {
+      continue;
+    }
+
+    // V3 §41: OHLC integrity. In strict mode a violation is an error, not a
+    // silent skip (so the caller can see rejected candles). Never "repair".
+    if (!isOhlcConsistent(candle)) {
+      if (opts.strictOhlc) result.errors += 1;
       continue;
     }
 
@@ -101,6 +135,7 @@ export async function persistCandles(
           oi: candle.oi ?? null,
           ...(opts.provider ? { provider: opts.provider } : {}),
           ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+          ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
           receivedAt: new Date(),
         },
         create: {
@@ -117,12 +152,14 @@ export async function persistCandles(
           oi: candle.oi ?? null,
           ...(opts.provider ? { provider: opts.provider } : {}),
           ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+          ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
           receivedAt: new Date(),
         },
       });
       result.upserted += 1;
     } catch (err) {
       result.errors += 1;
+      persistFailures += 1;
       mdLog("stale_data", {
         reason: "candle_persist_failed",
         instrumentId,
@@ -133,6 +170,26 @@ export async function persistCandles(
       });
     }
   }
+
+  // V3 §37: a provider-success / DB-failure must be observable, not silent.
+  if (persistFailures > 0 && opts.recordIncidentOnFailure) {
+    try {
+      const { recordDataIncident } = await import("./data-incident.service");
+      await recordDataIncident({
+        severity: "ERROR",
+        failureType: "PERSISTENCE_FAILED",
+        provider: opts.provider ?? null,
+        instrumentId,
+        intervalStr: interval,
+        rootCause: "one or more candles failed to persist to CandleBar",
+        affectedRecords: persistFailures,
+        prisma,
+      });
+    } catch {
+      /* fail-open: incident recording must never break persistence */
+    }
+  }
+
   return result;
 }
 

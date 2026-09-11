@@ -134,6 +134,12 @@ export type OHLCVCandle = {
    * a real zero-volume observation. Absent/false means the volume is real.
    */
   volumeUnavailable?: boolean;
+  /**
+   * Provider/exchange-declared source time for this candle (UTC ISO-8601 or
+   * epoch ms), when the provider supplies it. V3 provenance — persisted to
+   * `CandleBar.sourceTimestamp`. Absent means the source did not declare one.
+   */
+  sourceTimestamp?: string | number;
 };
 
 // ── Market Depth ─────────────────────────────────────────────────────────────
