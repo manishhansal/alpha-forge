@@ -22,6 +22,19 @@ import { getPrisma } from "@/lib/prisma";
 import { mdLog } from "../health";
 import type { Interval, OHLCVCandle } from "../types";
 
+const IST_OFFSET_MS = 5.5 * 3600 * 1000;
+
+/**
+ * Canonical NSE trading SESSION date (IST `YYYY-MM-DD`) for a candle open time
+ * (UTC epoch seconds). Stamped on all new daily writes so trading-day
+ * uniqueness is enforced structurally (V4 §8). For intraday it records the
+ * IST date the bar belongs to (still useful for coverage/gap grouping).
+ */
+export function sessionDateForTime(timeSec: number): string {
+  const d = new Date(timeSec * 1000 + IST_OFFSET_MS);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
 export interface PersistCandlesOptions {
   /** Prisma client — defaults to the global singleton. */
   prisma?: PrismaClient;
@@ -136,6 +149,7 @@ export async function persistCandles(
           ...(opts.provider ? { provider: opts.provider } : {}),
           ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
           ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
+          sessionDate: sessionDateForTime(candle.time),
           receivedAt: new Date(),
         },
         create: {
@@ -153,6 +167,7 @@ export async function persistCandles(
           ...(opts.provider ? { provider: opts.provider } : {}),
           ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
           ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
+          sessionDate: sessionDateForTime(candle.time),
           receivedAt: new Date(),
         },
       });

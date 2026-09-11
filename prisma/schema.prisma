@@ -375,8 +375,22 @@ model CandleBar {
   datasetVersion    String?
   volumeUnavailable Boolean  @default(false)
 
+  /// ── Data Foundation V4 (additive, nullable) ───────────────────────────────
+  /// Canonical NSE trading SESSION date as IST `YYYY-MM-DD`. Lets daily
+  /// uniqueness be enforced per trading day rather than per epoch `time`
+  /// (D-V4-01..04: multiple timestamp conventions created >1 epoch key per
+  /// trading day). Stamped on all NEW writes; existing rows keep null until the
+  /// operator-approved daily normalization migration runs. A partial unique
+  /// index (see migration) enforces one daily row per (instrument,exchange,
+  /// sessionDate) for interval='1d' rows that carry a sessionDate.
+  sessionDate       String?
+
   /// Composite unique constraint prevents duplicate candle records.
   @@unique([instrumentId, exchange, intervalStr, time])
+  /// One canonical daily candle per trading session, once sessionDate is
+  /// populated (partial — daily only, non-null sessionDate). Created via raw
+  /// SQL in the migration since Prisma cannot express partial unique indexes.
+  @@index([instrumentId, exchange, sessionDate])
   /// PostgreSQL creates a B-tree index automatically to enforce the unique
   /// constraint above. The explicit @@index below adds a second covering
   /// index on the same columns for query performance (e.g. range scans that
