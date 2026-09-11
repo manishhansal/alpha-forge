@@ -82,6 +82,7 @@ import {
 import {
   finiteOrNull,
   intervalToUpstox,
+  intervalToUpstoxV3,
   normaliseExpiry,
   normaliseCandlesFromUpstox,
 } from "../normalizer";
@@ -1161,6 +1162,39 @@ export class UpstoxProvider implements MarketDataProvider {
         return filterValidCandles(normaliseCandlesFromUpstox(rows));
       },
     );
+  }
+
+  /**
+   * V5 §8/§11: Upstox **V3** historical candles. Unlike V2 (limited to
+   * 1minute/30minute/day), V3 supports per-minute intervals (1/3/5/15/30) +
+   * hours/days AND serves INDEX instrument keys (NSE_INDEX|Nifty 50) that
+   * Angel's getCandleData returns empty for. Endpoint shape:
+   *   /v3/historical-candle/{instrument_key}/{unit}/{value}/{to_date}/{from_date}
+   * Verified live: 200 for minutes/5 on RELIANCE and NIFTY.
+   */
+  async getHistoricalCandlesV3(
+    req: HistoricalCandleRequest,
+    opts?: ProviderCallOptions,
+  ): Promise<OHLCVCandle[]> {
+    if (!(await isUpstoxAvailable())) return [];
+    const v3 = intervalToUpstoxV3(req.interval);
+    if (!v3) return [];
+
+    const instrumentKey = await resolveUpstoxInstrumentKey(req.symbol, req.exchange);
+    const toDate = req.to.slice(0, 10);
+    const fromDate = req.from.slice(0, 10);
+    const path = `/v3/historical-candle/${encodeURIComponent(instrumentKey)}/${v3.unit}/${v3.value}/${toDate}/${fromDate}`;
+
+    const data = await upstoxGet<UpstoxCandleData>(path, undefined, opts?.signal);
+    const rows = (data.candles ?? []).map((c) => ({
+      timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5], oi: c[6],
+    }));
+    // Upstox returns candles NEWEST-FIRST (descending). The candle validator
+    // rejects non-ascending timestamps, which would drop all but the first bar.
+    // Normalise then sort ascending by time before validating.
+    const normalised = normaliseCandlesFromUpstox(rows).sort((a, b) => a.time - b.time);
+    recordSuccess(PROVIDER_ID, 0);
+    return filterValidCandles(normalised);
   }
 
   // ── Live quote (single symbol) ────────────────────────────────────────────

@@ -435,6 +435,44 @@ model OptionChainSnapshot {
   @@index([capturedAt])
 }
 
+/// Data Foundation V5 (§25/§26): durable STRIKE-LEVEL option snapshot. Unlike
+/// `OptionChainSnapshot` (aggregate analytics only), this persists one row per
+/// (underlying, expiry, strike, optionType, captureTimestamp, provider) so the
+/// real per-strike OI/IV/bid/ask time series is captured where the provider
+/// supplies it. Fields the provider does NOT supply are stored NULL with the
+/// `*Unavailable` flag — never fabricated to 0 (Absolute Rule 1).
+model OptionChainStrike {
+  id              String   @id @default(cuid())
+  underlying      String
+  /// Provider expiry display string (e.g. "15-Sep-2026").
+  expiry          String
+  strike          Float
+  /// "CE" | "PE"
+  optionType      String
+  ltp             Float?
+  bid             Float?
+  ask             Float?
+  volume          Float?
+  oi              Float?
+  oiChange        Float?
+  iv              Float?
+  bidUnavailable  Boolean  @default(false)
+  askUnavailable  Boolean  @default(false)
+  ivUnavailable   Boolean  @default(false)
+  volumeUnavailable Boolean @default(false)
+  /// Capture time (worker cadence). Truncate/align externally if needed.
+  captureTimestamp DateTime @default(now())
+  provider        String
+  sourceTimestamp DateTime?
+  receivedAt      DateTime @default(now())
+  datasetVersion  String?
+
+  @@unique([underlying, expiry, strike, optionType, captureTimestamp, provider])
+  @@index([underlying, expiry, captureTimestamp])
+  @@index([underlying, captureTimestamp])
+  @@map("option_chain_strike")
+}
+
 /// One daily scan result from the FnO Bullish or Bearish Trend Scanner
 /// (14-condition Chartink screener, MA + ADX + MACD). Persisted once per
 /// IST trading day per symbol so the board builds an auditable track record.

@@ -15,6 +15,8 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
+type OHLCVLike = { time: number; open: number; high: number; low: number; close: number; volume?: number };
+
 function safeErr(msg: string): string {
   return msg.replace(/[A-Za-z0-9._-]{40,}/g, "«redacted»").slice(0, 300);
 }
@@ -96,35 +98,59 @@ async function backfill() {
   out.params = { symbols, intervals, range };
 
   const { res } = await loadCreds();
-  if (!res.angel) { out.error = "Angel credentials not loaded: " + (res.reason ?? "unknown"); console.log(JSON.stringify(out, null, 2)); return; }
-
   const { angel } = await import("../src/services/india/angelone");
+  const { UpstoxProvider } = await import("../src/lib/market-data/providers/upstox");
+  const upstox = new UpstoxProvider();
   const { persistCandles } = await import("../src/lib/market-data/services/candle-persist.service");
   const { datasetVersion } = await import("../src/lib/market-data/dataset-version");
   const { recordProviderObservation } = await import("../src/lib/market-data/services/provider-observation.service");
-  const { selectProviders, providerSupportsHistoricalInterval } = await import("../src/lib/market-data/provider-selection");
-  const dv = datasetVersion(new Date().toISOString().slice(0, 10), { kind: "provider", provider: "angel_one" });
+  const { providerSupportsHistoricalInterval } = await import("../src/lib/market-data/provider-selection");
+
+  const INDICES = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
+  const fromIso = new Date(Date.now() - 6 * 86_400_000).toISOString();
+  const toIso = new Date().toISOString();
+
+  async function fetchVia(provider: "angel_one" | "upstox", symbol: string, iv: string): Promise<OHLCVLike[]> {
+    if (provider === "angel_one") {
+      return (await angel.getHistorical({ symbol, interval: iv, range } as never, { allowFallback: false })) as OHLCVLike[];
+    }
+    // Upstox V3 (unlocks indices + full intraday set).
+    return (await upstox.getHistoricalCandlesV3({ symbol, exchange: "NSE", interval: iv as never, from: fromIso, to: toIso } as never)) as OHLCVLike[];
+  }
 
   const results: Array<Record<string, unknown>> = [];
   for (const symbol of symbols) {
+    const isIndex = INDICES.has(symbol.toUpperCase());
     for (const iv of intervals) {
-      const eligible = selectProviders({ capability: "historicalCandles", interval: iv as never, instrumentKind: "EQUITY", historical: true });
-      if (eligible.length === 0 || !providerSupportsHistoricalInterval("angel_one", iv as never)) {
-        results.push({ symbol, interval: iv, status: "UNSUPPORTED_OR_NO_PROVIDER", eligible });
-        continue;
+      // Capability-aware provider order: indices → Upstox first (Angel getCandleData
+      // returns empty for index tokens); equities → Angel first, Upstox fallback.
+      const providerOrder: Array<"angel_one" | "upstox"> = isIndex
+        ? ["upstox", "angel_one"]
+        : ["angel_one", "upstox"];
+      const dvFor = (p: string) => datasetVersion(new Date().toISOString().slice(0, 10), { kind: "provider", provider: p });
+
+      let done = false;
+      for (const provider of providerOrder) {
+        const available = provider === "angel_one" ? res.angel || !!process.env.SMARTAPI_API_KEY : true;
+        if (!available) continue;
+        if (provider === "angel_one" && !providerSupportsHistoricalInterval("angel_one", iv as never)) continue;
+        const t0 = Date.now();
+        try {
+          const candles = await fetchVia(provider, symbol, iv);
+          if (candles.length === 0) {
+            await recordProviderObservation({ provider, instrumentId: symbol, dataType: "CANDLE", requestType: "backfill", interval: iv as never, outcome: "EMPTY", latencyMs: Date.now() - t0, recordCount: 0, prisma: prisma as never });
+            continue; // try next provider (failover on empty)
+          }
+          const pr = await persistCandles(candles as never, symbol, "NSE", iv as never, { provider, datasetVersion: dvFor(provider), recordIncidentOnFailure: true, strictOhlc: true, prisma: prisma as never });
+          await recordProviderObservation({ provider, instrumentId: symbol, dataType: "CANDLE", requestType: "backfill", interval: iv as never, outcome: "SUCCESS", latencyMs: Date.now() - t0, recordCount: candles.length, qualityStatus: "AVAILABLE", prisma: prisma as never });
+          results.push({ symbol, interval: iv, provider, candles: candles.length, upserted: pr.upserted, errors: pr.errors });
+          done = true;
+          break;
+        } catch (e) {
+          await recordProviderObservation({ provider, instrumentId: symbol, dataType: "CANDLE", requestType: "backfill", interval: iv as never, outcome: "UNAVAILABLE", errorClass: safeErr((e as Error).message), latencyMs: Date.now() - t0, prisma: prisma as never });
+        }
       }
-      const t0 = Date.now();
-      try {
-        const candles = await angel.getHistorical({ symbol, interval: iv, range } as never, { allowFallback: false });
-        const pr = candles.length > 0
-          ? await persistCandles(candles as never, symbol, "NSE", iv as never, { provider: "angel_one", datasetVersion: dv, recordIncidentOnFailure: true, strictOhlc: true, prisma: prisma as never })
-          : { upserted: 0, errors: 0 };
-        await recordProviderObservation({ provider: "angel_one", instrumentId: symbol, dataType: "CANDLE", requestType: "backfill", interval: iv as never, outcome: candles.length > 0 ? "SUCCESS" : "EMPTY", latencyMs: Date.now() - t0, recordCount: candles.length, qualityStatus: candles.length > 0 ? "AVAILABLE" : "UNAVAILABLE", prisma: prisma as never });
-        results.push({ symbol, interval: iv, provider: "angel_one", candles: candles.length, upserted: pr.upserted, errors: pr.errors });
-      } catch (e) {
-        await recordProviderObservation({ provider: "angel_one", instrumentId: symbol, dataType: "CANDLE", requestType: "backfill", interval: iv as never, outcome: "UNAVAILABLE", errorClass: safeErr((e as Error).message), latencyMs: Date.now() - t0, prisma: prisma as never });
-        results.push({ symbol, interval: iv, status: "FAIL", error: safeErr((e as Error).message) });
-      }
+      if (!done) results.push({ symbol, interval: iv, status: "NO_PROVIDER_RETURNED_DATA" });
     }
   }
   out.results = results;

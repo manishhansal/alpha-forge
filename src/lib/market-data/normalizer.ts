@@ -282,6 +282,29 @@ export function intervalToUpstox(interval: Interval): string | null {
   return map[interval] ?? null;
 }
 
+/**
+ * Map a canonical `Interval` to the Upstox **V3** historical-candle unit+value
+ * (`/v3/historical-candle/{key}/{unit}/{value}/{to}/{from}`). V3 supports
+ * per-minute intervals (1,3,5,15,30) and hours/days/weeks/months, unlocking the
+ * intraday set V2 could not serve (V2 only had 1minute/30minute/day/week/month).
+ * Returns null for intervals V3 does not support. Verified live: 200 for
+ * minutes/1,5 and days/1 on both equities and indices.
+ */
+export function intervalToUpstoxV3(interval: Interval): { unit: string; value: number } | null {
+  const map: Partial<Record<Interval, { unit: string; value: number }>> = {
+    "1m": { unit: "minutes", value: 1 },
+    "3m": { unit: "minutes", value: 3 },
+    "5m": { unit: "minutes", value: 5 },
+    "15m": { unit: "minutes", value: 15 },
+    "30m": { unit: "minutes", value: 30 },
+    "1h": { unit: "hours", value: 1 },
+    "1d": { unit: "days", value: 1 },
+    "1w": { unit: "weeks", value: 1 },
+    "1M": { unit: "months", value: 1 },
+  };
+  return map[interval] ?? null;
+}
+
 /** Map a canonical `Interval` to a Yahoo Finance chart interval string. */
 export function intervalToYahoo(
   interval: Interval,
