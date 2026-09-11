@@ -164,6 +164,17 @@ async function resolveReadToken(): Promise<string | null> {
   const envToken = getReadToken();
   if (envToken) return envToken;
 
+  // V5 fix: process-scoped worker override — populated at worker/CLI startup
+  // from the stored per-user Analytics Token (no session needed). This lets the
+  // worker/backfill use a frontend-configured Upstox token.
+  try {
+    const { getWorkerUpstoxToken } = await import("@/lib/market-data/worker-credentials");
+    const workerToken = getWorkerUpstoxToken();
+    if (workerToken) return workerToken;
+  } catch {
+    /* worker-credentials unavailable — fall through */
+  }
+
   // Slow path — load the per-user DB token only when env vars are absent.
   // The lazy import avoids pulling NextAuth + Prisma into every code path
   // that imports this provider module (e.g. worker, data-service scripts).
