@@ -39,7 +39,8 @@ interface Override {
 }
 
 declare global {
-  var __afWorkerCredentials: Override | undefined; // eslint-disable-line no-var
+  // eslint-disable-next-line no-var, vars-on-top
+  var __afWorkerCredentials: Override | undefined;
 }
 
 const state: Override =
