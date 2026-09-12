@@ -13,6 +13,11 @@ import {
 import { getServerBroker } from "@/services/brokers/registry";
 import type { KlineInterval } from "@/services/binance/klines";
 import type { KlineCandle, SymbolId } from "@/types/market";
+import {
+  enforceDataGate,
+  dependencyFromStatus,
+} from "@/lib/market-data/services/data-gate-enforcement.service";
+import type { DataAvailabilityStatus } from "@/lib/market-data/data-availability";
 
 /**
  * Live forward-test for an active Strategy.
@@ -31,6 +36,39 @@ const REQUIRED_BARS = 200;
 const LIVE_PERIOD: StrategyPeriod = "1M"; // arbitrary — only used to pick interval
 const DEFAULT_INTERVAL: KlineInterval = PERIOD_INTERVAL[LIVE_PERIOD];
 const MAX_TRADE_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Warm-up floor for the forward-tester (matches the min the engine needs). */
+const STRATEGY_LAB_WARMUP_BARS = 60;
+/** Max age of the last closed bar before the window is treated as STALE. */
+const STRATEGY_LAB_MAX_BAR_AGE_MS = 30 * 60_000; // 30m for the 1M-period interval.
+
+/**
+ * V6 §20/§21 fail-closed data-integrity veto for the strategy-lab forward-tester.
+ * Derives a DataAvailabilityStatus from the ACTUAL candle window consumed (not a
+ * DB lookup — this producer reads live broker klines) and runs it through the
+ * shared availability gate. Blocks on INSUFFICIENT_HISTORY (too few bars) or
+ * STALE (last bar too old). Never reads/changes any strategy rule.
+ */
+function strategyLabDataGate(candles: KlineCandle[]): { allowed: boolean; reason: string } {
+  const n = candles.length;
+  let status: DataAvailabilityStatus;
+  if (n === 0) status = "UNAVAILABLE";
+  else if (n < STRATEGY_LAB_WARMUP_BARS) status = "INSUFFICIENT_HISTORY";
+  else {
+    const lastCloseMs = candles[n - 1]!.closeTime;
+    const age = Date.now() - lastCloseMs;
+    status = age > STRATEGY_LAB_MAX_BAR_AGE_MS ? "STALE" : "AVAILABLE";
+  }
+  // requireFullyReady: only AVAILABLE passes. This correctly blocks BOTH
+  // INSUFFICIENT_HISTORY (hard veto) and STALE (a fresh entry must not open on a
+  // stale window — STALE is a soft-degrade that would otherwise slip through the
+  // strategy-scoped allowance).
+  const decision = enforceDataGate({
+    dependencies: [dependencyFromStatus("ohlcv_window", status, true)],
+    requireFullyReady: true,
+  });
+  return { allowed: decision.allowed, reason: decision.reason };
+}
 
 export interface StrategyTickStats {
   scanned: number;
@@ -156,6 +194,16 @@ async function maybeOpenTrade(
     // detected on a previous tick. Don't re-open.
     return false;
   }
+
+  // ── V6 §20 FAIL-CLOSED DATA GATE (producer-level) ──────────────────────────
+  // A data-integrity veto ON TOP of the strategy engine. This forward-tester's
+  // data dependency is the broker candle WINDOW it just consumed (crypto klines,
+  // not the NSE CandleBar table). Block the entry if that window is genuinely
+  // insufficient for the engine's warm-up (REQUIRED_BARS) or if its last closed
+  // bar is stale — trading on data we don't actually have is forbidden (§20/§42).
+  // Never reads/changes any strategy rule; only vetoes on missing/insufficient/
+  // stale data.
+  if (!strategyLabDataGate(candles).allowed) return false;
 
   await prisma.strategyPaperTrade.create({
     data: {

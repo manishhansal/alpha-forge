@@ -19,9 +19,16 @@
  * NOTE: for VALUE_CONFLICT days the authoritative close cannot be determined
  * from DB evidence (no provenance, no directional signal) — the canonical row is
  * kept as OPERATIONAL and the conflict preserved for later provider re-verify.
+ *
+ * V6 addition (§26 provenance): every SURVIVING legacy daily row this migration
+ * touches is stamped `datasetVersion = PROVENANCE_UNKNOWN` when it currently has
+ * no datasetVersion. This does NOT fabricate a provider — it explicitly records
+ * that the true source is unproven, so provenance-requiring strategies can
+ * exclude it. Rows that already carry a real datasetVersion are left untouched.
  */
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
+import { PROVENANCE_UNKNOWN } from "../src/lib/market-data/dataset-version";
 
 const IST = 5.5 * 3600 * 1000;
 const OPEN_MIN = 9 * 60 + 15;
@@ -40,8 +47,11 @@ async function main() {
 
   const rows = await prisma.candleBar.findMany({
     where: { intervalStr: "1d" },
-    select: { id: true, instrumentId: true, exchange: true, time: true, open: true, high: true, low: true, close: true, volume: true, oi: true, provider: true },
+    select: { id: true, instrumentId: true, exchange: true, time: true, open: true, high: true, low: true, close: true, volume: true, oi: true, provider: true, datasetVersion: true },
   });
+
+  /** Only stamp legacy provenance on rows that have NO datasetVersion yet. */
+  const provStamp = (dv: string | null) => (dv ? {} : { datasetVersion: PROVENANCE_UNKNOWN });
 
   const before: { total: number; weekend: number; logicalDuplicateDays: number } = {
     total: rows.length,
@@ -84,11 +94,11 @@ async function main() {
       const p = istParts(r.time);
       if (p.min === OPEN_MIN) {
         plan.CANONICAL += 1;
-        if (apply) actions.push(async () => { await prisma.candleBar.update({ where: { id: r.id }, data: { sessionDate: date } }); });
+        if (apply) actions.push(async () => { await prisma.candleBar.update({ where: { id: r.id }, data: { sessionDate: date, ...provStamp(r.datasetVersion) } }); });
       } else {
         plan.RETIME += 1;
         if (apply) actions.push(async () => {
-          await prisma.candleBar.update({ where: { id: r.id }, data: { time: canonOpenSec(p.y, p.mo, p.da), sessionDate: date, sourceTimestamp: new Date(r.time * 1000) } });
+          await prisma.candleBar.update({ where: { id: r.id }, data: { time: canonOpenSec(p.y, p.mo, p.da), sessionDate: date, sourceTimestamp: new Date(r.time * 1000), ...provStamp(r.datasetVersion) } });
         });
       }
       continue;
@@ -108,7 +118,7 @@ async function main() {
           }});
           await prisma.candleBar.delete({ where: { id: nc.id } });
         }
-        await prisma.candleBar.update({ where: { id: canonRow.id }, data: { sessionDate: date } });
+        await prisma.candleBar.update({ where: { id: canonRow.id }, data: { sessionDate: date, ...provStamp(canonRow.datasetVersion) } });
       });
     } else {
       plan.CONFLICT_NO_CANONICAL_RETIME += 1;
@@ -124,7 +134,7 @@ async function main() {
           }});
           await prisma.candleBar.delete({ where: { id: nc.id } });
         }
-        await prisma.candleBar.update({ where: { id: keep.id }, data: { time: canonOpenSec(p.y, p.mo, p.da), sessionDate: date, sourceTimestamp: new Date(keep.time * 1000) } });
+        await prisma.candleBar.update({ where: { id: keep.id }, data: { time: canonOpenSec(p.y, p.mo, p.da), sessionDate: date, sourceTimestamp: new Date(keep.time * 1000), ...provStamp(keep.datasetVersion) } });
       });
     }
   }

@@ -23,6 +23,29 @@ export const NORMALIZER_VERSION = "norm-v3";
 /** Bump when aggregation math changes. */
 export const AGGREGATION_VERSION = "agg-v3";
 
+/**
+ * Sentinel dataset version for LEGACY data whose provider/provenance cannot be
+ * proven (Data Foundation §26). Applied to pre-provenance rows during the daily
+ * normalization migration. It is NOT a provider — it explicitly records that the
+ * true source is UNKNOWN, so strategies that require verified provenance can
+ * exclude it rather than a fabricated provider being assigned (Absolute Rule:
+ * "Do not falsely assign a provider").
+ */
+export const PROVENANCE_UNKNOWN = "legacy.provenance-unknown.norm-v0";
+
+/** True when a row's datasetVersion marks it as unproven legacy provenance. */
+export function isProvenanceUnknown(datasetVersion: string | null | undefined): boolean {
+  return datasetVersion === PROVENANCE_UNKNOWN;
+}
+
+/**
+ * True when a row carries VERIFIED provenance (a real provider capture, an
+ * aggregation, or a correction) — i.e. not null and not the legacy sentinel.
+ */
+export function hasVerifiedProvenance(datasetVersion: string | null | undefined): boolean {
+  return typeof datasetVersion === "string" && datasetVersion.length > 0 && datasetVersion !== PROVENANCE_UNKNOWN;
+}
+
 export type DatasetSource =
   | { kind: "provider"; provider: string }
   | { kind: "aggregation"; sourceInterval: string }

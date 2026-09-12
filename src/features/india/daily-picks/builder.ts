@@ -662,7 +662,21 @@ async function freezeAndTrack(
   sessionEnded: boolean,
 ): Promise<DailyPick[]> {
   if (fresh.length === 0) return [];
-  const tracked = fresh.map((p) => {
+
+  // ── V6 §20 FAIL-CLOSED DATA GATE (producer-level) ──────────────────────────
+  // Before a pick is FROZEN into the immutable IndiaDailyPick track record, its
+  // underlying instrument must have enough REAL persisted daily history for a
+  // basic feature warm-up. A pick whose data is genuinely unavailable /
+  // insufficient is DROPPED (NO SIGNAL) rather than frozen on data we don't have
+  // (§20/§42). This is a data-integrity veto ONLY — it never reads or changes any
+  // scoring/grade/threshold. INDICES_SCALP picks are option-premium projections
+  // priced off the live chain, not the daily-bar warm-up, so they are exempt
+  // from the daily-history veto (their data dependency is the option chain,
+  // which the projection step already fail-drops when unavailable).
+  const gated = await gateFreshPicksByData(fresh, db);
+  if (gated.length === 0) return [];
+
+  const tracked = gated.map((p) => {
     const t = trackPick(p, livePriceFor(p, prices, chains), now);
     return sessionEnded ? squareOffPick(t, now) : t;
   });
@@ -671,6 +685,46 @@ async function freezeAndTrack(
     skipDuplicates: true,
   });
   return tracked;
+}
+
+/**
+ * V6 §20/§21 producer data gate for Daily Picks. Filters the fresh (about-to-be-
+ * frozen) picks to those whose underlying instrument has sufficient persisted
+ * daily history. Fails CLOSED: a gate-read error drops the pick. Never throws;
+ * on catastrophic failure returns [] (no picks frozen this tick — the next tick
+ * retries). INDICES_SCALP picks are exempt (option-chain-priced, not daily-warm-up).
+ */
+const DAILY_PICK_WARMUP_BARS = 20; // basic warm-up floor for a daily-horizon pick.
+async function gateFreshPicksByData(
+  fresh: DailyPick[],
+  db: PrismaClient,
+): Promise<DailyPick[]> {
+  try {
+    const { evaluateProducerDataGate } = await import(
+      "@/lib/market-data/services/producer-data-gate.service"
+    );
+    const kept: DailyPick[] = [];
+    for (const p of fresh) {
+      if (p.bucket === "INDICES_SCALP") {
+        kept.push(p); // option-premium pick — its data dep is the chain, gated upstream.
+        continue;
+      }
+      const gate = await evaluateProducerDataGate({
+        instrumentId: p.symbol,
+        exchange: "NSE",
+        interval: "1d",
+        requiredBars: DAILY_PICK_WARMUP_BARS,
+        requireFullyReady: false,
+        prisma: db, // use the SAME prisma the builder persists with (consistent + testable)
+      });
+      if (gate.allowed) kept.push(p);
+      else console.warn(`[daily-picks] data gate blocked ${p.symbol} (${p.bucket}): ${gate.reason}`);
+    }
+    return kept;
+  } catch (err) {
+    console.warn("[daily-picks] data gate unavailable — failing closed (no freeze this tick):", (err as Error).message);
+    return [];
+  }
 }
 
 /** Live-track already-frozen rows against the latest mark, persisting deltas. */
