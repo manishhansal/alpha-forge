@@ -1,7 +1,5 @@
 import "server-only";
 
-import { yahoo } from "@/services/india/yahoo";
-
 import {
   backtestIndiaPriceStrategy,
   summariseTrades,
@@ -82,13 +80,27 @@ export function getIndiaBacktestScores(opts?: {
 }
 
 async function computeBacktestScores(): Promise<BacktestScoreMap> {
+  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+  await bootstrapRegistry();
+
   const loaded = await Promise.allSettled(
     INDIA_BACKTEST_UNIVERSE.map(async (symbol) => {
-      const candles = await yahoo.getHistorical({
+      const ohlcv = await registry.getHistoricalCandles({
         symbol,
+        exchange: "NSE",
         interval: "1d",
-        range: "5y",
+        from: new Date(Date.now() - 5 * 365 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
       });
+      // Map OHLCVCandle (UTC epoch ms) → legacy Candle (epoch seconds)
+      const candles = ohlcv.map((c) => ({
+        time: Math.floor(c.time / 1000),
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume ?? null,
+      })) as Candle[];
       // Drop the in-progress bar so we never open off an unclosed candle.
       const closed = candles.length > 1 ? candles.slice(0, -1) : candles;
       return { symbol, candles: closed };
