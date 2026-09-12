@@ -11,7 +11,9 @@ Features:
 - 09:15 IST anchor for all intraday bars
 - Rejects impossible candles (high < max(open, close), etc.)
 
-Supported intervals: 1m, 3m, 5m, 15m, 30m, 1h, 1d
+Supported intervals: 1m, 5m, 10m, 15m, 30m, 1h, 1d, 1w, 1M
+NOTE: 3m was permanently removed in V8 (refactor/signals). Requests for 3m
+      MUST be rejected. No 3m candles will be built or stored.
 
 Usage:
     from src.engines.candle_builder import CandleBuilderV2
@@ -38,15 +40,19 @@ _IST = ZoneInfo("Asia/Kolkata")
 # Interval definitions
 # ---------------------------------------------------------------------------
 
+# 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 _INTERVAL_SECONDS: dict[str, int] = {
     "1m": 60,
-    "3m": 180,
     "5m": 300,
+    "10m": 600,
     "15m": 900,
     "30m": 1800,
     "1h": 3600,
     "1d": 86400,
 }
+
+# Canonical supported intervals — used for validation at API boundaries.
+SUPPORTED_INTERVALS: frozenset[str] = frozenset(_INTERVAL_SECONDS.keys())
 
 # NSE session anchor: 09:15:00 IST
 _NSE_SESSION_OPEN_HOUR = 9

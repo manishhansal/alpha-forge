@@ -43,6 +43,8 @@ const PROVIDER_BG: Record<ProviderId, string> = {
   scrapling:  "var(--color-data-positive)",
   angel_one:  "var(--color-data-positive)",
   upstox:     "var(--color-data-neutral)",
+  jugaad:     "var(--color-data-neutral)",   // open-source NSE-derived
+  openchart:  "var(--color-data-neutral)",   // open-source NSE-derived
   yahoo:      "var(--color-data-negative)",
 };
 

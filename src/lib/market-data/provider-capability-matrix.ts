@@ -54,7 +54,8 @@ export interface ProviderCapabilityRow {
   intervals: Partial<Record<Interval, IntervalCapability>>;
 }
 
-const INTRADAY: readonly Interval[] = ["1m", "3m", "5m", "10m", "15m", "30m", "1h"];
+// 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
+const INTRADAY: readonly Interval[] = ["1m", "5m", "10m", "15m", "30m", "1h"];
 
 function cap(
   supported: boolean,
@@ -96,14 +97,10 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
   },
   {
     provider: "angel_one",
-    // V7 §11/§38 correction: Angel's getCandleData does NOT serve the 3-minute
-    // interval (ONE_MINUTE/FIVE_MINUTE/… but no THREE_MINUTE) — a live probe on
-    // 2026-09-12 returned 0 bars for 3m RELIANCE while 1m returned 1690. It also
-    // returns 0 for INDEX tokens (NIFTY/BANKNIFTY daily = 0). So Angel is marked
-    // supported ONLY for the intervals it genuinely serves, on EQUITIES. Index
-    // history and 3m are served by Upstox V3 (see below). Never claim a
-    // capability the provider does not actually satisfy (§ absolute rule).
-    note: "SmartAPI — primary EQUITY multi-day intraday HISTORY source. Serves 1m/5m/15m/30m/1h/1d on equities. Does NOT serve 3m (no THREE_MINUTE) and returns 0 for index tokens. Historical endpoint ~3 req/s (403 past that). Requires SMARTAPI_* credentials.",
+    // V7 §11/§38 / V8 cleanup: Angel's getCandleData does NOT serve the 3-minute
+    // interval — a live probe on 2026-09-12 returned 0 bars for 3m RELIANCE.
+    // 3m is permanently out of scope (V8 refactor/signals).
+    note: "SmartAPI — primary EQUITY multi-day intraday HISTORY source. Serves 1m/5m/15m/30m/1h/1d on equities. Does NOT serve 3m. Returns 0 for index tokens; indices route to Upstox V3. ~3 req/s. Requires SMARTAPI_* credentials.",
     requestsPerSecond: 3,
     requiresCredentials: true,
     intervals: {
@@ -118,18 +115,15 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
   },
   {
     provider: "upstox",
-    // V7 §5/§6: Upstox V3 is the capable source for INDEX history (all
-    // intervals) AND for 3m (equities+indices), verified live 2026-09-12. Minute
-    // intervals MUST be requested in narrow windows — a 40-day 1m request 400s
-    // while an 8-day request returns 2250 bars. maxChunkDays for sub-hour
-    // intervals is therefore small and conservative to stay inside the API's
-    // per-request minute-history window.
-    note: "Upstox v3 — intraday history + live for equities AND indices; the capable 3m + index-history source. Minute intervals capped to a small per-request window (~7 days) by the API. Requires UPSTOX_* credentials.",
+    // V7 §5/§6 / V8 cleanup: Upstox V3 is the capable source for INDEX history (all
+    // intervals). 3m has been removed from AlphaForge scope entirely in V8.
+    // Minute intervals MUST be requested in narrow windows.
+    note: "Upstox v3 — intraday history + live for equities AND indices. Minute intervals capped to a small per-request window (~7 days) by the API. 3m removed from scope (V8). Requires UPSTOX_* credentials.",
     requestsPerSecond: 5,
     requiresCredentials: true,
     intervals: {
       "1m": cap(true, true, true, 7),
-      "3m": cap(true, true, true, 14),
+      // 3m intentionally omitted — removed from AlphaForge scope (V8 refactor/signals).
       "5m": cap(true, true, true, 30),
       "15m": cap(true, true, true, 90),
       "30m": cap(true, true, true, 90),
@@ -139,7 +133,7 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
   },
   {
     provider: "yahoo",
-    note: "Yahoo Finance — last-resort equity fallback. Coarse intraday, short history window, delayed. No F&O.",
+    note: "Yahoo Finance — last-resort equity fallback. Coarse intraday, short history window, delayed. No F&O. NEVER for options/OI/IV. No 3m.",
     requestsPerSecond: 2,
     requiresCredentials: false,
     intervals: {
@@ -148,6 +142,42 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
       "30m": cap(true, true, true, 60),
       "1h": cap(true, true, true, 730),
       "1d": cap(true, true, true, 2000),
+    },
+  },
+  {
+    provider: "jugaad",
+    // jugaad-data: open-source, NSE-derived. Historical EOD bhavcopy for equity
+    // and F&O (FUTSTK/FUTIDX/OPTSTK/OPTIDX). Provides OI, volume, expiry.
+    // Does NOT provide intraday OHLCV. No credentials required.
+    // Uses NSE's publicly published bhavcopy files (two formats: pre/post Jul 2024).
+    // provenanceStrength: NSE_DERIVATIVES_SOURCE.
+    note: "jugaad-data (open-source) — NSE F&O bhavcopy: historical EOD equity + derivatives OHLCV, OI, volume. No intraday. No credentials required. NSE-derived (bhavcopy). Does NOT provide live data.",
+    requestsPerSecond: 2, // NSE public endpoint — be conservative
+    requiresCredentials: false,
+    intervals: {
+      "1d": cap(true, true, false, 365), // one session per request (bhavcopy per date)
+    },
+  },
+  {
+    provider: "openchart",
+    // openchart 0.2.0: open-source NSE chart-data. Provides historical OHLCV for
+    // indices (IDX), equities (EQ), and F&O. Supports 1m–1M timeframes (no 3m).
+    // No credentials required. DOES NOT provide OI, IV, bid, ask.
+    // Historical range verified in README. Rate-sensitive (NSE charting platform).
+    // Use primarily as reconciliation source and 1d/1w/1M supplement.
+    note: "openchart 0.2.0 (open-source) — NSE charting platform: historical OHLCV for IDX/EQ/FO. Supported: 1m,5m,10m,15m,30m,1h,1d,1w,1M. No OI/IV/bid/ask. No credentials. No live data. Use for reconciliation + historical gaps.",
+    requestsPerSecond: 1, // Very conservative — NSE charting platform
+    requiresCredentials: false,
+    intervals: {
+      "1m":  cap(true, true, false, 7),   // NSE charting: intraday window limited
+      "5m":  cap(true, true, false, 30),
+      "10m": cap(true, true, false, 60),
+      "15m": cap(true, true, false, 90),
+      "30m": cap(true, true, false, 90),
+      "1h":  cap(true, true, false, 180),
+      "1d":  cap(true, true, false, 2000),
+      "1w":  cap(true, true, false, 2000),
+      "1M":  cap(true, true, false, 2000),
     },
   },
 ];
@@ -199,20 +229,11 @@ export function isIndexSymbol(symbol: string): boolean {
 }
 
 /**
- * V7 §6/§11 capability-aware history-provider ordering for a concrete
- * (symbol, interval).
+ * V8 capability-aware history-provider ordering for a concrete (symbol, interval).
  *
- * This refines {@link historyProvidersFor} with the two facts a plain
- * interval lookup cannot express and that were verified against the live
- * providers on 2026-09-12:
- *
- *   1. Angel returns 0 bars for INDEX tokens → indices must use Upstox first.
- *   2. Angel has no 3-minute interval → 3m must use Upstox (already reflected
- *      in the matrix, but kept explicit here for the symbol-aware path).
- *
- * The result is still grounded ENTIRELY in the capability matrix — it only
- * re-orders / filters the providers the matrix already says can serve the
- * interval. It never invents a provider or a capability.
+ * Refines historyProvidersFor: Angel cannot serve index tokens, so indices
+ * must route to Upstox first. The result is grounded entirely in the
+ * capability matrix — never invents a provider or a capability.
  */
 export function historyProvidersForSymbol(
   symbol: string,
@@ -220,9 +241,8 @@ export function historyProvidersForSymbol(
 ): ProviderId[] {
   const base = historyProvidersFor(interval);
   if (isIndexSymbol(symbol)) {
-    // Indices: Upstox is the only capable history source. Drop Angel entirely
-    // (it returns empty for index tokens — never let it be tried and recorded
-    // as a false EMPTY that could be mistaken for "no data exists").
+    // Indices: Upstox is the only capable broker history source.
+    // jugaad and openchart can serve index EOD/intraday directly.
     return base.filter((p) => p !== "angel_one");
   }
   return base;
@@ -240,7 +260,7 @@ export const V3_INTRADAY_INTERVALS: readonly Interval[] = INTRADAY;
 export function renderCapabilityMatrixMarkdown(
   enabled?: (p: ProviderId) => boolean,
 ): string {
-  const cols: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h"];
+  const cols: Interval[] = ["1m", "5m", "10m", "15m", "30m", "1h"];
   const header = `| Provider | ${cols.join(" | ")} | History | Live | Enabled |`;
   const sep = `| --- | ${cols.map(() => "---").join(" | ")} | --- | --- | --- |`;
   const rows = PROVIDER_CAPABILITY_MATRIX.map((r) => {

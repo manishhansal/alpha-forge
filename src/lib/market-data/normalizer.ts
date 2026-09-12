@@ -248,11 +248,12 @@ export function normaliseCandlesFromUpstox(
 // ── Interval mapping ──────────────────────────────────────────────────────────
 
 /** Map a canonical `Interval` to a SmartAPI getCandleData enum string.
- *  Returns null for intervals SmartAPI doesn't support (1w, 1M, 3m, 10m). */
+ *  Returns null for intervals SmartAPI doesn't support (1w, 1M, 10m).
+ *  3m is not a supported AlphaForge interval — intentionally absent. */
 export function intervalToSmartApi(interval: Interval): string | null {
   const map: Partial<Record<Interval, string>> = {
     "1m": "ONE_MINUTE",
-    "3m": "THREE_MINUTE",
+    // "3m" intentionally absent — Angel getCandleData has no THREE_MINUTE; 3m removed V8.
     "5m": "FIVE_MINUTE",
     "10m": "TEN_MINUTE",
     "15m": "FIFTEEN_MINUTE",
@@ -293,7 +294,7 @@ export function intervalToUpstox(interval: Interval): string | null {
 export function intervalToUpstoxV3(interval: Interval): { unit: string; value: number } | null {
   const map: Partial<Record<Interval, { unit: string; value: number }>> = {
     "1m": { unit: "minutes", value: 1 },
-    "3m": { unit: "minutes", value: 3 },
+    // "3m" intentionally absent — removed from AlphaForge scope in V8.
     "5m": { unit: "minutes", value: 5 },
     "15m": { unit: "minutes", value: 15 },
     "30m": { unit: "minutes", value: 30 },
@@ -311,7 +312,7 @@ export function intervalToYahoo(
 ): "1m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1wk" | "1mo" {
   const map: Record<Interval, "1m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1wk" | "1mo"> = {
     "1m": "1m",
-    "3m": "5m",    // no 3m on Yahoo, round up
+    // "3m" intentionally absent from the Interval type (removed V8).
     "5m": "5m",
     "10m": "15m",  // no 10m on Yahoo, round up
     "15m": "15m",

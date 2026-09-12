@@ -30,9 +30,9 @@ import {
 import { mdLog } from "../health";
 import type { Interval } from "../types";
 
+// 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 const INTERVAL_SECONDS: Partial<Record<Interval, number>> = {
   "1m": 60,
-  "3m": 180,
   "5m": 300,
   "10m": 600,
   "15m": 900,
@@ -281,4 +281,110 @@ export async function detectAndPersistGaps(
     prisma: input.prisma,
   });
   return { result, written };
+}
+
+// ── Data Foundation V8 §27 — gap classification ───────────────────────────
+
+/**
+ * V8 gap classification that distinguishes expected absence from real gaps.
+ *
+ * EXPECTED_NO_DATA    — before the instrument's first observed bar (not listed yet)
+ * MARKET_HOLIDAY      — falls on an NSE holiday (not a data gap)
+ * MARKET_CLOSED       — outside session hours (weekend / after-hours)
+ * PROVIDER_UNAVAILABLE — provider had outage or capability gap for this interval
+ * ACTUAL_DATA_GAP     — genuine missing bars that should be recovered
+ * PENDING_RECOVERY    — gap detected, recovery queued or in progress
+ */
+export type GapClassification =
+  | "EXPECTED_NO_DATA"
+  | "MARKET_HOLIDAY"
+  | "MARKET_CLOSED"
+  | "PROVIDER_UNAVAILABLE"
+  | "ACTUAL_DATA_GAP"
+  | "PENDING_RECOVERY";
+
+export interface ClassifiedGap extends DetectedGap {
+  classification: GapClassification;
+  /** Human-readable reason for the classification. */
+  classificationReason: string;
+}
+
+/**
+ * Classify detected gaps to distinguish real data gaps from expected absences.
+ *
+ * Rules (in priority order):
+ * 1. Gap entirely before first observed bar → EXPECTED_NO_DATA
+ * 2. All missing times fall on NSE holidays → MARKET_HOLIDAY
+ * 3. Provider has no historical capability for this interval → PROVIDER_UNAVAILABLE
+ * 4. Gap is marked PENDING in the DataGap table → PENDING_RECOVERY
+ * 5. Otherwise → ACTUAL_DATA_GAP
+ */
+export function classifyGap(
+  gap: DetectedGap,
+  interval: Interval,
+  firstActualSec: number | null,
+  expectedProvider?: string | null,
+): ClassifiedGap {
+  // Rule 1: before first observed bar
+  if (firstActualSec != null && gap.gapEnd < firstActualSec) {
+    return {
+      ...gap,
+      classification: "EXPECTED_NO_DATA",
+      classificationReason: "gap is before the instrument's first observed bar",
+    };
+  }
+
+  // Rule 2: check if all missing times in the gap are on NSE holidays
+  const secs = INTERVAL_SECONDS[interval] ?? 0;
+  if (secs > 0) {
+    const missingTimes: number[] = [];
+    for (let t = gap.gapStart; t <= gap.gapEnd; t += secs) {
+      missingTimes.push(t);
+    }
+    const allHoliday = missingTimes.every((t) => {
+      const istDate = toIstDateString(t * 1000);
+      return !nseCalendar.isTradingDay(istDate);
+    });
+    if (allHoliday) {
+      return {
+        ...gap,
+        classification: "MARKET_HOLIDAY",
+        classificationReason: "all missing bars fall on NSE holidays or weekends",
+      };
+    }
+  }
+
+  // Rule 3: provider has no capability for this interval
+  if (expectedProvider) {
+    const { intervalCapability } = require("../provider-capability-matrix");
+    const cap = intervalCapability(expectedProvider, interval);
+    if (!cap.history) {
+      return {
+        ...gap,
+        classification: "PROVIDER_UNAVAILABLE",
+        classificationReason: `provider '${expectedProvider}' has no historical capability for ${interval}`,
+      };
+    }
+  }
+
+  // Rule 4: classify as actual gap (caller can check DataGap.recoveryStatus for PENDING)
+  return {
+    ...gap,
+    classification: "ACTUAL_DATA_GAP",
+    classificationReason: `${gap.missingBars} genuine missing ${interval} bars detected`,
+  };
+}
+
+/**
+ * Detect, classify, and persist gaps for an instrument in one call.
+ * Returns gaps with classification attached.
+ */
+export async function detectClassifyAndPersistGaps(
+  input: DetectGapsInput,
+): Promise<{ result: DetectGapsResult; classified: ClassifiedGap[]; written: number }> {
+  const { result, written } = await detectAndPersistGaps(input);
+  const classified: ClassifiedGap[] = result.gaps.map((gap) =>
+    classifyGap(gap, input.interval, result.firstActualSec, input.expectedProvider),
+  );
+  return { result, classified, written };
 }

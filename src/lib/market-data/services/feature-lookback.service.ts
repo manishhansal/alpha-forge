@@ -91,20 +91,20 @@ export const FEATURE_LOOKBACKS: readonly FeatureLookback[] = [
   // ── 1m micro-structure features ───────────────────────────────────────────
   { feature: "vwap_1m", timeframe: "1m", indicatorPeriod: 375, requiredBars: 375, source: "1m session VWAP (375 min = full session)" },
   { feature: "ema20_1m", timeframe: "1m", indicatorPeriod: 20, requiredBars: emaBars(20), source: "1m EMA20 micro-trend" },
-
-  // ── 3m features ───────────────────────────────────────────────────────────
-  { feature: "ema50_3m", timeframe: "3m", indicatorPeriod: 50, requiredBars: emaBars(50), source: "3m EMA50" },
+  // NOTE: ema50_3m (3-minute feature) was permanently removed in V8 refactor/signals.
+  // 3m is not a supported AlphaForge interval.
 ];
 
-/** NSE intraday bars per full trading session, by interval (09:15–15:30 IST). */
+/** NSE intraday bars per full trading session, by interval (09:15–15:30 IST = 375 minutes). */
 export const BARS_PER_SESSION: Partial<Record<Interval, number>> = {
   "1m": 375,
-  "3m": 125,
   "5m": 75,
+  "10m": 38, // 375/10 rounded up
   "15m": 25,
-  "30m": 13, // 12.5 → 13 (the 15:15–15:30 half-bar counts)
-  "1h": 7, // 6.25 → 7
+  "30m": 13, // 375/30 rounded up
+  "1h": 7,   // 375/60 rounded up
   "1d": 1,
+  // "3m" intentionally absent — 3m is not a supported interval (V8 removal).
 };
 
 export interface TimeframeRequirement {
@@ -144,8 +144,8 @@ export function computeTimeframeRequirements(
       drivingFeature: f.feature,
     });
   }
-  // Stable ordering by canonical interval.
-  const order: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "1d"];
+  // Stable ordering by canonical interval (3m permanently removed).
+  const order: Interval[] = ["1m", "5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M"];
   out.sort((a, b) => order.indexOf(a.timeframe) - order.indexOf(b.timeframe));
   return out;
 }

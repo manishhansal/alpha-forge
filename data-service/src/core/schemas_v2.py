@@ -342,7 +342,7 @@ class CandleV2(BaseModel):
     instrumentId: str
     symbol: str
     exchange: str
-    interval: str  # 1m, 3m, 5m, 15m, 30m, 1h, 1d
+    interval: str  # 1m, 5m, 10m, 15m, 30m, 1h, 1d, 1w, 1M (3m removed V8)
 
     # Timestamps (UTC seconds for candle open time, matching existing schema)
     time: int  # UTC epoch seconds (candle open)
