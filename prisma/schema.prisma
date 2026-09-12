@@ -997,3 +997,108 @@ model DataCorrection {
   @@index([correctedAt])
   @@map("data_correction")
 }
+
+/// ── Data Foundation V7 §3 — versioned instrument-master snapshot ────────────
+/// A point-in-time, immutable snapshot of the canonical NSE F&O universe as
+/// resolved from a provider's instrument master (Angel ScripMaster / Upstox
+/// instrument dump). One header row per refresh, addressed by a monotonic
+/// `snapshotVersion` + content `checksum`. The per-instrument rows live in
+/// `InstrumentMasterEntry` and reference the header. Snapshots are NEVER
+/// mutated in place — a refresh writes a NEW version so provenance and
+/// reproducibility are preserved (a signal computed against v3 can always be
+/// traced to exactly the universe that produced it).
+model InstrumentMasterSnapshot {
+  id             String   @id @default(cuid())
+  /// Provider whose master produced this snapshot ("angel_one" | "upstox").
+  provider       String
+  /// Monotonic version string, e.g. "2026-09-12T10:30:00Z#angel_one".
+  snapshotVersion String  @unique
+  /// SHA-256 hex of the canonical-sorted entry set (integrity + dedup).
+  checksum       String
+  /// Total entries persisted for this snapshot.
+  recordCount    Int
+  /// Counts by instrument class (equities/futures/options + underlyings).
+  fnoUniverseCount Int    @default(0)
+  fnoEquityCount   Int    @default(0)
+  fnoFutureCount   Int    @default(0)
+  fnoOptionCount   Int    @default(0)
+  fnoIndexCount    Int    @default(0)
+  /// When the provider master was retrieved.
+  retrievedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  entries        InstrumentMasterEntry[]
+
+  @@index([provider, createdAt])
+  @@index([checksum])
+  @@map("instrument_master_snapshot")
+}
+
+/// One canonical instrument resolved from a provider master, bound to a
+/// versioned `InstrumentMasterSnapshot`. Fields the provider does not supply
+/// are stored NULL — never guessed (Absolute Rule: never guess unresolved
+/// instruments). `instrumentKey`/`symbolToken` are the provider-specific
+/// resolution handles (Upstox instrument_key / Angel symboltoken).
+model InstrumentMasterEntry {
+  id             String   @id @default(cuid())
+  snapshotId     String
+  snapshot       InstrumentMasterSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  provider       String
+  /// Provider-native instrument key (Upstox instrument_key). Null when N/A.
+  instrumentKey  String?
+  /// NSE trading symbol (e.g. "RELIANCE", "NIFTY28OCT2624000CE").
+  symbol         String
+  exchange       String
+  /// Provider segment ("NSE" | "NFO" | "BFO" | "NSE_INDEX" | …).
+  segment        String?
+  /// "EQ" | "FUTIDX" | "FUTSTK" | "OPTIDX" | "OPTSTK" | "INDEX".
+  instrumentType String
+  isin           String?
+  /// Angel symboltoken (numeric string). Null when N/A.
+  symbolToken    String?
+  /// Expiry display string for derivatives; null for cash/index.
+  expiry         String?
+  /// Strike (rupees) for options; null otherwise.
+  strike         Float?
+  /// "CE" | "PE" for options; null otherwise.
+  optionType     String?
+  lotSize        Int?
+  tickSize       Float?
+  /// Underlying name (e.g. "NIFTY", "RELIANCE").
+  underlying     String?
+  active         Boolean  @default(true)
+  validFrom      DateTime @default(now())
+  validTo        DateTime?
+
+  @@index([snapshotId])
+  @@index([provider, instrumentType])
+  @@index([underlying, expiry])
+  @@index([symbol])
+  @@map("instrument_master_entry")
+}
+
+/// ── Data Foundation V7 §16 — realtime vs historical reconciliation ──────────
+/// Records a divergence between a realtime-built candle and the same candle as
+/// later served by a historical provider. Never silently overwrites — the
+/// mismatch is recorded with both values + a resolution note so a human/ops can
+/// see cross-source divergence (Absolute Rule: never silently discard conflicts).
+model RealtimeHistoricalMismatch {
+  id              String   @id @default(cuid())
+  symbol          String
+  exchange        String
+  intervalStr     String
+  /// UTC epoch seconds — candle open time.
+  time            Int
+  realtimeClose   Float
+  historicalClose Float
+  /// abs(realtime - historical).
+  difference      Float
+  realtimeProvider  String?
+  historicalProvider String?
+  /// "KEPT_REALTIME" | "KEPT_HISTORICAL" | "RECORDED_ONLY" | "WITHIN_TOLERANCE"
+  resolution      String   @default("RECORDED_ONLY")
+  detectedAt      DateTime @default(now())
+
+  @@index([symbol, intervalStr, time])
+  @@index([detectedAt])
+  @@map("realtime_historical_mismatch")
+}

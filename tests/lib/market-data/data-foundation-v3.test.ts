@@ -48,10 +48,17 @@ describe("provider capability matrix", () => {
     expect(c.history).toBe(false); // deferred to Angel upstream
   });
 
-  it("angel_one is the multi-day intraday HISTORY source for all intraday intervals", () => {
-    for (const iv of ["1m", "3m", "5m", "15m", "30m", "1h"] as const) {
+  it("angel_one is the multi-day intraday HISTORY source for the intervals it actually serves (V7: NOT 3m)", () => {
+    // V7 correction (data-foundation-v7): a live probe on 2026-09-12 showed
+    // Angel getCandleData returns 0 bars for 3m (no THREE_MINUTE interval) while
+    // 1m returned 1690. So Angel is a history source for 1m/5m/15m/30m/1h — but
+    // 3m is served by Upstox V3, not Angel. Asserting the real behaviour.
+    for (const iv of ["1m", "5m", "15m", "30m", "1h"] as const) {
       expect(intervalCapability("angel_one", iv).history).toBe(true);
     }
+    expect(intervalCapability("angel_one", "3m").history).toBe(false);
+    // Upstox is the capable 3m history source.
+    expect(intervalCapability("upstox", "3m").history).toBe(true);
   });
 
   it("historyProvidersFor(1m) excludes scrapling+yahoo, includes angel+upstox in order", () => {

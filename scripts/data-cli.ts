@@ -163,18 +163,157 @@ async function backfill() {
   console.log(JSON.stringify(out, null, 2));
 }
 
+// ── refresh-universe (V7 §3) ─────────────────────────────────────────────────
+async function refreshUniverse() {
+  const out: Record<string, unknown> = { command: "refresh-universe", at: new Date().toISOString() };
+  await loadCreds();
+  const { refreshInstrumentMaster } = await import(
+    "../src/lib/market-data/services/instrument-master-universe.service"
+  );
+  const res = await refreshInstrumentMaster({ prisma: prisma as never });
+  out.snapshot = res;
+  console.log(JSON.stringify(out, null, 2));
+}
+
+// ── backfill-fno (V7 §5) — universe-scale, resumable, capability-aware ────────
+async function backfillFno() {
+  const out: Record<string, unknown> = { command: "backfill-fno", at: new Date().toISOString() };
+  const { res } = await loadCreds();
+  out.creds = { angel: res.angel, upstox: res.upstox };
+
+  const intervals = (arg("intervals") ?? "1m,3m,5m,15m,30m,1h,1d")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const limit = Number(arg("limit") ?? "0"); // 0 = all symbols in universe
+  const explicitSymbols = arg("symbols");
+  const concurrency = Number(arg("concurrency") ?? "3");
+  out.params = { intervals, limit, concurrency, universe: arg("universe") ?? "fno" };
+
+  // Resolve the universe from the latest persisted instrument-master snapshot.
+  let symbols: string[];
+  if (explicitSymbols) {
+    symbols = explicitSymbols.split(",").map((s) => s.trim()).filter(Boolean);
+  } else {
+    const { getLatestUniverseUnderlyings } = await import(
+      "../src/lib/market-data/services/instrument-master-universe.service"
+    );
+    const u = await getLatestUniverseUnderlyings({ prisma: prisma as never });
+    out.snapshotVersion = u.snapshotVersion;
+    symbols = u.symbols;
+    if (symbols.length === 0) {
+      out.error = "no instrument-master snapshot — run refresh-universe first";
+      console.log(JSON.stringify(out, null, 2));
+      return;
+    }
+  }
+  if (limit > 0) symbols = symbols.slice(0, limit);
+  out.symbolCount = symbols.length;
+
+  const { getRedis } = await import("../worker/src/redis");
+  const { runFnoUniverseBackfill, expandJobs } = await import(
+    "../src/lib/market-data/services/fno-backfill-runner.service"
+  );
+  const jobs = expandJobs(symbols, intervals as never);
+  const range = arg("range");
+  const { results, totalBarsPersisted } = await runFnoUniverseBackfill(jobs, {
+    redis: getRedis() as never,
+    concurrency,
+    ...(range ? { fromIstDate: range } : {}),
+  });
+  out.totalBarsPersisted = totalBarsPersisted;
+  // Summarise per-interval to keep output bounded.
+  const byInterval: Record<string, { bars: number; jobs: number; blocked: number }> = {};
+  for (const r of results) {
+    const b = (byInterval[r.interval] ??= { bars: 0, jobs: 0, blocked: 0 });
+    b.bars += r.barsPersisted; b.jobs += 1;
+    if (r.state === "BLOCKED" || r.state === "FAILED") b.blocked += 1;
+  }
+  out.byInterval = byInterval;
+  console.log(JSON.stringify(out, null, 2));
+}
+
+// ── options-capture (V7 §9-12) — strike-level capture w/ expiry rollover ──────
+async function optionsCapture() {
+  const out: Record<string, unknown> = { command: "options-capture", at: new Date().toISOString() };
+  const { res } = await loadCreds();
+  out.creds = { angel: res.angel, upstox: res.upstox };
+
+  const underlyings = (arg("underlyings") ?? "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  out.underlyings = underlyings;
+
+  const { captureUnderlyingStrikes, defaultChainFetcher } = await import(
+    "../src/lib/market-data/services/option-strike-capture.service"
+  );
+  const def = await defaultChainFetcher();
+  const results = [];
+  for (const u of underlyings) {
+    const r = await captureUnderlyingStrikes(u, {
+      prisma: prisma as never,
+      fetcher: def.fetcher,
+      providerLabel: def.providerLabel,
+    });
+    results.push(r);
+  }
+  out.results = results;
+  const totalWritten = results.reduce((s, r) => s + r.strikesWritten, 0);
+  out.totalStrikesWritten = totalWritten;
+
+  // DB snapshot after.
+  const oc = await prisma.optionChainStrike.groupBy({ by: ["underlying"], _count: { _all: true } });
+  out.dbByUnderlying = oc.map((g) => ({ underlying: g.underlying, rows: g._count._all }));
+  console.log(JSON.stringify(out, null, 2));
+}
+
+// ── readiness-matrix (V7 §26/§27/§33) ────────────────────────────────────────
+async function readinessMatrix() {
+  const out: Record<string, unknown> = { command: "readiness-matrix", at: new Date().toISOString() };
+  await loadCreds();
+  const symbols = (arg("symbols") ?? "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,RELIANCE,HDFCBANK,TCS")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+
+  const { buildSignalDataSnapshot, buildFnoSignalReadinessMatrix, computeOverallDataStatus } = await import(
+    "../src/lib/market-data/services/signal-data-snapshot.service"
+  );
+  const snapshot = await buildSignalDataSnapshot({ symbols, prisma: prisma as never });
+  const matrix = buildFnoSignalReadinessMatrix(snapshot);
+  const overall = computeOverallDataStatus(matrix);
+
+  out.instrumentMasterVersion = snapshot.instrumentMasterVersion;
+  out.snapshotTimestamp = new Date(snapshot.snapshotTimestamp).toISOString();
+  out.overallDataStatus = overall.overallDataStatus;
+  out.overallReason = overall.reason;
+  out.perStrategyReadiness = overall.perStrategyReadiness;
+  // Compact matrix: show state + reason per row.
+  out.matrix = matrix.map((r) => ({ strategy: r.strategy, symbol: r.symbol, tf: r.timeframe, state: r.state, reason: r.reason }));
+  console.log(JSON.stringify(out, null, 2));
+}
+
 async function main() {
   const cmd = process.argv[2];
   try {
     if (cmd === "self-test") await selfTest();
     else if (cmd === "readiness") await readiness();
-    else if (cmd === "backfill") await backfill();
-    else console.log(JSON.stringify({ error: "unknown command", usage: "self-test | readiness | backfill" }, null, 2));
+    else if (cmd === "backfill") {
+      // V7: `--universe=fno` routes to the universe-scale runner.
+      if (arg("universe")) await backfillFno();
+      else await backfill();
+    }
+    else if (cmd === "refresh-universe") await refreshUniverse();
+    else if (cmd === "options-capture") await optionsCapture();
+    else if (cmd === "readiness-matrix") await readinessMatrix();
+    else console.log(JSON.stringify({ error: "unknown command", usage: "self-test | readiness | backfill | refresh-universe | options-capture | readiness-matrix" }, null, 2));
   } finally {
     await prisma.$disconnect();
   }
   process.exit(0);
 }
-const to = setTimeout(() => { console.error("CLI_TIMEOUT after 180s"); process.exit(2); }, 180_000);
+// Backfill/universe commands are long-running (rate-limited multi-symbol
+// acquisition); everything else stays snappy.
+const cmdName = process.argv[2];
+const CLI_TIMEOUT_MS =
+  cmdName === "backfill" || cmdName === "refresh-universe" || cmdName === "options-capture"
+    ? 30 * 60_000
+    : 180_000;
+const to = setTimeout(() => { console.error(`CLI_TIMEOUT after ${CLI_TIMEOUT_MS}ms`); process.exit(2); }, CLI_TIMEOUT_MS);
 to.unref?.();
 main().catch((e) => { console.error("CLI_FAILED", safeErr((e as Error).message)); process.exit(1); });

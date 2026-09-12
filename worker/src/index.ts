@@ -7,6 +7,7 @@ import { startIndiaEodSquareOffJob } from "./jobs/india-eod-squareoff";
 import { startIndiaAutoTraderJob } from "./jobs/india-auto-trader";
 import { startIndiaOptionChainCaptureJob } from "./jobs/india-oc-capture";
 import { startIndiaScannerJob } from "./jobs/india-scanner";
+import { startIndiaRealtimeCandlesJob } from "./jobs/india-realtime-candles";
 import { startIndiaScalperJob } from "./jobs/india-scalper";
 import { startScalperJob } from "./jobs/scalper";
 import { startSignalIngestJob } from "./jobs/signal-ingest";
@@ -108,6 +109,12 @@ async function bootstrap(): Promise<void> {
 
   const indiaScanner = startIndiaScannerJob();
   jobs.push({ name: indiaScanner.name, stop: indiaScanner.stop });
+
+  // Data Foundation V7 §13-17: realtime WS → candle-builder → persistence →
+  // reconciliation → self-healing. Subscribes only during the NSE session; idle
+  // (no false live claim) when the market is closed.
+  const indiaRealtimeCandles = startIndiaRealtimeCandlesJob();
+  jobs.push({ name: indiaRealtimeCandles.name, stop: indiaRealtimeCandles.stop });
 
   log.info("worker ready", { jobs: jobs.map((j) => j.name) });
 

@@ -96,12 +96,19 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
   },
   {
     provider: "angel_one",
-    note: "SmartAPI — primary multi-day intraday HISTORY source. All intraday intervals. Historical endpoint ~3 req/s (403 past that). Requires SMARTAPI_* credentials.",
+    // V7 §11/§38 correction: Angel's getCandleData does NOT serve the 3-minute
+    // interval (ONE_MINUTE/FIVE_MINUTE/… but no THREE_MINUTE) — a live probe on
+    // 2026-09-12 returned 0 bars for 3m RELIANCE while 1m returned 1690. It also
+    // returns 0 for INDEX tokens (NIFTY/BANKNIFTY daily = 0). So Angel is marked
+    // supported ONLY for the intervals it genuinely serves, on EQUITIES. Index
+    // history and 3m are served by Upstox V3 (see below). Never claim a
+    // capability the provider does not actually satisfy (§ absolute rule).
+    note: "SmartAPI — primary EQUITY multi-day intraday HISTORY source. Serves 1m/5m/15m/30m/1h/1d on equities. Does NOT serve 3m (no THREE_MINUTE) and returns 0 for index tokens. Historical endpoint ~3 req/s (403 past that). Requires SMARTAPI_* credentials.",
     requestsPerSecond: 3,
     requiresCredentials: true,
     intervals: {
       "1m": cap(true, true, true, 30),
-      "3m": cap(true, true, true, 60),
+      // 3m intentionally omitted — Angel getCandleData has no THREE_MINUTE.
       "5m": cap(true, true, true, 90),
       "15m": cap(true, true, true, 180),
       "30m": cap(true, true, true, 180),
@@ -111,16 +118,22 @@ export const PROVIDER_CAPABILITY_MATRIX: readonly ProviderCapabilityRow[] = [
   },
   {
     provider: "upstox",
-    note: "Upstox v2/v3 — intraday history + live. No instrument master. Requires UPSTOX_* credentials.",
+    // V7 §5/§6: Upstox V3 is the capable source for INDEX history (all
+    // intervals) AND for 3m (equities+indices), verified live 2026-09-12. Minute
+    // intervals MUST be requested in narrow windows — a 40-day 1m request 400s
+    // while an 8-day request returns 2250 bars. maxChunkDays for sub-hour
+    // intervals is therefore small and conservative to stay inside the API's
+    // per-request minute-history window.
+    note: "Upstox v3 — intraday history + live for equities AND indices; the capable 3m + index-history source. Minute intervals capped to a small per-request window (~7 days) by the API. Requires UPSTOX_* credentials.",
     requestsPerSecond: 5,
     requiresCredentials: true,
     intervals: {
-      "1m": cap(true, true, true, 30),
-      "3m": cap(true, true, true, 60),
-      "5m": cap(true, true, true, 90),
-      "15m": cap(true, true, true, 180),
-      "30m": cap(true, true, true, 180),
-      "1h": cap(true, true, true, 365),
+      "1m": cap(true, true, true, 7),
+      "3m": cap(true, true, true, 14),
+      "5m": cap(true, true, true, 30),
+      "15m": cap(true, true, true, 90),
+      "30m": cap(true, true, true, 90),
+      "1h": cap(true, true, true, 180),
       "1d": cap(true, true, true, 2000),
     },
   },
@@ -168,6 +181,51 @@ export function liveProvidersFor(interval: Interval): ProviderId[] {
   return PROVIDER_CAPABILITY_MATRIX.filter(
     (r) => r.intervals[interval]?.live,
   ).map((r) => r.provider);
+}
+
+/** The canonical NSE index underlyings whose HISTORY Angel cannot serve. */
+export const INDEX_UNDERLYINGS: ReadonlySet<string> = new Set([
+  "NIFTY",
+  "BANKNIFTY",
+  "FINNIFTY",
+  "MIDCPNIFTY",
+  "NIFTYNXT50",
+  "INDIAVIX",
+]);
+
+/** True when `symbol` is an NSE index (history must go through Upstox V3). */
+export function isIndexSymbol(symbol: string): boolean {
+  return INDEX_UNDERLYINGS.has(symbol.toUpperCase());
+}
+
+/**
+ * V7 §6/§11 capability-aware history-provider ordering for a concrete
+ * (symbol, interval).
+ *
+ * This refines {@link historyProvidersFor} with the two facts a plain
+ * interval lookup cannot express and that were verified against the live
+ * providers on 2026-09-12:
+ *
+ *   1. Angel returns 0 bars for INDEX tokens → indices must use Upstox first.
+ *   2. Angel has no 3-minute interval → 3m must use Upstox (already reflected
+ *      in the matrix, but kept explicit here for the symbol-aware path).
+ *
+ * The result is still grounded ENTIRELY in the capability matrix — it only
+ * re-orders / filters the providers the matrix already says can serve the
+ * interval. It never invents a provider or a capability.
+ */
+export function historyProvidersForSymbol(
+  symbol: string,
+  interval: Interval,
+): ProviderId[] {
+  const base = historyProvidersFor(interval);
+  if (isIndexSymbol(symbol)) {
+    // Indices: Upstox is the only capable history source. Drop Angel entirely
+    // (it returns empty for index tokens — never let it be tried and recorded
+    // as a false EMPTY that could be mistaken for "no data exists").
+    return base.filter((p) => p !== "angel_one");
+  }
+  return base;
 }
 
 /** All intraday intervals V3 targets. */

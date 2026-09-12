@@ -178,6 +178,16 @@ export function evaluateShadow(
   candidate: CanonicalCandidate,
   artifact: MetaModelArtifact,
   cluster: CanonicalCandidate[] = [],
+  /**
+   * V7 §24/§25 AUTHORITATIVE DATA VETO (optional, fail-closed). When the caller
+   * has evaluated the authoritative data gate (evaluateSignalSurfaceDataGate)
+   * for this candidate, it passes the verdict here. It can only STRENGTHEN the
+   * data veto — a blocked/insufficient authoritative gate forces the canonical
+   * decision's data flags on, so the A+ factory + ML decision path cannot emit
+   * a TRADE on data the authoritative gate rejected. It NEVER relaxes any gate
+   * and NEVER touches EV/probability/score.
+   */
+  dataGateVeto?: { blocked: boolean; insufficient: boolean; reason?: string },
 ): ShadowDecision {
   const { state: modelState, contribution } = deriveMetaModelState(artifact);
 
@@ -281,9 +291,12 @@ export function evaluateShadow(
   const isAPlus = bucket === "A_PLUS_PRIME" || bucket === "A_PLUS_STRONG";
 
   // ── Canonical decision authority ──
+  // V7 §24/§25: OR-in the authoritative data-gate veto so it can only add a
+  // block, never remove one (fail-closed). The authoritative gate is DB-backed
+  // (real history/snapshot coherence) and supersedes a self-reported clean flag.
   const canonical = resolveCanonicalDecision({
-    criticalDataIssue: candidate.criticalDataIssue,
-    insufficientData: candidate.insufficientData,
+    criticalDataIssue: candidate.criticalDataIssue || (dataGateVeto?.blocked ?? false),
+    insufficientData: candidate.insufficientData || (dataGateVeto?.insufficient ?? false),
     riskBlocked: candidate.riskBlocked,
     modelState,
     calibrationAvailable: candidate.calibrationAvailable,
