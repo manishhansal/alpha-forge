@@ -357,3 +357,136 @@ def assess_staleness(
     if age_days > cfg.aging_days:
         return Staleness.AGING, f"model age {age_days:.0f}d > {cfg.aging_days}d"
     return Staleness.FRESH, f"model age {age_days:.0f}d"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V8 Canonical Data Gate — §22/§35/§70
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Supported timeframes in V8 (3m permanently removed).
+_V8_SUPPORTED_TIMEFRAMES: frozenset[str] = frozenset({
+    "1m", "5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M",
+    # Daily variants (case variants used in ML training)
+    "1D", "5M", "15M", "30M", "1H",
+})
+
+# Trust statuses acceptable for production ML (§35).
+_ACCEPTABLE_TRUST_STATUSES: frozenset[str] = frozenset({
+    "VERIFIED_RECONCILED",
+    "VERIFIED_SINGLE_SOURCE",
+    # DEGRADED is allowed ONLY for shadow/research mode (checked below).
+})
+
+# Minimum quality score for production ML inference.
+_MIN_QUALITY_SCORE_PRODUCTION: float = 70.0
+_MIN_QUALITY_SCORE_SHADOW:     float = 50.0
+
+
+def validate_canonical_data_v8(
+    dataset_version: str,
+    feature_version: str,
+    snapshot_timestamp: Optional[str],
+    data_trust_status: Optional[str],
+    data_quality_score: Optional[float],
+    timeframe: str,
+    deployment_mode: str = "shadow",
+) -> "ValidationResult":
+    """
+    V8 canonical data gate for ML decisions.
+
+    Verifies:
+    1. Timeframe is supported (3m raises immediately — never enters inference).
+    2. Dataset version is populated (not empty — prevents "latest" drift).
+    3. Feature version is populated.
+    4. Snapshot timestamp is present (inference must know WHEN the data was from).
+    5. Data trust status is acceptable for the deployment mode.
+    6. Quality score meets the minimum threshold for the deployment mode.
+
+    This function is ADDITIVE — it does not replace existing validation
+    (model_compatibility, staleness, etc.) but adds data-layer enforcement.
+
+    ABSOLUTE RULE: ML service must never fetch raw broker data.
+    The caller is responsible for supplying data from the canonical store only.
+
+    Returns
+    -------
+    ValidationResult
+        ok=True if all checks pass; ok=False with reason and failed_state otherwise.
+    """
+    # 1. Timeframe check — 3m is permanently removed
+    tf_normalized = str(timeframe).strip()
+    if tf_normalized.lower() in ("3m", "3min", "3-minute", "3_minute"):
+        return ValidationResult(
+            "canonical_data_v8", False,
+            f"Timeframe '{timeframe}' was permanently removed from AlphaForge (V8). "
+            "No ML inference is performed on 3m data. "
+            "Supported: 1m 5m 10m 15m 30m 1h 1d 1w 1M",
+            DecisionState.BLOCKED.value,
+        )
+    if tf_normalized not in _V8_SUPPORTED_TIMEFRAMES:
+        return ValidationResult(
+            "canonical_data_v8", False,
+            f"Timeframe '{timeframe}' is not in the supported V8 timeframe list: "
+            f"{sorted(_V8_SUPPORTED_TIMEFRAMES)}",
+            DecisionState.BLOCKED.value,
+        )
+
+    # 2. Dataset version
+    if not dataset_version or not dataset_version.strip():
+        return ValidationResult(
+            "canonical_data_v8", False,
+            "dataset_version is empty — ML inference cannot proceed without a "
+            "versioned canonical dataset. Prevents 'latest data' drift.",
+            DecisionState.BLOCKED.value,
+        )
+
+    # 3. Feature version
+    if not feature_version or not feature_version.strip():
+        return ValidationResult(
+            "canonical_data_v8", False,
+            "feature_version is empty — cannot verify feature schema compatibility.",
+            DecisionState.BLOCKED.value,
+        )
+
+    # 4. Snapshot timestamp
+    if not snapshot_timestamp:
+        return ValidationResult(
+            "canonical_data_v8", False,
+            "snapshot_timestamp missing — ML inference must know the point-in-time "
+            "of the data snapshot to prevent look-ahead contamination.",
+            DecisionState.BLOCKED.value,
+        )
+
+    # 5. Data trust status
+    if data_trust_status:
+        is_production = deployment_mode in ("live", "production", "LIVE", "PRODUCTION")
+        acceptable = _ACCEPTABLE_TRUST_STATUSES.copy()
+        if not is_production:
+            acceptable = acceptable | {"DEGRADED"}  # shadow/paper allows DEGRADED
+
+        if data_trust_status not in acceptable:
+            return ValidationResult(
+                "canonical_data_v8", False,
+                f"data_trust_status='{data_trust_status}' is not acceptable for "
+                f"deployment_mode='{deployment_mode}'. Acceptable: {sorted(acceptable)}. "
+                "UNVERIFIED and INVALID data must not enter ML inference.",
+                DecisionState.BLOCKED.value,
+            )
+
+    # 6. Quality score threshold
+    if data_quality_score is not None:
+        threshold = (
+            _MIN_QUALITY_SCORE_PRODUCTION
+            if deployment_mode in ("live", "production", "LIVE", "PRODUCTION")
+            else _MIN_QUALITY_SCORE_SHADOW
+        )
+        if data_quality_score < threshold:
+            return ValidationResult(
+                "canonical_data_v8", False,
+                f"data_quality_score={data_quality_score:.1f} below minimum "
+                f"{threshold} for deployment_mode='{deployment_mode}'. "
+                "Improve data coverage, reconciliation, or provenance.",
+                DecisionState.BLOCKED.value,
+            )
+
+    return ValidationResult("canonical_data_v8", True)

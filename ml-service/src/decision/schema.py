@@ -55,6 +55,17 @@ class CanonicalDecision:
     feature_version:        str = ""
     feature_schema_hash:    str = ""
 
+    # ── V8 canonical data provenance ─────────────────────────────────────
+    # Every ML decision must reference the canonical data snapshot it consumed.
+    # ABSOLUTE RULE: ML service must NEVER fetch raw broker data directly.
+    # Flow: provider → canonical data → validated snapshot → features → ML
+    # 3m is permanently out of scope — any decision with timeframe="3m" is INVALID.
+    data_provenance_type:   Optional[str] = None   # BROKER_AUTHENTICATED | OPEN_SOURCE_NSE_DERIVED | YAHOO_FALLBACK | UNKNOWN
+    data_trust_status:      Optional[str] = None   # VERIFIED_RECONCILED | VERIFIED_SINGLE_SOURCE | DEGRADED | UNVERIFIED | INVALID
+    data_quality_score:     Optional[float] = None # [0-100] deterministic score from quality engine
+    data_authenticated:     Optional[bool] = None  # True if broker-authenticated source
+    snapshot_timestamp:     Optional[str] = None   # UTC ISO-8601 of the data snapshot used
+
     # ── regime ───────────────────────────────────────────────────────────
     market_regime:          Optional[str] = None
     regime_confidence:      Optional[float] = None
@@ -121,6 +132,13 @@ class CanonicalDecision:
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
+        # V8: 3m is permanently out of scope — reject at construction time
+        if self.timeframe and str(self.timeframe).lower() in ("3m", "3min", "3-minute"):
+            raise ValueError(
+                f"CanonicalDecision: timeframe '{self.timeframe}' is permanently removed "
+                "from AlphaForge (V8 refactor/signals). No ML decisions are generated "
+                "for 3m data. Supported timeframes: 1m 5m 10m 15m 30m 1h 1d 1w 1M"
+            )
 
     # ── state helpers ────────────────────────────────────────────────────
 
