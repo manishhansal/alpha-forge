@@ -19,8 +19,9 @@ UTC = timezone.utc
 
 # Canonical bar interval seconds (spec §8). Daily is a marker (session-based, not
 # a fixed second-grid) and is handled specially.
+# 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 INTERVAL_SECONDS: dict[str, int] = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600,
+    "1m": 60, "5m": 300, "10m": 600, "15m": 900, "30m": 1800, "1h": 3600,
     "1d": 86400,
 }
 

@@ -150,7 +150,8 @@ export async function buildRuntimeCapabilityMatrix(
     if (m.outcome === "SUCCESS") verified.add(key);
   }
 
-  const intervals: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "1d"];
+  // 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
+  const intervals: Interval[] = ["1m", "5m", "10m", "15m", "30m", "1h", "1d"];
   const cells: RuntimeCapabilityCell[] = [];
   for (const row of PROVIDER_CAPABILITY_MATRIX) {
     for (const iv of intervals) {

@@ -331,7 +331,7 @@ export const INDIA_SIGNAL_FAMILY_REGISTRY: SignalFamilyMetadata[] = [
     description: "9 F&O strategies: UT Bot, HMA, SMC BOS/CHoCH, EMA stack + Super Confluence",
     apiRoute: "/api/in/scalper/signals",
     workerJob: "india-scalper",
-    timeframes: ["1m", "3m", "5m"],
+    timeframes: ["1m", "5m"],  // 3m permanently removed (V8 refactor/signals)
     requiresOI: true,
     requiresOptionChain: false,
   },

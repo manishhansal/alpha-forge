@@ -1102,3 +1102,276 @@ model RealtimeHistoricalMismatch {
   @@index([detectedAt])
   @@map("realtime_historical_mismatch")
 }
+
+/// ── Data Foundation V8 §6 — per-dataset provenance record ──────────────────
+/// Every acquired canonical dataset carries a full provenance record.
+/// This is the authoritative audit trail for: who provided it, was it
+/// authenticated, when was it fetched, what version of the pipeline processed
+/// it. Never stores credentials — only identity hashes.
+model DataProvenance {
+  id                    String   @id @default(cuid())
+  /// Stable dataset identity: "{instrumentId}:{exchange}:{intervalStr}:{sessionDate}"
+  datasetKey            String
+  instrumentId          String
+  exchange              String
+  intervalStr           String
+  /// IST session date (YYYY-MM-DD) — the trading day this dataset covers.
+  sessionDate           String
+  /// "angel_one" | "upstox" | "jugaad" | "openchart" | "scrapling" | "yahoo"
+  provider              String
+  /// "BROKER_AUTHENTICATED" | "OPEN_SOURCE_NSE_DERIVED" | "YAHOO_FALLBACK" | "UNKNOWN"
+  sourceType            String
+  /// True when the provider required and presented valid broker credentials.
+  authenticated         Boolean  @default(false)
+  /// SHA-256 of the credential identity (never the raw credential).
+  credentialIdentityHash String?
+  /// UTC ISO-8601 when this dataset was fetched from the source.
+  fetchedAt             DateTime
+  /// Provider/exchange-declared source timestamp (if supplied).
+  sourceTimestamp       DateTime?
+  /// SHA-256 of the raw response payload.
+  responseHash          String?
+  /// Dataset version string (e.g. "2026-09-12-v1").
+  datasetVersion        String
+  /// Instrument master snapshot version used at acquisition time.
+  instrumentMasterVersion String?
+  /// Parser version that processed the raw response.
+  parserVersion         String   @default("1")
+  /// Normalization pipeline version.
+  normalizationVersion  String   @default("1")
+  /// Validation pipeline version.
+  validationVersion     String   @default("1")
+  /// "VERIFIED" | "VERIFIED_RECONCILED" | "VERIFIED_SINGLE_SOURCE" | "DEGRADED" | "UNVERIFIED" | "INVALID"
+  dataTrustStatus       String   @default("UNVERIFIED")
+  /// Number of candles/rows in this dataset.
+  rowCount              Int      @default(0)
+  createdAt             DateTime @default(now())
+
+  @@unique([datasetKey, provider, fetchedAt])
+  @@index([instrumentId, exchange, intervalStr, sessionDate])
+  @@index([provider, dataTrustStatus])
+  @@index([datasetVersion])
+  @@map("data_provenance")
+}
+
+/// ── Data Foundation V8 §13/§21 — multi-source reconciliation record ─────────
+/// When the same candle is available from multiple providers, this records
+/// the comparison result. Never blindly picks a winner — discrepancies are
+/// documented. MATCHED means within tolerance; MAJOR_DISCREPANCY flags for ops.
+model DataReconciliation {
+  id              String   @id @default(cuid())
+  instrumentId    String
+  exchange        String
+  intervalStr     String
+  /// UTC epoch seconds — candle open time.
+  time            Int
+  /// IST session date.
+  sessionDate     String
+  /// Primary provider (higher trust).
+  providerA       String
+  /// Secondary provider being compared.
+  providerB       String
+  openA           Float?
+  openB           Float?
+  highA           Float?
+  highB           Float?
+  lowA            Float?
+  lowB            Float?
+  closeA          Float?
+  closeB          Float?
+  volumeA         Float?
+  volumeB         Float?
+  oiA             Float?
+  oiB             Float?
+  /// Max absolute difference across OHLC fields.
+  maxOhlcDiff     Float?
+  /// "MATCHED" | "WITHIN_TOLERANCE" | "MINOR_DISCREPANCY" | "MAJOR_DISCREPANCY" | "SOURCE_ONLY" | "UNAVAILABLE"
+  reconciliationStatus String
+  /// Tolerance config used (from registry).
+  toleranceConfig Json?
+  reconciledAt    DateTime @default(now())
+
+  @@unique([instrumentId, exchange, intervalStr, time, providerA, providerB])
+  @@index([instrumentId, exchange, intervalStr, time])
+  @@index([reconciliationStatus, sessionDate])
+  @@index([reconciledAt])
+  @@map("data_reconciliation")
+}
+
+/// ── Data Foundation V8 §14 — data quality score per dataset ────────────────
+/// Deterministic quality score for a (instrument, exchange, interval, sessionDate).
+/// Score is computed from completeness + validity + freshness + provenance +
+/// reconciliation + duplicate rate + gap rate + timestamp integrity + provider health.
+/// A critical failure ALWAYS overrides the numeric score (never fake completeness).
+model DataQualityScore {
+  id                  String   @id @default(cuid())
+  instrumentId        String
+  exchange            String
+  intervalStr         String
+  sessionDate         String
+  /// [0–100] deterministic score; null if computation blocked by critical failure.
+  qualityScore        Float?
+  /// "VERIFIED_RECONCILED" | "VERIFIED_SINGLE_SOURCE" | "DEGRADED" | "UNVERIFIED" | "INVALID"
+  qualityStatus       String
+  completenessScore   Float?   // 0–1
+  validityScore       Float?   // 0–1
+  freshnessScore      Float?   // 0–1
+  provenanceScore     Float?   // 0–1
+  reconciliationScore Float?   // 0–1
+  duplicateRate       Float?   // 0–1 (0 = no dupes)
+  gapRate             Float?   // 0–1 (0 = no gaps)
+  timestampIntegrity  Float?   // 0–1
+  providerHealth      Float?   // 0–1
+  /// Specific reasons for any degradation or failure.
+  reasons             String[] @default([])
+  /// True if any critical failure overrides the numeric score.
+  criticalFailure     Boolean  @default(false)
+  criticalReason      String?
+  provider            String?
+  datasetVersion      String?
+  computedAt          DateTime @default(now())
+
+  @@unique([instrumentId, exchange, intervalStr, sessionDate])
+  @@index([qualityStatus, sessionDate])
+  @@index([instrumentId, exchange, intervalStr])
+  @@index([computedAt])
+  @@map("data_quality_score")
+}
+
+/// ── Data Foundation V8 §11 — resumable historical backfill job ──────────────
+/// Tracks every historical acquisition job: provider, symbol, interval, range,
+/// checkpoint, status. Idempotent: same (jobKey) = same job.
+/// A checkpoint advances ONLY after validated persistence.
+model HistoricalBackfillJob {
+  id              String   @id @default(cuid())
+  /// Unique job identity: "{provider}:{instrumentId}:{exchange}:{intervalStr}:{from}:{to}"
+  jobKey          String   @unique
+  /// Universe snapshot version this job serves.
+  universeVersion String?
+  provider        String
+  instrumentId    String
+  exchange        String
+  intervalStr     String
+  /// IST date range (YYYY-MM-DD).
+  fromDate        String
+  toDate          String
+  /// "PENDING" | "RUNNING" | "SUCCESS" | "PARTIAL" | "FAILED" | "RETRYING" | "RATE_LIMITED" | "UNSUPPORTED" | "NO_DATA" | "INVALID_DATA"
+  status          String   @default("PENDING")
+  attempts        Int      @default(0)
+  rowsFetched     Int      @default(0)
+  rowsPersisted   Int      @default(0)
+  rowsInvalid     Int      @default(0)
+  rowsDuplicate   Int      @default(0)
+  /// SHA-256 of the persisted row set for idempotency verification.
+  checksum        String?
+  /// Last successfully processed date (checkpoint for resumability).
+  checkpointDate  String?
+  failureReason   String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, provider])
+  @@index([instrumentId, exchange, intervalStr])
+  @@index([universeVersion])
+  @@map("historical_backfill_job")
+}
+
+/// ── Data Foundation V8 §9 — raw acquisition landing zone ────────────────────
+/// Captures the raw provider response BEFORE transformation. Sufficient to
+/// reproduce the normalization pipeline. Never stores credentials/tokens.
+/// Retained for a configurable period (default 30 days) then pruned.
+model RawAcquisitionRecord {
+  id               String   @id @default(cuid())
+  /// Unique request identity (correlates with backfill job or gap recovery).
+  requestId        String   @unique
+  provider         String
+  /// The endpoint or source identifier (never contains auth tokens).
+  endpoint         String
+  instrumentId     String
+  exchange         String
+  intervalStr      String
+  requestParams    Json
+  requestedAt      DateTime
+  respondedAt      DateTime
+  /// HTTP status (null for non-HTTP sources like jugaad file-based).
+  httpStatus       Int?
+  /// SHA-256 of the raw response bytes.
+  responseHash     String
+  /// Compressed/truncated raw response (max 50KB; null if skipped).
+  rawResponseJson  Json?
+  /// Number of records in the raw response.
+  recordCount      Int      @default(0)
+  parserVersion    String   @default("1")
+  createdAt        DateTime @default(now())
+  /// Soft-delete: pruned after retention period.
+  prunedAt         DateTime?
+
+  @@index([provider, instrumentId, requestedAt])
+  @@index([requestId])
+  @@index([responseHash])
+  @@index([createdAt])
+  @@map("raw_acquisition_record")
+}
+
+/// ── Data Foundation V8 §4 — F&O Universe snapshot ───────────────────────────
+/// Versioned snapshot of the current NSE F&O equity universe.
+/// A new snapshot is written on every refresh; old ones are never deleted.
+/// Each constituent gets ACTIVE/REMOVED/ADDED/SUSPENDED/UNRESOLVED status.
+model FnoUniverseSnapshot {
+  id                String   @id @default(cuid())
+  universeVersion   String   @unique
+  generatedAt       DateTime @default(now())
+  /// The date from which this universe is effective (IST).
+  effectiveFrom     String
+  /// The date until which this universe is effective (null = current).
+  effectiveTo       String?
+  sourceProvider    String
+  checksum          String
+  constituentCount  Int
+  fnoEquityCount    Int      @default(0)
+  fnoIndexCount     Int      @default(0)
+  addedCount        Int      @default(0)
+  removedCount      Int      @default(0)
+  suspendedCount    Int      @default(0)
+  unresolvedCount   Int      @default(0)
+  constituents      FnoUniverseEntry[]
+
+  @@index([generatedAt])
+  @@index([effectiveFrom])
+  @@map("fno_universe_snapshot")
+}
+
+/// One F&O equity/index entry in a universe snapshot.
+model FnoUniverseEntry {
+  id              String   @id @default(cuid())
+  snapshotId      String
+  snapshot        FnoUniverseSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  symbol          String
+  exchange        String
+  isin            String?
+  /// "EQ" | "INDEX"
+  instrumentType  String
+  /// Angel One instrument token/key.
+  angelToken      String?
+  angelSymbol     String?
+  /// Upstox instrument key.
+  upstoxKey       String?
+  upstoxSymbol    String?
+  /// "ACTIVE" | "REMOVED" | "ADDED" | "SUSPENDED" | "UNRESOLVED"
+  lifecycleStatus String   @default("ACTIVE")
+  /// When this symbol first appeared in any universe snapshot.
+  firstSeen       DateTime @default(now())
+  /// When this symbol was last seen in an ACTIVE universe snapshot.
+  lastSeen        DateTime @default(now())
+  /// Latest known expiry for futures/options (null for spot equity).
+  latestExpiry    String?
+  /// Whether F&O contracts are currently listed for this symbol.
+  fnoEligible     Boolean  @default(true)
+
+  @@index([snapshotId])
+  @@index([symbol, exchange])
+  @@index([lifecycleStatus])
+  @@map("fno_universe_entry")
+}

@@ -9,3 +9,14 @@ hypothesis==6.112.1
 pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-mock==3.14.0
+
+# Historical open-source NSE data providers (V8)
+# jugaad-data: NSE bhavcopy + F&O EOD data (latest stable)
+jugaad-data==0.35.5
+# openchart: NSE charting platform historical OHLCV (1m–1M, no 3m)
+openchart==0.2.0
+# curl_cffi: Chrome TLS fingerprint spoofing — bypasses Akamai WAF on
+# charting.nseindia.com (which blocks standard Python requests/OpenSSL)
+curl_cffi>=0.16.0
+# pandas: required by both jugaad-data and openchart for DataFrame handling
+pandas>=2.0.0

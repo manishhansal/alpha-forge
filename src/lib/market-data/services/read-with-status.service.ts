@@ -75,10 +75,9 @@ function providerChainFor(
 }
 
 // ── Interval seconds (mirrors the canonical Interval union) ────────────────
-
+// 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 const INTERVAL_SECONDS: Partial<Record<Interval, number>> = {
   "1m": 60,
-  "3m": 180,
   "5m": 300,
   "10m": 600,
   "15m": 900,

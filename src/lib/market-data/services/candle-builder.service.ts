@@ -2,7 +2,9 @@
  * Production-grade Real-Time Candle Builder — AlphaForge Indian Market.
  *
  * Assembles OHLCV candles from a stream of normalized LiveTick events for
- * all required NSE timeframes (1m, 3m, 5m, 10m, 15m, 30m, 1h, 1d).
+ * all required NSE timeframes (1m, 5m, 10m, 15m, 30m, 1h, 1d).
+ * NOTE: 3m was permanently removed (V8 refactor/signals). No 3m candles are
+ * built, persisted, cached, or emitted.
  *
  * Key design decisions
  * ────────────────────
@@ -45,10 +47,9 @@ const NSE_OPEN_MINUTES = 9 * 60 + 15; // 555
 /** NSE regular session close: 15:30 IST → minutes from IST midnight. */
 const NSE_CLOSE_MINUTES = 15 * 60 + 30; // 930
 
-/** Interval width in seconds. */
+/** Interval width in seconds. 3m is deliberately absent — it is not a supported AlphaForge interval. */
 const INTERVAL_SECONDS: Record<Interval, number> = {
   "1m":  60,
-  "3m":  180,
   "5m":  300,
   "10m": 600,
   "15m": 900,
@@ -62,9 +63,10 @@ const INTERVAL_SECONDS: Record<Interval, number> = {
 /**
  * All timeframes actively built by the production candle builder.
  * "1w" and "1M" are historical-only; the live builder ignores them.
+ * 3m is permanently removed — no 3m candles are built or requested.
  */
 export const LIVE_INTERVALS: readonly Interval[] = [
-  "1m", "3m", "5m", "10m", "15m", "30m", "1h", "1d",
+  "1m", "5m", "10m", "15m", "30m", "1h", "1d",
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import {
   historyProvidersForSymbol,
   isIndexSymbol,
   intervalCapability,
+  PROVIDER_CAPABILITY_MATRIX,
 } from "@/lib/market-data/provider-capability-matrix";
 import {
   computeTimeframeRequirements,
@@ -38,16 +39,44 @@ import {
   _resetBackfillBreakers,
   type ProviderFetchers,
 } from "@/lib/market-data/services/fno-backfill-runner.service";
+import { LIVE_INTERVALS } from "@/lib/market-data/services/candle-builder.service";
+import { SUPPORTED_TIMEFRAMES, isSupportedInterval, assertSupportedInterval } from "@/lib/market-data/types";
 
-// ── §5 capability matrix corrections ─────────────────────────────────────────
+// ── V8 3m removal audit ───────────────────────────────────────────────────────
 
-describe("V7 §5 — capability matrix reflects real provider behaviour", () => {
-  it("Angel does NOT claim 3m (verified 0 bars live); Upstox does", () => {
-    expect(intervalCapability("angel_one", "3m").history).toBe(false);
-    expect(intervalCapability("upstox", "3m").history).toBe(true);
-    // 3m history provider chain is Upstox-only.
-    expect(historyProvidersFor("3m")).toContain("upstox");
-    expect(historyProvidersFor("3m")).not.toContain("angel_one");
+describe("V8 — 3m permanently removed from AlphaForge", () => {
+  it("LIVE_INTERVALS does not contain 3m", () => {
+    // 3m has been removed from the candle builder and all production code.
+    expect(LIVE_INTERVALS).not.toContain("3m");
+    expect(LIVE_INTERVALS).toContain("1m");
+    expect(LIVE_INTERVALS).toContain("5m");
+  });
+
+  it("SUPPORTED_TIMEFRAMES from types does not contain 3m", () => {
+    expect(SUPPORTED_TIMEFRAMES).not.toContain("3m");
+    expect(SUPPORTED_TIMEFRAMES).toContain("1m");
+    expect(SUPPORTED_TIMEFRAMES).toContain("5m");
+    expect(SUPPORTED_TIMEFRAMES).toContain("10m");
+    expect(SUPPORTED_TIMEFRAMES).toContain("1w");
+    expect(SUPPORTED_TIMEFRAMES).toContain("1M");
+    expect(SUPPORTED_TIMEFRAMES).toHaveLength(9); // exactly the 9 supported ones
+  });
+
+  it("isSupportedInterval rejects 3m with false", () => {
+    expect(isSupportedInterval("3m")).toBe(false);
+    expect(isSupportedInterval("5m")).toBe(true);
+    expect(isSupportedInterval("1m")).toBe(true);
+  });
+
+  it("assertSupportedInterval throws for 3m", () => {
+    expect(() => assertSupportedInterval("3m")).toThrow(/3m.*removed/i);
+    expect(() => assertSupportedInterval("5m")).not.toThrow();
+  });
+
+  it("capability matrix has no 3m entry for any provider", () => {
+    for (const row of PROVIDER_CAPABILITY_MATRIX) {
+      expect(Object.keys(row.intervals)).not.toContain("3m");
+    }
   });
 
   it("indices route history away from Angel (Angel returns empty for index tokens)", () => {
@@ -61,7 +90,17 @@ describe("V7 §5 — capability matrix reflects real provider behaviour", () => 
 
   it("Upstox minute intervals use small per-request windows (avoid HTTP 400)", () => {
     expect(intervalCapability("upstox", "1m").maxChunkDays).toBeLessThanOrEqual(7);
-    expect(intervalCapability("upstox", "3m").maxChunkDays).toBeLessThanOrEqual(14);
+    // 3m is no longer in scope — upstox has no "3m" entry.
+  });
+
+  it("jugaad and openchart are registered in the capability matrix", () => {
+    const jugaad = intervalCapability("jugaad", "1d");
+    const openchart5m = intervalCapability("openchart", "5m");
+    expect(jugaad.supported).toBe(true);
+    expect(jugaad.history).toBe(true);
+    expect(openchart5m.supported).toBe(true);
+    expect(openchart5m.history).toBe(true);
+    expect(openchart5m.live).toBe(false); // openchart has no live data
   });
 });
 

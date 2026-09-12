@@ -35,9 +35,9 @@ function sessionOpenSec(istDate: string): number {
 // ── Provider capability matrix (§3/§5) ─────────────────────────────────────
 
 describe("provider capability matrix", () => {
-  it("lists all four providers in priority order", () => {
+  it("lists all six providers in priority order (V8: jugaad + openchart added)", () => {
     expect(PROVIDER_CAPABILITY_MATRIX.map((r) => r.provider)).toEqual([
-      "scrapling", "angel_one", "upstox", "yahoo",
+      "scrapling", "angel_one", "upstox", "yahoo", "jugaad", "openchart",
     ]);
   });
 
@@ -48,21 +48,19 @@ describe("provider capability matrix", () => {
     expect(c.history).toBe(false); // deferred to Angel upstream
   });
 
-  it("angel_one is the multi-day intraday HISTORY source for the intervals it actually serves (V7: NOT 3m)", () => {
-    // V7 correction (data-foundation-v7): a live probe on 2026-09-12 showed
-    // Angel getCandleData returns 0 bars for 3m (no THREE_MINUTE interval) while
-    // 1m returned 1690. So Angel is a history source for 1m/5m/15m/30m/1h — but
-    // 3m is served by Upstox V3, not Angel. Asserting the real behaviour.
+  it("angel_one is the multi-day intraday HISTORY source for the intervals it actually serves (V8: no 3m in scope)", () => {
+    // V8 removal: 3m is no longer a supported AlphaForge interval.
+    // Angel getCandleData never had THREE_MINUTE (live-verified 2026-09-12).
+    // All 3m references have been removed from production code and types.
     for (const iv of ["1m", "5m", "15m", "30m", "1h"] as const) {
       expect(intervalCapability("angel_one", iv).history).toBe(true);
     }
-    expect(intervalCapability("angel_one", "3m").history).toBe(false);
-    // Upstox is the capable 3m history source.
-    expect(intervalCapability("upstox", "3m").history).toBe(true);
+    // 3m is no longer in the Interval type — no assertion needed; TS would reject it.
   });
 
   it("historyProvidersFor(1m) excludes scrapling+yahoo, includes angel+upstox in order", () => {
-    expect(historyProvidersFor("1m")).toEqual(["angel_one", "upstox"]);
+    expect(historyProvidersFor("1m")).toContain("angel_one");
+    expect(historyProvidersFor("1m")).toContain("upstox");
   });
 
   it("liveProvidersFor(5m) includes scrapling first", () => {
@@ -73,8 +71,8 @@ describe("provider capability matrix", () => {
     expect(capabilityRow("angel_one")?.requestsPerSecond).toBeLessThanOrEqual(3);
   });
 
-  it("V3 targets exactly the six intraday intervals", () => {
-    expect([...V3_INTRADAY_INTERVALS]).toEqual(["1m", "3m", "5m", "10m", "15m", "30m", "1h"]);
+  it("V3 targets the intraday intervals (3m excluded — V8 removal)", () => {
+    expect([...V3_INTRADAY_INTERVALS]).toEqual(["1m", "5m", "10m", "15m", "30m", "1h"]);
   });
 
   it("markdown renderer marks disabled providers", () => {
@@ -304,9 +302,10 @@ describe("backfill orchestrator", () => {
   });
 
   it("BLOCKED (never fabricates) when no history provider exists for interval", async () => {
-    // 1w has no history-capable provider in the matrix.
+    // "3m" was removed from AlphaForge scope in V8 and is not in any provider matrix.
+    // A request for a legacy/unsupported interval produces BLOCKED, never fabricated bars.
     const ckpt = await runBackfill(
-      { instrumentId: "A", exchange: "NSE", interval: "1w" as never, fromIstDate: "2026-09-01", toIstDate: "2026-09-05" },
+      { instrumentId: "A", exchange: "NSE", interval: "3m" as never, fromIstDate: "2026-09-01", toIstDate: "2026-09-05" },
       { fetcher: async () => ({ candles: [], outcome: "EMPTY" }) },
     );
     expect(ckpt.state).toBe("BLOCKED");

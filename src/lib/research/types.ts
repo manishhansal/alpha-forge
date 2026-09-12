@@ -56,7 +56,7 @@ export type Market = "NSE_FNO" | "NSE_EQUITY" | "CRYPTO" | "NSE_INDEX";
 
 export type StrategyTimeframe =
   | "1m"
-  | "3m"
+  // "3m" was permanently removed from AlphaForge in V8 (refactor/signals).
   | "5m"
   | "15m"
   | "30m"

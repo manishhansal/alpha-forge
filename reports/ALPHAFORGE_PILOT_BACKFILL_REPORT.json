@@ -1,0 +1,135 @@
+{
+  "schema": "alphaforge-pilot-backfill-v8",
+  "generatedAt": "2026-09-12T17:06:12.738652+00:00",
+  "pilotSymbols": [
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "SBIN"
+  ],
+  "pilotTimeframes": [
+    "1m",
+    "5m",
+    "10m",
+    "15m",
+    "30m",
+    "1h",
+    "1d",
+    "1w",
+    "1M"
+  ],
+  "note3m": "3m was permanently removed in V8. It does NOT appear in PILOT_TIMEFRAMES.",
+  "dateRange": {
+    "intradayFrom": "2026-08-13",
+    "eodFrom": "2024-09-12",
+    "to": "2026-09-12"
+  },
+  "providers": {
+    "jugaad": {
+      "available": true,
+      "role": "historical_eod_bhavcopy"
+    },
+    "openchart": {
+      "available": false,
+      "role": "historical_ohlcv_reconciliation",
+      "nsit_cookie_present": false,
+      "note": "nsit cookie absent \u2014 charting API returns empty. Run scripts/seed_nse_session.py to obtain it."
+    }
+  },
+  "dryRun": false,
+  "summary": {
+    "totalAcquisitions": 5,
+    "success": 1,
+    "partial": 4,
+    "failed": 0,
+    "geoRestricted": 0,
+    "sessionRequired": 0,
+    "note_sessionRequired": "NSE charting API requires the 'nsit' session cookie (Akamai behavioural token). Run scripts/seed_nse_session.py via Playwright to obtain it. curl_cffi TLS bypass is active but nsit requires interactive browser.",
+    "dryRun": 0,
+    "blocked3m": 0,
+    "totalValidRows": 2520,
+    "totalInvalidRows": 27,
+    "elapsedSecs": 7.7
+  },
+  "acceptanceCriteria": {
+    "fnoUniverseDiscoveredDynamically": true,
+    "3mCompletelyRemoved": true,
+    "supportedTimeframesExactly9": true,
+    "angelRetained": true,
+    "upstoxRetained": true,
+    "jugaadIntegrated": true,
+    "openChartIntegrated": false,
+    "yahooRemainRestricted": true,
+    "rawDataProvenanceRetained": true,
+    "noFakeData": true,
+    "noNullToZeroConversion": true
+  },
+  "records": [
+    {
+      "symbol": "RELIANCE",
+      "timeframe": "1d",
+      "provider": "jugaad",
+      "status": "PARTIAL",
+      "rows_fetched": 508,
+      "rows_valid": 505,
+      "rows_invalid": 3,
+      "from_date": "2024-09-12",
+      "to_date": "2026-09-12",
+      "error": null,
+      "duration_secs": 0.02
+    },
+    {
+      "symbol": "TCS",
+      "timeframe": "1d",
+      "provider": "jugaad",
+      "status": "SUCCESS",
+      "rows_fetched": 501,
+      "rows_valid": 501,
+      "rows_invalid": 0,
+      "from_date": "2024-09-12",
+      "to_date": "2026-09-12",
+      "error": null,
+      "duration_secs": 0.03
+    },
+    {
+      "symbol": "HDFCBANK",
+      "timeframe": "1d",
+      "provider": "jugaad",
+      "status": "PARTIAL",
+      "rows_fetched": 506,
+      "rows_valid": 505,
+      "rows_invalid": 1,
+      "from_date": "2024-09-12",
+      "to_date": "2026-09-12",
+      "error": null,
+      "duration_secs": 0.03
+    },
+    {
+      "symbol": "INFY",
+      "timeframe": "1d",
+      "provider": "jugaad",
+      "status": "PARTIAL",
+      "rows_fetched": 507,
+      "rows_valid": 505,
+      "rows_invalid": 2,
+      "from_date": "2024-09-12",
+      "to_date": "2026-09-12",
+      "error": null,
+      "duration_secs": 0.03
+    },
+    {
+      "symbol": "SBIN",
+      "timeframe": "1d",
+      "provider": "jugaad",
+      "status": "PARTIAL",
+      "rows_fetched": 525,
+      "rows_valid": 504,
+      "rows_invalid": 21,
+      "from_date": "2024-09-12",
+      "to_date": "2026-09-12",
+      "error": null,
+      "duration_secs": 0.03
+    }
+  ]
+}

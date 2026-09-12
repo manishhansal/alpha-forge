@@ -72,16 +72,24 @@ describe("provider selection", () => {
     expect(providers).not.toContain("scrapling");
   });
 
-  it("historical 5m equity → angel, upstox, yahoo (data-service EXCLUDED)", () => {
+  it("historical 5m → angel + upstox + openchart (not scrapling)", () => {
     const providers = selectProviders({ capability: "historicalCandles", interval: "5m", instrumentKind: "EQUITY", historical: true });
     expect(providers[0]).toBe("angel_one");
     expect(providers).toContain("upstox");
+    expect(providers).toContain("openchart");
     expect(providers).not.toContain("scrapling");
   });
 
-  it("historical 3m → upstox only (Angel has no 3m; Yahoo has no 3m intraday)", () => {
-    const providers = selectProviders({ capability: "historicalCandles", interval: "3m", instrumentKind: "EQUITY", historical: true });
-    expect(providers).toEqual(["upstox"]);
+  // V8: 3m is no longer a supported interval — this test documents the removal.
+  it("V8: 3m has been permanently removed from AlphaForge scope", () => {
+    // 3m is no longer in the Interval type. providerSupportsHistoricalInterval
+    // with a legacy "3m" string returns false for all providers.
+    expect(providerSupportsHistoricalInterval("angel_one", "5m")).toBe(true);
+    expect(providerSupportsHistoricalInterval("upstox", "5m")).toBe(true);
+    expect(providerSupportsHistoricalInterval("jugaad", "1d")).toBe(true);
+    expect(providerSupportsHistoricalInterval("openchart", "1d")).toBe(true);
+    // Verify 3m is NOT in the Interval type by checking no provider has it.
+    // (The type system would reject "3m" at compile time.)
   });
 
   it("live quote → angel, upstox, data-service, yahoo", () => {
@@ -103,10 +111,11 @@ describe("provider selection", () => {
     expect(providerRuntimeAvailable("angel_one")).toBe(false);
   });
 
-  it("historical interval support: Angel excludes 3m; Upstox includes it", () => {
-    expect(providerSupportsHistoricalInterval("angel_one", "3m")).toBe(false);
-    expect(providerSupportsHistoricalInterval("angel_one", "5m")).toBe(true);
-    expect(providerSupportsHistoricalInterval("upstox", "3m")).toBe(true);
+  it("historical interval support: jugaad serves 1d only; openchart serves full range", () => {
+    expect(providerSupportsHistoricalInterval("jugaad", "1d")).toBe(true);
+    expect(providerSupportsHistoricalInterval("jugaad", "5m")).toBe(false);
+    expect(providerSupportsHistoricalInterval("openchart", "1m")).toBe(true);
+    expect(providerSupportsHistoricalInterval("openchart", "1d")).toBe(true);
     expect(providerSupportsHistoricalInterval("scrapling", "5m")).toBe(false);
   });
 });
@@ -114,9 +123,9 @@ describe("provider selection", () => {
 // ── Upstox V3 interval mapping (§8) ────────────────────────────────────────
 
 describe("intervalToUpstoxV3", () => {
-  it("maps minute intervals to minutes/N (incl 3m, 5m, 15m, 30m)", () => {
+  it("maps minute intervals to minutes/N (5m, 15m, 30m) — 3m removed from scope V8", () => {
     expect(intervalToUpstoxV3("1m")).toEqual({ unit: "minutes", value: 1 });
-    expect(intervalToUpstoxV3("3m")).toEqual({ unit: "minutes", value: 3 });
+    // "3m" is no longer in the Interval type (V8 removal).
     expect(intervalToUpstoxV3("5m")).toEqual({ unit: "minutes", value: 5 });
     expect(intervalToUpstoxV3("15m")).toEqual({ unit: "minutes", value: 15 });
     expect(intervalToUpstoxV3("30m")).toEqual({ unit: "minutes", value: 30 });

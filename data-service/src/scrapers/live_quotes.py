@@ -59,6 +59,7 @@ from fastapi.responses import JSONResponse
 
 from src.config import settings
 from src.schemas import MDQuote
+from src.core.nse_session import nse_get as _nse_get
 from src.core.symbol_normalizer import symbol_normalizer
 from src.core.circuit_breaker import get_breaker
 from src.core.lineage import lineage_store
@@ -91,8 +92,10 @@ _http_client_lock: asyncio.Lock = asyncio.Lock()
 async def get_http_client() -> httpx.AsyncClient:
     """Return the module-level persistent httpx.AsyncClient singleton.
 
-    Creates one client with keep-alive and connection limits.
-    This is far more efficient than ``async with httpx.AsyncClient(...) as client:``.
+    NOTE: This client is used for the NSE NextAPI endpoint
+    (www.nseindia.com/api/NextApi). curl_cffi WAF bypass is applied via
+    nse_get() from src.core.nse_session — this httpx client is kept as a
+    fallback when curl_cffi is not available.
     """
     global _http_client
     if _http_client is not None and not _http_client.is_closed:
@@ -393,8 +396,8 @@ async def _fetch_batch_quotes(session: Any, symbols: list[str]) -> dict[str, MDQ
         return results
     received_at_ms = int(_time.time() * 1000)
     try:
-        client = await get_http_client()
-        resp = await client.get(url)
+        # curl_cffi WAF bypass — uses Chrome TLS fingerprint (nse_session.py)
+        resp = await _nse_get(url)
         resp.raise_for_status()
         available_at_ms = int(_time.time() * 1000)
         payload = resp.json()
@@ -495,8 +498,8 @@ async def _fetch_index_quotes(symbols: list[str]) -> dict[str, MDQuote]:
         return results
     received_at_ms = int(_time.time() * 1000)
     try:
-        client = await get_http_client()
-        resp = await client.get(_NSE_INDEX_LIST_URL)
+        # curl_cffi WAF bypass
+        resp = await _nse_get(_NSE_INDEX_LIST_URL)
         resp.raise_for_status()
         available_at_ms = int(_time.time() * 1000)
         breaker.record_success()
@@ -594,8 +597,8 @@ async def _fetch_single_quote(session: Any, symbol: str) -> MDQuote | None:
         return None
     received_at_ms = int(_time.time() * 1000)
     try:
-        client = await get_http_client()
-        resp = await client.get(url)
+        # curl_cffi WAF bypass
+        resp = await _nse_get(url)
         resp.raise_for_status()
         available_at_ms = int(_time.time() * 1000)
         payload = resp.json()

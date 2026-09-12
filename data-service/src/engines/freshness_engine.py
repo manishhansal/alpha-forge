@@ -64,10 +64,11 @@ _OPTION_CHAIN_THRESHOLDS: dict[str, int] = {
 }
 
 # Candle freshness: how stale can the last closed candle be (ms)
+# 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 _CANDLE_THRESHOLDS: dict[str, dict[str, int]] = {
     "1m":  {"FRESH": 90_000,  "AGING": 180_000,  "STALE": 300_000,  "EXPIRED": 600_000},
-    "3m":  {"FRESH": 210_000, "AGING": 360_000,  "STALE": 600_000,  "EXPIRED": 900_000},
     "5m":  {"FRESH": 360_000, "AGING": 600_000,  "STALE": 900_000,  "EXPIRED": 1_800_000},
+    "10m": {"FRESH": 660_000, "AGING": 1_200_000, "STALE": 1_800_000, "EXPIRED": 3_600_000},
     "15m": {"FRESH": 960_000, "AGING": 1_800_000, "STALE": 3_600_000, "EXPIRED": 7_200_000},
     "30m": {"FRESH": 1_860_000, "AGING": 3_600_000, "STALE": 7_200_000, "EXPIRED": 14_400_000},
     "1h":  {"FRESH": 3_660_000, "AGING": 7_200_000, "STALE": 14_400_000, "EXPIRED": 28_800_000},

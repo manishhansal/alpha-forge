@@ -8,8 +8,9 @@
  * observations) with:
  *
  *   - a REAL capability-aware `ChunkFetcher` that calls Angel One (equities)
- *     and Upstox V3 (indices + 1m/3m + fallback), grounded in the live-probed
- *     provider capabilities (2026-09-12);
+ *     and Upstox V3 (indices + fallback), grounded in the live-probed
+ *     provider capabilities (2026-09-12). Jugaad and OpenChart are used for
+ *     EOD and reconciliation respectively (see data-service providers);
  *   - retry with exponential backoff + a lightweight per-provider circuit
  *     breaker (the two capabilities the orchestrator lacked);
  *   - request deduplication within a run;
@@ -160,7 +161,8 @@ function istDateToIso(istDate: string, endOfDay: boolean): string {
 /**
  * Build a capability-aware `ChunkFetcher` for the orchestrator. The provider
  * the orchestrator hands us is the primary; we honour it but also enforce the
- * index/3m routing (index → never Angel) and wrap with breaker + backoff.
+ * index routing (index → never Angel) and wrap with breaker + backoff.
+ * Note: 3m has been removed from scope (V8 refactor/signals).
  */
 export function makeCapabilityAwareFetcher(fetchers: ProviderFetchers): ChunkFetcher {
   return async ({ instrumentId, interval, fromIstDate, toIstDate, provider }) => {

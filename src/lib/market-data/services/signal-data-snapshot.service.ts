@@ -114,7 +114,7 @@ export async function buildSignalDataSnapshot(opts: {
   prisma?: PrismaClient;
 }): Promise<SignalDataSnapshot> {
   const prisma = opts.prisma ?? getPrisma();
-  const intervals = opts.intervals ?? (["1m", "3m", "5m", "15m", "30m", "1h", "1d"] as Interval[]);
+  const intervals = opts.intervals ?? (["1m", "5m", "10m", "15m", "30m", "1h", "1d"] as Interval[]);
 
   const master = await prisma.instrumentMasterSnapshot.findFirst({
     orderBy: { createdAt: "desc" },

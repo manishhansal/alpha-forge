@@ -28,10 +28,12 @@ import type { Quote } from "@/types/india";
  * unknown id that would render a raw string in the badge.
  */
 const PROVIDER_TO_DATA_SOURCE: Record<ProviderId, DataSourceId> = {
-  scrapling: "yahoo",
-  angel_one: "angel",
-  upstox: "upstox",
-  yahoo: "yahoo",
+  scrapling:  "yahoo",    // managed aggregation layer (credential-free public data)
+  angel_one:  "angel",
+  upstox:     "upstox",
+  jugaad:     "yahoo",    // open-source NSE-derived — no catalog entry; map to nearest public
+  openchart:  "yahoo",    // open-source NSE chart data — no catalog entry; map to nearest public
+  yahoo:      "yahoo",
 };
 
 export function providerToDataSource(provider: ProviderId): DataSourceId {

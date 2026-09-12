@@ -286,9 +286,7 @@ describe("intervalToYahoo()", () => {
   it("maps monthly to 1mo", () => {
     expect(intervalToYahoo("1M")).toBe("1mo");
   });
-  it("maps 3m (unsupported on Yahoo) to 5m", () => {
-    expect(intervalToYahoo("3m")).toBe("5m");
-  });
+  // V8: "3m" removed from Interval type — intervalToYahoo no longer accepts it.
 });
 
 // ── Number helpers ────────────────────────────────────────────────────────────

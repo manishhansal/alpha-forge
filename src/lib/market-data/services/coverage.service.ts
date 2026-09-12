@@ -24,10 +24,10 @@ import { nseCalendar, IST_OFFSET_MS } from "@/lib/india/nse-trading-calendar";
 import type { Interval } from "../types";
 
 // Bars per regular NSE session (09:15–15:30 IST = 375 minutes) by interval.
+// 3m intentionally absent — 3m is not a supported AlphaForge interval (V8 removal).
 const SESSION_MINUTES = 375;
 const BARS_PER_SESSION: Partial<Record<Interval, number>> = {
   "1m": 375,
-  "3m": 125,
   "5m": 75,
   "10m": 38, // 375/10 rounded up (last partial bar counts)
   "15m": 25,
@@ -72,7 +72,8 @@ export function expectedBars(interval: Interval, fromMs: number, toMs: number): 
 
 function intervalMinutes(interval: Interval): number {
   const map: Partial<Record<Interval, number>> = {
-    "1m": 1, "3m": 3, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "1h": 60, "1d": 375,
+    "1m": 1, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "1h": 60, "1d": 375,
+    // "3m" intentionally absent — not a supported interval.
   };
   return map[interval] ?? 1;
 }

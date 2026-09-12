@@ -1,17 +1,16 @@
 /**
- * provider-selection.ts — Data Foundation V5 §17/§18/§19/§31.
+ * provider-selection.ts — Data Foundation V5 §17/§18/§19/§31 (updated V8).
  *
- * Capability-AWARE provider selection. NOT a blind linear chain: the eligible
- * providers depend on the request's capability + interval + instrument type +
- * history-vs-live + options-vs-equity, and on which providers are actually
- * available at runtime (env or worker-loaded credentials).
+ * Capability-AWARE provider selection. NOT a blind linear chain.
+ * 3m was permanently removed in V8 (refactor/signals).
  *
- * Grounding (from the real integration + provider docs):
+ * Provider grounding:
  *  - Angel One (SmartAPI getCandleData): historical intraday 1m/5m/15m/30m/1h/1d
- *    (NO 3m — intervalToSmartApi returns null → not eligible for 3m). Options via
- *    NFO chain. Requires credentials.
- *  - Upstox (v3 historical-candle): 1m/3m/5m/15m/30m/1h historical + intraday.
- *    Options via chain. Requires an analytics token.
+ *    on EQUITIES. No 3m. Returns 0 for index tokens.
+ *  - Upstox (v3): 1m/5m/15m/30m/1h historical + intraday on equities AND indices.
+ *    No 3m in scope (removed V8). Requires credentials.
+ *  - jugaad: EOD (1d) only — F&O bhavcopy (equity + derivatives). No intraday.
+ *  - openchart: historical OHLCV 1m–1M on equity/index/F&O. No OI/IV. No live.
  *  - data-service (scrapling): quotes + current-day intraday ONLY — NEVER
  *    multi-day historical intraday (V4-confirmed). Daily via bhavcopy.
  *  - Yahoo: equity historical fallback; NEVER for option OI/IV/bid/ask.
@@ -53,12 +52,16 @@ export function providerRuntimeAvailable(provider: ProviderId): boolean {
   }
 }
 
-/** Angel supports these historical intraday intervals (no 3m). */
+/** Angel supports these historical intraday intervals (no 3m — removed V8). */
 const ANGEL_HIST_INTERVALS = new Set<Interval>(["1m", "5m", "15m", "30m", "1h", "1d"]);
-/** Upstox v3 historical intervals (incl 3m). */
-const UPSTOX_HIST_INTERVALS = new Set<Interval>(["1m", "3m", "5m", "15m", "30m", "1h", "1d"]);
-/** Yahoo historical intraday (coarse; no 1m/3m reliably long-range). */
+/** Upstox v3 historical intervals (3m removed from scope in V8). */
+const UPSTOX_HIST_INTERVALS = new Set<Interval>(["1m", "5m", "15m", "30m", "1h", "1d"]);
+/** Yahoo historical intraday (coarse; no 1m reliably long-range). */
 const YAHOO_HIST_INTERVALS = new Set<Interval>(["5m", "15m", "30m", "1h", "1d"]);
+/** jugaad: EOD only (bhavcopy). */
+const JUGAAD_HIST_INTERVALS = new Set<Interval>(["1d"]);
+/** openchart: full range, no live. */
+const OPENCHART_HIST_INTERVALS = new Set<Interval>(["1m", "5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M"]);
 
 /**
  * Return eligible providers in priority order for the request, filtered by both
@@ -89,10 +92,18 @@ export function selectProviders(req: SelectionRequest): ProviderId[] {
   const historical = req.historical ?? true;
 
   if (historical) {
-    // Multi-day historical intraday: Angel → Upstox → Yahoo (interval-gated).
-    // data-service is EXCLUDED for historical intraday (§18 — it cannot serve it).
+    // Multi-day historical:
+    // LIVE BROKER sources (authenticated, highest trust):
+    //   Angel → Upstox (interval-gated)
+    // OPEN-SOURCE historical sources (unauthenticated, NSE-derived):
+    //   jugaad (1d/EOD only) → openchart (1m–1M, no live)
+    // LAST-RESORT FALLBACK (equity only, restricted):
+    //   Yahoo
+    // data-service is EXCLUDED for historical intraday (§18 — cannot serve it).
     if (iv && ANGEL_HIST_INTERVALS.has(iv) && providerRuntimeAvailable("angel_one")) ordered.push("angel_one");
     if (iv && UPSTOX_HIST_INTERVALS.has(iv) && providerRuntimeAvailable("upstox")) ordered.push("upstox");
+    if (iv && JUGAAD_HIST_INTERVALS.has(iv) && req.instrumentKind !== "OPTION") ordered.push("jugaad");
+    if (iv && OPENCHART_HIST_INTERVALS.has(iv) && req.instrumentKind !== "OPTION") ordered.push("openchart");
     if (iv && YAHOO_HIST_INTERVALS.has(iv) && providerRuntimeAvailable("yahoo") && req.instrumentKind !== "OPTION") ordered.push("yahoo");
     return ordered;
   }
@@ -108,6 +119,8 @@ export function selectProviders(req: SelectionRequest): ProviderId[] {
 export function providerSupportsHistoricalInterval(provider: ProviderId, iv: Interval): boolean {
   if (provider === "angel_one") return ANGEL_HIST_INTERVALS.has(iv);
   if (provider === "upstox") return UPSTOX_HIST_INTERVALS.has(iv);
+  if (provider === "jugaad") return JUGAAD_HIST_INTERVALS.has(iv);
+  if (provider === "openchart") return OPENCHART_HIST_INTERVALS.has(iv);
   if (provider === "yahoo") return YAHOO_HIST_INTERVALS.has(iv);
   return false; // scrapling: no multi-day historical intraday
 }

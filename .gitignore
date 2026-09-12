@@ -100,3 +100,7 @@ data-service/reports/FNO_COVERAGE_*.json
 data-service/reports/LATENCY_MEASUREMENT_*.json
 data-service/reports/MARKET_OPEN_SOAK_*.json
 data-service/reports/MEMORY_SOAK_*.json
+
+# NSE session cookie (sensitive — treat as credential, never commit)
+.nsit_cookie
+data-service/.nsit_cookie

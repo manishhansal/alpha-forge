@@ -40,6 +40,7 @@ from fastapi.responses import JSONResponse
 
 from src.config import settings
 from src.schemas import OHLCVCandle
+from src.core.nse_session import nse_get as _nse_get
 from src.anti_ban.rate_limiter import create_domain_limiters
 from src.core.circuit_breaker import get_breaker
 from src.core.lineage import lineage_store
@@ -710,32 +711,33 @@ async def _fetch_nse_intraday(
         to_date=to_date.isoformat(),
     )
 
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        try:
-            # Rate-limit NSE API
-            await _get_limiters()["nseindia.com"].acquire()
-            _breaker = get_breaker("nse_charting")
-            if not _breaker.allow_request():
-                raise RuntimeError("NSE charting circuit breaker OPEN")
-            # Prime session cookies (nsit / nseappid) then call the chart API.
-            await _prime_nse_cookies(client)
-            response = await client.get(
-                _NSE_CHART_URL,
-                params=params,
-                headers=_NSE_CHART_HEADERS,
-            )
+    # curl_cffi WAF bypass: Chrome TLS fingerprint + nsit cookie injection.
+    # nse_session.py seeds homepage + charting cookies; _prime_nse_cookies
+    # (old httpx helper) is no longer needed here.
+    try:
+        await _get_limiters()["nseindia.com"].acquire()
+        _breaker = get_breaker("nse_charting")
+        if not _breaker.allow_request():
+            raise RuntimeError("NSE charting circuit breaker OPEN")
+        response = await _nse_get(
+            _NSE_CHART_URL,
+            params=params,
+            headers=_NSE_CHART_HEADERS,
+            timeout=30,
+        )
+        if hasattr(response, "raise_for_status"):
             response.raise_for_status()
-            _breaker.record_success()
-        except httpx.TimeoutException as exc:
+        _breaker.record_success()
+    except Exception as exc:
+        err = str(exc)
+        if "timeout" in err.lower() or "timed out" in err.lower():
             get_breaker("nse_charting").record_failure("timeout")
             raise TimeoutError(f"NSE charting API timed out: {exc}") from exc
-        except httpx.HTTPStatusError as exc:
-            get_breaker("nse_charting").record_failure(f"http_{exc.response.status_code}")
-            raise RuntimeError(
-                f"NSE charting API returned HTTP {exc.response.status_code}"
-            ) from exc
-        except httpx.RequestError as exc:
-            get_breaker("nse_charting").record_failure(str(exc))
+        elif any(code in err for code in ("403", "404", "429", "503")):
+            get_breaker("nse_charting").record_failure("http_error")
+            raise RuntimeError(f"NSE charting API HTTP error: {exc}") from exc
+        else:
+            get_breaker("nse_charting").record_failure(err)
             raise RuntimeError(f"NSE charting API request failed: {exc}") from exc
 
     try:

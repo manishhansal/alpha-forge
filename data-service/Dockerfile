@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir "scrapling[fetchers]==0.4.*" && scrapling install
 
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 EXPOSE 8200
 

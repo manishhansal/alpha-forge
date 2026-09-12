@@ -32,8 +32,8 @@ import {
 import type { Interval, OHLCVCandle } from "../types";
 import { datasetVersion } from "../dataset-version";
 
+// 3m intentionally absent — not a supported AlphaForge interval (V8 removal).
 const TARGET_MINUTES: Partial<Record<Interval, number>> = {
-  "3m": 3,
   "5m": 5,
   "10m": 10,
   "15m": 15,

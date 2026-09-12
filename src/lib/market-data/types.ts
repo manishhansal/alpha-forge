@@ -11,21 +11,37 @@
 // ── Provider Identity ────────────────────────────────────────────────────────
 
 /**
- * Provider IDs in priority order:
- *   0. scrapling  — Data Service canonical gateway (credential-free Bhavcopy + broker APIs)
+ * Provider IDs in priority order.
+ *
+ * LIVE / BROKER (authenticated):
+ *   0. scrapling  — Data Service canonical gateway (credential-free bhavcopy + broker APIs)
  *   1. angel_one  — Angel One SmartAPI (primary broker, live quotes, WS, option chain)
  *   2. upstox     — Upstox v2/v3 (secondary broker, live quotes, WS, option chain)
- *   3. yahoo      — Yahoo Finance (last-resort fallback, delayed, equity only)
+ *
+ * HISTORICAL OPEN-SOURCE (unauthenticated, NSE-derived):
+ *   3. jugaad     — jugaad-data: historical EOD bhavcopy, NSE F&O derivatives OI/volume
+ *   4. openchart  — openchart: historical OHLCV (1m–1M), equity + index + F&O
+ *
+ * LAST-RESORT FALLBACK (restricted):
+ *   5. yahoo      — Yahoo Finance (equity only, delayed, no F&O, no OI/IV)
  *
  * There is NO "nse" provider. Direct NSE data acquisition is prohibited in production.
  * NSE exchange identifiers (NSE_EQ, NSE_FO, Exchange="NSE") are legitimate and remain.
  */
-export type ProviderId = "scrapling" | "angel_one" | "upstox" | "yahoo";
+export type ProviderId =
+  | "scrapling"
+  | "angel_one"
+  | "upstox"
+  | "jugaad"
+  | "openchart"
+  | "yahoo";
 
 export const PROVIDER_PRIORITY: readonly ProviderId[] = [
   "scrapling",
   "angel_one",
   "upstox",
+  "jugaad",
+  "openchart",
   "yahoo",
 ];
 
@@ -104,9 +120,20 @@ export type MDQuote = {
 
 // ── OHLCV Candle ────────────────────────────────────────────────────────────
 
+/**
+ * Canonical supported timeframes for AlphaForge India F&O platform.
+ *
+ * 3-MINUTE IS PERMANENTLY OUT OF SCOPE (removed in V8 refactor/signals):
+ *   - Angel One never served 3m (verified live 2026-09-12: 0 bars).
+ *   - 3m was Upstox-only with minimal historical coverage.
+ *   - No strategy, ML model, signal, or backfill uses 3m.
+ *   - Requests for 3m MUST be rejected at every layer.
+ *
+ * Supported timeframes:
+ *   1m  5m  10m  15m  30m  1h  1d  1w  1M
+ */
 export type Interval =
   | "1m"
-  | "3m"
   | "5m"
   | "10m"
   | "15m"
@@ -115,6 +142,49 @@ export type Interval =
   | "1d"
   | "1w"
   | "1M";
+
+/**
+ * The canonical ordered list of supported AlphaForge timeframes.
+ * This is the single source of truth — no code should hardcode its own list.
+ * 3m is NOT in this list and must not be added.
+ */
+export const SUPPORTED_TIMEFRAMES: readonly Interval[] = [
+  "1m",
+  "5m",
+  "10m",
+  "15m",
+  "30m",
+  "1h",
+  "1d",
+  "1w",
+  "1M",
+] as const;
+
+/**
+ * Return true when the string is a valid supported AlphaForge timeframe.
+ * Use this at every API/data boundary to reject unsupported intervals.
+ * Explicitly rejects "3m" with a clear error.
+ */
+export function isSupportedInterval(s: string): s is Interval {
+  return (SUPPORTED_TIMEFRAMES as readonly string[]).includes(s);
+}
+
+/**
+ * Assert that an interval is supported; throw with a clear message if not.
+ * Use at data-ingestion entry points and API handlers.
+ */
+export function assertSupportedInterval(s: string): asserts s is Interval {
+  if (!isSupportedInterval(s)) {
+    throw new Error(
+      `Unsupported interval "${s}". Supported: ${SUPPORTED_TIMEFRAMES.join(", ")}. ` +
+        `Note: "3m" was permanently removed from AlphaForge (V8 refactor/signals).`,
+    );
+  }
+}
+
+/**
+ * Extended provider ID — includes the two new historical open-source providers.
+ */
 
 export type OHLCVCandle = {
   /** UTC epoch seconds for the candle open time. */
