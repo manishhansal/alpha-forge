@@ -43,29 +43,21 @@ interface RealtimeState {
 
 const state: RealtimeState = { subscription: null, pool: null, subscribedAt: null };
 
-/** Resolve {token,exchange} for the realtime universe via Angel's ScripMaster. */
+/** Resolve {token,exchange} for the realtime universe via the canonical instrument master. */
 async function resolveTokens(
   symbols: string[],
 ): Promise<Array<{ token: string; exchange: "NSE" }>> {
-  const { INDEX_TOKENS, SYMBOL_TO_INDEX, getScripSubsets, buildEqTokenMap } = await import(
-    "@/services/india/angelone"
-  );
-  const out: Array<{ token: string; exchange: "NSE" }> = [];
-  let eqMap: Map<string, { token: string }> | null = null;
-  for (const sym of symbols) {
-    const idxKey = SYMBOL_TO_INDEX[sym] ?? SYMBOL_TO_INDEX[sym.toUpperCase()];
-    if (idxKey && INDEX_TOKENS[idxKey]) {
-      out.push({ token: INDEX_TOKENS[idxKey]!.token, exchange: "NSE" });
-      continue;
-    }
-    if (!eqMap) {
-      const subsets = await getScripSubsets();
-      eqMap = buildEqTokenMap(subsets.cash) as Map<string, { token: string }>;
-    }
-    const hit = eqMap.get(sym.toUpperCase());
-    if (hit) out.push({ token: hit.token, exchange: "NSE" });
-  }
-  return out;
+  // Route through the canonical instrument master service instead of importing
+  // Angel One ScripMaster internals directly (V9 architecture enforcement).
+  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+  await bootstrapRegistry();
+  const instruments = await registry.getInstrumentMaster({
+    exchange: "NSE",
+    symbols,
+  } as never);
+  return instruments
+    .filter((ins) => ins.token && ins.token !== "")
+    .map((ins) => ({ token: ins.token, exchange: "NSE" as const }));
 }
 
 /** Start the live subscription + candle-builder pool (idempotent). */

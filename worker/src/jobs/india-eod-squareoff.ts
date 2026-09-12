@@ -119,17 +119,18 @@ export function startIndiaEodSquareOffJob(): JobHandle {
             },
           });
 
-          // Fetch last-known prices in one batch from Yahoo.
+          // Fetch last-known prices via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO).
           // If a quote is unavailable, fall back to entry (0 P&L).
           const symbols = [...new Set(openTrades.map((t) => t.symbol))];
           const priceMap = new Map<string, number>();
           try {
-            const { yahoo } = await import("@/services/india/yahoo");
-            const quotes = await yahoo.getQuotes(symbols);
-            for (const q of quotes) {
-              const sym = q.symbol.replace(/\.NS$/i, "").toUpperCase();
-              if (q.price != null && Number.isFinite(q.price)) {
-                priceMap.set(sym, q.price);
+            const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+            await bootstrapRegistry();
+            const mdQuotes = await registry.getQuotes(symbols);
+            for (const q of mdQuotes) {
+              const sym = q?.symbol?.replace(/\.NS$/i, "").toUpperCase();
+              if (sym && q?.ltp != null && Number.isFinite(q.ltp)) {
+                priceMap.set(sym, q.ltp);
               }
             }
           } catch (qErr) {

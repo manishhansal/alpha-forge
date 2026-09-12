@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
-import { yahoo } from "@/services/india/yahoo";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { indiaPnlPercent } from "@/features/india/scalping/paper-trader-core";
 
@@ -35,14 +34,16 @@ export async function POST() {
       return NextResponse.json({ closed: 0, message: "No open trades to close." });
     }
 
-    // Batch-fetch prices
+    // Batch-fetch prices via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
     const symbols   = [...new Set(openTrades.map((t) => t.symbol))];
     const priceMap  = new Map<string, number>();
     try {
-      const quotes = await yahoo.getQuotes(symbols);
-      for (const q of quotes) {
-        const sym = q.symbol.replace(/\.NS$/i, "").toUpperCase();
-        if (q.price != null && Number.isFinite(q.price)) priceMap.set(sym, q.price);
+      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+      await bootstrapRegistry();
+      const mdQuotes = await registry.getQuotes(symbols);
+      for (const q of mdQuotes) {
+        const sym = q?.symbol?.replace(/\.NS$/i, "").toUpperCase();
+        if (sym && q?.ltp != null && Number.isFinite(q.ltp)) priceMap.set(sym, q.ltp);
       }
     } catch { /* fail-soft — use entry price */ }
 
