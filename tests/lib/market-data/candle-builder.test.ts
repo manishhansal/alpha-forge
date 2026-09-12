@@ -145,11 +145,7 @@ describe("snapToNseInterval()", () => {
     expect(snapToNseInterval(ts, "1m")).toBe(ts); // already on boundary
   });
 
-  it("3m — aligns to 09:15, 09:18, 09:21, …", () => {
-    const open = Math.floor(istMs(TRADE_DATE, 9, 15, 0) / 1_000);
-    const ts = Math.floor(istMs(TRADE_DATE, 9, 19, 45) / 1_000); // 9:19 → slot 9:18
-    expect(snapToNseInterval(ts, "3m")).toBe(open + 3 * 60);
-  });
+  // V8: "3m" snap test removed — 3m is not a supported interval.
 
   it("5m — aligns to 09:15, 09:20, 09:25, …", () => {
     const open = Math.floor(istMs(TRADE_DATE, 9, 15, 0) / 1_000);
@@ -1100,10 +1096,11 @@ describe("Legacy MultiCandleBuilder", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("LIVE_INTERVALS", () => {
-  it("contains exactly the 8 required timeframes", () => {
+  it("contains exactly the 7 required timeframes (3m permanently removed V8)", () => {
     expect([...LIVE_INTERVALS].sort()).toEqual(
-      ["10m", "15m", "1d", "1h", "1m", "30m", "3m", "5m"].sort(),
+      ["10m", "15m", "1d", "1h", "1m", "30m", "5m"].sort(),
     );
+    expect(LIVE_INTERVALS).not.toContain("3m");
   });
 });
 

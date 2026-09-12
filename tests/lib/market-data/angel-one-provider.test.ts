@@ -344,8 +344,8 @@ describe("AngelOneProvider", () => {
       expect(candles.every((c) => Number.isFinite(c.open))).toBe(true);
     });
 
-    it("supports all required intervals (1m 3m 5m 10m 15m 30m 1h 1d)", async () => {
-      const intervals = ["1m", "3m", "5m", "10m", "15m", "30m", "1h", "1d"] as const;
+    it("supports all required intervals (1m 5m 10m 15m 30m 1h 1d) — 3m removed V8", async () => {
+      const intervals = ["1m", "5m", "10m", "15m", "30m", "1h", "1d"] as const;
       for (const interval of intervals) {
         (angel.getHistorical as Mock).mockResolvedValueOnce([
           { time: 1_718_152_500, open: 100, high: 105, low: 99, close: 102, volume: 100 },

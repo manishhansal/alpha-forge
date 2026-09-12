@@ -30,18 +30,20 @@ describe("NSE eliminated from ProviderId type", () => {
     expect(PROVIDER_PRIORITY).not.toContain("nse");
   });
 
-  it("PROVIDER_PRIORITY is exactly: scrapling → angel_one → upstox → yahoo", () => {
+  it("PROVIDER_PRIORITY is exactly: scrapling → angel_one → upstox → jugaad → openchart → yahoo (V8)", () => {
     expect(Array.from(PROVIDER_PRIORITY)).toEqual([
       "scrapling",
       "angel_one",
       "upstox",
+      "jugaad",
+      "openchart",
       "yahoo",
     ]);
   });
 
   it("ProviderId union does not include nse (compile-time check via valid values)", () => {
     // These are all valid ProviderId values — nse must not be assignable
-    const validIds: ProviderId[] = ["scrapling", "angel_one", "upstox", "yahoo"];
+    const validIds: ProviderId[] = ["scrapling", "angel_one", "upstox", "jugaad", "openchart", "yahoo"];
     expect(validIds).not.toContain("nse");
   });
 });

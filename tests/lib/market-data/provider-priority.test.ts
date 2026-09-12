@@ -108,8 +108,8 @@ afterEach(() => {
 // ── PROVIDER_PRIORITY constant ────────────────────────────────────────────────
 
 describe("PROVIDER_PRIORITY constant", () => {
-  it("lists providers in the correct priority order (NSE is NOT in the chain)", () => {
-    expect(PROVIDER_PRIORITY).toEqual(["scrapling", "angel_one", "upstox", "yahoo"]);
+  it("lists providers in the correct priority order (NSE is NOT in the chain) — V8 includes jugaad + openchart", () => {
+    expect(PROVIDER_PRIORITY).toEqual(["scrapling", "angel_one", "upstox", "jugaad", "openchart", "yahoo"]);
   });
 
   it("does NOT include nse in the provider chain", () => {
