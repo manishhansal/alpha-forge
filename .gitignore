@@ -83,6 +83,9 @@ data-service/data/
 dump.rdb
 *.rdb
 
+# Data Foundation V6 — local pre-migration DB backups (large CSV snapshots, not source)
+/reports/v6-backups/
+
 # Phase 2 additions
 ml-service/artifacts/*.npz
 ml-service/nifty_5m.npz
