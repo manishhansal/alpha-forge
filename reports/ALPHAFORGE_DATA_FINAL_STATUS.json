@@ -1,0 +1,62 @@
+{
+  "schema": "alphaforge-data-final-status",
+  "generatedAt": "2026-09-12T13:30:00Z",
+  "branch": "refactor/signals",
+  "market": "IST closed (Saturday) — live WS tick + live option IV/bid/ask not verifiable this session",
+  "overall": "DATA_DEGRADED",
+  "criteriaWeakened": false,
+  "mlModelsChanged": false,
+  "mlThresholdsChanged": false,
+  "fabricatedData": false,
+  "schemaOrMigrationChanges": false,
+  "scope": "Engineering pass: §4 provider-failure-vs-empty semantics + §21 evaluateShadow data-gate wiring + TDD tests + verification. NOT a fresh full-universe acquisition run.",
+  "fixesThisSession": {
+    "section4_providerFailureTyped": {
+      "rootCause": "angel-one/upstox getQuotes returned all-null on failure (indistinguishable from unresolved symbols AND suppressed failover since withFailover only fails over on throw); upstox getQuotes/getLatestQuote returned null when not configured",
+      "fix": [
+        "health.ts: added failureKindToErrorCode() (inverse of codeToFailureKind)",
+        "angel-one.ts getQuotes: catch now throws typed MarketDataError(code) (records health first)",
+        "upstox.ts _fetchQuotes: throws typed MarketDataError only when ALL chunks failed and nothing resolved; genuine PARTIAL preserved",
+        "upstox.ts getQuotes + getLatestQuote: throw NOT_CONFIGURED (was silent null); getQuotes([]) still returns []"
+      ],
+      "effect": "provider failure now fails over to next capable provider and reaches getQuotesWithStatus which stamps AUTH_FAILED/RATE_LIMITED/INVALID/PROVIDER_FAILED; genuine unresolved symbol stays null (UNRESOLVED)"
+    },
+    "section21_evaluateShadowDataGate": {
+      "rootCause": "evaluateShadow had a dataGateVeto param but no production caller; A+ factory + ML decision path were only gated by self-reported candidate flags, not the authoritative DB-backed gate",
+      "fix": [
+        "new src/lib/india/shadow-data-gate.ts: deriveDataGateVeto(gate, deps) + evaluateShadowWithDataGate(candidate, artifact, gateInput, cluster?)",
+        "evaluates evaluateSignalSurfaceDataGate (fail-closed) FIRST, derives veto, then evaluateShadow with the veto"
+      ],
+      "effect": "authoritative gate can only STRENGTHEN the veto (blocked/insufficient/skew -> REJECT/ABSTAIN); never relaxes a gate; never touches EV/probability/score"
+    }
+  },
+  "verification": {
+    "typecheckMain": "PASS",
+    "typecheckWorker": "PASS",
+    "prismaValidate": "PASS",
+    "migrationsCount": 21,
+    "migrationsAddedThisSession": 0,
+    "vitestAffectedSuites": { "files": 6, "passed": 208, "failed": 0 },
+    "vitestBroad": { "scope": "tests/lib/market-data + tests/lib/india", "files": 40, "passed": 953, "failed": 0 },
+    "eslintChangedRegions": "clean",
+    "eslintPreExisting": "angel-one.ts:669 require()-import error + no-unused-vars warnings in untouched WS/subscribe code — pre-existing, not in scope",
+    "npmBuildFullSuite": "NOT_RUN_THIS_SESSION (prebuild=npm test is a heavy full run; affected+neighbouring 953 tests pass)"
+  },
+  "realtimeCertification": "PENDING_MARKET_OPEN (npm run data:live-verify during 09:15-15:30 IST)",
+  "carriedForwardFromV7DbProbe": {
+    "note": "NOT re-verified against a live DB this session (Postgres container not exercised); figures are from the V7 DB probe on 2026-09-12",
+    "instrumentMasterCount": 72305,
+    "dailyRows": 91555,
+    "optionStrikesRealOi": 2990,
+    "intradayInstruments": 15,
+    "indexDailyDepth": { "NIFTY": 1166, "BANKNIFTY": 1166, "FINNIFTY": 1166, "MIDCPNIFTY": 0 }
+  },
+  "remainingBlockers": [
+    { "item": "Live option IV/bid/ask", "classification": "MARKET_CLOSED", "bug": false, "gates": "only IV/bid-ask-dependent strategies" },
+    { "item": "Live WebSocket tick verification", "classification": "PENDING_MARKET_OPEN", "bug": false },
+    { "item": "Full 228-name equity deep backfill", "classification": "OPERATOR_RUN", "bug": false, "runner": "fno-backfill-runner.service.ts (resumable)" },
+    { "item": "MIDCPNIFTY deep daily history", "classification": "DATA_UNAVAILABLE (Upstox did not serve deep history)", "bug": false, "gates": "only MIDCPNIFTY-dependent strategies" },
+    { "item": "504 intraday gaps pending", "classification": "RECOVERABLE via deep-backfill + gap runner", "bug": false }
+  ],
+  "perStrategyIndependence": "PRESERVED — MIDCPNIFTY/IV unavailability does NOT globally block independent NIFTY/RELIANCE/BANKNIFTY price strategies"
+}

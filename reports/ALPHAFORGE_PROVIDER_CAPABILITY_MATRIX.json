@@ -1,0 +1,96 @@
+{
+  "schema": "alphaforge-provider-capability-matrix",
+  "generatedAt": "2026-09-12T13:30:00Z",
+  "source": "src/lib/market-data/provider-capability-matrix.ts (authoritative, in-code single source of truth)",
+  "liveProbedOn": "2026-09-12 (V7 session)",
+  "note": "Capability is DISTINCT from health. UNSUPPORTED_CAPABILITY != PROVIDER_FAILURE, AUTH_FAILURE != EMPTY_DATA, RATE_LIMITED != NO_DATA, MARKET_CLOSED != DATA_MISSING. Cells encode {supported, history, live, maxChunkDays}.",
+  "priorityOrder": ["scrapling", "angel_one", "upstox", "yahoo"],
+  "providers": [
+    {
+      "provider": "scrapling",
+      "role": "Data-service gateway: daily (bhavcopy, ranged) + current-day intraday only; NO multi-day intraday history; live quotes via nextapi",
+      "requiresCredentials": false,
+      "requestsPerSecond": 8,
+      "intervals": {
+        "1d": { "supported": true, "history": true, "live": false, "maxChunkDays": 365 },
+        "5m": { "supported": true, "history": false, "live": true, "maxChunkDays": null },
+        "15m": { "supported": true, "history": false, "live": true, "maxChunkDays": null },
+        "30m": { "supported": true, "history": false, "live": true, "maxChunkDays": null },
+        "1h": { "supported": true, "history": false, "live": true, "maxChunkDays": null }
+      },
+      "options": false,
+      "webSocket": false
+    },
+    {
+      "provider": "angel_one",
+      "role": "SmartAPI — primary EQUITY multi-day intraday history source",
+      "requiresCredentials": true,
+      "requestsPerSecond": 3,
+      "verifiedLimitations": [
+        "NO 3m interval (getCandleData has no THREE_MINUTE; live probe returned 0 bars for 3m RELIANCE while 1m returned 1690)",
+        "Returns 0 for INDEX tokens (NIFTY/BANKNIFTY daily = 0) -> indices route to Upstox",
+        "Historical endpoint ~3 req/s (HTTP 403 'exceeding access rate' past that -> classified rate_limit, not hard block)"
+      ],
+      "intervals": {
+        "1m": { "supported": true, "history": true, "live": true, "maxChunkDays": 30 },
+        "5m": { "supported": true, "history": true, "live": true, "maxChunkDays": 90 },
+        "15m": { "supported": true, "history": true, "live": true, "maxChunkDays": 180 },
+        "30m": { "supported": true, "history": true, "live": true, "maxChunkDays": 180 },
+        "1h": { "supported": true, "history": true, "live": true, "maxChunkDays": 365 },
+        "1d": { "supported": true, "history": true, "live": true, "maxChunkDays": 2000 }
+      },
+      "options": true,
+      "optionGreeks": "endpoint optionGreek (AB9019 off-hours)",
+      "webSocket": true
+    },
+    {
+      "provider": "upstox",
+      "role": "Upstox v3 — intraday history + live for equities AND indices; the capable 3m + index-history source",
+      "requiresCredentials": true,
+      "requestsPerSecond": 5,
+      "verifiedNotes": [
+        "Serves INDEX history (all intervals) and 3m (equities+indices)",
+        "Minute intervals MUST be requested in narrow windows (1m ~7d, 3m ~14d) — a 40-day 1m request 400s while 8-day returns 2250 bars",
+        "MIDCPNIFTY deep daily NOT served (recorded DATA_UNAVAILABLE)"
+      ],
+      "intervals": {
+        "1m": { "supported": true, "history": true, "live": true, "maxChunkDays": 7 },
+        "3m": { "supported": true, "history": true, "live": true, "maxChunkDays": 14 },
+        "5m": { "supported": true, "history": true, "live": true, "maxChunkDays": 30 },
+        "15m": { "supported": true, "history": true, "live": true, "maxChunkDays": 90 },
+        "30m": { "supported": true, "history": true, "live": true, "maxChunkDays": 90 },
+        "1h": { "supported": true, "history": true, "live": true, "maxChunkDays": 180 },
+        "1d": { "supported": true, "history": true, "live": true, "maxChunkDays": 2000 }
+      },
+      "options": true,
+      "webSocket": true
+    },
+    {
+      "provider": "yahoo",
+      "role": "Yahoo Finance — last-resort equity fallback; coarse, delayed, short intraday history",
+      "requiresCredentials": false,
+      "requestsPerSecond": 2,
+      "hardRules": ["NEVER for options", "NEVER for F&O required datasets", "delayed ~15min: ticks marked synthetic + feedDelayMs so freshness checks do not treat as live"],
+      "intervals": {
+        "5m": { "supported": true, "history": true, "live": true, "maxChunkDays": 60 },
+        "15m": { "supported": true, "history": true, "live": true, "maxChunkDays": 60 },
+        "30m": { "supported": true, "history": true, "live": true, "maxChunkDays": 60 },
+        "1h": { "supported": true, "history": true, "live": true, "maxChunkDays": 730 },
+        "1d": { "supported": true, "history": true, "live": true, "maxChunkDays": 2000 }
+      },
+      "options": false,
+      "webSocket": false
+    }
+  ],
+  "capabilityAwareRouting": {
+    "1m": ["angel_one", "upstox", "yahoo?"],
+    "3m": ["upstox"],
+    "5m": ["angel_one", "upstox", "yahoo?"],
+    "15m": ["angel_one", "upstox", "yahoo?"],
+    "30m": ["angel_one", "upstox", "yahoo?"],
+    "1h": ["angel_one", "upstox", "yahoo?"],
+    "dailyIndices": ["upstox"],
+    "options": ["angel_one", "upstox"],
+    "note": "angel_one dropped for INDEX symbols (returns 0 for index tokens); yahoo only when strategy permits equity fallback"
+  }
+}

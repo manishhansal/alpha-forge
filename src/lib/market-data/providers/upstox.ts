@@ -72,7 +72,9 @@ import {
   recordFailure,
   recordStaleData,
   recordSuccess,
+  failureKindToErrorCode,
 } from "../health";
+import { MarketDataError, type MarketDataErrorCode } from "../types";
 import {
   memoCandles,
   memoOptionChain,
@@ -1203,7 +1205,15 @@ export class UpstoxProvider implements MarketDataProvider {
     symbol:  string,
     opts?:   ProviderCallOptions,
   ): Promise<MDQuote | null> {
-    if (!(await isUpstoxAvailable())) return null;
+    // §4: "not configured" must fail over (typed throw), not silently return a
+    // null that withFailover would treat as a successful empty result.
+    if (!(await isUpstoxAvailable())) {
+      throw new MarketDataError(
+        "Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+        PROVIDER_ID,
+        "NOT_CONFIGURED",
+      );
+    }
 
     return memoQuote(symbol, PROVIDER_ID, async () => {
       const instrumentKey = await resolveUpstoxInstrumentKey(symbol, "NSE");
@@ -1230,8 +1240,17 @@ export class UpstoxProvider implements MarketDataProvider {
     symbols: string[],
     opts?:   ProviderCallOptions,
   ): Promise<Array<MDQuote | null>> {
-    if (symbols.length === 0 || !(await isUpstoxAvailable())) {
-      return symbols.map(() => null);
+    // Empty input is not a failure — return an empty result.
+    if (symbols.length === 0) return [];
+    // §4: "not configured" is a real reason to fail over, NOT legitimate
+    // empty data. Throw NOT_CONFIGURED so withFailover routes to the next
+    // capable provider instead of interpreting all-null as unresolved symbols.
+    if (!(await isUpstoxAvailable())) {
+      throw new MarketDataError(
+        "Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+        PROVIDER_ID,
+        "NOT_CONFIGURED",
+      );
     }
 
     // Cache-first + request coalescing (single-flight): identical concurrent
@@ -1249,7 +1268,17 @@ export class UpstoxProvider implements MarketDataProvider {
     const CHUNK_SIZE = 500;
     const results: Array<MDQuote | null> = new Array(symbols.length).fill(null);
 
+    // §4: track chunk outcomes so a TOTAL provider failure is re-thrown as a
+    // typed error (drives failover + honest status) while a genuine PARTIAL
+    // success is preserved. A quiet all-null return would be indistinguishable
+    // from "symbols unresolved" and would suppress failover to Yahoo/Angel.
+    let chunkCount = 0;
+    let failedChunks = 0;
+    let lastKind: "api_error" | "auth_failure" | "ws_disconnect" | "timeout" = "api_error";
+    let lastMsg = "";
+
     for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
+      chunkCount++;
       const chunk      = symbols.slice(i, i + CHUNK_SIZE);
       const keyToIndex = new Map<string, number>();
 
@@ -1286,10 +1315,25 @@ export class UpstoxProvider implements MarketDataProvider {
           }
         }
       } catch (err) {
-        // Record failure but continue processing remaining chunks
-        const kind = classifyError(err);
-        recordFailure(PROVIDER_ID, kind, err instanceof Error ? err.message : String(err));
+        // Record failure but continue processing remaining chunks so a genuine
+        // PARTIAL (some chunks OK, some failed) is still returned.
+        failedChunks++;
+        lastKind = classifyError(err);
+        lastMsg = err instanceof Error ? err.message : String(err);
+        recordFailure(PROVIDER_ID, lastKind, lastMsg);
       }
+    }
+
+    // §4 ROOT-CAUSE FIX: if EVERY chunk failed (total provider failure) and we
+    // resolved nothing, throw a typed MarketDataError instead of returning a
+    // silent all-null array. That lets withFailover try the next capable
+    // provider and lets getQuotesWithStatus stamp the true failure reason.
+    if (chunkCount > 0 && failedChunks === chunkCount && results.every((r) => r == null)) {
+      throw new MarketDataError(
+        `Upstox getQuotes failed for all ${chunkCount} chunk(s): ${lastMsg}`,
+        PROVIDER_ID,
+        failureKindToErrorCode(lastKind) as MarketDataErrorCode,
+      );
     }
 
     return results;
