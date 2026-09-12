@@ -1,0 +1,125 @@
+{
+  "schema": "alphaforge-data-v6-status",
+  "generatedAt": "2026-09-12T09:30:00Z",
+  "market": "IST closed (Saturday) — live-WS tick verification not possible this session",
+  "overall": "DATA_DEGRADED",
+  "overallReason": "Credential flow + Angel/Upstox auth verified live; daily series normalized (canonical sessionDate, 0 logical duplicates) with full legacy provenance marking; daily gaps re-detected against normalized data; all signal producers fail-closed data-gated. DEGRADED (not READY) because: index daily history is 1 bar, intraday depth is ~5 sessions across 8 instruments, F&O universe not fully populated, option IV/bid/ask NULL, and realtime WS unverifiable while market is closed.",
+  "verifiedLiveThisSession": {
+    "credentialFlowDbToWorker": true,
+    "angelAuth": true,
+    "angelRealHistoricalCandles": { "symbol": "RELIANCE", "interval": "5m", "count": 342 },
+    "upstoxTokenLoadedFromDb": true,
+    "postgres": "OK",
+    "redis": "OK"
+  },
+  "credentials": {
+    "source": "UserSetting.apiKeysEncrypted (encrypted DB, no browser session)",
+    "loaderVerified": "loadWorkerCredentialsFromDb → angel:true upstox:true",
+    "angel": { "configured": true, "decryptable": true, "runtimeAvailable": true, "authenticated": true },
+    "upstox": { "configured": true, "decryptable": true, "runtimeAvailable": true, "authenticated": "token-present (V3 path validated separately)" },
+    "secretsInReports": false
+  },
+  "providers": {
+    "data_service": { "container": "alpha-forge-data:8200", "status": "running(healthy)" },
+    "angel_one": { "auth": "PASS", "capabilities": ["equity_intraday_history", "daily", "option_oi", "option_greek"] },
+    "upstox": { "auth": "token-present", "capabilities": ["index_intraday_history_v3", "equity_intraday_history_v3", "option_chain"] },
+    "yahoo": { "role": "fallback", "neverOptionsProvider": true }
+  },
+  "instruments": {
+    "distinctWithAnyCandles": 175,
+    "intradayInstruments": 8,
+    "intradayList": ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "INFY", "NIFTY", "RELIANCE", "SBIN", "TCS"],
+    "fnoUniverseFullyPopulated": false,
+    "note": "175 instruments carry daily history; only 8 carry intraday. Full F&O universe backfill NOT executed this session (rate-limit + multi-day acquisition; requires an operator backfill run during/after market hours)."
+  },
+  "historical": {
+    "daily": {
+      "rows": 86227,
+      "instruments": 175,
+      "withSessionDate": 85198,
+      "logicalDuplicateDays": 0,
+      "weekendQuarantined": 1029,
+      "provenanceUnknownMarked": 85198,
+      "verifiedProviderProvenance": 0,
+      "note": "Normalized to canonical 09:15-IST session-open epochs; one canonical row per (instrument,exchange,sessionDate) enforced by partial unique index. Legacy rows explicitly marked PROVENANCE_UNKNOWN (NOT a fabricated provider). Weekend bars quarantined (incident-recorded), excluded from canonical daily identity."
+    }
+  },
+  "intraday": {
+    "1m": { "rows": 0, "status": "MISSING" },
+    "3m": { "rows": 0, "status": "MISSING" },
+    "5m": { "rows": 2796, "instruments": 8, "sessions": 5, "provenance": "complete" },
+    "15m": { "rows": 950, "instruments": 8, "provenance": "complete" },
+    "30m": { "rows": 494, "instruments": 8, "provenance": "complete" },
+    "1h": { "rows": 266, "instruments": 8, "provenance": "complete" },
+    "note": "1m/3m not backfilled; 5m-1h present with full provider+datasetVersion provenance but only ~5 sessions / 8 instruments — insufficient depth for long-warm-up features (EMA200 etc.)."
+  },
+  "options": {
+    "strikes": 944,
+    "underlyings": ["NIFTY", "BANKNIFTY"],
+    "oiPopulated": 944,
+    "ivPopulated": 0,
+    "bidPopulated": 0,
+    "askPopulated": 0,
+    "stockOptions": 0,
+    "note": "OI is real; IV/bid/ask stored NULL (provider did not supply — never fabricated to 0). Stock options and FINNIFTY/MIDCPNIFTY not captured. Genuine remaining gap."
+  },
+  "realtime": {
+    "wsActive": false,
+    "candleBuilderWiredIntoWorker": false,
+    "reason": "Market closed (Saturday 2026-09-12). RealTimeCandleBuilder/MultiInstrumentCandleBuilder classes exist but are not instantiated in worker/src/index.ts and scraping-tick-listener is not started. Cannot verify a live tick reaching Postgres while the market is closed — NOT claimed as working."
+  },
+  "gaps": {
+    "daily": { "pending": 179, "recovered": 0, "stale": 0, "instrumentsAffected": 171 },
+    "note": "Re-detected against normalized data (calendar-aware, anchored to canonical session-open epochs). PENDING gaps require credentialed provider backfill + canonical-bar validation to resolve (§12 — no HTTP-200 resolution)."
+  },
+  "provenance": {
+    "dailyLegacyMarked": 85198,
+    "sentinel": "legacy.provenance-unknown.norm-v0",
+    "intradayVerified": 4506,
+    "note": "Intraday 5m-1h rows carry real provider + datasetVersion. Daily legacy rows explicitly marked unknown (blockable by provenance-requiring strategies via hasVerifiedProvenance())."
+  },
+  "dataGate": {
+    "failClosed": true,
+    "producersGated": {
+      "india-scalper": { "gated": true, "gate": "enforceDataGate + evaluateDataGate (V5)" },
+      "auto-trader": { "gated": true, "gate": "evaluateDataGate + V6 availability veto (equities)" },
+      "IndiaDailyPick": { "gated": true, "gate": "evaluateProducerDataGate at freezeAndTrack (V6)" },
+      "FnoTrendScan": { "gated": true, "gate": "evaluateProducerDataGate at snapshotFnoTrendScan (V6)" },
+      "StrategyPaperTrade": { "gated": true, "gate": "strategyLabDataGate on consumed candle window (V6)" }
+    },
+    "notYetGated": ["SignalHistory ingest", "A+ signal factory", "ML inference decision path"],
+    "note": "5 producers now fail-closed data-gated (2 in V5 + 3 in V6). Remaining producers noted honestly as not-yet-gated."
+  },
+  "signalReadiness": {
+    "NIFTY_daily_strategies": { "status": "BLOCKED", "reason": "index daily history = 1 bar (INSUFFICIENT_HISTORY)" },
+    "BANKNIFTY_daily_strategies": { "status": "BLOCKED", "reason": "index daily history = 1 bar (INSUFFICIENT_HISTORY)" },
+    "equity_daily_scan_FnoTrendScan": { "status": "DEGRADED", "reason": "F&O equities have ~503 daily bars (sufficient) but only for ~175 names; full universe not populated; realtime tracking unverifiable while closed" },
+    "IndiaDailyPick_equity_buckets": { "status": "DEGRADED", "reason": "equity daily warm-up satisfied; option-projection buckets depend on live chain (market closed)" },
+    "intraday_scalp_5m": { "status": "DEGRADED", "reason": "5m present for 8 instruments but only ~5 sessions; long-warm-up features blocked" },
+    "strategy_lab_crypto": { "status": "READY", "reason": "gated on live broker klines window; independent of NSE data" }
+  },
+  "mlReadiness": {
+    "modelsChanged": false,
+    "preMlGate": "producer data gate blocks INSUFFICIENT_HISTORY/STALE/UNAVAILABLE before signal → ML decision",
+    "note": "No ML model/threshold changes (per mandate). Data gate prevents invalid datasets reaching ML-fed producers."
+  },
+  "failover": {
+    "capabilityAware": true,
+    "note": "Capability-aware selection (indices→Upstox, equities→Angel→Upstox) verified in code + V5 DB-verified backfill. Live 401/429/timeout injection NOT exercised this session."
+  },
+  "tests": {
+    "typecheck": "PASS (main + worker)",
+    "eslint": "0 errors (2 pre-existing warnings)",
+    "prismaValidate": "PASS",
+    "vitest": { "files": 220, "passed": 3427, "failed": 0 }
+  },
+  "remainingBlockers": [
+    "Full F&O universe backfill (hundreds of instruments × 1m/3m/5m/15m/30m/1h × deep history) — requires operator backfill run; rate-limited multi-day acquisition.",
+    "1m + 3m intraday not populated.",
+    "Index (NIFTY/BANKNIFTY) daily + deep intraday history essentially absent (1 daily bar).",
+    "Option IV/bid/ask NULL; stock options + FINNIFTY/MIDCPNIFTY option chains not captured.",
+    "Realtime WS candle-builder not wired into worker startup; unverifiable while market closed.",
+    "179 PENDING daily gaps await credentialed backfill + validation.",
+    "SignalHistory ingest, A+ factory, ML inference decision path not yet data-gated."
+  ]
+}

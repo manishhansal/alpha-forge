@@ -644,7 +644,11 @@ def _aggregate_price_series(
             )
             continue
         candles.append(OHLCVCandle(
-            time=bucket_start, open=open_, high=high, low=low, close=close, volume=0,
+            # G-07: the chart-databyindex endpoint is a price series with NO
+            # volume. Emit volume=0 as an explicit PLACEHOLDER flagged as
+            # unavailable, never as a real zero-volume bar (Rules 2/4).
+            time=bucket_start, open=open_, high=high, low=low, close=close,
+            volume=0, volumeUnavailable=True,
         ))
     return candles
 

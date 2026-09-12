@@ -23,13 +23,46 @@ interface IngestStats {
  * HOLD rows are skipped — they're not actionable and would clutter the table.
  * The caller drives this from the worker on a fixed cadence.
  */
+/**
+ * Max age (ms) of a signal's `generatedAt` before it is considered STALE and
+ * blocked from SignalHistory ingest by the V7 authoritative data gate (§24).
+ * A signal computed on stale market data must not enter the actionable audit
+ * trail. This is a DATA veto only — it never inspects type/confidence/score.
+ */
+const SIGNAL_INGEST_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes
+
 export async function ingestSignals(signals: TradingSignal[], prisma?: PrismaClient): Promise<IngestStats> {
   const db = prisma ?? getPrisma();
   const stats: IngestStats = { inserted: 0, skippedSameType: 0, skippedHold: 0 };
 
+  // V7 §24: fail-closed authoritative data gate for the SignalHistory surface.
+  const { evaluateSignalSurfaceDataGate } = await import(
+    "@/lib/market-data/services/signal-surface-data-gate.service"
+  );
+
   for (const s of signals) {
     if (s.type === "HOLD") {
       stats.skippedHold += 1;
+      continue;
+    }
+
+    // V7 §24 DATA GATE (fail-closed): the signal's data snapshot must be fresh
+    // and coherent before it becomes an actionable persisted row. Uses the
+    // signal's own generatedAt as the freshness input; blocks STALE data.
+    const now = Date.now();
+    const ageMs = now - s.generatedAt;
+    // A signal older than the freshness bound is treated as UNAVAILABLE (a hard
+    // veto) rather than STALE (a soft degrade), because an actionable persisted
+    // row must rest on fresh data — this is the fail-closed choice for the
+    // SignalHistory surface specifically.
+    const freshStatus = ageMs > SIGNAL_INGEST_MAX_AGE_MS ? "UNAVAILABLE" : "AVAILABLE";
+    const gate = await evaluateSignalSurfaceDataGate({
+      surface: "SignalHistory",
+      dependencies: [{ name: "signalSnapshotFreshness", status: freshStatus, critical: true }],
+      prisma: db,
+    });
+    if (!gate.allowed) {
+      // Blocked on data grounds — do NOT persist. Not counted as inserted.
       continue;
     }
 

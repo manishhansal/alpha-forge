@@ -591,8 +591,53 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
       });
       continue;
     }
-    // If gate.error (data-service unreachable), we allow the trade to proceed
-    // but mark dataQualityAtEntry as UNKNOWN so the provenance record is honest.
+    // If gate.error (data-service unreachable), the remote gate cannot vouch for
+    // freshness. Rather than fail OPEN, apply the V6 §20 availability gate as a
+    // second, fail-CLOSED veto backed by REAL persisted daily history: if the
+    // symbol has no/insufficient persisted candles we must NOT open a trade even
+    // when the remote data-service is unreachable (§42 — never treat unavailable
+    // as available). This is a data-integrity veto ONLY; it never changes any
+    // strategy/threshold. INDEX symbols (NIFTY/BANKNIFTY) legitimately lack a
+    // deep persisted daily series in the DB today, and daily-pick signals for
+    // them are option-projected upstream — so the availability veto is applied
+    // to equity symbols; indices continue to rely on the remote quote gate above.
+    {
+      const isIndexSymbol = /^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY)/i.test(c.symbol);
+      if (!isIndexSymbol) {
+        try {
+          const { evaluateProducerDataGate } = await import(
+            "@/lib/market-data/services/producer-data-gate.service"
+          );
+          const availGate = await evaluateProducerDataGate({
+            instrumentId: c.symbol,
+            exchange: "NSE",
+            interval: "1d",
+            requiredBars: 20, // basic daily warm-up floor
+            requireFullyReady: false,
+            prisma: db,
+          });
+          if (!availGate.allowed) {
+            skipped++;
+            emitLifecycleEvent(db, {
+              signalId:    `${c.symbol}-${tradeDate}-availability-blocked`,
+              fromState:   "APPROVED",
+              toState:     "REJECTED",
+              reason:      `Availability gate blocked: ${availGate.reason}`,
+              strategyId:  c.source,
+              instrument:  c.symbol,
+              sessionDate: tradeDate,
+              sourceType:  c.source === "DAILY_PICK" ? "DAILY_PICK" : "AI_SIGNAL",
+              metadata:    { availabilityStatus: availGate.status, requiredBars: availGate.history.requiredBars, availableBars: availGate.history.availableBars },
+            });
+            continue;
+          }
+        } catch {
+          // Gate read itself failed → fail closed (do not open on unverifiable data).
+          skipped++;
+          continue;
+        }
+      }
+    }
 
     // Duplicate check — skip if any auto trade already open for this symbol
     const source = c.source === "DAILY_PICK"

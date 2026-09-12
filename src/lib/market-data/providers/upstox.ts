@@ -72,7 +72,9 @@ import {
   recordFailure,
   recordStaleData,
   recordSuccess,
+  failureKindToErrorCode,
 } from "../health";
+import { MarketDataError, type MarketDataErrorCode } from "../types";
 import {
   memoCandles,
   memoOptionChain,
@@ -82,6 +84,7 @@ import {
 import {
   finiteOrNull,
   intervalToUpstox,
+  intervalToUpstoxV3,
   normaliseExpiry,
   normaliseCandlesFromUpstox,
 } from "../normalizer";
@@ -163,6 +166,17 @@ async function resolveReadToken(): Promise<string | null> {
   // Fast path — check env vars first (synchronous, no I/O).
   const envToken = getReadToken();
   if (envToken) return envToken;
+
+  // V5 fix: process-scoped worker override — populated at worker/CLI startup
+  // from the stored per-user Analytics Token (no session needed). This lets the
+  // worker/backfill use a frontend-configured Upstox token.
+  try {
+    const { getWorkerUpstoxToken } = await import("@/lib/market-data/worker-credentials");
+    const workerToken = getWorkerUpstoxToken();
+    if (workerToken) return workerToken;
+  } catch {
+    /* worker-credentials unavailable — fall through */
+  }
 
   // Slow path — load the per-user DB token only when env vars are absent.
   // The lazy import avoids pulling NextAuth + Prisma into every code path
@@ -976,10 +990,23 @@ function normaliseOptionLeg(
   const md     = leg.market_data ?? {};
   const greeks = leg.option_greeks ?? {};
 
-  // OI change: if prev_oi available compute the delta; otherwise 0
-  const oi       = md.oi       ?? 0;
-  const prevOi   = md.prev_oi  ?? null;
-  const oiChange = prevOi != null ? oi - prevOi : 0;
+  // RCA-D01: NEVER silently fabricate OI / OI-change / volume as a genuine 0.
+  // A missing field is recorded as a PLACEHOLDER (0) with an explicit *Missing
+  // flag so analytics and quality gates can exclude it instead of treating a
+  // fabricated zero as a real reading (Absolute Rules 2, 5, 46).
+  const oiRaw       = finiteOrNull(md.oi ?? null);
+  const oiMissing   = oiRaw === null;
+  const oi          = oiRaw ?? 0;
+
+  const prevOi      = finiteOrNull(md.prev_oi ?? null);
+  // OI-change is only real when BOTH current and previous OI are known.
+  const oiChangeKnown = !oiMissing && prevOi != null;
+  const oiChange      = oiChangeKnown ? oi - prevOi! : 0;
+  const oiChangeMissing = !oiChangeKnown;
+
+  const volumeRaw     = finiteOrNull(md.volume ?? null);
+  const volumeMissing = volumeRaw === null;
+  const volume        = volumeRaw ?? 0;
 
   return {
     token:         leg.instrument_key,
@@ -993,7 +1020,10 @@ function normaliseOptionLeg(
     ask:    finiteOrNull(md.ask_price ?? null),
     oi,
     oiChange,
-    volume: md.volume ?? 0,
+    volume,
+    ...(oiMissing ? { oiMissing: true } : {}),
+    ...(oiChangeMissing ? { oiChangeMissing: true } : {}),
+    ...(volumeMissing ? { volumeMissing: true } : {}),
     greeks: {
       iv:    finiteOrNull(greeks.iv    ?? null),
       delta: finiteOrNull(greeks.delta ?? null),
@@ -1019,18 +1049,26 @@ function computeAnalytics(
   let maxCeOiStrike: number | null = null;
   let maxPeOiStrike: number | null = null;
 
+  // RCA-D01: placeholder (source-missing) OI/OI-change/volume must NOT be summed
+  // as real zeros. Legs flagged *Missing carry a fabricated 0 for type
+  // compatibility only — exclude them from every aggregate so PCR / max-pain /
+  // OI-walls reflect actual data, not fabricated zeros.
   for (const row of rows) {
     if (row.ce) {
-      totalCeOi       += row.ce.oi;
-      totalCeOiChange += row.ce.oiChange;
-      totalCeVol      += row.ce.volume;
-      if (row.ce.oi > maxCeOi) { maxCeOi = row.ce.oi; maxCeOiStrike = row.strike; }
+      if (!row.ce.oiMissing) {
+        totalCeOi += row.ce.oi;
+        if (row.ce.oi > maxCeOi) { maxCeOi = row.ce.oi; maxCeOiStrike = row.strike; }
+      }
+      if (!row.ce.oiChangeMissing) totalCeOiChange += row.ce.oiChange;
+      if (!row.ce.volumeMissing)   totalCeVol      += row.ce.volume;
     }
     if (row.pe) {
-      totalPeOi       += row.pe.oi;
-      totalPeOiChange += row.pe.oiChange;
-      totalPeVol      += row.pe.volume;
-      if (row.pe.oi > maxPeOi) { maxPeOi = row.pe.oi; maxPeOiStrike = row.strike; }
+      if (!row.pe.oiMissing) {
+        totalPeOi += row.pe.oi;
+        if (row.pe.oi > maxPeOi) { maxPeOi = row.pe.oi; maxPeOiStrike = row.strike; }
+      }
+      if (!row.pe.oiChangeMissing) totalPeOiChange += row.pe.oiChange;
+      if (!row.pe.volumeMissing)   totalPeVol      += row.pe.volume;
     }
   }
 
@@ -1057,8 +1095,8 @@ function computeAnalytics(
     for (const candidate of rows) {
       let pain = 0;
       for (const row of rows) {
-        if (row.ce) pain += row.ce.oi * Math.max(0, row.strike - candidate.strike);
-        if (row.pe) pain += row.pe.oi * Math.max(0, candidate.strike - row.strike);
+        if (row.ce && !row.ce.oiMissing) pain += row.ce.oi * Math.max(0, row.strike - candidate.strike);
+        if (row.pe && !row.pe.oiMissing) pain += row.pe.oi * Math.max(0, candidate.strike - row.strike);
       }
       if (pain < minPain) { minPain = pain; maxPain = candidate.strike; }
     }
@@ -1128,13 +1166,54 @@ export class UpstoxProvider implements MarketDataProvider {
     );
   }
 
+  /**
+   * V5 §8/§11: Upstox **V3** historical candles. Unlike V2 (limited to
+   * 1minute/30minute/day), V3 supports per-minute intervals (1/3/5/15/30) +
+   * hours/days AND serves INDEX instrument keys (NSE_INDEX|Nifty 50) that
+   * Angel's getCandleData returns empty for. Endpoint shape:
+   *   /v3/historical-candle/{instrument_key}/{unit}/{value}/{to_date}/{from_date}
+   * Verified live: 200 for minutes/5 on RELIANCE and NIFTY.
+   */
+  async getHistoricalCandlesV3(
+    req: HistoricalCandleRequest,
+    opts?: ProviderCallOptions,
+  ): Promise<OHLCVCandle[]> {
+    if (!(await isUpstoxAvailable())) return [];
+    const v3 = intervalToUpstoxV3(req.interval);
+    if (!v3) return [];
+
+    const instrumentKey = await resolveUpstoxInstrumentKey(req.symbol, req.exchange);
+    const toDate = req.to.slice(0, 10);
+    const fromDate = req.from.slice(0, 10);
+    const path = `/v3/historical-candle/${encodeURIComponent(instrumentKey)}/${v3.unit}/${v3.value}/${toDate}/${fromDate}`;
+
+    const data = await upstoxGet<UpstoxCandleData>(path, undefined, opts?.signal);
+    const rows = (data.candles ?? []).map((c) => ({
+      timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5], oi: c[6],
+    }));
+    // Upstox returns candles NEWEST-FIRST (descending). The candle validator
+    // rejects non-ascending timestamps, which would drop all but the first bar.
+    // Normalise then sort ascending by time before validating.
+    const normalised = normaliseCandlesFromUpstox(rows).sort((a, b) => a.time - b.time);
+    recordSuccess(PROVIDER_ID, 0);
+    return filterValidCandles(normalised);
+  }
+
   // ── Live quote (single symbol) ────────────────────────────────────────────
 
   async getLatestQuote(
     symbol:  string,
     opts?:   ProviderCallOptions,
   ): Promise<MDQuote | null> {
-    if (!(await isUpstoxAvailable())) return null;
+    // §4: "not configured" must fail over (typed throw), not silently return a
+    // null that withFailover would treat as a successful empty result.
+    if (!(await isUpstoxAvailable())) {
+      throw new MarketDataError(
+        "Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+        PROVIDER_ID,
+        "NOT_CONFIGURED",
+      );
+    }
 
     return memoQuote(symbol, PROVIDER_ID, async () => {
       const instrumentKey = await resolveUpstoxInstrumentKey(symbol, "NSE");
@@ -1161,8 +1240,17 @@ export class UpstoxProvider implements MarketDataProvider {
     symbols: string[],
     opts?:   ProviderCallOptions,
   ): Promise<Array<MDQuote | null>> {
-    if (symbols.length === 0 || !(await isUpstoxAvailable())) {
-      return symbols.map(() => null);
+    // Empty input is not a failure — return an empty result.
+    if (symbols.length === 0) return [];
+    // §4: "not configured" is a real reason to fail over, NOT legitimate
+    // empty data. Throw NOT_CONFIGURED so withFailover routes to the next
+    // capable provider instead of interpreting all-null as unresolved symbols.
+    if (!(await isUpstoxAvailable())) {
+      throw new MarketDataError(
+        "Upstox: not configured — set UPSTOX_ANALYTICS_TOKEN or add an Analytics Token via Profile → API Keys",
+        PROVIDER_ID,
+        "NOT_CONFIGURED",
+      );
     }
 
     // Cache-first + request coalescing (single-flight): identical concurrent
@@ -1180,7 +1268,17 @@ export class UpstoxProvider implements MarketDataProvider {
     const CHUNK_SIZE = 500;
     const results: Array<MDQuote | null> = new Array(symbols.length).fill(null);
 
+    // §4: track chunk outcomes so a TOTAL provider failure is re-thrown as a
+    // typed error (drives failover + honest status) while a genuine PARTIAL
+    // success is preserved. A quiet all-null return would be indistinguishable
+    // from "symbols unresolved" and would suppress failover to Yahoo/Angel.
+    let chunkCount = 0;
+    let failedChunks = 0;
+    let lastKind: "api_error" | "auth_failure" | "ws_disconnect" | "timeout" = "api_error";
+    let lastMsg = "";
+
     for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
+      chunkCount++;
       const chunk      = symbols.slice(i, i + CHUNK_SIZE);
       const keyToIndex = new Map<string, number>();
 
@@ -1217,10 +1315,25 @@ export class UpstoxProvider implements MarketDataProvider {
           }
         }
       } catch (err) {
-        // Record failure but continue processing remaining chunks
-        const kind = classifyError(err);
-        recordFailure(PROVIDER_ID, kind, err instanceof Error ? err.message : String(err));
+        // Record failure but continue processing remaining chunks so a genuine
+        // PARTIAL (some chunks OK, some failed) is still returned.
+        failedChunks++;
+        lastKind = classifyError(err);
+        lastMsg = err instanceof Error ? err.message : String(err);
+        recordFailure(PROVIDER_ID, lastKind, lastMsg);
       }
+    }
+
+    // §4 ROOT-CAUSE FIX: if EVERY chunk failed (total provider failure) and we
+    // resolved nothing, throw a typed MarketDataError instead of returning a
+    // silent all-null array. That lets withFailover try the next capable
+    // provider and lets getQuotesWithStatus stamp the true failure reason.
+    if (chunkCount > 0 && failedChunks === chunkCount && results.every((r) => r == null)) {
+      throw new MarketDataError(
+        `Upstox getQuotes failed for all ${chunkCount} chunk(s): ${lastMsg}`,
+        PROVIDER_ID,
+        failureKindToErrorCode(lastKind) as MarketDataErrorCode,
+      );
     }
 
     return results;

@@ -302,10 +302,10 @@ describe("1. Token authentication", () => {
     expect(isUpstoxConfigured()).toBe(false);
   });
 
-  it("getLatestQuote returns null when not configured", async () => {
+  it("getLatestQuote THROWS NOT_CONFIGURED when not configured (§4 — fail over, not silent null)", async () => {
     delete process.env.UPSTOX_ANALYTICS_TOKEN;
     const p = new UpstoxProvider();
-    expect(await p.getLatestQuote("RELIANCE")).toBeNull();
+    await expect(p.getLatestQuote("RELIANCE")).rejects.toThrow(/not configured/i);
   });
 
   it("getHistoricalCandles returns [] when not configured", async () => {
@@ -318,10 +318,10 @@ describe("1. Token authentication", () => {
     expect(r).toEqual([]);
   });
 
-  it("getQuotes returns array of null when not configured", async () => {
+  it("getQuotes THROWS NOT_CONFIGURED when not configured (§4 — fail over, not silent all-null)", async () => {
     delete process.env.UPSTOX_ANALYTICS_TOKEN;
     const p = new UpstoxProvider();
-    expect(await p.getQuotes(["NIFTY", "BANKNIFTY"])).toEqual([null, null]);
+    await expect(p.getQuotes(["NIFTY", "BANKNIFTY"])).rejects.toThrow(/not configured/i);
   });
 
   it("throws when getOptionChain is called without credentials", async () => {

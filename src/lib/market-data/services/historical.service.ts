@@ -15,7 +15,8 @@
 import { registry } from "../registry";
 import type { HistoricalCandleRequest, OHLCVCandle } from "../types";
 import type { ProviderCallOptions } from "../provider";
-import { filterValidCandles } from "../validation/candle-validator";
+import { filterValidCandlesWithReport } from "../validation/candle-validator";
+import { mdLog } from "../health";
 
 export type HistoricalOptions = ProviderCallOptions & {
   /**
@@ -38,10 +39,38 @@ export async function getHistoricalCandles(
   try {
     const candles = await registry.getHistoricalCandles(req, opts);
     if (opts?.tolerateInvalidCandles) {
-      return filterValidCandles(candles);
+      // RCA-D04: report dropped candles instead of silently repairing.
+      const report = filterValidCandlesWithReport(candles);
+      if (report.droppedCount > 0) {
+        mdLog("stale_data", {
+          reason: "candles_dropped_on_validation",
+          symbol: req.symbol,
+          exchange: req.exchange,
+          interval: req.interval,
+          inputCount: report.inputCount,
+          droppedCount: report.droppedCount,
+          firstDrop: report.dropped[0] ?? null,
+        });
+      }
+      return report.candles;
     }
     return candles;
-  } catch {
+  } catch (err) {
+    // RCA-D05: a provider outage returning [] must be distinguishable from a
+    // genuine "no data for range". We keep the [] contract for compatibility
+    // but emit an explicit PROVIDER_FAILED signal so the outage is observable
+    // (Absolute Rules 14/15/78 — provider failure is not data absence).
+    mdLog("provider_failure", {
+      operationId: "getHistoricalCandles",
+      reason: "all_providers_exhausted",
+      status: "PROVIDER_FAILED",
+      symbol: req.symbol,
+      exchange: req.exchange,
+      interval: req.interval,
+      from: req.from,
+      to: req.to,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return [];
   }
 }

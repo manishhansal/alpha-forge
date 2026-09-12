@@ -211,13 +211,19 @@ describe("AngelOneProvider", () => {
   // ── 1. Authentication ─────────────────────────────────────────────────────
 
   describe("1. Authentication", () => {
-    it("returns null quotes when adapter throws an auth error", async () => {
+    it("THROWS a typed error on auth failure (never returns all-null — §4)", async () => {
       (angel.getQuotes as Mock).mockRejectedValueOnce(
         new Error("unauthorized: invalid JWT"),
       );
 
-      const result = await provider.getQuotes(["RELIANCE"]);
-      expect(result).toEqual([null]);
+      // §4: a provider FAILURE must be a typed throw so it is distinguishable
+      // from a successful call that legitimately resolved no quote, and so the
+      // failover engine actually routes to the next capable provider.
+      await expect(provider.getQuotes(["RELIANCE"])).rejects.toMatchObject({
+        name: "MarketDataError",
+        providerId: "angel_one",
+        code: "AUTH_FAILURE",
+      });
     });
 
     it("records an auth_failure in health when JWT error occurs", async () => {
@@ -225,7 +231,8 @@ describe("AngelOneProvider", () => {
         new Error("auth: session expired"),
       );
 
-      await provider.getQuotes(["TCS"]);
+      // getQuotes now throws on failure (§4) — health is recorded before the throw.
+      await expect(provider.getQuotes(["TCS"])).rejects.toBeInstanceOf(Error);
 
       const health = getProviderHealth("angel_one");
       expect(health.consecutiveFailures).toBeGreaterThanOrEqual(1);
@@ -633,18 +640,22 @@ describe("AngelOneProvider", () => {
   // ── 7. API failover trigger ───────────────────────────────────────────────
 
   describe("7. API failover trigger", () => {
-    it("getQuotes returns [null, null] when adapter throws", async () => {
+    it("getQuotes THROWS a typed MarketDataError when the adapter fails (§4)", async () => {
       (angel.getQuotes as Mock).mockRejectedValueOnce(new Error("SmartAPI: HTTP 503"));
 
-      const result = await provider.getQuotes(["RELIANCE", "TCS"]);
-      expect(result).toEqual([null, null]);
+      // Never a silent [null, null] — that would suppress failover and look like
+      // two unresolved symbols. It must be a typed throw the chain can act on.
+      await expect(provider.getQuotes(["RELIANCE", "TCS"])).rejects.toMatchObject({
+        name: "MarketDataError",
+        providerId: "angel_one",
+      });
     });
 
     it("records a failure in health so the failover engine can detect it", async () => {
       resetAllHealth();
       (angel.getQuotes as Mock).mockRejectedValueOnce(new Error("rate limit exceeded"));
 
-      await provider.getQuotes(["NIFTY"]);
+      await expect(provider.getQuotes(["NIFTY"])).rejects.toBeInstanceOf(Error);
 
       const health = provider.getProviderHealth();
       expect(health.consecutiveFailures).toBeGreaterThanOrEqual(1);
@@ -666,11 +677,12 @@ describe("AngelOneProvider", () => {
       expect(health.status).toBe("unhealthy");
     });
 
-    it("getLatestQuote returns null when adapter throws a network error", async () => {
+    it("getLatestQuote THROWS when the adapter fails with a network error (§4)", async () => {
       (angel.getQuotes as Mock).mockRejectedValueOnce(new Error("ECONNRESET"));
 
-      const result = await provider.getLatestQuote("RELIANCE");
-      expect(result).toBeNull();
+      // A network failure is a failure, not a legitimate null quote — it must
+      // propagate so the failover chain / caller can classify it.
+      await expect(provider.getLatestQuote("RELIANCE")).rejects.toBeInstanceOf(Error);
     });
 
     it("consecutive successes recover the health score toward 100", async () => {

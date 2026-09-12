@@ -739,6 +739,10 @@ export class RealTimeCandleBuilder {
           volume: candle.volume,
           oi: candle.oi ?? null,
           oiChange,
+          // V4: canonical IST session date for trading-day uniqueness.
+          sessionDate: new Date(candle.time * 1000 + 5.5 * 3600 * 1000)
+            .toISOString()
+            .slice(0, 10),
         },
       });
     } catch (err) {

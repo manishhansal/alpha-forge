@@ -360,8 +360,37 @@ model CandleBar {
   oiChange     Float?
   confirmedAt  DateTime @default(now())
 
+  /// ── Data Foundation V2 provenance (additive, nullable — backfilled going
+  /// forward; existing rows keep null). Lets coverage/reconciliation report
+  /// which provider supplied each candle and the true data-vs-receipt times.
+  /// `provider`        — ProviderId string ("scrapling"|"angel_one"|"upstox"|"yahoo").
+  /// `sourceTimestamp` — the provider/exchange-declared time for this candle.
+  /// `receivedAt`      — when the app received it from the provider.
+  /// `datasetVersion`  — normalization/dataset version that produced this row.
+  /// `volumeUnavailable` — true when volume was NOT supplied by the source (the
+  ///   stored `volume` is then a placeholder 0, not a real reading — Rule 2).
+  provider          String?
+  sourceTimestamp   DateTime?
+  receivedAt        DateTime?
+  datasetVersion    String?
+  volumeUnavailable Boolean  @default(false)
+
+  /// ── Data Foundation V4 (additive, nullable) ───────────────────────────────
+  /// Canonical NSE trading SESSION date as IST `YYYY-MM-DD`. Lets daily
+  /// uniqueness be enforced per trading day rather than per epoch `time`
+  /// (D-V4-01..04: multiple timestamp conventions created >1 epoch key per
+  /// trading day). Stamped on all NEW writes; existing rows keep null until the
+  /// operator-approved daily normalization migration runs. A partial unique
+  /// index (see migration) enforces one daily row per (instrument,exchange,
+  /// sessionDate) for interval='1d' rows that carry a sessionDate.
+  sessionDate       String?
+
   /// Composite unique constraint prevents duplicate candle records.
   @@unique([instrumentId, exchange, intervalStr, time])
+  /// One canonical daily candle per trading session, once sessionDate is
+  /// populated (partial — daily only, non-null sessionDate). Created via raw
+  /// SQL in the migration since Prisma cannot express partial unique indexes.
+  @@index([instrumentId, exchange, sessionDate])
   /// PostgreSQL creates a B-tree index automatically to enforce the unique
   /// constraint above. The explicit @@index below adds a second covering
   /// index on the same columns for query performance (e.g. range scans that
@@ -404,6 +433,44 @@ model OptionChainSnapshot {
 
   @@index([underlying, capturedAt])
   @@index([capturedAt])
+}
+
+/// Data Foundation V5 (§25/§26): durable STRIKE-LEVEL option snapshot. Unlike
+/// `OptionChainSnapshot` (aggregate analytics only), this persists one row per
+/// (underlying, expiry, strike, optionType, captureTimestamp, provider) so the
+/// real per-strike OI/IV/bid/ask time series is captured where the provider
+/// supplies it. Fields the provider does NOT supply are stored NULL with the
+/// `*Unavailable` flag — never fabricated to 0 (Absolute Rule 1).
+model OptionChainStrike {
+  id              String   @id @default(cuid())
+  underlying      String
+  /// Provider expiry display string (e.g. "15-Sep-2026").
+  expiry          String
+  strike          Float
+  /// "CE" | "PE"
+  optionType      String
+  ltp             Float?
+  bid             Float?
+  ask             Float?
+  volume          Float?
+  oi              Float?
+  oiChange        Float?
+  iv              Float?
+  bidUnavailable  Boolean  @default(false)
+  askUnavailable  Boolean  @default(false)
+  ivUnavailable   Boolean  @default(false)
+  volumeUnavailable Boolean @default(false)
+  /// Capture time (worker cadence). Truncate/align externally if needed.
+  captureTimestamp DateTime @default(now())
+  provider        String
+  sourceTimestamp DateTime?
+  receivedAt      DateTime @default(now())
+  datasetVersion  String?
+
+  @@unique([underlying, expiry, strike, optionType, captureTimestamp, provider])
+  @@index([underlying, expiry, captureTimestamp])
+  @@index([underlying, captureTimestamp])
+  @@map("option_chain_strike")
 }
 
 /// One daily scan result from the FnO Bullish or Bearish Trend Scanner
@@ -705,4 +772,333 @@ model SignalIntelligenceRecord {
   @@index([instrument, sessionDate])
   @@index([reportingBucket, sessionDate])
   @@map("signal_intelligence_record")
+}
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// Closed-loop learning: durable prediction/resolution records (remediation).
+/// These back the `SignalRecordStore` interface in
+/// `src/lib/india/signal-learning-loop.ts` with real persistence, replacing the
+/// in-memory-only store. A PredictionRecord is written ONCE at signal creation
+/// and is IMMUTABLE (unique `signalId`); a ResolutionRecord is appended ONCE at
+/// close (unique `signalId` → no double-resolution). The full creation-time
+/// scoring snapshot is preserved so historical quality/grade/probability are
+/// never recomputed with a later algorithm.
+/// ─────────────────────────────────────────────────────────────────────────
+model IndiaPredictionRecord {
+  /// Stable signal id — primary key AND idempotency key (immutable snapshot).
+  signalId          String   @id
+  symbol            String
+  strategy          String
+  direction         String
+  /// Signal generation time (UTC ms).
+  timestampMs       BigInt
+  entry             Float
+  stop              Float
+  /// Target ladder (first target resolves).
+  targets           Float[]
+  timeframe         String
+  regime            String
+  instrumentType    String
+  sector            String?
+
+  // ── scoring provenance (immutable at creation) ──
+  signalQuality           Float
+  grade                   String
+  rawConfidence           Float
+  calibratedProbability   Float
+  expectedValue           Float
+  /// per-model contribution map.
+  modelContributions      Json
+  /// per-component quality attribution.
+  qualityComponents       Json
+  abstentionDecision      Boolean
+
+  // ── immutable evidence snapshots at signal time ──
+  featureSnapshot     Json
+  derivativesSnapshot Json
+  marketContext       Json
+
+  // ── data / execution quality at signal time ──
+  dataQuality       Float
+  liquidity         Float
+  costEstimate      Float
+  slippageEstimate  Float
+
+  // ── engine + model provenance (versioned so scores are reproducible) ──
+  modelVersion         String
+  qualityEngineVersion String?
+  gradingEngineVersion String?
+  calibrationVersion   String?
+  featureVersion       String?
+  datasetVersion       String?
+  provider             String?
+  providerTimestampMs  BigInt?
+
+  /// IST calendar day key (YYYY-MM-DD) — same-day retrain embargo.
+  tradeDate         String
+  createdAt         DateTime @default(now())
+
+  resolution        IndiaResolutionRecord?
+
+  @@index([symbol, tradeDate])
+  @@index([strategy, tradeDate])
+  @@index([grade, tradeDate])
+  @@map("india_prediction_record")
+}
+
+/// Appended ONCE at trade close. `signalId` is unique → a signal can never
+/// resolve twice (idempotency). `ambiguous = true` marks a resolution whose
+/// intrabar ordering could not be determined (both stop & target touched in one
+/// candle) — such rows are EXCLUDED from win-rate/expectancy aggregation.
+model IndiaResolutionRecord {
+  signalId          String   @id
+  outcome           String
+  exit              Float?
+  exitTimeMs        BigInt?
+  returnPct         Float?
+  returnR           Float?
+  mfe               Float
+  mae               Float
+  holdingTimeMs     BigInt?
+  targetReached     Boolean
+  stopReached       Boolean
+  costActual        Float
+  slippageActual    Float
+  netReturn         Float?
+  regimeDuringTrade String
+  ambiguous         Boolean  @default(false)
+  resolvedAtMs      BigInt
+  createdAt         DateTime @default(now())
+
+  prediction        IndiaPredictionRecord @relation(fields: [signalId], references: [signalId], onDelete: Cascade)
+
+  @@index([outcome, resolvedAtMs])
+  @@map("india_resolution_record")
+}
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// DATA FOUNDATION V2 — durable data-reliability models (additive, non-destructive)
+/// These record gaps, quality incidents, raw provider evidence, and historical
+/// corrections so the data layer is observable and reproducible. NEVER used to
+/// fabricate market data; they record facts ABOUT the data.
+/// ─────────────────────────────────────────────────────────────────────────
+
+/// A detected gap in candle continuity (missing intervals) for one instrument.
+/// Populated by the gap-detection / real-time recovery path. A closed market is
+/// recorded with recoveryStatus=MARKET_CLOSED, NOT as a recoverable gap.
+model DataGap {
+  id               String   @id @default(cuid())
+  instrumentId     String
+  exchange         String
+  intervalStr      String
+  /// UTC epoch seconds — first missing candle open time (inclusive).
+  gapStart         Int
+  /// UTC epoch seconds — last missing candle open time (inclusive).
+  gapEnd           Int
+  /// Gap duration in seconds (gapEnd - gapStart + one interval).
+  durationSec      Int
+  /// Provider that was expected to supply the missing intervals.
+  expectedProvider String?
+  detectedAt       DateTime @default(now())
+  /// PENDING | RECOVERING | RECOVERED | UNRESOLVED | MARKET_CLOSED | INVALID_DATA
+  recoveryStatus   String   @default("PENDING")
+  recoveryAttempts Int      @default(0)
+  recoveredAt      DateTime?
+  recoveryProvider String?
+  reason           String?
+  requestId        String?
+  datasetVersion   String?
+
+  @@unique([instrumentId, exchange, intervalStr, gapStart])
+  @@index([recoveryStatus])
+  @@index([instrumentId, exchange, intervalStr])
+  @@index([detectedAt])
+  @@map("data_gap")
+}
+
+/// A recorded data-quality incident (fail-open observability, not a data mutation).
+model DataQualityIncident {
+  id              String   @id @default(cuid())
+  /// INFO | WARNING | ERROR | CRITICAL
+  severity        String
+  provider        String?
+  instrumentId    String?
+  intervalStr     String?
+  /// PROVIDER_FAILED | STALE | MISSING | DUPLICATE | INVALID_OHLC |
+  /// TIMESTAMP_REGRESSION | PROVIDER_DIVERGENCE | OPTION_CHAIN_INCOMPLETE |
+  /// OI_STALE | IV_STALE | SNAPSHOT_SKEW | AUTH_FAILED | RATE_LIMITED
+  failureType     String
+  detectedAt      DateTime @default(now())
+  resolvedAt      DateTime?
+  /// OPEN | RESOLVED
+  status          String   @default("OPEN")
+  rootCause       String?
+  /// Structured detail (never contains credentials).
+  detail          Json?
+  requestId       String?
+  affectedRecords Int      @default(0)
+
+  @@index([severity, status])
+  @@index([failureType])
+  @@index([detectedAt])
+  @@index([instrumentId])
+  @@map("data_quality_incident")
+}
+
+/// Raw provider observation — the evidence separated from normalized data
+/// (Absolute Rule 12: never silently mutate historical evidence). Raw payload
+/// retention is configurable by the caller; NEVER store credentials.
+model ProviderObservation {
+  id                   String   @id @default(cuid())
+  provider             String
+  instrumentId         String
+  /// QUOTE | CANDLE | OPTION_CHAIN | INSTRUMENT_MASTER
+  dataType             String
+  requestId            String?
+  /// Provider/exchange-declared source time (nullable when not supplied).
+  sourceTimestamp      DateTime?
+  receivedAt           DateTime @default(now())
+  /// Hash of the raw payload for dedup / integrity (e.g. sha256 hex).
+  payloadHash          String?
+  /// Optional raw payload retained for replay/audit (configurable retention).
+  rawPayload           Json?
+  schemaVersion        String?
+  normalizationVersion String?
+
+  @@index([instrumentId, dataType, receivedAt])
+  @@index([provider, receivedAt])
+  @@index([payloadHash])
+  @@map("provider_observation")
+}
+
+/// A historical correction: when a provider later supplies a corrected candle,
+/// record the original + correction + reason + version rather than mutating in
+/// place (Rules 12/13 — never silently repair, never use future data blindly).
+model DataCorrection {
+  id             String   @id @default(cuid())
+  instrumentId   String
+  exchange       String
+  intervalStr    String
+  /// UTC epoch seconds — candle open time being corrected.
+  time           Int
+  /// Original observed values (JSON: {open,high,low,close,volume,oi}).
+  original       Json
+  /// Corrected values (JSON, same shape).
+  corrected      Json
+  correctedAt    DateTime @default(now())
+  provider       String?
+  reason         String?
+  /// Monotonic version for this (instrument,exchange,interval,time) correction.
+  version        Int      @default(1)
+  requestId      String?
+  datasetVersion String?
+
+  @@index([instrumentId, exchange, intervalStr, time])
+  @@index([correctedAt])
+  @@map("data_correction")
+}
+
+/// ── Data Foundation V7 §3 — versioned instrument-master snapshot ────────────
+/// A point-in-time, immutable snapshot of the canonical NSE F&O universe as
+/// resolved from a provider's instrument master (Angel ScripMaster / Upstox
+/// instrument dump). One header row per refresh, addressed by a monotonic
+/// `snapshotVersion` + content `checksum`. The per-instrument rows live in
+/// `InstrumentMasterEntry` and reference the header. Snapshots are NEVER
+/// mutated in place — a refresh writes a NEW version so provenance and
+/// reproducibility are preserved (a signal computed against v3 can always be
+/// traced to exactly the universe that produced it).
+model InstrumentMasterSnapshot {
+  id             String   @id @default(cuid())
+  /// Provider whose master produced this snapshot ("angel_one" | "upstox").
+  provider       String
+  /// Monotonic version string, e.g. "2026-09-12T10:30:00Z#angel_one".
+  snapshotVersion String  @unique
+  /// SHA-256 hex of the canonical-sorted entry set (integrity + dedup).
+  checksum       String
+  /// Total entries persisted for this snapshot.
+  recordCount    Int
+  /// Counts by instrument class (equities/futures/options + underlyings).
+  fnoUniverseCount Int    @default(0)
+  fnoEquityCount   Int    @default(0)
+  fnoFutureCount   Int    @default(0)
+  fnoOptionCount   Int    @default(0)
+  fnoIndexCount    Int    @default(0)
+  /// When the provider master was retrieved.
+  retrievedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  entries        InstrumentMasterEntry[]
+
+  @@index([provider, createdAt])
+  @@index([checksum])
+  @@map("instrument_master_snapshot")
+}
+
+/// One canonical instrument resolved from a provider master, bound to a
+/// versioned `InstrumentMasterSnapshot`. Fields the provider does not supply
+/// are stored NULL — never guessed (Absolute Rule: never guess unresolved
+/// instruments). `instrumentKey`/`symbolToken` are the provider-specific
+/// resolution handles (Upstox instrument_key / Angel symboltoken).
+model InstrumentMasterEntry {
+  id             String   @id @default(cuid())
+  snapshotId     String
+  snapshot       InstrumentMasterSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  provider       String
+  /// Provider-native instrument key (Upstox instrument_key). Null when N/A.
+  instrumentKey  String?
+  /// NSE trading symbol (e.g. "RELIANCE", "NIFTY28OCT2624000CE").
+  symbol         String
+  exchange       String
+  /// Provider segment ("NSE" | "NFO" | "BFO" | "NSE_INDEX" | …).
+  segment        String?
+  /// "EQ" | "FUTIDX" | "FUTSTK" | "OPTIDX" | "OPTSTK" | "INDEX".
+  instrumentType String
+  isin           String?
+  /// Angel symboltoken (numeric string). Null when N/A.
+  symbolToken    String?
+  /// Expiry display string for derivatives; null for cash/index.
+  expiry         String?
+  /// Strike (rupees) for options; null otherwise.
+  strike         Float?
+  /// "CE" | "PE" for options; null otherwise.
+  optionType     String?
+  lotSize        Int?
+  tickSize       Float?
+  /// Underlying name (e.g. "NIFTY", "RELIANCE").
+  underlying     String?
+  active         Boolean  @default(true)
+  validFrom      DateTime @default(now())
+  validTo        DateTime?
+
+  @@index([snapshotId])
+  @@index([provider, instrumentType])
+  @@index([underlying, expiry])
+  @@index([symbol])
+  @@map("instrument_master_entry")
+}
+
+/// ── Data Foundation V7 §16 — realtime vs historical reconciliation ──────────
+/// Records a divergence between a realtime-built candle and the same candle as
+/// later served by a historical provider. Never silently overwrites — the
+/// mismatch is recorded with both values + a resolution note so a human/ops can
+/// see cross-source divergence (Absolute Rule: never silently discard conflicts).
+model RealtimeHistoricalMismatch {
+  id              String   @id @default(cuid())
+  symbol          String
+  exchange        String
+  intervalStr     String
+  /// UTC epoch seconds — candle open time.
+  time            Int
+  realtimeClose   Float
+  historicalClose Float
+  /// abs(realtime - historical).
+  difference      Float
+  realtimeProvider  String?
+  historicalProvider String?
+  /// "KEPT_REALTIME" | "KEPT_HISTORICAL" | "RECORDED_ONLY" | "WITHIN_TOLERANCE"
+  resolution      String   @default("RECORDED_ONLY")
+  detectedAt      DateTime @default(now())
+
+  @@index([symbol, intervalStr, time])
+  @@index([detectedAt])
+  @@map("realtime_historical_mismatch")
 }

@@ -237,6 +237,36 @@ export function isNonRetryableWithinProvider(kind: FailureKind): boolean {
   return kind === "auth_failure" || kind === "hard_block";
 }
 
+/**
+ * Inverse of {@link codeToFailureKind}: map a health-layer FailureKind back to
+ * the canonical `MarketDataErrorCode` string. Used by provider adapters so a
+ * caught provider failure can be re-thrown as a *typed* `MarketDataError`
+ * instead of being swallowed into an all-null result (§4 — provider failure
+ * must never be indistinguishable from legitimate empty/unresolved data).
+ */
+export function failureKindToErrorCode(kind: FailureKind): string {
+  switch (kind) {
+    case "auth_failure":
+      return "AUTH_FAILURE";
+    case "hard_block":
+      return "AUTHORIZATION_FAILURE";
+    case "rate_limit":
+      return "RATE_LIMIT";
+    case "unavailable":
+      return "UNAVAILABLE";
+    case "timeout":
+      return "TIMEOUT";
+    case "network":
+      return "NETWORK";
+    case "malformed":
+      return "MALFORMED_RESPONSE";
+    case "ws_disconnect":
+    case "api_error":
+    default:
+      return "UNAVAILABLE";
+  }
+}
+
 /** Escalating half-open window: the longer a provider stays down, the less
  *  often we probe it — 30s, 60s, 120s … capped at CIRCUIT_RETRY_MAX_MS. This
  *  is what stops the every-30s open/probe/re-open flapping loop. */

@@ -1,0 +1,85 @@
+{
+  "retrainRun": {
+    "date": "2026-09-09",
+    "gitCommit": "1c2941b",
+    "engine": "ml-service/src/training/train_all.py (walk-forward + PurgedKFold + EmbargoApplier + ModelAcceptanceGate)",
+    "artifactsDir": "ml-service/artifacts_retrain (scratch — production artifacts NOT overwritten)",
+    "productionLogicChanged": false,
+    "datasetVersionDefault": "af-v3.0-fv4",
+    "featureVersionDefault": "fv4",
+    "labelVersionDefault": "lv1 (triple-barrier first-touch)",
+    "cvMethod": "walk_forward",
+    "embargoBars": 5,
+    "note": "Trains on DAILY-OHLCV-derived tensors (yfinance/Bhavcopy). App intraday/executed-trade history NOT usable (RCA-001)."
+  },
+  "datasetHashesSha256Prefix": {
+    "regime_train.npz": "482f56f4a4fdb1e8",
+    "ranking_train.npz": "1979dcf3b688926f",
+    "risk_train.npz": "ab027e930c52d781",
+    "strategy_train.npz": "9c68405b4943c21d"
+  },
+  "models": {
+    "market_regime_classifier": {
+      "algo": "XGBoost multiclass",
+      "tensor": "regime_train.npz X(826,28) y(826)",
+      "folds": 4,
+      "trainBars": 504, "valBars": 63, "testBars": 63,
+      "nOosSamples": 232,
+      "oosAccuracy": 0.4741,
+      "gateAccepted": false,
+      "gateReasons": [
+        "Accuracy 0.4741 below threshold 0.52",
+        "Sharpe ratio -0.8284 below threshold 0.5",
+        "Out-of-sample return -1.0000 is not positive",
+        "Max drawdown 1.0000 exceeds limit 0.25",
+        "Profit factor 0.9016 below threshold 1.05",
+        "Single fold contributes 100.0% of total return (limit 60.0%) - path-dependent"
+      ],
+      "acceptanceStatus": "INSUFFICIENT_EVIDENCE",
+      "saved": false,
+      "overfitSignal": "train_acc ~0.99 vs val_acc 0.29-1.00 by fold (severe overfit on 826-sample daily set)"
+    },
+    "stock_ranker": {
+      "algo": "LightGBM ranker",
+      "tensor": "ranking_train.npz X(25104,64) y groups(523)",
+      "nOosSamples": 22330,
+      "oosSpearmanIC": 0.0041,
+      "icPValue": 0.5409,
+      "gateThresholdIC": 0.02,
+      "acceptanceStatus": "INSUFFICIENT_EVIDENCE",
+      "saved": false,
+      "overfitSignal": "train_spearman 0.70 / val 0.65 but OOS IC ~0 (no genuine OOS edge)"
+    },
+    "risk_predictor": {
+      "algo": "XGBoost stop-hit + target-hit + drawdown-reg",
+      "tensor": "risk_train.npz X(38962,18) y_stop y_target y_drawdown",
+      "acceptanceStatus": "TRAINING_FAILED",
+      "error": "roc_auc_score raised 'Only one class present in y_true' inside an intermediate 63-bar validation fold",
+      "rootCause": "risk rows are grouped by symbol; a chronological 63-bar slice can land entirely within one single-class symbol block, even though global class balance is y_stop 58.5% / y_target 57.1% positive",
+      "saved": false,
+      "note": "Not patched — task forbids changing production logic during certification."
+    },
+    "strategy_selector": {
+      "algo": "CatBoost multiclass",
+      "tensor": "strategy_train.npz X(39682,17) y(39682)",
+      "acceptanceStatus": "BLOCKED",
+      "error": "catboost import fails: numpy.dtype size changed (numpy 2.2.6 binary incompatibility with installed catboost)",
+      "saved": false
+    },
+    "price_regime_forecaster": {
+      "acceptanceStatus": "NOT_RUN",
+      "reason": "darts/TFT deep-learning deps commented out in requirements.txt; no prebuilt tensor; runs in lightweight/heuristic form only"
+    },
+    "iv_regime_classifier": {
+      "acceptanceStatus": "NOT_RUN",
+      "reason": "PatchTST/tsai deep deps optional/not installed; no prebuilt tensor"
+    },
+    "meta_decision_model": {
+      "acceptanceStatus": "NOT_TRAINABLE_ON_REAL_DATA",
+      "reason": "TS ensemble meta-learner (trainMetaModel) requires persisted PredictionRecord/ResolutionRecord OOS outcomes; signal-learning-loop uses InMemory store only, no Prisma adapter. Runtime returns defaultMetaArtifact (untrained, globalPrior 0.5, method raw)."
+    }
+  },
+  "championComparison": {
+    "note": "Existing production artifacts (ml-service/artifacts/*, dated 2026-08-19) contain raw booster dumps with NO embedded provenance or validation metrics; no model_registry.json exists. Therefore no recorded champion OOS metrics exist to compare against. Champion/challenger promotion CANNOT be evaluated — challengers all fail their own acceptance gates and none are eligible for promotion regardless."
+  }
+}

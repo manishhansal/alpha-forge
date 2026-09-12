@@ -21,6 +21,11 @@ import { bootstrapRegistry } from "@/lib/market-data/registry";
 import type { OHLCVCandle } from "@/lib/market-data/types";
 // V2.1 DATA GATE: every signal path must check DataQualityGate before trading.
 import { evaluateDataGate } from "@/lib/data-service/gate-client";
+// V5 §60: also enforce the V4 availability-based data gate (fail-closed) using
+// REAL persisted-candle coverage as the critical dependency — a data-integrity
+// veto ON TOP of the existing gate. Does not read or change any strategy logic.
+import { enforceDataGate, dependencyFromStatus } from "@/lib/market-data/services/data-gate-enforcement.service";
+import { checkHistorySufficiency } from "@/lib/market-data/services/coverage.service";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
@@ -255,6 +260,33 @@ export function startIndiaScalperJob(): JobHandle {
                 atrBySymbol.set(sig.symbol, await getIndiaIntradayAtr(sig.symbol));
               }
               const atr = atrBySymbol.get(sig.symbol) ?? undefined;
+
+              // ── V5 §60 AVAILABILITY DATA GATE (fail-closed) ──────────────
+              // A data-integrity veto based on REAL persisted intraday coverage.
+              // If the strategy's critical 5m history is genuinely unavailable
+              // (0 persisted bars), block the trade — NO SIGNAL — rather than
+              // trading on data we don't actually have. This does NOT alter any
+              // strategy scoring; it only vetoes on missing data (Rule §61).
+              try {
+                const hist = await checkHistorySufficiency({
+                  instrumentId: sig.symbol, exchange: "NSE", interval: "5m", requiredBars: 1, prisma,
+                });
+                const availStatus = hist.status === "AVAILABLE" ? "AVAILABLE"
+                  : hist.status === "INSUFFICIENT_HISTORY" ? "INSUFFICIENT_HISTORY"
+                  : hist.availableBars > 0 ? "PARTIAL" : "UNAVAILABLE";
+                const gate = enforceDataGate({
+                  dependencies: [dependencyFromStatus("ohlcv_5m", availStatus as never, true)],
+                  requireFullyReady: false, // allow DEGRADED; block only hard-unavailable critical data
+                });
+                if (!gate.allowed) {
+                  child.debug("signal blocked by availability data gate", { symbol: sig.symbol, tf, reason: gate.reason });
+                  dupSignal += 1;
+                  continue;
+                }
+              } catch {
+                // Coverage check failure is non-fatal here; the V2.1 gate below
+                // still applies. Never crash the tick on a gate read.
+              }
 
               // ── V2.1 DATA QUALITY GATE ───────────────────────────────────
               // HARD GATE: check DataQualityGate before opening any paper trade.

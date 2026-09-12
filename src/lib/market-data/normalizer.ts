@@ -197,7 +197,14 @@ export function normaliseCandlesFromAngel(
     ) {
       continue;
     }
-    out.push({ time: utcSec, open, high, low, close, volume: volume ?? 0 });
+    // G-06: flag placeholder-0 volume so a source-missing volume is never
+    // mistaken for a genuine zero-volume bar (Absolute Rules 2/4).
+    const volumeUnavailable = !Number.isFinite(volume);
+    out.push({
+      time: utcSec, open, high, low, close,
+      volume: Number.isFinite(volume) ? volume : 0,
+      ...(volumeUnavailable ? { volumeUnavailable: true } : {}),
+    });
   }
   return out;
 }
@@ -223,13 +230,15 @@ export function normaliseCandlesFromUpstox(
   for (const r of rows) {
     const ms = Date.parse(r.timestamp);
     if (!Number.isFinite(ms)) continue;
+    const volumeUnavailable = !Number.isFinite(r.volume);
     out.push({
       time: Math.floor(ms / 1_000),
       open: r.open,
       high: r.high,
       low: r.low,
       close: r.close,
-      volume: r.volume,
+      volume: Number.isFinite(r.volume) ? r.volume : 0,
+      ...(volumeUnavailable ? { volumeUnavailable: true } : {}),
       ...(r.oi != null ? { oi: r.oi } : {}),
     });
   }
@@ -269,6 +278,29 @@ export function intervalToUpstox(interval: Interval): string | null {
     "1d": "day",
     "1w": "week",
     "1M": "month",
+  };
+  return map[interval] ?? null;
+}
+
+/**
+ * Map a canonical `Interval` to the Upstox **V3** historical-candle unit+value
+ * (`/v3/historical-candle/{key}/{unit}/{value}/{to}/{from}`). V3 supports
+ * per-minute intervals (1,3,5,15,30) and hours/days/weeks/months, unlocking the
+ * intraday set V2 could not serve (V2 only had 1minute/30minute/day/week/month).
+ * Returns null for intervals V3 does not support. Verified live: 200 for
+ * minutes/1,5 and days/1 on both equities and indices.
+ */
+export function intervalToUpstoxV3(interval: Interval): { unit: string; value: number } | null {
+  const map: Partial<Record<Interval, { unit: string; value: number }>> = {
+    "1m": { unit: "minutes", value: 1 },
+    "3m": { unit: "minutes", value: 3 },
+    "5m": { unit: "minutes", value: 5 },
+    "15m": { unit: "minutes", value: 15 },
+    "30m": { unit: "minutes", value: 30 },
+    "1h": { unit: "hours", value: 1 },
+    "1d": { unit: "days", value: 1 },
+    "1w": { unit: "weeks", value: 1 },
+    "1M": { unit: "months", value: 1 },
   };
   return map[interval] ?? null;
 }

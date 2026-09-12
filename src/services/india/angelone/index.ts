@@ -206,8 +206,24 @@ export function isAngelConfigured(): boolean {
  * source has a complete credential set, so callers can fall back to Yahoo/NSE.
  */
 async function resolveConfig(): Promise<SmartApiConfig | null> {
+  // 1. Environment credentials (cover env-configured deployments).
   const envCreds = readEnvCredentials();
   if (envCreds) return buildConfig(envCreds);
+
+  // 2. V5 fix: process-scoped worker override — the worker/backfill/CLI loads
+  //    the stored per-user credentials by userId (no session) at startup. This
+  //    is what lets the worker actually use frontend-configured broker creds.
+  try {
+    const { getWorkerAngelCredentials } = await import(
+      "@/lib/market-data/worker-credentials"
+    );
+    const workerCreds = getWorkerAngelCredentials();
+    if (workerCreds) return buildConfig(workerCreds);
+  } catch {
+    /* worker-credentials module unavailable — fall through */
+  }
+
+  // 3. Request-scoped per-user DB resolver (needs a session; app request path).
   try {
     const mod = await import("@/features/settings/angel-credentials");
     const dbCreds = await mod.getAngelConfigForRequest();

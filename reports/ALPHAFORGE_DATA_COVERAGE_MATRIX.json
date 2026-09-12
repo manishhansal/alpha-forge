@@ -1,0 +1,61 @@
+{
+  "schema": "alphaforge-data-coverage-matrix",
+  "generatedAt": "2026-09-12T13:30:00Z",
+  "provenance": "CARRIED_FORWARD_FROM_V7_DB_PROBE",
+  "important": "These figures were produced by the V7 DB probe (2026-09-12) and were NOT re-derived against a live Postgres in THIS session. The code paths that PRODUCE the coverage matrix at runtime are coverage.service.ts + signal-data-snapshot.service.ts (buildSignalDataSnapshot). Re-run `npm run data:readiness` against the live DB for a fresh matrix.",
+  "instrumentMaster": {
+    "recordCount": 72305,
+    "fnoUnderlyings": 238,
+    "fnoEquities": 228,
+    "fnoFutures": 1306,
+    "fnoOptions": 70765,
+    "fnoIndices": 6,
+    "versioned": true,
+    "checksummed": true
+  },
+  "daily": {
+    "rows": 91555,
+    "instruments": 176,
+    "indexRange": "2021-12-31..2026-09-11",
+    "indexDailyDepth": { "NIFTY": 1166, "BANKNIFTY": 1166, "FINNIFTY": 1166, "MIDCPNIFTY": 0 }
+  },
+  "intraday": [
+    { "interval": "1m", "rows": 46150, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    { "interval": "3m", "rows": 10125, "instruments": 9, "providers": ["upstox"], "note": "Angel has no 3m — Upstox only (capability-correct)" },
+    { "interval": "5m", "rows": 13804, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    { "interval": "15m", "rows": 3878, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    { "interval": "30m", "rows": 3320, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    { "interval": "1h", "rows": 2869, "instruments": 15, "providers": ["angel_one", "upstox"] }
+  ],
+  "options": {
+    "strikes": 2990,
+    "underlyings": ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "HDFCBANK", "TCS"],
+    "oiPopulated": 2990,
+    "ivPopulated": 0,
+    "bidPopulated": 0,
+    "askPopulated": 0,
+    "fieldSemantics": "OI real on all rows. IV/bid/ask NULL with *Unavailable flags — MARKET_CLOSED (Angel optionGreek AB9019 off-hours). Never fabricated; NULL means unavailable, not zero."
+  },
+  "gaps": {
+    "dailyPending": 0,
+    "dailyRecovered": 179,
+    "dailyCorrections": 3583,
+    "intradayPending": 504,
+    "intradayRecoveryStatus": "RECOVERABLE via deep-backfill + gap runner; each unrecoverable gap must carry an explicit provider-verified UNAVAILABLE/MARKET_CLOSED classification"
+  },
+  "perStrategyReadinessSample": {
+    "NIFTY_ORB_5m": "READY",
+    "NIFTY_VWAP_scalp_5m": "READY",
+    "NIFTY_trend_1h": "READY",
+    "NIFTY_daily_swing": "READY",
+    "NIFTY_option_OI": "READY",
+    "NIFTY_option_IV": "DEGRADED (MISSING_IV off-hours)",
+    "RELIANCE_5m": "READY",
+    "MIDCPNIFTY_daily_swing": "BLOCKED (DATA_UNAVAILABLE — Upstox deep daily)"
+  },
+  "coverageMatrixColumns": [
+    "provider", "instrument", "instrumentType", "timeframe", "historicalStart",
+    "historicalEnd", "expectedSessions", "actualBars", "missingBars",
+    "coveragePercent", "provenance", "freshness", "quality", "status", "failureReason"
+  ]
+}

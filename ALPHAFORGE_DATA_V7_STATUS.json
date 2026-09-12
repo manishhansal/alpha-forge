@@ -1,0 +1,147 @@
+{
+  "schema": "alphaforge-data-v7-status",
+  "generatedAt": "2026-09-12T12:20:00Z",
+  "market": "IST closed (Saturday) — live-WS tick + live option IV/bid/ask not verifiable this session",
+  "overall": "DATA_DEGRADED",
+  "realtimeCertification": "LIVE_VERIFICATION_PENDING_MARKET_OPEN",
+  "overallReason": "Historical/instrument/gap/option-OI/gate/snapshot/readiness foundation genuinely populated + verified against the live DB. DEGRADED (not READY) because live option IV/bid/ask are NULL off-hours, live WS ticks are unverifiable while closed, the full 228-name equity deep backfill is a multi-hour operator run, and MIDCPNIFTY deep daily is unavailable from Upstox.",
+  "criteriaWeakened": false,
+  "verifiedLiveThisSession": {
+    "credentialFlowDbToWorker": true,
+    "angelAuth": true,
+    "angelRealHistorical": { "symbol": "RELIANCE", "interval": "5m", "count": 344 },
+    "upstoxV3IndexDaily": { "symbols": ["NIFTY", "BANKNIFTY", "FINNIFTY"], "barsEach": 1166 },
+    "postgres": "OK",
+    "redis": "OK"
+  },
+  "instrumentMaster": {
+    "table": "instrument_master_snapshot + instrument_master_entry",
+    "recordCount": 72305,
+    "fnoUniverseCount": 238,
+    "fnoEquityCount": 228,
+    "fnoFutureCount": 1306,
+    "fnoOptionCount": 70765,
+    "fnoIndexCount": 6,
+    "snapshotVersion": "2026-09-12T11:57:35.302Z#angel_one",
+    "checksum": "082411bb8a889077190bd986807494e029f6073ad90c41d269c0bd51c5d5e4c7",
+    "versioned": true,
+    "checksummed": true
+  },
+  "daily": {
+    "rows": 91555,
+    "instruments": 176,
+    "indexDailyDepth": { "NIFTY": 1166, "BANKNIFTY": 1166, "FINNIFTY": 1166, "MIDCPNIFTY": 0 },
+    "indexRange": "2021-12-31..2026-09-11",
+    "midcpniftyNote": "Upstox did not serve deep MIDCPNIFTY daily — honest remaining gap"
+  },
+  "intraday": {
+    "1m": { "rows": 46150, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    "3m": { "rows": 10125, "instruments": 9, "providers": ["upstox"], "note": "Angel has no 3m interval (verified live) — Upstox only" },
+    "5m": { "rows": 13804, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    "15m": { "rows": 3878, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    "30m": { "rows": 3320, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    "1h": { "rows": 2869, "instruments": 15, "providers": ["angel_one", "upstox"] },
+    "intradayInstruments": 15
+  },
+  "options": {
+    "strikes": 2990,
+    "underlyings": ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "HDFCBANK", "TCS"],
+    "oiPopulated": 2990,
+    "ivPopulated": 0,
+    "bidPopulated": 0,
+    "askPopulated": 0,
+    "stockOptionsCaptured": true,
+    "expiryDiscovery": { "current": "29-Sep-2026", "next": "27-Oct-2026", "automatic": true },
+    "note": "OI real on all rows. IV/bid/ask NULL with *Unavailable flags — HONEST off-hours (Angel optionGreek AB9019). Never fabricated."
+  },
+  "gaps": {
+    "daily": { "pending": 0, "recovered": 179, "corrections": 3583 },
+    "intradayPending": 504,
+    "note": "All 179 daily gaps recovered (verify-before-resolve). Daily anchor mismatch fixed via canonical 09:15-IST re-anchoring. 504 intraday gaps detected PENDING (recoverable by operator deep-backfill)."
+  },
+  "realtime": {
+    "wsWiredIntoWorker": true,
+    "job": "india-realtime-candles",
+    "candleBuilderActive": "during NSE session only",
+    "reconciliationTable": "realtime_historical_mismatch",
+    "selfHealing": true,
+    "marketClosedHandling": "LIVE_LISTENER_IDLE_MARKET_CLOSED — no false live claim",
+    "liveTickVerification": "PENDING_MARKET_OPEN (npm run data:live-verify)"
+  },
+  "dataGate": {
+    "failClosed": true,
+    "producersGatedV6": ["india-scalper", "auto-trader", "IndiaDailyPick", "FnoTrendScan", "StrategyPaperTrade"],
+    "producersGatedV7": ["SignalHistory ingest", "A+ signal factory (via canonical veto)", "ML inference decision path (via canonical veto)"],
+    "signalSurfaceGate": "evaluateSignalSurfaceDataGate — composes global state + snapshot consistency + producer history gate; no-deps => BLOCKED; never throws",
+    "mlModelsChanged": false,
+    "mlThresholdsChanged": false
+  },
+  "readiness": {
+    "overallDataStatus": "DATA_DEGRADED",
+    "perStrategySample": {
+      "NIFTY_ORB_5m": "READY",
+      "NIFTY_VWAP_scalp_5m": "READY",
+      "NIFTY_trend_1h": "READY",
+      "NIFTY_daily_swing": "READY",
+      "NIFTY_option_OI": "READY",
+      "NIFTY_option_IV": "DEGRADED (MISSING_IV off-hours)",
+      "RELIANCE_5m": "READY",
+      "RELIANCE_option_OI": "BLOCKED (no stock-option OI captured for RELIANCE this session)"
+    },
+    "exactReasons": true,
+    "neverGloballyReadyBecauseOneStrategyIs": true
+  },
+  "tests": {
+    "typecheck": "PASS (main + worker)",
+    "eslint": "0 errors on V7 files",
+    "prismaValidate": "PASS",
+    "prismaMigrateStatus": "21 migrations, in sync",
+    "vitest": { "files": 221, "passed": 3453, "failed": 0 },
+    "nextBuild": "PASS",
+    "newV7Tests": 26
+  },
+  "productionPurity": {
+    "demoRowsInCandleBar": 0,
+    "demoRowsInOptionChainStrike": 0,
+    "demoRowsInProviderObservation": 0,
+    "demoRowsInInstrumentMaster": 0,
+    "verified": true
+  },
+  "hiddenBlockerSweep": {
+    "todoFixmeInMarketDataCore": 0,
+    "returnEmptyReturnNull": "all classified LEGITIMATE (null-guards on optional fields, provider-unavailable fallbacks, capability gates) — no bug"
+  },
+  "migrationsAdded": [
+    "20260912000000_data_foundation_v7_instrument_master",
+    "20260912010000_data_foundation_v7_realtime_mismatch"
+  ],
+  "newArtifacts": {
+    "services": [
+      "instrument-master-universe.service.ts",
+      "feature-lookback.service.ts",
+      "fno-backfill-runner.service.ts",
+      "option-strike-capture.service.ts",
+      "realtime-reconciliation.service.ts",
+      "signal-surface-data-gate.service.ts",
+      "signal-data-snapshot.service.ts"
+    ],
+    "workerJobs": ["india-realtime-candles.ts"],
+    "scripts": ["data-v7-gaps.ts", "data-v7-live-verify.ts"],
+    "cliCommands": ["refresh-universe", "backfill --universe=fno", "options-capture", "readiness-matrix"],
+    "npmScripts": ["data:refresh-universe", "data:live-verify"],
+    "tests": ["tests/lib/market-data/data-foundation-v7.test.ts (26 tests)"]
+  },
+  "remainingBlockers": [
+    "Live option IV/bid/ask — NULL off-hours (Angel AB9019); populates during market hours.",
+    "Live WebSocket tick verification — deferred to market open (data:live-verify).",
+    "Full 228-name equity deep backfill — multi-hour operator run (runbook in report).",
+    "MIDCPNIFTY deep daily history — not served by Upstox; needs alternate source.",
+    "504 intraday gaps PENDING — recoverable by the deep-backfill run.",
+    "evaluateShadow live-builder hook — pre-existing V6 gap; data-gate veto param ready."
+  ],
+  "capabilityCorrections": {
+    "angel_3m": "removed — Angel getCandleData has no THREE_MINUTE (verified 0 bars live)",
+    "angel_index_history": "removed — Angel returns 0 for index tokens; indices route to Upstox V3",
+    "upstox_intraday_window": "minute intervals capped to small per-request windows (1m=7d,3m=14d) to avoid HTTP 400"
+  }
+}

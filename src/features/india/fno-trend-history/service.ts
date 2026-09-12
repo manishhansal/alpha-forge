@@ -97,7 +97,17 @@ export async function snapshotFnoTrendScan(
   // Don't persist before the session opens.
   if (!isNseMarketOpenIST(now)) return;
 
-  const upserts = hits.map((h) => {
+  // ── V6 §20 FAIL-CLOSED DATA GATE (producer-level) ──────────────────────────
+  // The 14-condition trend scan is computed from DAILY indicators (MA/ADX/MACD/
+  // ATR/RSI). Before a hit is persisted as a track-record row, its symbol must
+  // have enough REAL persisted daily history for those indicators to warm up.
+  // A symbol whose daily data is genuinely unavailable/insufficient is DROPPED
+  // (NO SIGNAL) rather than persisted on data we don't have (§20/§42). This is a
+  // data-integrity veto ONLY — it never reads or changes the scan conditions.
+  const gatedHits = await gateHitsByData(hits, db);
+  if (gatedHits.length === 0) return;
+
+  const upserts = gatedHits.map((h) => {
     const entry    = h.entry    ?? h.price ?? 0;
     const stopLoss = h.stopLoss ?? 0;
     const tp1      = h.tp1      ?? 0;
@@ -143,6 +153,40 @@ export async function snapshotFnoTrendScan(
   });
 
   await Promise.allSettled(upserts);
+}
+
+/**
+ * V6 §20/§21 producer data gate for the FnO trend scan. Filters scanner hits to
+ * those whose symbol has sufficient persisted daily history (the scan's warm-up
+ * window). Fails CLOSED: a gate-read error drops the hit. Never throws.
+ */
+const FNO_SCAN_WARMUP_BARS = 30; // MA/ADX/MACD/ATR/RSI(14) daily warm-up floor.
+async function gateHitsByData(
+  hits: ScannerHit[],
+  db: PrismaClient,
+): Promise<ScannerHit[]> {
+  try {
+    const { evaluateProducerDataGate } = await import(
+      "@/lib/market-data/services/producer-data-gate.service"
+    );
+    const kept: ScannerHit[] = [];
+    for (const h of hits) {
+      const gate = await evaluateProducerDataGate({
+        instrumentId: h.symbol,
+        exchange: "NSE",
+        interval: "1d",
+        requiredBars: FNO_SCAN_WARMUP_BARS,
+        requireFullyReady: false,
+        prisma: db,
+      });
+      if (gate.allowed) kept.push(h);
+      else console.warn(`[fno-trend] data gate blocked ${h.symbol}: ${gate.reason}`);
+    }
+    return kept;
+  } catch (err) {
+    console.warn("[fno-trend] data gate unavailable — failing closed (no snapshot this run):", (err as Error).message);
+    return [];
+  }
 }
 
 // ─── 2. Live-tracking: called by the worker every minute ─────────────────────

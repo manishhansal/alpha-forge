@@ -45,7 +45,8 @@ import type {
   ProviderHealth,
   SubscribeRequest,
 } from "../types";
-import { getProviderHealth, recordFailure, recordStaleData, recordSuccess, isTickStale, mdLog, type FailureKind } from "../health";
+import { getProviderHealth, recordFailure, recordStaleData, recordSuccess, isTickStale, mdLog, failureKindToErrorCode, type FailureKind } from "../health";
+import { MarketDataError, type MarketDataErrorCode } from "../types";
 import { memoCandles, memoInstrumentMaster, memoQuote } from "../cache/market-cache";
 import { filterValidCandles } from "../validation/candle-validator";
 import { normaliseExpiry, intervalToSmartApi, finiteOrNull } from "../normalizer";
@@ -1027,8 +1028,19 @@ export class AngelOneProvider implements MarketDataProvider {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      recordFailure(PROVIDER_ID, classifyProviderError(msg), msg);
-      return symbols.map(() => null);
+      const kind = classifyProviderError(msg);
+      recordFailure(PROVIDER_ID, kind, msg);
+      // §4 ROOT-CAUSE FIX: a provider FAILURE must NEVER be returned as an
+      // all-null quote array — that is indistinguishable from a successful call
+      // that legitimately could not resolve some symbols, and it also robs the
+      // failover engine of the throw it needs to try the next capable provider.
+      // Re-throw a *typed* MarketDataError so (a) withFailover routes to Upstox,
+      // and (b) getQuotesWithStatus stamps the true reason (AUTH_FAILED/…).
+      throw new MarketDataError(
+        `Angel One getQuotes failed for ${symbols.length} symbol(s): ${msg}`,
+        PROVIDER_ID,
+        failureKindToErrorCode(kind) as MarketDataErrorCode,
+      );
     }
   }
 

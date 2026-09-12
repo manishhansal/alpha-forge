@@ -212,8 +212,18 @@ function fakePrisma() {
       },
     ),
   };
+  // V6 §20 data gate: the builder gates fresh picks on persisted daily history
+  // via checkHistorySufficiency (candleBar.count/aggregate). These pick-ASSEMBLY
+  // tests are not data-availability tests, so the fake reports ample daily
+  // coverage (well above the 20-bar warm-up floor) — i.e. the gate passes and
+  // the assembly logic under test runs unchanged. (Production still checks the
+  // real DB and fails closed on genuinely-missing history.)
+  const candleBar = {
+    count: vi.fn(async () => 500),
+    aggregate: vi.fn(async () => ({ _min: { time: 1_700_000_000 }, _max: { time: 1_750_000_000 } })),
+  };
   return {
-    client: { indiaDailyPick: model, $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)) } as never,
+    client: { indiaDailyPick: model, candleBar, $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)) } as never,
     model,
     seed: (rows: Record<string, unknown>[]) => {
       store = rows.map((r) => ({

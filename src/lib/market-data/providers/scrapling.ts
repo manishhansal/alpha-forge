@@ -27,7 +27,8 @@ import type {
   SubscribeRequest,
 } from "../types";
 import { MarketDataError, httpStatusToErrorCode, parseRetryAfterMs } from "../types";
-import { getProviderHealth } from "../health";
+import { getProviderHealth, mdLog } from "../health";
+import { filterValidCandlesWithReport } from "../validation/candle-validator";
 import {
   memoQuote,
   memoQuoteBatch,
@@ -203,7 +204,25 @@ export class ScraplingProvider implements MarketDataProvider {
           `/scraping/historical?${params}`,
           opts?.signal,
         );
-        return data.candles;
+        // Phase 22 (finding M): do NOT trust gateway data blindly. Re-validate
+        // OHLC invariants + strict-ascending timestamps locally before it enters
+        // the canonical layer. Invalid/out-of-order candles are dropped and the
+        // drop is reported (never silently repaired — Rule 11).
+        const raw = data.candles ?? [];
+        const report = filterValidCandlesWithReport(raw);
+        if (report.droppedCount > 0) {
+          mdLog("stale_data", {
+            reason: "scrapling_candles_dropped_on_local_validation",
+            providerId: PROVIDER_ID,
+            symbol: req.symbol,
+            exchange: req.exchange,
+            interval: req.interval,
+            inputCount: report.inputCount,
+            droppedCount: report.droppedCount,
+            firstDrop: report.dropped[0] ?? null,
+          });
+        }
+        return report.candles;
       },
     );
   }
@@ -317,6 +336,12 @@ export class ScraplingProvider implements MarketDataProvider {
           const now = Date.now();
           for (const quote of quotes) {
             if (!quote || quote.ltp == null) continue;
+            // RCA-D03: this is a REST-polled quote, not a real-time exchange
+            // tick. It has no exchange-side timestamp, so mark it synthetic and
+            // use the data-service fetch time (quote.fetchedAt) rather than the
+            // local poll instant as the best-available data timestamp. Freshness
+            // checks MUST NOT treat this as an exchange-fresh tick (Rule 7).
+            const dataTsMs = quote.fetchedAt ? Date.parse(quote.fetchedAt) : now;
             onTick({
               token:               quote.token ?? quote.symbol,
               symbol:              quote.symbol,
@@ -326,9 +351,10 @@ export class ScraplingProvider implements MarketDataProvider {
               changePct:           quote.changePct,
               volume:              quote.volume,
               oi:                  quote.oi,
-              exchangeTimestampMs: now,
+              exchangeTimestampMs: Number.isFinite(dataTsMs) ? dataTsMs : now,
               receivedAtMs:        now,
               provider:            PROVIDER_ID,
+              synthetic:           true,
             });
           }
         } catch (err) {
