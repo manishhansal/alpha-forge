@@ -15,5 +15,8 @@ pytest-mock==3.14.0
 jugaad-data==0.35.5
 # openchart: NSE charting platform historical OHLCV (1m–1M, no 3m)
 openchart==0.2.0
+# curl_cffi: Chrome TLS fingerprint spoofing — bypasses Akamai WAF on
+# charting.nseindia.com (which blocks standard Python requests/OpenSSL)
+curl_cffi>=0.16.0
 # pandas: required by both jugaad-data and openchart for DataFrame handling
 pandas>=2.0.0

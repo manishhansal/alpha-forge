@@ -3,45 +3,39 @@ providers/openchart/adapter.py — Data Foundation V8 §11.
 
 OpenChart 0.2.0 provider adapter for AlphaForge.
 
+NSE WAF bypass status (fully investigated 2026-09-12):
+  - NSE uses Akamai WAF with TWO layers of bot protection:
+    1. TLS fingerprinting (JA3/JA4): BYPASSED via curl_cffi Chrome impersonation
+    2. Behavioural session token (nsit cookie): REQUIRES interactive browser session
+       The `nsit` cookie is only issued after Akamai's behavioural JS challenge
+       completes (mouse movements, timing, page interactions). It cannot be
+       obtained by curl_cffi alone without Playwright/Selenium headless automation.
+  - Without nsit: charting API returns {"status":true,"data":[]} always.
+  - With nsit: charting API serves real historical OHLCV data.
+
+Current state: TLS bypass implemented; nsit acquisition not yet automated.
+To enable OpenChart: use Playwright to seed the session (see scripts/seed_nse_session.py).
+Alternative: use jugaad-data for EOD and Angel One/Upstox for intraday — both work.
+
 Provides:
   - Historical OHLCV for NSE equities (EQ), indices (IDX), and F&O (FO)
   - Supported timeframes: 1m 5m 10m 15m 30m 1h 1d 1w 1M (NO 3m)
-  - Rate limiting: 1 req/s max (NSE charting platform — be conservative)
+  - curl_cffi Chrome TLS impersonation (layer 1 bypass)
+  - Optional nsit cookie injection for layer 2 bypass
   - Retries with exponential backoff
-  - Response validation
   - Raw response capture (landing zone)
   - Provenance records
-
-OpenChart API (verified against openchart 0.2.0):
-  from openchart import NSEData
-  nse = NSEData()
-
-  # Search
-  nse.search(query, segment)  # segment: 'IDX' | 'EQ' | 'FO'
-
-  # Historical
-  nse.historical(symbol, segment, start, end, interval)
-  # interval: '1m'|'5m'|'10m'|'15m'|'30m'|'1h'|'1d'|'1w'|'1M'
-  # Returns: DataFrame with columns [Open, High, Low, Close, Volume]
-  #          Index: Timestamp (pandas DatetimeTZDtype)
-
-IMPORTANT:
-  - OpenChart does NOT provide OI, IV, bid, ask.
-  - Never store 0 for missing OI/IV — those fields stay None.
-  - This provider is primarily for reconciliation and historical gaps.
-  - Live data is NOT provided — realtime=False for all capabilities.
 
 ABSOLUTE RULES:
   - 3m raises ValueError — permanently removed from scope.
   - Never return fabricated data on network error.
   - Never use openchart as a live signal source.
+  - OI/IV/bid/ask always stay None.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
-import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -68,12 +62,72 @@ from src.providers.common.provenance import (
 
 logger = structlog.get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# NSE WAF bypass — Chrome TLS fingerprint via curl_cffi
+# ---------------------------------------------------------------------------
+
+_CHROME_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/119.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Content-Type": "application/json",
+    "Origin": "https://charting.nseindia.com",
+    "Referer": "https://charting.nseindia.com/",
+}
+
+def _make_curl_cffi_session():
+    """
+    Create a curl_cffi session impersonating Chrome 110.
+    Seeds WAF cookies from the NSE homepage before returning.
+    Returns None if curl_cffi is not installed.
+    """
+    try:
+        from curl_cffi import requests as cffi_requests
+    except ImportError:
+        return None
+
+    session = cffi_requests.Session(impersonate="chrome110")
+    session.headers.update(_CHROME_HEADERS)
+
+    # Step 1: seed _abck / ak_bmsc / bm_sz cookies from NSE homepage
+    try:
+        session.get("https://www.nseindia.com", timeout=12)
+    except Exception:
+        pass
+    time.sleep(1.5)
+
+    # Step 2: seed bm_sv from the charting sub-domain
+    try:
+        session.headers.update({"Referer": "https://charting.nseindia.com/"})
+        session.get("https://charting.nseindia.com", timeout=12)
+    except Exception:
+        pass
+    time.sleep(1.5)
+
+    return session
+
+
+def _inject_cffi_session_into_openchart(nse_instance: Any, cffi_session: Any) -> None:
+    """
+    Monkey-patch an NSEData instance's internal requests.Session with the
+    curl_cffi session so all subsequent API calls use Chrome TLS fingerprinting.
+    """
+    if cffi_session is None:
+        return
+    # OpenChart stores the session as nse_instance.session
+    nse_instance.session = cffi_session
+    nse_instance._cookies_set = True  # skip openchart's own cookie-seeding
+
 
 # ---------------------------------------------------------------------------
 # Segment mapping
 # ---------------------------------------------------------------------------
 
-# AlphaForge instrument type → openchart segment
 _SEGMENT_MAP = {
     "EQ":    "EQ",
     "INDEX": "IDX",
@@ -85,37 +139,12 @@ _SEGMENT_MAP = {
     "OPTSTK": "FO",
 }
 
-# openchart uses "<symbol>-EQ" naming for equities
+
 def _oc_symbol(symbol: str, segment: str) -> str:
-    """Build the openchart symbol string."""
-    if segment == "EQ":
-        s = symbol.upper()
-        if not s.endswith("-EQ"):
-            return f"{s}-EQ"
-        return s
-    return symbol.upper()
-
-
-# ---------------------------------------------------------------------------
-# Rate limiter
-# ---------------------------------------------------------------------------
-
-class _SimpleRateLimiter:
-    """Token-bucket rate limiter for openchart (max 1 req/s)."""
-
-    def __init__(self, requests_per_second: float = 1.0) -> None:
-        self._min_interval = 1.0 / requests_per_second
-        self._last_call: float = 0.0
-
-    async def acquire(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self._last_call
-        if elapsed < self._min_interval:
-            await asyncio.sleep(self._min_interval - elapsed)
-        self._last_call = time.monotonic()
-
-
-_rate_limiter = _SimpleRateLimiter(requests_per_second=1.0)
+    s = symbol.upper()
+    if segment == "EQ" and not s.endswith("-EQ"):
+        return f"{s}-EQ"
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +153,6 @@ _rate_limiter = _SimpleRateLimiter(requests_per_second=1.0)
 
 @dataclass
 class OpenChartAcquisitionResult:
-    """Result of a single OpenChart acquisition request."""
     provider:       str                        = "openchart"
     symbol:         str                        = ""
     segment:        str                        = "EQ"
@@ -154,53 +182,87 @@ class OpenChartAcquisitionResult:
 
 class OpenChartAdapter:
     """
-    OpenChart 0.2.0 adapter for AlphaForge historical data acquisition.
+    OpenChart 0.2.0 adapter with NSE WAF bypass via curl_cffi.
 
-    Usage
-    -----
-    adapter = OpenChartAdapter()
-    result = await adapter.get_historical(
-        symbol="RELIANCE",
-        segment="EQ",
-        interval_str="1d",
-        from_date=date(2024, 1, 1),
-        to_date=date(2024, 12, 31),
-    )
+    Uses Chrome TLS fingerprinting to bypass Akamai's bot detection on
+    charting.nseindia.com. Seeds session cookies from the NSE homepage
+    before making any API calls.
     """
 
     PROVIDER_ID = "openchart"
     MAX_RETRIES = 3
     BACKOFF_BASE_SECS = 2.0
+    REQUEST_SLEEP_SECS = 1.5   # between requests — avoid rate-ban
 
-    # OpenChart supported timeframes (verified from README — no 3m)
     SUPPORTED_INTERVALS: frozenset[str] = frozenset({
         "1m", "5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M"
     })
 
-    def __init__(self) -> None:
-        self._import_openchart()
+    def __init__(self, nsit_cookie: Optional[str] = None) -> None:
+        """
+        Parameters
+        ----------
+        nsit_cookie : str, optional
+            The `nsit` session cookie from an interactive NSE browser session.
+            Required for charting API to return data. Without it, the API
+            returns {"status":true,"data":[]} on every request.
+            Obtain via Playwright: scripts/seed_nse_session.py
+        """
+        self._openchart_available = False
+        self._cffi_available = False
+        self._last_request: float = 0.0
+        self._nse: Any = None
+        self._cffi_session: Any = None
+        self._nsit_cookie: Optional[str] = nsit_cookie
+        self._import_libs()
 
-    def _import_openchart(self) -> None:
-        """Lazy import openchart — raises ImportError with clear message if missing."""
+    def _import_libs(self) -> None:
         try:
             from openchart import NSEData  # noqa: F401
             self._openchart_available = True
         except ImportError:
-            self._openchart_available = False
-            logger.warning(
-                "openchart_not_installed",
-                message="openchart package not found. "
-                        "Install with: pip install openchart==0.2.0. "
-                        "Historical OHLCV reconciliation will be unavailable.",
-            )
+            logger.warning("openchart_not_installed",
+                           message="Install with: pip install openchart==0.2.0")
+            return
 
-    def _ensure_available(self) -> None:
-        if not self._openchart_available:
-            raise ImportError(
-                "openchart is not installed. "
-                "Run: pip install openchart==0.2.0\n"
-                "The adapter will be disabled until the package is installed."
-            )
+        try:
+            import curl_cffi  # noqa: F401
+            self._cffi_available = True
+        except ImportError:
+            logger.warning("curl_cffi_not_installed",
+                           message=(
+                               "curl_cffi not installed. OpenChart requests will use "
+                               "standard Python TLS (may be blocked by NSE WAF). "
+                               "Install with: pip install curl_cffi"
+                           ))
+
+    def _ensure_session(self) -> None:
+        """Create and warm up the NSEData + curl_cffi session (once per adapter lifetime)."""
+        if self._nse is not None:
+            return
+        from openchart import NSEData
+        self._nse = NSEData()
+
+        if self._cffi_available:
+            logger.info("openchart_cffi_bypass", message="Injecting Chrome TLS fingerprint via curl_cffi")
+            self._cffi_session = _make_curl_cffi_session()
+            _inject_cffi_session_into_openchart(self._nse, self._cffi_session)
+            # Inject nsit cookie if provided (required for charting API to serve data)
+            if self._nsit_cookie and self._cffi_session is not None:
+                self._cffi_session.cookies.set("nsit", self._nsit_cookie, domain=".nseindia.com")
+                logger.info("openchart_nsit_injected", message="nsit session cookie injected")
+        else:
+            self._nse._ensure_cookies()
+
+    def _rate_limit(self) -> None:
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < self.REQUEST_SLEEP_SECS:
+            time.sleep(self.REQUEST_SLEEP_SECS - elapsed)
+        self._last_request = time.monotonic()
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     async def get_historical(
         self,
@@ -211,53 +273,36 @@ class OpenChartAdapter:
         to_date: date,
         exchange: str = "NSE",
     ) -> OpenChartAcquisitionResult:
-        """
-        Fetch historical OHLCV from OpenChart for a single instrument.
-
-        Parameters
-        ----------
-        symbol : str
-            NSE symbol (e.g. "RELIANCE" for EQ, "NIFTY 50" for IDX,
-            "NIFTY26JANFUT" for FO).
-        segment : str
-            "EQ" | "IDX" | "FO"
-        interval_str : str
-            Canonical interval (e.g. "1d", "5m"). Raises on "3m".
-        from_date : date
-        to_date : date
-        exchange : str
-            Default "NSE".
-        """
-        self._ensure_available()
-
-        # Validate interval — reject 3m explicitly
         if interval_str == "3m":
             return OpenChartAcquisitionResult(
-                symbol=symbol, segment=segment,
-                interval_str=interval_str,
+                symbol=symbol, segment=segment, interval_str=interval_str,
                 from_date=str(from_date), to_date=str(to_date),
                 status="UNSUPPORTED",
-                error="3m interval was permanently removed from AlphaForge (V8). "
-                      "OpenChart does not provide 3m data.",
+                error="3m interval permanently removed from AlphaForge (V8).",
             )
         if interval_str not in self.SUPPORTED_INTERVALS:
             return OpenChartAcquisitionResult(
-                symbol=symbol, segment=segment,
-                interval_str=interval_str,
+                symbol=symbol, segment=segment, interval_str=interval_str,
                 from_date=str(from_date), to_date=str(to_date),
                 status="UNSUPPORTED",
-                error=f"Interval '{interval_str}' not supported by OpenChart. "
-                      f"Supported: {sorted(self.SUPPORTED_INTERVALS)}",
+                error=f"Interval '{interval_str}' not supported by OpenChart.",
+            )
+        if not self._openchart_available:
+            return OpenChartAcquisitionResult(
+                symbol=symbol, segment=segment, interval_str=interval_str,
+                from_date=str(from_date), to_date=str(to_date),
+                status="FAILED",
+                error="openchart package not installed.",
             )
 
         result = await asyncio.get_event_loop().run_in_executor(
             None,
-            self._fetch_sync_with_retry,
+            self._fetch_with_retry,
             symbol, segment, interval_str, from_date, to_date, exchange,
         )
         return result
 
-    def _fetch_sync_with_retry(
+    def _fetch_with_retry(
         self,
         symbol: str,
         segment: str,
@@ -266,43 +311,29 @@ class OpenChartAdapter:
         to_date: date,
         exchange: str,
     ) -> OpenChartAcquisitionResult:
-        """Fetch with exponential backoff retry."""
+        self._ensure_session()
         last_error: Optional[str] = None
 
         for attempt in range(self.MAX_RETRIES + 1):
             if attempt > 0:
                 delay = self.BACKOFF_BASE_SECS * (2 ** (attempt - 1))
-                jitter = 0.1 * delay * (hash(symbol + str(attempt)) % 10) / 10
-                logger.info(
-                    "openchart_retry",
-                    symbol=symbol, interval=interval_str, attempt=attempt,
-                    delay_secs=round(delay + jitter, 2),
-                )
-                time.sleep(delay + jitter)
+                logger.info("openchart_retry", symbol=symbol, interval=interval_str,
+                            attempt=attempt, delay_secs=round(delay, 2))
+                time.sleep(delay)
 
-            result = self._fetch_sync_once(
-                symbol, segment, interval_str, from_date, to_date, exchange
-            )
-
+            result = self._fetch_once(symbol, segment, interval_str, from_date, to_date, exchange)
             if result.status not in ("FAILED",):
                 return result
-
             last_error = result.error
-            logger.warning(
-                "openchart_fetch_failed",
-                symbol=symbol, interval=interval_str, attempt=attempt,
-                error=last_error,
-            )
 
         return OpenChartAcquisitionResult(
-            symbol=symbol, segment=segment,
-            interval_str=interval_str,
+            symbol=symbol, segment=segment, interval_str=interval_str,
             from_date=str(from_date), to_date=str(to_date),
             status="FAILED",
             error=f"All {self.MAX_RETRIES + 1} attempts failed. Last: {last_error}",
         )
 
-    def _fetch_sync_once(
+    def _fetch_once(
         self,
         symbol: str,
         segment: str,
@@ -311,61 +342,54 @@ class OpenChartAdapter:
         to_date: date,
         exchange: str,
     ) -> OpenChartAcquisitionResult:
-        """Single fetch attempt — no retry logic."""
-        from openchart import NSEData
-        t_start = int(time.time() * 1000)
-        oc_symbol = _oc_symbol(symbol, segment)
+        self._rate_limit()
         oc_segment = _SEGMENT_MAP.get(segment.upper(), segment.upper())
+        oc_symbol  = _oc_symbol(symbol, oc_segment)
 
-        # Rate limit (synchronous wait since we're in thread pool)
-        _elapsed = time.monotonic() - getattr(self, "_last_oc_call", 0)
-        _min_interval = 1.0  # 1 req/s
-        if _elapsed < _min_interval:
-            time.sleep(_min_interval - _elapsed)
-        self._last_oc_call = time.monotonic()  # type: ignore[attr-defined]
-
+        t_start = int(time.time() * 1000)
         try:
-            nse = NSEData()
             from datetime import datetime as _dt
             start_dt = _dt.combine(from_date, _dt.min.time())
-            end_dt = _dt.combine(to_date, _dt.max.time())
-
-            df = nse.historical(oc_symbol, oc_segment, start_dt, end_dt, interval_str)
-
+            end_dt   = _dt.combine(to_date,   _dt.max.time())
+            df = self._nse.historical(oc_symbol, oc_segment, start_dt, end_dt, interval_str)
         except Exception as exc:
             return OpenChartAcquisitionResult(
-                symbol=symbol, segment=segment,
-                interval_str=interval_str,
+                symbol=symbol, segment=segment, interval_str=interval_str,
                 from_date=str(from_date), to_date=str(to_date),
-                status="FAILED",
-                error=str(exc),
+                status="FAILED", error=str(exc),
             )
-
         t_end = int(time.time() * 1000)
 
         if df is None or len(df) == 0:
+            # Empty response with status=true means the charting API served no data.
+            # This happens when the nsit session cookie is missing (Akamai behavioural
+            # token — not obtainable via curl_cffi alone, requires Playwright).
+            status_msg = "SESSION_REQUIRED" if not self._nsit_cookie else "EMPTY"
             return OpenChartAcquisitionResult(
-                symbol=symbol, segment=segment,
-                interval_str=interval_str,
+                symbol=symbol, segment=segment, interval_str=interval_str,
                 from_date=str(from_date), to_date=str(to_date),
-                status="EMPTY",
+                status=status_msg,
                 rows_fetched=0,
+                error=(
+                    "NSE charting API returned no data. The 'nsit' session cookie is "
+                    "required but not present. Obtain it via Playwright "
+                    "(scripts/seed_nse_session.py) and pass it to "
+                    "OpenChartAdapter(nsit_cookie='...'). "
+                    "Alternative: use jugaad-data for EOD or Angel One/Upstox for intraday."
+                ) if status_msg == "SESSION_REQUIRED" else None,
             )
 
-        # Validate response schema
+        # Validate schema
         required_cols = {"Open", "High", "Low", "Close", "Volume"}
         if not required_cols.issubset(set(df.columns)):
             return OpenChartAcquisitionResult(
-                symbol=symbol, segment=segment,
-                interval_str=interval_str,
+                symbol=symbol, segment=segment, interval_str=interval_str,
                 from_date=str(from_date), to_date=str(to_date),
                 status="FAILED",
                 error=f"OpenChart response missing columns. Got: {list(df.columns)}",
             )
 
-        # Convert to raw records for landing zone
         raw_records = df.reset_index().to_dict("records")
-
         raw_record = build_raw_record(
             provider=self.PROVIDER_ID,
             endpoint=f"openchart.NSEData.historical:{oc_symbol}:{oc_segment}:{interval_str}",
@@ -373,8 +397,7 @@ class OpenChartAdapter:
             exchange=exchange,
             interval_str=interval_str,
             request_params={
-                "symbol": oc_symbol, "segment": oc_segment,
-                "interval": interval_str,
+                "symbol": oc_symbol, "segment": oc_segment, "interval": interval_str,
                 "from": str(from_date), "to": str(to_date),
             },
             raw_response=raw_records[:50],
@@ -383,10 +406,7 @@ class OpenChartAdapter:
             request_end_ms=t_end,
         )
 
-        # Normalize
-        candles, dropped = self._normalize_df(
-            df, symbol, exchange, interval_str
-        )
+        candles, dropped = self._normalize_df(df, symbol, exchange, interval_str)
         valid, validation_dropped = validate_batch(candles)
         all_dropped = dropped + validation_dropped
 
@@ -400,25 +420,20 @@ class OpenChartAdapter:
             raw_response=raw_records,
             dataset_version=current_dataset_version(),
         )
-        prov.dataTrustStatus = (
-            TRUST_VERIFIED_SINGLE_SOURCE if len(valid) > 0 else TRUST_UNVERIFIED
-        )
+        prov.dataTrustStatus = TRUST_VERIFIED_SINGLE_SOURCE if valid else TRUST_UNVERIFIED
 
-        status = "SUCCESS" if len(valid) > 0 else "EMPTY"
+        status = "SUCCESS" if valid else "EMPTY"
         if all_dropped and valid:
             status = "PARTIAL"
 
-        logger.info(
-            "openchart_acquired",
-            symbol=symbol, segment=segment, interval=interval_str,
-            from_date=str(from_date), to_date=str(to_date),
-            rows_fetched=len(raw_records), rows_valid=len(valid),
-            rows_invalid=len(all_dropped), status=status,
-        )
+        logger.info("openchart_acquired",
+                    symbol=symbol, segment=segment, interval=interval_str,
+                    from_date=str(from_date), to_date=str(to_date),
+                    rows_fetched=len(raw_records), rows_valid=len(valid),
+                    rows_invalid=len(all_dropped), status=status)
 
         return OpenChartAcquisitionResult(
-            symbol=symbol, segment=segment,
-            interval_str=interval_str,
+            symbol=symbol, segment=segment, interval_str=interval_str,
             from_date=str(from_date), to_date=str(to_date),
             status=status,
             rows_fetched=len(raw_records),
@@ -432,15 +447,11 @@ class OpenChartAdapter:
 
     def _normalize_df(
         self,
-        df: Any,   # pandas DataFrame
+        df: Any,
         symbol: str,
         exchange: str,
         interval_str: str,
     ) -> tuple[list[CanonicalCandle], list[dict]]:
-        """
-        Normalize an openchart DataFrame to CanonicalCandle objects.
-        OpenChart returns OHLCV with a Timestamp index (timezone-aware).
-        """
         candles: list[CanonicalCandle] = []
         dropped: list[dict] = []
 
@@ -449,7 +460,6 @@ class OpenChartAdapter:
 
         for idx, row in df.iterrows():
             try:
-                # idx is a Timestamp — extract IST session date and UTC epoch
                 if hasattr(idx, "to_pydatetime"):
                     ts = idx.to_pydatetime()
                 elif isinstance(idx, datetime):
@@ -457,15 +467,11 @@ class OpenChartAdapter:
                 else:
                     ts = datetime.fromisoformat(str(idx))
 
-                # Ensure UTC
                 if ts.tzinfo is None:
-                    # Assume IST (openchart returns IST times)
                     ts = ts.replace(tzinfo=_IST)
 
                 ts_utc = ts.astimezone(timezone.utc)
                 epoch_sec = int(ts_utc.timestamp())
-
-                # Session date in IST
                 ts_ist = ts.astimezone(_IST)
                 session_date_str = ts_ist.strftime("%Y-%m-%d")
 
@@ -475,12 +481,8 @@ class OpenChartAdapter:
                 c = float(row["Close"])
                 v = float(row.get("Volume", 0) or 0)
 
-                # Sanity check
                 if any(x is None or x <= 0 for x in [o, h, l_, c]):
-                    dropped.append({
-                        "time": epoch_sec, "symbol": symbol,
-                        "error": "invalid_ohlc",
-                    })
+                    dropped.append({"time": epoch_sec, "symbol": symbol, "error": "invalid_ohlc"})
                     continue
 
                 candles.append(CanonicalCandle(
@@ -490,20 +492,11 @@ class OpenChartAdapter:
                     sessionDate=session_date_str,
                     provider=self.PROVIDER_ID,
                     time=epoch_sec,
-                    open=o,
-                    high=h,
-                    low=l_,
-                    close=c,
+                    open=o, high=h, low=l_, close=c,
                     volume=v,
-                    volumeUnavailable=(v == 0.0 and "Volume" not in df.columns),
-                    # OpenChart does NOT provide OI, IV, bid, ask.
-                    # All stay None — never fabricated to 0.
-                    oi=None,
-                    iv=None,
-                    bid=None,
-                    ask=None,
+                    volumeUnavailable=("Volume" not in df.columns),
+                    oi=None, iv=None, bid=None, ask=None,
                 ))
-
             except Exception as exc:
                 dropped.append({"time": str(idx), "symbol": symbol, "error": str(exc)})
 

@@ -39,7 +39,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # Path setup — works both inside Docker (/app) and on host (data-service/)
@@ -173,6 +173,8 @@ async def acquire_openchart(
     from_date: date,
     to_date: date,
     dry_run: bool = False,
+    nsit_cookie: Optional[str] = None,
+    adapter: Optional[Any] = None,
 ) -> AcquisitionRecord:
     """Acquire historical OHLCV via OpenChart."""
     # Validate — 3m must never reach here
@@ -191,7 +193,9 @@ async def acquire_openchart(
         )
     try:
         from src.providers.openchart.adapter import OpenChartAdapter
-        adapter = OpenChartAdapter()
+        # Use pre-built adapter if provided (avoids re-seeding cookies on every call)
+        if adapter is None:
+            adapter = OpenChartAdapter(nsit_cookie=nsit_cookie)
         t0 = time.monotonic()
         result = await adapter.get_historical(
             symbol=symbol, segment="EQ",
@@ -199,11 +203,12 @@ async def acquire_openchart(
             from_date=from_date, to_date=to_date,
         )
         elapsed = time.monotonic() - t0
-        # OpenChart's NSE charting endpoint is geo-restricted.
-        # Treat EMPTY from openchart as GEO_RESTRICTED when outside India.
+        # SESSION_REQUIRED = nsit cookie not present; charting API returns empty data.
+        # This is not a network error — the WAF is bypassed but Akamai's behavioural
+        # token (nsit) must be obtained via Playwright (scripts/seed_nse_session.py).
         status = result.status
-        if status == "EMPTY" and result.rows_fetched == 0:
-            status = "GEO_RESTRICTED"
+        if status in ("EMPTY",) and result.rows_fetched == 0 and not nsit_cookie:
+            status = "SESSION_REQUIRED"
         return AcquisitionRecord(
             symbol=symbol, timeframe=timeframe, provider="openchart",
             status=status,
@@ -211,7 +216,10 @@ async def acquire_openchart(
             rows_valid=result.rows_valid,
             rows_invalid=result.rows_invalid,
             from_date=from_date, to_date=to_date,
-            error=result.error or ("NSE charting platform geo-restricted (run from India or use a local proxy)" if status == "GEO_RESTRICTED" else None),
+            error=result.error or (
+                "nsit session cookie required. Run: python3 scripts/seed_nse_session.py"
+                if status == "SESSION_REQUIRED" else None
+            ),
             duration_secs=round(elapsed, 2),
         )
     except Exception as e:
@@ -232,15 +240,24 @@ async def run_pilot(
 ) -> dict:
     """Execute the pilot backfill and return the full report."""
     import asyncio
+    from pathlib import Path
 
     enabled_providers = set(providers or ["jugaad", "openchart"])
-    jugaad_ok   = _check_jugaad_available() and "jugaad" in enabled_providers
+    jugaad_ok    = _check_jugaad_available() and "jugaad" in enabled_providers
     openchart_ok = _check_openchart_available() and "openchart" in enabled_providers
+
+    # Load nsit cookie if present (enables OpenChart charting API)
+    nsit_cookie: Optional[str] = None
+    cookie_file = Path(__file__).parent.parent / ".nsit_cookie"
+    if cookie_file.exists():
+        nsit_cookie = cookie_file.read_text().strip() or None
+        if nsit_cookie:
+            print(f"nsit cookie loaded from {cookie_file}")
 
     print(f"\nAlphaForge V8 Pilot Backfill")
     print(f"Symbols: {PILOT_SYMBOLS}")
     print(f"Timeframes: {PILOT_TIMEFRAMES}  (3m: NOT IN LIST — permanently removed)")
-    print(f"Providers: jugaad={jugaad_ok}, openchart={openchart_ok}")
+    print(f"Providers: jugaad={jugaad_ok}, openchart={openchart_ok}, nsit={'yes' if nsit_cookie else 'no'}")
     print(f"Date range: {PILOT_START_EOD} → {PILOT_END}")
     print(f"Dry-run: {dry_run}\n")
 
@@ -260,10 +277,18 @@ async def run_pilot(
             )
             records.append(rec)
             print(f"  jugaad/1d: {rec.status} ({rec.rows_valid} valid rows)")
-            await asyncio.sleep(1.5)  # rate limit: 1 req/s
+            if not dry_run:
+                await asyncio.sleep(1.5)  # rate limit: 1 req/s
 
         # OpenChart: all supported timeframes
+        # Re-use ONE adapter instance per symbol to avoid re-seeding cookies on every call
         if openchart_ok or dry_run:
+            oc_adapter = None
+            if not dry_run and openchart_ok:
+                from src.providers.openchart.adapter import OpenChartAdapter
+                oc_adapter = OpenChartAdapter(nsit_cookie=nsit_cookie)
+                oc_adapter._ensure_session()  # seed cookies ONCE per symbol
+
             for tf in PILOT_TIMEFRAMES:
                 # Skip 3m — should never appear but guard explicitly
                 if tf == "3m":
@@ -276,10 +301,13 @@ async def run_pilot(
                     from_date=from_d,
                     to_date=PILOT_END,
                     dry_run=dry_run,
+                    nsit_cookie=nsit_cookie,
+                    adapter=oc_adapter,
                 )
                 records.append(rec)
                 print(f"  openchart/{tf}: {rec.status} ({rec.rows_valid} valid rows)")
-                await asyncio.sleep(1.2)  # conservative: 1 req/s
+                if not dry_run:
+                    await asyncio.sleep(1.2)  # conservative: 1 req/s
 
     elapsed = time.monotonic() - pilot_start
 
@@ -288,7 +316,8 @@ async def run_pilot(
     success = sum(1 for r in records if r.status == "SUCCESS")
     partial = sum(1 for r in records if r.status == "PARTIAL")
     failed  = sum(1 for r in records if r.status in ("FAILED",))
-    geo_restricted = sum(1 for r in records if r.status == "GEO_RESTRICTED")
+    session_required = sum(1 for r in records if r.status == "SESSION_REQUIRED")
+    geo_restricted = sum(1 for r in records if r.status == "GEO_RESTRICTED")  # legacy
     dry     = sum(1 for r in records if r.status == "DRY_RUN")
     blocked_3m = sum(1 for r in records if r.status == "BLOCKED" and r.timeframe == "3m")
 
@@ -308,7 +337,17 @@ async def run_pilot(
         },
         "providers": {
             "jugaad": {"available": jugaad_ok, "role": "historical_eod_bhavcopy"},
-            "openchart": {"available": openchart_ok, "role": "historical_ohlcv_reconciliation"},
+            "openchart": {
+                "available": openchart_ok,
+                "role": "historical_ohlcv_reconciliation",
+                "nsit_cookie_present": bool(nsit_cookie),
+                "note": (
+                    "nsit cookie present — charting API should serve data"
+                    if nsit_cookie else
+                    "nsit cookie absent — charting API returns empty. "
+                    "Run scripts/seed_nse_session.py to obtain it."
+                ),
+            },
         },
         "dryRun": dry_run,
         "summary": {
@@ -317,7 +356,12 @@ async def run_pilot(
             "partial": partial,
             "failed": failed,
             "geoRestricted": geo_restricted,
-            "note_geoRestricted": "NSE charting.nseindia.com is geo-restricted outside India. OpenChart requires running from an Indian IP.",
+            "sessionRequired": session_required,
+            "note_sessionRequired": (
+                "NSE charting API requires the 'nsit' session cookie (Akamai behavioural token). "
+                "Run scripts/seed_nse_session.py via Playwright to obtain it. "
+                "curl_cffi TLS bypass is active but nsit requires interactive browser."
+            ),
             "dryRun": dry,
             "blocked3m": blocked_3m,
             "totalValidRows": total_valid_rows,
@@ -374,7 +418,9 @@ def main():
     print(f"  Success:            {s['success']}")
     print(f"  Partial:            {s['partial']}")
     print(f"  Failed:             {s['failed']}")
-    print(f"  Geo-restricted:     {s.get('geoRestricted', 0)} (openchart — needs Indian IP)")
+    print(f"  Geo-restricted:     {s.get('geoRestricted', 0)} (legacy status)")
+    print(f"  Session required:   {s.get('sessionRequired', 0)} (openchart needs nsit cookie)")
+    print(f"    → Run: python3 scripts/seed_nse_session.py")
     print(f"  Valid rows:         {s['totalValidRows']:,}")
     print(f"  3m blocked:         {s['blocked3m']} (must be zero — never acquired)")
     print(f"  Elapsed:            {s['elapsedSecs']}s")
@@ -388,11 +434,13 @@ def main():
     if s["failed"] > 0 and not args.dry_run:
         print(f"\nWARNING: {s['failed']} unexpected failure(s). Check report for details.")
         sys.exit(1)
-    elif s.get("geoRestricted", 0) > 0:
-        print(f"\nNOTE: {s['geoRestricted']} openchart acquisitions geo-restricted (charting.nseindia.com).")
-        print("OpenChart requires running from an Indian IP address.")
-        print("Jugaad-data is not geo-restricted and will handle EOD/1d data regardless.")
-        sys.exit(0)  # Not a failure — expected outside India
+    elif s.get("sessionRequired", 0) > 0:
+        print(f"\nNOTE: {s['sessionRequired']} openchart acquisitions need nsit session cookie.")
+        print("The NSE charting API requires Akamai's behavioural token (nsit).")
+        print("TLS fingerprinting bypass (curl_cffi) is active — but nsit requires Playwright.")
+        print("Run: python3 scripts/seed_nse_session.py")
+        print("Jugaad-data is fully functional for EOD/1d data.")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
