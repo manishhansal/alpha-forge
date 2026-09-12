@@ -4,6 +4,176 @@ All changes are listed in reverse chronological order (newest first). Each entry
 
 ---
 
+## [Unreleased] — V8 Historical Data Fabric + F&O Universe Redesign + 3m Removal + NSE WAF Bypass
+
+**Date:** 2026-09-12
+**Branch:** `feat/historical-data`
+**Type:** Production-grade historical data platform — F&O universe redesign, provider capability registry, Jugaad-data + OpenChart integration, 3m permanent removal, provenance, reconciliation, quality scoring, signal/ML canonical data gates, NSE Akamai WAF bypass.
+
+### 3m Removal (permanent)
+
+3-minute data is permanently out of scope. Enforced at every layer:
+
+- **TypeScript type system:** `Interval` union no longer includes `"3m"`. `isSupportedInterval("3m")` returns `false`. `assertSupportedInterval("3m")` throws. `SUPPORTED_TIMEFRAMES` = 9 intervals (`1m 5m 10m 15m 30m 1h 1d 1w 1M`).
+- **Python data-service:** `validate_interval("3m")` raises `ValueError`. `SUPPORTED_INTERVALS` frozenset excludes `"3m"`. `ProviderCapability.__post_init__` raises on any `"3m"` capability registration.
+- **ML service:** `CanonicalDecision.__post_init__` raises if `timeframe="3m"`. `validate_canonical_data_v8` returns `BLOCKED`.
+- **API layer:** All `/api/in/historical-data/*` endpoints return HTTP 400 for `timeframe=3m`.
+- **Signal gate:** `evaluateV8SignalDataGate` always returns `BLOCKED` for the 3m interval.
+- Legacy 3m rows in `CandleBar` are preserved as immutable audit records. No new 3m data will ever be written.
+
+### F&O Universe System
+
+- `FnoUniverseSnapshot` + `FnoUniverseEntry` DB tables (migration `20260912020000`)
+- `data-service/src/providers/common/universe.py` — dynamic discovery from Angel One / Upstox instrument masters; lifecycle tracking (`ACTIVE / ADDED / REMOVED / SUSPENDED / UNRESOLVED`); deterministic SHA-256 checksum; never hardcoded
+- API: `GET /api/in/historical-data/universe`
+
+### Provider Capability Registry (dataset-specific routing, NOT a linear chain)
+
+- `data-service/src/providers/common/registry.py` — one authoritative Python-layer registry per `(provider, dataset, instrumentClass, timeframe)`
+- Routing: Live equity → Angel/Upstox · Historical EOD F&O → Jugaad · Historical OHLCV reconciliation → OpenChart · Options live → Angel/Upstox · Last-resort equity → Yahoo (restricted)
+- Authentication and trust status are distinct fields — open-source NSE-derived data can be trustworthy without being broker-authenticated
+
+### Jugaad-Data Integration
+
+- `data-service/src/providers/jugaad/adapter.py`
+- Historical EOD equity OHLCV via `stock_df()` — handles both UDiff (≥ 2024-07-08) and BHAVDATA-FULL (legacy) formats automatically
+- F&O bhavcopy (FUTSTK/FUTIDX/OPTSTK/OPTIDX) with OI preserved exactly — **never null→0**
+- F&O universe filtering at acquisition time
+- `pip install jugaad-data==0.35.5`
+
+### OpenChart 0.2.0 Integration
+
+- `data-service/src/providers/openchart/adapter.py`
+- Historical OHLCV 1m–1M for equities, indices, and F&O (no 3m)
+- Session managed via central `src/core/nse_session.py` (see WAF bypass below)
+- `pip install openchart==0.2.0`
+
+### NSE Akamai WAF Bypass (curl_cffi)
+
+NSE uses Akamai WAF with two protection layers:
+
+| Layer | Mechanism | Status |
+|-------|-----------|--------|
+| 1 | TLS fingerprinting (JA3/JA4) — standard Python requests/httpx uses OpenSSL, detected as bot | **BYPASSED** via `curl_cffi` Chrome 110 impersonation |
+| 2 | Behavioural session token (`nsit` cookie) — issued only during live NSE market hours (09:15–15:30 IST Mon–Fri) | **TOOLED** — auto-obtained by scheduler at market open |
+
+- `data-service/src/core/nse_session.py` — singleton curl_cffi session shared across ALL NSE HTTP clients (live_quotes.py, historical.py, OpenChart adapter). Seeds `_abck / ak_bmsc / bm_sv / bm_sz` from NSE homepage + charting subdomain. Auto-refreshes every 25 minutes. Loads `nsit` from `data-service/.nsit_cookie` or `NSE_NSIT_COOKIE` env var.
+- Applied to: `src/scrapers/live_quotes.py` (3 NextAPI calls), `src/scrapers/historical.py` (intraday charting endpoint), `src/providers/openchart/adapter.py`
+- NOT applied to: `nsearchives.nseindia.com` (CloudFront, no Akamai), `bseindia.com`, broker APIs (Angel/Upstox)
+- `pip install curl_cffi`
+
+**To complete OpenChart (run on a trading day, 09:15–15:30 IST):**
+
+```bash
+# Option A: Fully automated — waits for market open then runs the full sequence
+cd data-service
+PYTHONPATH=. python3 scripts/market_open_openchart.py
+
+# Option B: Manual run during market hours
+PYTHONPATH=. python3 scripts/market_open_openchart.py --no-wait
+
+# Option C: macOS launchd job (already registered — fires Monday 09:20 IST)
+# Check: launchctl list | grep alphaforge
+# Logs:  data-service/logs/openchart_pilot.log
+
+# Dry-run to verify all dependencies are installed:
+PYTHONPATH=. python3 scripts/market_open_openchart.py --dry-run
+```
+
+After nsit is obtained once, it is saved to `data-service/.nsit_cookie` (gitignored) and loaded automatically on every subsequent run.
+
+### Provenance + Raw Landing Zone
+
+- `DataProvenanceRecord` — per-dataset audit trail (provider, sourceType, authenticated, credentialIdentityHash, fetchedAt, responseHash, dataTrustStatus)
+- `RawAcquisitionRecord` — raw response capture before transformation (max 50KB, SHA-256 hash, never stores credentials)
+- 4 source types: `BROKER_AUTHENTICATED / OPEN_SOURCE_NSE_DERIVED / YAHOO_FALLBACK / UNKNOWN`
+- 5 trust states: `VERIFIED_RECONCILED / VERIFIED_SINGLE_SOURCE / DEGRADED / UNVERIFIED / INVALID`
+
+### Reconciliation Engine
+
+- `data-service/src/providers/common/reconciliation.py`
+- Compares candles from two providers: OHLC (5 paisa tolerance), volume (5% relative), OI (100 contracts)
+- 6 statuses: `MATCHED / WITHIN_TOLERANCE / MINOR_DISCREPANCY / MAJOR_DISCREPANCY / SOURCE_ONLY / UNAVAILABLE`
+- MAJOR_DISCREPANCY never silently resolved — persisted to `data_reconciliation` table
+
+### Quality Scoring Engine
+
+- `data-service/src/providers/common/quality.py`
+- Deterministic 9-dimension formula: completeness(25%) + validity(20%) + freshness(15%) + provenance(15%) + reconciliation(15%) + duplicate_rate(5%) + gap_rate(5%)
+- Critical failures (negative OI, impossible OHLC, future candle) override to `INVALID` regardless of score
+- Per-timeframe freshness thresholds (1m: 90s; 1d: 86,400s)
+
+### Gap Detection V8
+
+- `GapClassification` type: `EXPECTED_NO_DATA / MARKET_HOLIDAY / MARKET_CLOSED / PROVIDER_UNAVAILABLE / ACTUAL_DATA_GAP / PENDING_RECOVERY`
+- Holidays never counted as data gaps; provider incapability explicitly classified
+
+### Signal Data Gate V8
+
+- `src/lib/market-data/services/v8-signal-data-gate.service.ts`
+- `STRATEGY_DATA_CONTRACTS` — per-strategy data requirements (timeframe, requiredBars, requiresOI, requiresIV, minimumQualityScore, acceptableProvenanceTypes)
+- Composes V7 gate; never relaxes existing checks
+
+### ML Canonical Data Gate V8
+
+- `ml-service/src/decision/schema.py` — `CanonicalDecision` extended with `data_provenance_type`, `data_trust_status`, `data_quality_score`, `data_authenticated`, `snapshot_timestamp`
+- `ml-service/src/decision/validation.py` — `validate_canonical_data_v8()`: empty dataset/feature version → BLOCKED; missing snapshot_timestamp → BLOCKED; unverified trust status → BLOCKED; quality score below threshold → BLOCKED
+
+### Historical Data APIs
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/in/historical-data/coverage` | Live DB coverage matrix with provenance |
+| `GET /api/in/historical-data/status` | Overall health (universe, timeframes, quality, gaps) |
+| `GET /api/in/historical-data/providers` | Capability matrix + runtime stats + auth labels |
+| `GET /api/in/historical-data/gaps` | Detected gaps with V8 classification |
+| `GET /api/in/historical-data/reconciliation` | Multi-source comparison records |
+| `GET /api/in/historical-data/universe` | Versioned F&O universe snapshots |
+
+### Data Status Dashboard
+
+- `/in/data-status` — new page
+- Shows: 3m removal audit, F&O universe, timeframe coverage (9 intervals), provider matrix with authentication labels (`AUTHENTICATED` / `OPEN-SOURCE` / `FALLBACK`), quality distribution, gap summary, reconciliation
+
+### DB Migration
+
+- `prisma/migrations/20260912020000_data_foundation_v8_historical_fabric/`
+- 7 new tables: `data_provenance`, `data_reconciliation`, `data_quality_score`, `historical_backfill_job`, `raw_acquisition_record`, `fno_universe_snapshot`, `fno_universe_entry`
+
+### Pilot Backfill (Jugaad — verified live)
+
+```bash
+cd data-service
+PYTHONPATH=. python3 scripts/pilot_backfill.py --providers jugaad
+```
+
+Result: **2,520 valid EOD rows** across 5 F&O stocks (RELIANCE 505, TCS 501, HDFCBANK 505, INFY 505, SBIN 504) from NSE bhavcopy. `blocked3m=0` confirmed.
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/pilot_backfill.py` | 5-stock pilot for jugaad + openchart |
+| `scripts/market_open_openchart.py` | Waits for market open, seeds nsit, runs OpenChart pilot |
+| `scripts/seed_nse_session.py` | Headless Playwright nsit seeder (market hours required) |
+| `scripts/seed_nse_session_gui.py` | Visible Chromium nsit seeder |
+| `scripts/verify_v8.py` | Container verification — all V8 modules + 3m rejection |
+
+### Tests
+
+- **TypeScript:** 222 test files, 3465 tests — 0 failures
+- **Python:** 64 new tests (`tests/providers/test_v8_foundation.py`) — 0 failures
+- `tsc --noEmit` (main + worker): clean
+- `prisma validate`: valid
+- `npm run build`: pass
+
+### Remaining operational step
+
+OpenChart requires the `nsit` session token which NSE/Akamai only issues during live market hours. The `market_open_openchart.py` script and macOS launchd job handle this automatically at Monday 09:20 IST.
+
+---
+
+
 ## [Unreleased] — Data-Service Reliability & Failover Hardening + Angel/Upstox Live-WS + API Conformance
 
 **Date:** 2026-09-07 → 2026-09-08
