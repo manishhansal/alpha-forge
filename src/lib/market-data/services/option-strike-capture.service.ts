@@ -88,42 +88,32 @@ export type ChainFetcher = (
 ) => Promise<ProviderOptionChain | null>;
 
 /**
- * Default chain fetcher: Angel first (fills IV via optionGreek), Upstox as the
- * next capable provider. Bypasses the registry-enablement gate (like the
- * backfill CLI) so a worker-credentialed run works.
+ * Default chain fetcher: routes through the canonical ProviderRegistry
+ * (DATA_SERVICE → ANGEL_ONE → UPSTOX). This ensures IV is populated where
+ * Angel One's optionGreek API provides it, with Upstox as fallback.
  */
 export async function defaultChainFetcher(): Promise<{
   fetcher: ChainFetcher;
   providerLabel: () => string | null;
 }> {
-  const { angel } = await import("@/services/india/angelone");
-  const { UpstoxProvider } = await import("../providers/upstox");
-  const upstox = new UpstoxProvider();
+  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+  await bootstrapRegistry();
   let lastProvider: string | null = null;
 
-  const fetcher: ChainFetcher = async (underlying, expiry) => {
-    // Angel first.
+  const fetcher: ChainFetcher = async (underlying, _expiry) => {
     try {
-      const oc = (await angel.getOptionChain(underlying, expiry)) as unknown as ProviderOptionChain;
-      if (oc && oc.rows && oc.rows.length > 0) {
-        lastProvider = "angel_one";
-        return oc;
+      const chain = (await registry.getOptionChain(underlying)) as unknown as ProviderOptionChain;
+      if (chain && chain.rows && chain.rows.length > 0) {
+        // Determine which provider served it from health state
+        const health = registry.getHealth();
+        const active = health.find((h) => h.status === "healthy" && h.consecutiveSuccesses > 0);
+        lastProvider = active?.providerId ?? "registry";
+        return chain;
       }
+      lastProvider = "registry";
+      return chain ?? null;
     } catch (e) {
-      mdLog("provider_degraded", { event: "OC_ANGEL_FAIL", underlying, error: (e as Error).message.slice(0, 160) });
-    }
-    // Upstox fallback (needs explicit expiry_date — §11 V5 fix).
-    try {
-      const oc = (await upstox.getOptionChain(underlying, expiry)) as unknown as ProviderOptionChain;
-      if (oc && oc.rows && oc.rows.length > 0) {
-        lastProvider = "upstox";
-        return oc;
-      }
-      // Return the (empty) Angel/Upstox shape so the caller can discover expiries.
-      lastProvider = "upstox";
-      return oc ?? null;
-    } catch (e) {
-      mdLog("provider_degraded", { event: "OC_UPSTOX_FAIL", underlying, error: (e as Error).message.slice(0, 160) });
+      mdLog("provider_degraded", { event: "OC_REGISTRY_FAIL", underlying, error: (e as Error).message.slice(0, 160) });
       return null;
     }
   };

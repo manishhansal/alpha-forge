@@ -119,23 +119,27 @@ export interface ProviderFetchers {
   }) => Promise<OHLCVCandle[]>;
 }
 
-/** Default fetchers backed by the real provider clients. */
+/** Default fetchers backed by the canonical registry providers. */
 export async function defaultProviderFetchers(): Promise<ProviderFetchers> {
-  const { angel } = await import("@/services/india/angelone");
+  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+  await bootstrapRegistry();
   const { UpstoxProvider } = await import("../providers/upstox");
   const upstox = new UpstoxProvider();
   return {
     async angelGetHistorical({ symbol, interval, fromIso, toIso }) {
-      // Angel takes a range string; compute day-span from the window.
-      const days = Math.max(
-        1,
-        Math.ceil((Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000),
-      );
-      const res = (await angel.getHistorical(
-        { symbol, interval, range: `${days}d` } as never,
-        { allowFallback: false },
-      )) as OHLCVCandle[];
-      return res;
+      // Route through the registry (angel_one provider at priority 1).
+      // Using { allowFallback: false } so we only get Angel data — if Angel
+      // is unavailable the caller's circuit breaker records UNAVAILABLE and
+      // falls back to the Upstox fetcher at the runner level.
+      const candles = await registry.getHistoricalCandles({
+        symbol,
+        exchange: "NSE",
+        interval: interval as never,
+        from: fromIso,
+        to: toIso,
+        providerHint: "angel_one",
+      } as never);
+      return candles as OHLCVCandle[];
     },
     async upstoxGetHistoricalV3({ symbol, interval, fromIso, toIso }) {
       const res = (await upstox.getHistoricalCandlesV3({
