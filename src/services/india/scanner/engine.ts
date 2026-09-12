@@ -10,17 +10,34 @@ import type {
   ScannerType,
 } from "@/types/india/scanner";
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
-import { yahoo } from "@/services/india/yahoo";
-// nse import kept for backward compatibility (throws on all methods — do not call directly)
+// angel is imported for SmartAPI-specific broker analytics only (PCR, OI buildup, gainers/losers).
+// These endpoints have no equivalent in the MarketDataProvider interface.
+// All generic market-data calls (quotes, historical candles) route through the registry.
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 
 const now = () => new Date().toISOString();
 
+/** F&O universe quote via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO). */
 async function fnoQuotes(): Promise<Quote[]> {
-  return cache.memo("scanner:fno-quotes", 10_000, () =>
-    yahoo.getQuotes(FNO_STOCKS),
-  );
+  return cache.memo("scanner:fno-quotes", 10_000, async () => {
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const mdQuotes = await registry.getQuotes(FNO_STOCKS);
+    // Normalize MDQuote[] → legacy Quote[] shape used by scanner logic
+    return mdQuotes
+      .filter((q): q is NonNullable<typeof q> => q != null)
+      .map((q) => ({
+        symbol: q.symbol,
+        price: q.ltp ?? 0,
+        changePct: q.changePct ?? null,
+        volume: q.volume ?? null,
+        high: q.high ?? null,
+        low: q.low ?? null,
+        open: q.open ?? null,
+        prevClose: q.prevClose ?? null,
+      })) as Quote[];
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -106,10 +123,14 @@ async function avgVolume(symbol: string): Promise<number | null> {
   const cacheKey = `scanner:avgvol:${symbol}`;
   return cache.memo(cacheKey, 5 * 60_000, async () => {
     try {
-      const candles = await yahoo.getHistorical({
+      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+      await bootstrapRegistry();
+      const candles = await registry.getHistoricalCandles({
         symbol,
+        exchange: "NSE",
         interval: "1d",
-        range: "30d",
+        from: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
       });
       const vols = candles
         .map((c) => c.volume ?? 0)
@@ -339,10 +360,13 @@ async function runOiBuildup(limit: number): Promise<ScannerResult> {
   if (fromAngel) return fromAngel;
 
   const chains = await indexChains();
-  const yfQuotes = await yahoo.getQuotes(FNO_INDICES.map((i) => i.symbol));
+  // Fetch index quotes through the canonical registry instead of Yahoo directly
+  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+  await bootstrapRegistry();
+  const mdQuotes = await registry.getQuotes(FNO_INDICES.map((i) => i.symbol));
   const priceChange: Record<string, number | null> = {};
   FNO_INDICES.forEach((i, idx) => {
-    priceChange[i.underlying] = yfQuotes[idx]?.changePct ?? null;
+    priceChange[i.underlying] = mdQuotes[idx]?.changePct ?? null;
   });
 
   const hits: ScannerHit[] = chains
@@ -480,11 +504,24 @@ async function evaluateRangeExpansion(
 ): Promise<RxRow | null> {
   let dailies: Candle[];
   try {
-    dailies = await yahoo.getHistorical({
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const ohlcv = await registry.getHistoricalCandles({
       symbol,
+      exchange: "NSE",
       interval: "1d",
-      range: "1y",
+      from: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      to: new Date().toISOString(),
     });
+    // Map OHLCVCandle (UTC epoch ms) → legacy Candle (epoch seconds)
+    dailies = ohlcv.map((c) => ({
+      time: Math.floor(c.time / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume ?? null,
+    })) as Candle[];
   } catch {
     return null;
   }
@@ -871,7 +908,23 @@ type FnoBullishTrendRow = {
 async function evaluateFnoBullishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
   let candles: Candle[];
   try {
-    candles = await yahoo.getHistorical({ symbol, interval: "1d", range: "1y" });
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const ohlcv = await registry.getHistoricalCandles({
+      symbol,
+      exchange: "NSE",
+      interval: "1d",
+      from: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      to: new Date().toISOString(),
+    });
+    candles = ohlcv.map((c) => ({
+      time: Math.floor(c.time / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume ?? null,
+    })) as Candle[];
   } catch {
     return null;
   }
@@ -1032,7 +1085,23 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
 async function evaluateFnoBearishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
   let candles: Candle[];
   try {
-    candles = await yahoo.getHistorical({ symbol, interval: "1d", range: "1y" });
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const ohlcv = await registry.getHistoricalCandles({
+      symbol,
+      exchange: "NSE",
+      interval: "1d",
+      from: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      to: new Date().toISOString(),
+    });
+    candles = ohlcv.map((c) => ({
+      time: Math.floor(c.time / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume ?? null,
+    })) as Candle[];
   } catch {
     return null;
   }
