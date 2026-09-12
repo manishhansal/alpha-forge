@@ -3,25 +3,17 @@ providers/openchart/adapter.py — Data Foundation V8 §11.
 
 OpenChart 0.2.0 provider adapter for AlphaForge.
 
-NSE WAF bypass status (fully investigated 2026-09-12):
-  - NSE uses Akamai WAF with TWO layers of bot protection:
-    1. TLS fingerprinting (JA3/JA4): BYPASSED via curl_cffi Chrome impersonation
-    2. Behavioural session token (nsit cookie): REQUIRES interactive browser session
-       The `nsit` cookie is only issued after Akamai's behavioural JS challenge
-       completes (mouse movements, timing, page interactions). It cannot be
-       obtained by curl_cffi alone without Playwright/Selenium headless automation.
-  - Without nsit: charting API returns {"status":true,"data":[]} always.
-  - With nsit: charting API serves real historical OHLCV data.
+NSE WAF bypass: both layers handled via src.core.nse_session:
+  Layer 1 (TLS fingerprinting): curl_cffi Chrome 110 impersonation — BYPASSED
+  Layer 2 (nsit behavioural token): loaded from .nsit_cookie / NSE_NSIT_COOKIE env
 
-Current state: TLS bypass implemented; nsit acquisition not yet automated.
-To enable OpenChart: use Playwright to seed the session (see scripts/seed_nse_session.py).
-Alternative: use jugaad-data for EOD and Angel One/Upstox for intraday — both work.
+The adapter now delegates all HTTP to the central nse_session singleton,
+which handles cookie seeding, nsit injection, and periodic refresh.
 
 Provides:
   - Historical OHLCV for NSE equities (EQ), indices (IDX), and F&O (FO)
   - Supported timeframes: 1m 5m 10m 15m 30m 1h 1d 1w 1M (NO 3m)
-  - curl_cffi Chrome TLS impersonation (layer 1 bypass)
-  - Optional nsit cookie injection for layer 2 bypass
+  - Session reuse across calls
   - Retries with exponential backoff
   - Raw response capture (landing zone)
   - Provenance records
@@ -44,6 +36,7 @@ from typing import Any, Optional
 
 import structlog
 
+from src.core.nse_session import get_nse_session_sync, NSE_CHROME_HEADERS
 from src.providers.common.normalizer import (
     CanonicalCandle,
     validate_batch,
@@ -61,68 +54,6 @@ from src.providers.common.provenance import (
 )
 
 logger = structlog.get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# NSE WAF bypass — Chrome TLS fingerprint via curl_cffi
-# ---------------------------------------------------------------------------
-
-_CHROME_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/119.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Content-Type": "application/json",
-    "Origin": "https://charting.nseindia.com",
-    "Referer": "https://charting.nseindia.com/",
-}
-
-def _make_curl_cffi_session():
-    """
-    Create a curl_cffi session impersonating Chrome 110.
-    Seeds WAF cookies from the NSE homepage before returning.
-    Returns None if curl_cffi is not installed.
-    """
-    try:
-        from curl_cffi import requests as cffi_requests
-    except ImportError:
-        return None
-
-    session = cffi_requests.Session(impersonate="chrome110")
-    session.headers.update(_CHROME_HEADERS)
-
-    # Step 1: seed _abck / ak_bmsc / bm_sz cookies from NSE homepage
-    try:
-        session.get("https://www.nseindia.com", timeout=12)
-    except Exception:
-        pass
-    time.sleep(1.5)
-
-    # Step 2: seed bm_sv from the charting sub-domain
-    try:
-        session.headers.update({"Referer": "https://charting.nseindia.com/"})
-        session.get("https://charting.nseindia.com", timeout=12)
-    except Exception:
-        pass
-    time.sleep(1.5)
-
-    return session
-
-
-def _inject_cffi_session_into_openchart(nse_instance: Any, cffi_session: Any) -> None:
-    """
-    Monkey-patch an NSEData instance's internal requests.Session with the
-    curl_cffi session so all subsequent API calls use Chrome TLS fingerprinting.
-    """
-    if cffi_session is None:
-        return
-    # OpenChart stores the session as nse_instance.session
-    nse_instance.session = cffi_session
-    nse_instance._cookies_set = True  # skip openchart's own cookie-seeding
-
 
 # ---------------------------------------------------------------------------
 # Segment mapping
@@ -203,17 +134,13 @@ class OpenChartAdapter:
         Parameters
         ----------
         nsit_cookie : str, optional
-            The `nsit` session cookie from an interactive NSE browser session.
-            Required for charting API to return data. Without it, the API
-            returns {"status":true,"data":[]} on every request.
-            Obtain via Playwright: scripts/seed_nse_session.py
+            Overrides the .nsit_cookie file / NSE_NSIT_COOKIE env var.
+            The central nse_session.py will also try to load nsit automatically.
         """
         self._openchart_available = False
-        self._cffi_available = False
         self._last_request: float = 0.0
         self._nse: Any = None
-        self._cffi_session: Any = None
-        self._nsit_cookie: Optional[str] = nsit_cookie
+        self._nsit_cookie: Optional[str] = nsit_cookie  # explicit override
         self._import_libs()
 
     def _import_libs(self) -> None:
@@ -223,34 +150,24 @@ class OpenChartAdapter:
         except ImportError:
             logger.warning("openchart_not_installed",
                            message="Install with: pip install openchart==0.2.0")
-            return
-
-        try:
-            import curl_cffi  # noqa: F401
-            self._cffi_available = True
-        except ImportError:
-            logger.warning("curl_cffi_not_installed",
-                           message=(
-                               "curl_cffi not installed. OpenChart requests will use "
-                               "standard Python TLS (may be blocked by NSE WAF). "
-                               "Install with: pip install curl_cffi"
-                           ))
 
     def _ensure_session(self) -> None:
-        """Create and warm up the NSEData + curl_cffi session (once per adapter lifetime)."""
+        """Create and warm up the NSEData + curl_cffi session via central nse_session."""
         if self._nse is not None:
             return
         from openchart import NSEData
         self._nse = NSEData()
 
-        if self._cffi_available:
-            logger.info("openchart_cffi_bypass", message="Injecting Chrome TLS fingerprint via curl_cffi")
-            self._cffi_session = _make_curl_cffi_session()
-            _inject_cffi_session_into_openchart(self._nse, self._cffi_session)
-            # Inject nsit cookie if provided (required for charting API to serve data)
-            if self._nsit_cookie and self._cffi_session is not None:
-                self._cffi_session.cookies.set("nsit", self._nsit_cookie, domain=".nseindia.com")
-                logger.info("openchart_nsit_injected", message="nsit session cookie injected")
+        # Delegate to central nse_session — handles cookie seeding, nsit, refresh
+        cffi_session = get_nse_session_sync()
+        if cffi_session is not None:
+            # Explicit nsit override takes precedence over the file/env loaded by nse_session
+            if self._nsit_cookie:
+                cffi_session.cookies.set("nsit", self._nsit_cookie, domain=".nseindia.com")
+            self._nse.session = cffi_session
+            self._nse._cookies_set = True
+            logger.info("openchart_cffi_session_injected",
+                        message="Central Chrome TLS session (curl_cffi) injected into OpenChart")
         else:
             self._nse._ensure_cookies()
 

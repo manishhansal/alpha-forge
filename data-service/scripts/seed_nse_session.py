@@ -58,6 +58,10 @@ async def get_nsit_cookie() -> str:
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--disable-http2",            # NSE blocks H2 from Chromium headless
+                "--disable-web-security",
+                "--ignore-certificate-errors",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
             ],
         )
         context = await browser.new_context(
@@ -68,26 +72,33 @@ async def get_nsit_cookie() -> str:
             ),
             viewport={"width": 1280, "height": 800},
             locale="en-US",
+            # Mask automation detection
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "sec-ch-ua": '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-ch-ua-mobile": "?0",
+            },
         )
         page = await context.new_page()
 
         # Navigate to NSE homepage to trigger Akamai challenge
         print("Navigating to NSE homepage...")
         await page.goto("https://www.nseindia.com", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=20000)
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
         await asyncio.sleep(3)  # let Akamai's JS run
 
         # Navigate to a page that triggers nsit issuance
         print("Navigating to live equity market...")
         await page.goto("https://www.nseindia.com/market-data/live-equity-market", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=20000)
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
         await asyncio.sleep(2)
 
         # Navigate to charting to seed charting-specific cookies
         print("Navigating to charting platform...")
         await page.goto("https://charting.nseindia.com", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await asyncio.sleep(2)
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        await asyncio.sleep(3)
 
         # Extract all cookies
         cookies = await context.cookies()
