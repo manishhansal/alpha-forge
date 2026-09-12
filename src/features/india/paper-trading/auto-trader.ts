@@ -770,14 +770,15 @@ export async function finaliseAutoTradingSession(): Promise<void> {
     select: { id: true, symbol: true, entry: true, direction: true, notional: true },
   });
 
-  // Batch-fetch prices
+  // Batch-fetch prices via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
   const priceMap = new Map<string, number>();
   if (openTrades.length > 0) {
     try {
-      const { yahoo } = await import("@/services/india/yahoo");
-      const quotes = await yahoo.getQuotes([...new Set(openTrades.map((t) => t.symbol))]);
-      for (const q of quotes) {
-        if (q.price != null) priceMap.set(q.symbol.replace(/\.NS$/i, "").toUpperCase(), q.price);
+      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+      await bootstrapRegistry();
+      const mdQuotes = await registry.getQuotes([...new Set(openTrades.map((t) => t.symbol))]);
+      for (const q of mdQuotes) {
+        if (q?.ltp != null) priceMap.set(q.symbol.replace(/\.NS$/i, "").toUpperCase(), q.ltp);
       }
     } catch { /* fail-soft */ }
   }

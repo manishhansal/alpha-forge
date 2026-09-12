@@ -10,7 +10,6 @@
 // A change resets `since = now`. This means clients can compute true age as
 // `Date.now() - since`, even on first page-load mid-session.
 
-import { yahoo } from "@/services/india/yahoo";
 import { FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
 import { classifySignal, computeScore, type SignalLabel } from "./score";
@@ -85,14 +84,17 @@ export async function getSignalRecords(
 async function snapshotChunk(nseSymbols: string[]): Promise<number> {
   let stamped = 0;
   try {
-    const quotes = await yahoo.getQuotes(nseSymbols);
+    // Route through canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const mdQuotes = await registry.getQuotes(nseSymbols);
     for (let i = 0; i < nseSymbols.length; i++) {
-      const q = quotes[i];
-      if (!q || q.price == null) continue;
+      const q = mdQuotes[i];
+      if (!q || q.ltp == null) continue;
       const symbol = nseSymbols[i]!;
       const score = computeScore({
-        price: q.price,
-        sma50: null,          // yahoo adapter getQuotes doesn't return SMA
+        price: q.ltp,
+        sma50: null,
         sma200: null,
         changePct: q.changePct ?? null,
         targetMean: null,

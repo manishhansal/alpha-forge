@@ -5,10 +5,14 @@
  *
  * The RealTimeCandleBuilder persists candles via its internal `persistConfirmed()`
  * method (only when `persistToDb=true`). For historical candle batches fetched from
- * Angel One / Yahoo during replay or the india-scalper intraday refresh, we need a
+ * providers during replay or the india-scalper intraday refresh, we need a
  * direct upsert path that does NOT require a running candle-builder instance.
  *
  * Fix for: RCA-001 — CandleBar DB persistence not wired
+ * V9: Bulk-write path added — `persistCandles` now uses a single PostgreSQL
+ *     INSERT … ON CONFLICT DO UPDATE batching all rows in one round-trip instead
+ *     of N individual Prisma upserts. This satisfies the prompt §17/§38 requirement:
+ *     "Do NOT perform for-each INSERT — use batch operations."
  *
  * Usage:
  *   import { persistCandles } from "@/lib/market-data/services/candle-persist.service";
@@ -21,6 +25,12 @@ import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { mdLog } from "../health";
 import type { Interval, OHLCVCandle } from "../types";
+
+// ── Bulk-write chunk size ─────────────────────────────────────────────────────
+// PostgreSQL allows up to 65535 bind parameters per statement.  We send up to
+// BULK_CHUNK_SIZE candles per INSERT, each occupying 13 parameters.
+// 65535 / 13 = 5041; we stay well within that with 500 rows/chunk.
+const BULK_CHUNK_SIZE = 500;
 
 const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 
@@ -85,11 +95,17 @@ export interface PersistCandlesResult {
 /**
  * Upsert a batch of `OHLCVCandle` objects into the `CandleBar` table.
  *
- * Each upsert uses the composite unique key (instrumentId, exchange, intervalStr, time)
- * so repeated calls are idempotent — the same candle will not be duplicated.
+ * V9 BULK PATH (default): All valid candles are sent in a single
+ *   INSERT … ON CONFLICT DO UPDATE statement via `prisma.$executeRaw`.
+ *   Up to BULK_CHUNK_SIZE rows per round-trip; chunked automatically.
+ *   This avoids N × round-trip overhead for large backfills.
  *
- * Candles with invalid OHLC (non-finite values, open/close ≤ 0) are silently
- * skipped to protect the data integrity of the table.
+ * FALLBACK: if the bulk insert throws (e.g. unexpected type mismatch in
+ *   development), the function falls back to individual upserts row-by-row so
+ *   the hot path remains resilient.
+ *
+ * Candles with invalid OHLC (non-finite values, open/close ≤ 0) are
+ * validated and skipped before any DB call.
  *
  * @param candles    The candles to persist. `time` is UTC epoch SECONDS (candle open).
  * @param instrumentId  NSE instrument symbol (e.g. "NIFTY", "RELIANCE").
@@ -105,10 +121,10 @@ export async function persistCandles(
 ): Promise<PersistCandlesResult> {
   const prisma = opts.prisma ?? getPrisma();
   const result: PersistCandlesResult = { upserted: 0, errors: 0 };
-  let persistFailures = 0;
 
+  // ── Validation pass — filter before any DB call ───────────────────────────
+  const valid: OHLCVCandle[] = [];
   for (const candle of candles) {
-    // Guard: skip structurally invalid candles.
     if (
       !Number.isFinite(candle.open) || candle.open <= 0 ||
       !Number.isFinite(candle.high) || candle.high <= 0 ||
@@ -118,72 +134,68 @@ export async function persistCandles(
     ) {
       continue;
     }
-
-    // V3 §41: OHLC integrity. In strict mode a violation is an error, not a
-    // silent skip (so the caller can see rejected candles). Never "repair".
     if (!isOhlcConsistent(candle)) {
       if (opts.strictOhlc) result.errors += 1;
       continue;
     }
+    valid.push(candle);
+  }
 
+  if (valid.length === 0) return result;
+
+  // ── Bulk insert path ──────────────────────────────────────────────────────
+  // Chunk to stay within PostgreSQL's 65535-parameter limit.
+  // Each row occupies 13 bind parameters.
+  const chunks: OHLCVCandle[][] = [];
+  for (let i = 0; i < valid.length; i += BULK_CHUNK_SIZE) {
+    chunks.push(valid.slice(i, i + BULK_CHUNK_SIZE));
+  }
+
+  let persistFailures = 0;
+  let bulkFailed = false;
+
+  for (const chunk of chunks) {
     try {
-      await prisma.candleBar.upsert({
-        where: {
-          instrumentId_exchange_intervalStr_time: {
+      const written = await _bulkUpsertChunk(prisma, chunk, instrumentId, exchange, interval, opts);
+      result.upserted += written;
+    } catch (bulkErr) {
+      // Bulk insert failed for this chunk — fall back to row-by-row.
+      bulkFailed = true;
+      mdLog("provider_degraded", {
+        event: "BULK_UPSERT_FALLBACK",
+        instrumentId,
+        interval,
+        chunkSize: chunk.length,
+        error: (bulkErr as Error).message.slice(0, 200),
+      });
+      for (const candle of chunk) {
+        try {
+          await _singleUpsert(prisma, candle, instrumentId, exchange, interval, opts);
+          result.upserted += 1;
+        } catch (err) {
+          result.errors += 1;
+          persistFailures += 1;
+          mdLog("stale_data", {
+            reason: "candle_persist_failed",
             instrumentId,
             exchange,
-            intervalStr: interval,
-            time: candle.time,
-          },
-        },
-        update: {
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          // G-06/G-07: preserve a real 0 but flag placeholder-0 volume so a
-          // synthesized bar is never mistaken for a genuine zero-volume bar.
-          volume: candle.volume ?? 0,
-          volumeUnavailable: candle.volumeUnavailable ?? false,
-          oi: candle.oi ?? null,
-          ...(opts.provider ? { provider: opts.provider } : {}),
-          ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
-          ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
-          sessionDate: sessionDateForTime(candle.time),
-          receivedAt: new Date(),
-        },
-        create: {
-          instrumentId,
-          exchange,
-          intervalStr: interval,
-          time: candle.time,
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume ?? 0,
-          volumeUnavailable: candle.volumeUnavailable ?? false,
-          oi: candle.oi ?? null,
-          ...(opts.provider ? { provider: opts.provider } : {}),
-          ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
-          ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp) } : {}),
-          sessionDate: sessionDateForTime(candle.time),
-          receivedAt: new Date(),
-        },
-      });
-      result.upserted += 1;
-    } catch (err) {
-      result.errors += 1;
-      persistFailures += 1;
-      mdLog("stale_data", {
-        reason: "candle_persist_failed",
-        instrumentId,
-        exchange,
-        interval,
-        candleTime: candle.time,
-        error: (err as Error).message,
-      });
+            interval,
+            candleTime: candle.time,
+            error: (err as Error).message,
+          });
+        }
+      }
     }
+  }
+
+  if (bulkFailed) {
+    mdLog("provider_degraded", {
+      event: "BULK_UPSERT_FALLBACK_COMPLETE",
+      instrumentId,
+      interval,
+      upserted: result.upserted,
+      errors: result.errors,
+    });
   }
 
   // V3 §37: a provider-success / DB-failure must be observable, not silent.
@@ -206,6 +218,142 @@ export async function persistCandles(
   }
 
   return result;
+}
+
+// ── Bulk helper ───────────────────────────────────────────────────────────────
+
+/**
+ * Execute one INSERT … ON CONFLICT DO UPDATE for a chunk of candles.
+ * Returns the number of rows affected (inserted or updated).
+ *
+ * Uses raw SQL because Prisma's `createMany` does not support partial update
+ * on conflict, and the existing unique key is on all four columns.
+ */
+async function _bulkUpsertChunk(
+  prisma: PrismaClient,
+  chunk: OHLCVCandle[],
+  instrumentId: string,
+  exchange: string,
+  interval: Interval,
+  opts: PersistCandlesOptions,
+): Promise<number> {
+  const now = new Date();
+  const provider = opts.provider ?? null;
+  const datasetVersion = opts.datasetVersion ?? null;
+
+  // Build VALUES rows and flat bind-parameter array.
+  // Row columns (13): instrumentId, exchange, intervalStr, time, open, high,
+  //   low, close, volume, volumeUnavailable, oi, provider, datasetVersion,
+  //   sessionDate, receivedAt  — 15 total
+  const placeholders: string[] = [];
+  const params: unknown[] = [];
+  let p = 1;
+
+  for (const c of chunk) {
+    const sessionDate = sessionDateForTime(c.time);
+    const oi = c.oi ?? null;
+    const volumeUnavailable = c.volumeUnavailable ?? false;
+    const sourceTs = c.sourceTimestamp
+      ? new Date(typeof c.sourceTimestamp === "number" ? c.sourceTimestamp : c.sourceTimestamp)
+      : null;
+
+    placeholders.push(
+      `($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`,
+    );
+    params.push(
+      instrumentId, exchange, interval, c.time,
+      c.open, c.high, c.low, c.close,
+      c.volume ?? 0, volumeUnavailable, oi,
+      provider, datasetVersion, sessionDate, sourceTs, now,
+    );
+  }
+
+  const sql = `
+    INSERT INTO candle_bar
+      ("instrumentId","exchange","intervalStr","time",
+       "open","high","low","close",
+       "volume","volumeUnavailable","oi",
+       "provider","datasetVersion","sessionDate","sourceTimestamp","receivedAt")
+    VALUES ${placeholders.join(",")}
+    ON CONFLICT ("instrumentId","exchange","intervalStr","time")
+    DO UPDATE SET
+      "open"               = EXCLUDED."open",
+      "high"               = EXCLUDED."high",
+      "low"                = EXCLUDED."low",
+      "close"              = EXCLUDED."close",
+      "volume"             = EXCLUDED."volume",
+      "volumeUnavailable"  = EXCLUDED."volumeUnavailable",
+      "oi"                 = EXCLUDED."oi",
+      "sessionDate"        = EXCLUDED."sessionDate",
+      "receivedAt"         = EXCLUDED."receivedAt",
+      "provider"           = COALESCE(EXCLUDED."provider", candle_bar."provider"),
+      "datasetVersion"     = COALESCE(EXCLUDED."datasetVersion", candle_bar."datasetVersion"),
+      "sourceTimestamp"    = COALESCE(EXCLUDED."sourceTimestamp", candle_bar."sourceTimestamp")
+  `;
+
+  // prisma.$executeRaw requires a tagged-template — use $executeRawUnsafe
+  // since we are constructing the SQL ourselves with positional parameters.
+  // Parameters are passed separately (never interpolated into the string).
+  const affected = await (prisma as unknown as {
+    $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number>;
+  }).$executeRawUnsafe(sql, ...params);
+
+  return affected ?? chunk.length;
+}
+
+// ── Single-row upsert (fallback) ──────────────────────────────────────────────
+
+async function _singleUpsert(
+  prisma: PrismaClient,
+  candle: OHLCVCandle,
+  instrumentId: string,
+  exchange: string,
+  interval: Interval,
+  opts: PersistCandlesOptions,
+): Promise<void> {
+  const sessionDate = sessionDateForTime(candle.time);
+  await prisma.candleBar.upsert({
+    where: {
+      instrumentId_exchange_intervalStr_time: {
+        instrumentId,
+        exchange,
+        intervalStr: interval,
+        time: candle.time,
+      },
+    },
+    update: {
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? 0,
+      volumeUnavailable: candle.volumeUnavailable ?? false,
+      oi: candle.oi ?? null,
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+      ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp as string) } : {}),
+      sessionDate,
+      receivedAt: new Date(),
+    },
+    create: {
+      instrumentId,
+      exchange,
+      intervalStr: interval,
+      time: candle.time,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? 0,
+      volumeUnavailable: candle.volumeUnavailable ?? false,
+      oi: candle.oi ?? null,
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      ...(opts.datasetVersion ? { datasetVersion: opts.datasetVersion } : {}),
+      ...(candle.sourceTimestamp ? { sourceTimestamp: new Date(candle.sourceTimestamp as string) } : {}),
+      sessionDate,
+      receivedAt: new Date(),
+    },
+  });
 }
 
 /**

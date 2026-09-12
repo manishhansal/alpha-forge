@@ -26,6 +26,10 @@ import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { istDateKey } from "@/features/india/daily-picks/engine";
 import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { cache as indiaCache } from "@/services/india/cache";
+// angel.getOptionChain("SENSEX") is a DOCUMENTED EXCEPTION:
+// The BSE/BFO SENSEX option chain is only available via Angel One's SmartAPI
+// (synthesised from BFO scrip subset). There is no generic registry route for
+// BSE exchange option chains. See DATA_SERVICE_PRE_REFACTOR_AUDIT.md §5.
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import type { OptionChain } from "@/types/india";
 

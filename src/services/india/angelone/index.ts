@@ -32,7 +32,6 @@ import type {
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
 import { cache } from "../cache";
-import { yahoo } from "../yahoo";
 import {
   parseGainersLosers,
   parseGreekRows,
@@ -1147,14 +1146,9 @@ async function fetchUnderlyingSpot(
       if (ltp != null) return ltp;
     }
   } catch {
-    // fall through to Yahoo
+    // fall through
   }
-  try {
-    const q = await yahoo.getQuote(upper);
-    return q?.price ?? null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 // ── Adapter ────────────────────────────────────────────────────────────────
@@ -1178,26 +1172,26 @@ export class AngelOneAdapter implements BrokerAdapter {
 
   async getQuote(symbol: string): Promise<Quote> {
     const [q] = await this.getQuotes([symbol]);
-    return q ?? (await yahoo.getQuote(symbol));
+    return q ?? emptyAngelQuote(symbol);
   }
 
   /**
    * Live FULL-mode quotes from SmartAPI. By default, symbols Angel One can't
-   * resolve (or the whole batch if SmartAPI is unconfigured / errors)
-   * transparently fall back to Yahoo so a partial registry never blanks the
-   * dashboard. Pass `{ allowFallback: false }` to suppress that and get empty
-   * placeholders instead (used by the selected-source-only resolver).
+   * resolve return empty placeholders — the caller (ProviderRegistry via
+   * withFailover) decides whether to try the next provider. The Yahoo fallback
+   * was removed in V9: failover is the registry's responsibility, not the
+   * adapter's. Pass `{ allowFallback: false }` (no-op now, kept for compat).
    */
   async getQuotes(symbols: string[], opts?: AngelFetchOptions): Promise<Quote[]> {
     if (symbols.length === 0) return [];
-    const allowFallback = opts?.allowFallback ?? true;
     const cfg = await resolveConfig();
     if (!cfg) {
-      return allowFallback ? yahoo.getQuotes(symbols) : symbols.map(emptyAngelQuote);
+      // Not configured — return empty placeholders so registry can try next provider
+      return symbols.map(emptyAngelQuote);
     }
 
     return cache.memo(
-      `angel:quotes:${allowFallback ? "fb" : "strict"}:${symbols.join(",")}`,
+      `angel:quotes:strict:${symbols.join(",")}`,
       5_000,
       async () => {
         try {
@@ -1218,24 +1212,18 @@ export class AngelOneAdapter implements BrokerAdapter {
               ? await bulkQuoteTokens(cfg, jwt, [...resolved.values()])
               : new Map<string, AngelQuoteRow>();
 
-          // Yahoo backfill for anything Angel One couldn't resolve — only when
-          // fallback is allowed.
-          const fallback = new Map<string, Quote>();
-          if (allowFallback && unresolved.length > 0) {
-            const yq = await yahoo.getQuotes(unresolved);
-            unresolved.forEach((s, i) => fallback.set(s, yq[i]));
-          }
-
+          // Unresolved symbols return empty placeholders — registry failover handles them
           return symbols.map((s) => {
             const ins = resolved.get(s);
             const row = ins ? rows.get(`${ins.exchange}:${ins.token}`) : undefined;
             if (row && num(row.ltp) != null) return quoteFromQuoteRow(s, row);
-            return fallback.get(s) ?? emptyAngelQuote(s);
+            return emptyAngelQuote(s);
           });
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error(`angelone.getQuotes:`, msg);
-          return allowFallback ? yahoo.getQuotes(symbols) : symbols.map(emptyAngelQuote);
+          // Return empty — registry's withFailover will escalate to next provider
+          return symbols.map(emptyAngelQuote);
         }
       },
     );
@@ -1245,20 +1233,21 @@ export class AngelOneAdapter implements BrokerAdapter {
     req: HistoricalRequest,
     opts?: AngelFetchOptions,
   ): Promise<Candle[]> {
-    const allowFallback = opts?.allowFallback ?? true;
     const smartInterval = intervalToSmartApi(req.interval);
-    // SmartAPI has no weekly candle — defer to Yahoo for that interval.
-    if (!smartInterval) return allowFallback ? yahoo.getHistorical(req) : [];
+    // SmartAPI has no weekly/monthly candle — return empty so registry tries next provider.
+    if (!smartInterval) return [];
     const cfg = await resolveConfig();
-    if (!cfg) return allowFallback ? yahoo.getHistorical(req) : [];
+    // Not configured — return empty so registry's withFailover tries next provider.
+    if (!cfg) return [];
 
-    const cacheKey = `angel:hist:${allowFallback ? "fb" : "strict"}:${req.symbol}:${req.interval}:${req.range}`;
+    const cacheKey = `angel:hist:strict:${req.symbol}:${req.interval}:${req.range}`;
     return cache.memo(cacheKey, 30_000, async () => {
       try {
         const jwt = await login(cfg);
         const { cash } = await getScripSubsets();
         const ins = resolveAngelToken(req.symbol, buildEqTokenMap(cash));
-        if (!ins) return allowFallback ? yahoo.getHistorical(req) : [];
+        // Symbol not in ScripMaster — return empty so registry tries next provider.
+        if (!ins) return [];
 
         const now = Date.now();
         const tuples = await fetchCandleData(
@@ -1270,14 +1259,13 @@ export class AngelOneAdapter implements BrokerAdapter {
           now,
         );
         const candles = candlesFromCandleData(tuples);
-        // Empty SmartAPI window (e.g. holiday / off-hours) → Yahoo backfill
-        // unless the caller restricted us to the selected source.
-        if (candles.length > 0) return candles;
-        return allowFallback ? await yahoo.getHistorical(req) : [];
+        // Empty window (holiday / off-hours) → return empty, registry decides next step.
+        return candles;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`angelone.getHistorical(${req.symbol}):`, msg);
-        return allowFallback ? yahoo.getHistorical(req) : [];
+        // Throw so registry's withFailover classifies the failure correctly.
+        throw e;
       }
     });
   }

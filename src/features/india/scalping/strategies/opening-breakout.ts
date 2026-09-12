@@ -2,7 +2,6 @@ import "server-only";
 
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
-import { yahoo } from "@/services/india/yahoo";
 import type { OptionChainAnalytics } from "@/types/india/options";
 
 import { buildOpeningBreakoutSignal } from "@/features/india/scalping/strategies/opening-breakout-core";
@@ -131,11 +130,26 @@ export async function getIndiaOpeningBreakoutSignals(
 
       const settled = await Promise.allSettled(
         universe.map(async (u) => {
-          const candles = await yahoo.getHistorical({
+          // Route through canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
+          // instead of calling yahoo.getHistorical directly.
+          const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+          await bootstrapRegistry();
+          const ohlcv = await registry.getHistoricalCandles({
             symbol: u.yahooSymbol,
+            exchange: "NSE",
             interval: "5m",
-            range: "5d",
+            from: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+            to: new Date().toISOString(),
           });
+          // Map OHLCVCandle (UTC epoch ms) → legacy Candle (epoch seconds)
+          const candles = ohlcv.map((c) => ({
+            time: Math.floor(c.time / 1000),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume ?? null,
+          }));
           return buildOpeningBreakoutSignal({
             symbol: u.symbol,
             symbolName: u.symbolName,

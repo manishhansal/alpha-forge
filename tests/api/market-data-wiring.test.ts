@@ -63,10 +63,17 @@ describe("signal snapshotter — provider architecture compliance", () => {
     expect(src).not.toContain("yfClient");
   });
 
-  it("uses the canonical yahoo service adapter", () => {
+  it("V9: uses canonical registry instead of direct Yahoo adapter (V9 migration)", () => {
+    // Post-V9 refactor: snapshotter routes through the canonical registry,
+    // not the legacy @/services/india/yahoo adapter directly.
     const src = readSrc("src/services/india/signals/snapshotter.ts");
-    expect(src).toMatch(/from.*@\/services\/india\/yahoo/);
-    expect(src).toMatch(/yahoo\.getQuotes/);
+    // Must NOT import yahoo directly
+    expect(src).not.toMatch(/from.*@\/services\/india\/yahoo/);
+    // Must NOT call yahoo.getQuotes directly
+    expect(src).not.toMatch(/yahoo\.getQuotes/);
+    // MUST use the canonical registry
+    expect(src).toMatch(/registry|bootstrapRegistry/);
+    expect(src).toMatch(/registry\.getQuotes/);
   });
 });
 

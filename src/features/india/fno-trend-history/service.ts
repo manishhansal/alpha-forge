@@ -22,7 +22,6 @@ import {
   isNseMarketOpenIST,
   isNseSessionEndedForDateIST,
 } from "@/lib/india/market-hours";
-import { yahoo } from "@/services/india/yahoo";
 import type { ScannerHit } from "@/types/india/scanner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -210,13 +209,17 @@ export async function trackOpenFnoTrendScans(prisma?: PrismaClient): Promise<voi
 
   if (openRows.length === 0) return;
 
-  // Fetch quotes in one batch
+  // Fetch quotes in one batch via canonical registry
   const symbols = [...new Set(openRows.map((r) => r.symbol))];
   const quoteMap: Map<string, number> = new Map();
   try {
-    const quotes = await yahoo.getQuotes(symbols);
-    for (const q of quotes) {
-      if (q.price != null && Number.isFinite(q.price)) quoteMap.set(q.symbol.replace(".NS", ""), q.price);
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const mdQuotes = await registry.getQuotes(symbols);
+    for (const q of mdQuotes) {
+      if (q?.ltp != null && Number.isFinite(q.ltp)) {
+        quoteMap.set(q.symbol.replace(".NS", ""), q.ltp);
+      }
     }
   } catch {
     // Fail-soft — skip tracking this tick

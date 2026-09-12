@@ -2,7 +2,6 @@ import "server-only";
 
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
-import { yahoo } from "@/services/india/yahoo";
 
 import {
   buildLiquidityEdgeSignal,
@@ -110,7 +109,7 @@ async function loadPositioningInputs(
       const meta = FNO_INDICES[idx]!;
       const chain = res.value;
       const quote = quoteBySymbol.get(meta.symbol);
-      const spot = chain.spot ?? quote?.price ?? null;
+      const spot = chain.spot ?? quote?.ltp ?? null;
       if (spot == null || !Number.isFinite(spot) || spot <= 0) return;
 
       inputs.push({
@@ -130,13 +129,14 @@ async function loadPositioningInputs(
 }
 
 async function loadIndexQuotes() {
-  const map = new Map<
-    string,
-    Awaited<ReturnType<typeof yahoo.getQuotes>>[number]
-  >();
+  const map = new Map<string, { symbol: string; ltp: number | null; changePct: number | null; prevClose: number | null }>();
   try {
-    const quotes = await yahoo.getQuotes(FNO_INDICES.map((i) => i.symbol));
-    for (const q of quotes) map.set(q.symbol, q);
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    const mdQuotes = await registry.getQuotes(FNO_INDICES.map((i) => i.symbol));
+    for (const q of mdQuotes) {
+      if (q) map.set(q.symbol, { symbol: q.symbol, ltp: q.ltp ?? null, changePct: q.changePct ?? null, prevClose: q.prevClose ?? null });
+    }
   } catch (err) {
     console.warn("[india/scalping/positioning] index quotes failed", err);
   }
