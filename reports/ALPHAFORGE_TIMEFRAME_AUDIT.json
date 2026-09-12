@@ -1,0 +1,38 @@
+{
+  "schema": "alphaforge-timeframe-audit-v8",
+  "generatedAt": "2026-09-12T15:20:00Z",
+  "auditedBy": "V8 refactor/signals branch",
+  "datasetVersion": "2026-09-12-v1",
+
+  "supportedTimeframes": ["1m", "5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M"],
+  "supportedCount": 9,
+
+  "threeMRemoval": {
+    "status": "PERMANENTLY_REMOVED",
+    "removedIn": "V8 (refactor/signals)",
+    "reason": "Angel One never served 3m (verified live 2026-09-12: 0 bars). Upstox served it but coverage was minimal (10,125 rows, 9 instruments). No strategy uses 3m. No ML feature uses 3m. 3m is not a valid Alphaforge interval.",
+    "verifiedZeroNewAcquisitions": true,
+    "legacyRowsInDbAllowed": "Yes — existing rows are immutable audit records. No new 3m data is acquired.",
+    "typeSystemEnforcement": "Interval union in src/lib/market-data/types.ts does NOT include '3m'. TypeScript compiler rejects '3m' at compile time.",
+    "runtimeEnforcement": "isSupportedInterval('3m') === false. assertSupportedInterval('3m') throws. Python validate_interval('3m') raises ValueError.",
+    "apiEnforcement": "All historical-data API endpoints return HTTP 400 for timeframe=3m.",
+    "mlEnforcement": "CanonicalDecision.__post_init__ raises if timeframe='3m'. validate_canonical_data_v8 returns BLOCKED for 3m.",
+    "occurrencesInProductionCode": 0,
+    "occurrencesAllowedInTests": "Only as rejection assertions (tests proving 3m IS rejected)",
+    "occurrencesAllowedInLegacyData": "Existing CandleBar rows with intervalStr='3m' are immutable audit records",
+    "binanceKlineInterval3m": "RETAINED — Binance legitimately uses 3m. KlineInterval != Interval (different type).",
+    "deltaResolution3m": "RETAINED — Delta exchange broker uses 3m. Separate type from NSE Interval."
+  },
+
+  "perTimeframeStatus": {
+    "1m":  { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false },
+    "5m":  { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false },
+    "10m": { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": false, "openChartSupported": true, "jugaadSupported": false },
+    "15m": { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false },
+    "30m": { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false },
+    "1h":  { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false },
+    "1d":  { "liveBuilder": true, "backfillSupported": true, "angelSupported": true, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": true },
+    "1w":  { "liveBuilder": false, "backfillSupported": true, "angelSupported": false, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false, "note": "Provider-native preferred; derivable from 1d if native unavailable" },
+    "1M":  { "liveBuilder": false, "backfillSupported": true, "angelSupported": false, "upstoxSupported": true, "openChartSupported": true, "jugaadSupported": false, "note": "Provider-native preferred; derivable from 1d if native unavailable" }
+  }
+}
