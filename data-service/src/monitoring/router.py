@@ -325,31 +325,136 @@ _NOT_READY_BODY: dict[str, Any] = {
 
 @monitoring_router.get("/health", response_class=JSONResponse)
 async def monitoring_health() -> JSONResponse:
-    """Return overall service health counters.
+    """Return overall service health counters plus per-provider health status.
 
     Returns ``{"available": false, "reason": "service not yet ready"}`` with
     HTTP 503 when the service has not finished initialising.
 
-    Normal response (HTTP 200)::
-
-        {
-            "request_count": 1234,
-            "ban_count": 2,
-            "cache_hit_rate": 0.9876,
-            "uptime_seconds": 3600
-        }
+    Per-provider health schema (Req 15.7):
+        status:       "healthy" (score >= 60), "degraded" (score 20-59), or
+                      "unavailable" (score < 20 or circuit open)
+        lastSuccess:  ISO-8601 UTC of last successful call, or null
+        lastFailure:  ISO-8601 UTC of last failure, or null
+        requestCount: cumulative total requests
+        successCount: cumulative successful requests
+        failureCount: cumulative failed requests
+        latencyP50:   p50 latency ms over rolling window, or null
+        latencyP95:   p95 latency ms over rolling window, or null
+        latencyP99:   p99 latency ms over rolling window, or null
     """
     if not is_service_initialized():
         return JSONResponse(content=_NOT_READY_BODY, status_code=503)
 
     from src.anti_ban.ban_detector import ban_detector  # local import avoids circulars
 
-    body: dict[str, Any] = {
+    # ── Service-level counters ────────────────────────────────────────────────
+    service_body: dict[str, Any] = {
         "request_count": rolling_stats.request_count,
         "ban_count": ban_detector.ban_count,
         "cache_hit_rate": rolling_stats.cache_hit_rate,
         "uptime_seconds": rolling_stats.uptime_seconds,
     }
+
+    # ── Per-provider health (Req 15.7) ────────────────────────────────────────
+    # Derive provider health from circuit-breaker states and rolling endpoint stats.
+    providers: dict[str, Any] = {}
+    try:
+        from src.core.circuit_breaker import all_breakers  # type: ignore[attr-defined]
+        breakers = all_breakers()
+    except Exception:
+        breakers = {}
+
+    try:
+        all_stats = rolling_stats.get_all_stats()
+    except Exception:
+        all_stats = {}
+
+    # Map circuit breaker names to (provider, endpoint) pairs for latency lookup.
+    _breaker_to_provider: dict[str, str] = {
+        "nse_nextapi": "scrapling",
+        "nse_charting": "scrapling",
+        "bse_charting": "scrapling",
+        "upstox_quotes": "upstox",
+        "upstox_historical": "upstox",
+    }
+    _provider_endpoints: dict[str, str] = {
+        "scrapling": "/scraping/quotes",
+        "upstox": "/scraping/quotes",
+        "yahoo": "/scraping/historical",
+    }
+
+    # Aggregate per-provider from breaker stats.
+    provider_agg: dict[str, dict[str, Any]] = {}
+    for name, breaker in breakers.items():
+        prov = _breaker_to_provider.get(name)
+        if prov is None:
+            continue
+        stats = breaker.stats
+        if prov not in provider_agg:
+            provider_agg[prov] = {
+                "requestCount": 0,
+                "successCount": 0,
+                "failureCount": 0,
+                "score": 100,
+                "circuitOpen": False,
+                "lastSuccess": None,
+                "lastFailure": None,
+            }
+        agg = provider_agg[prov]
+        total = stats.get("total_requests", 0) or 0
+        failures = int(total * (stats.get("failure_rate", 0) or 0))
+        successes = total - failures
+        agg["requestCount"] += total
+        agg["successCount"] += successes
+        agg["failureCount"] += failures
+        state = stats.get("state", "CLOSED")
+        if state in ("OPEN", "HALF_OPEN"):
+            agg["circuitOpen"] = True
+        # Derive last success/failure timestamps from rolling stats if available
+        last_success_ts = stats.get("last_success_at")
+        last_failure_ts = stats.get("last_failure_at")
+        if last_success_ts:
+            agg["lastSuccess"] = last_success_ts
+        if last_failure_ts:
+            agg["lastFailure"] = last_failure_ts
+
+    # Build final per-provider response entries.
+    for prov, agg in provider_agg.items():
+        circuit_open: bool = agg["circuitOpen"]
+        total = agg["requestCount"]
+        successes = agg["successCount"]
+        failures = agg["failureCount"]
+        # Compute a simple health score: 100 - 40 * consecutive_failure_rate (bounded).
+        score = 100 - min(100, int((failures / total * 100) if total > 0 else 0))
+
+        # Status mapping per Req 15.7:
+        #   healthy   when score >= 60
+        #   degraded  when score 20-59
+        #   unavailable when score < 20 or circuit open
+        if circuit_open or score < 20:
+            status = "unavailable"
+        elif score < 60:
+            status = "degraded"
+        else:
+            status = "healthy"
+
+        # Latency from rolling stats for this provider's primary endpoint.
+        endpoint = _provider_endpoints.get(prov)
+        endpoint_stats = all_stats.get(endpoint) if isinstance(all_stats, dict) and endpoint else None
+
+        providers[prov] = {
+            "status": status,
+            "lastSuccess": agg.get("lastSuccess"),
+            "lastFailure": agg.get("lastFailure"),
+            "requestCount": total,
+            "successCount": successes,
+            "failureCount": failures,
+            "latencyP50": getattr(endpoint_stats, "p50_ms", None),
+            "latencyP95": getattr(endpoint_stats, "p95_ms", None) if endpoint_stats else None,
+            "latencyP99": getattr(endpoint_stats, "p99_ms", None),
+        }
+
+    body = {**service_body, "providers": providers}
     return JSONResponse(content=body, status_code=200)
 
 

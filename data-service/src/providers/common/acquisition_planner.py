@@ -13,7 +13,7 @@ produces a provider-specific acquisition plan rather than a one-size-fits-all
 approach.
 
 ABSOLUTE RULES:
-  - Never plan an acquisition for 3m (raises ValueError).
+  - Never plan an acquisition for 3m (returns infeasible plan, feasible=False).
   - Chunk sizes come from registry maximumRangeDays — never exceed them.
   - Rate limits come from registry requestsPerSecond.
   - Expected candle count is computed from the NSE trading calendar where
@@ -143,7 +143,7 @@ def plan_acquisition(
     exchange : str
         "NSE" | "NFO" | etc.
     interval_str : str
-        Canonical interval. Raises ValueError for "3m".
+        Canonical interval. Returns infeasible plan with blocked_reason for "3m".
     from_date : date
         Desired start of historical range (inclusive).
     to_date : date
@@ -155,6 +155,7 @@ def plan_acquisition(
     -------
     AcquisitionPlan
         If not feasible, plan.feasible=False and plan.blocked_reason explains why.
+        For "3m": plan.feasible=False, plan.blocked_reason contains "3m was permanently removed".
     """
     # Reject 3m permanently
     if interval_str == "3m":
