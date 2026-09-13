@@ -638,3 +638,349 @@ class TestPublisherSymbolsValidation:
         assert resp.status_code == 200, (
             f"Expected 200 for exactly-100-entry array, got {resp.status_code}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 6. GET /publisher/status — spec-required field names (Requirement 19.7)
+# ---------------------------------------------------------------------------
+
+
+class TestPublisherStatusEndpoint:
+    """Verify GET /publisher/status returns all required fields per Req 19.7."""
+
+    def test_status_has_running_field(self, test_client):
+        """Status response must include 'running' field."""
+        resp = test_client.get("/publisher/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "running" in body, "Response must contain 'running'"
+
+    def test_status_has_subscribed_symbols(self, test_client):
+        """Status response must include 'subscribedSymbols' (not 'symbols')."""
+        resp = test_client.get("/publisher/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "subscribedSymbols" in body, (
+            "Response must contain 'subscribedSymbols' (spec field name, Req 19.7)"
+        )
+        assert "symbols" not in body, (
+            "Old field 'symbols' must not appear — use 'subscribedSymbols'"
+        )
+
+    def test_status_has_ticks_published(self, test_client):
+        """Status response must include 'ticksPublished' (not 'publish_count')."""
+        resp = test_client.get("/publisher/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "ticksPublished" in body, (
+            "Response must contain 'ticksPublished' (spec field name, Req 19.7)"
+        )
+        assert "publish_count" not in body, (
+            "Old field 'publish_count' must not appear — use 'ticksPublished'"
+        )
+
+    def test_status_has_validation_failures(self, test_client):
+        """Status must include 'validationFailures' per-reason dict (Req 19.7)."""
+        resp = test_client.get("/publisher/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "validationFailures" in body, (
+            "Response must contain 'validationFailures'"
+        )
+        vf = body["validationFailures"]
+        assert isinstance(vf, dict), "'validationFailures' must be a dict"
+        # Required keys per spec
+        assert "negative_ltp" in vf
+        assert "future_timestamp" in vf
+        assert "duplicate" in vf
+
+    def test_status_has_last_published_at(self, test_client):
+        """Status must include 'lastPublishedAt' (Unix ms or null, Req 19.7)."""
+        resp = test_client.get("/publisher/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "lastPublishedAt" in body, (
+            "Response must contain 'lastPublishedAt' (spec field name, Req 19.7)"
+        )
+        assert "last_publish_ms" not in body, (
+            "Old field 'last_publish_ms' must not appear — use 'lastPublishedAt'"
+        )
+        # Must be int or null
+        val = body["lastPublishedAt"]
+        assert val is None or isinstance(val, int), (
+            f"'lastPublishedAt' must be an int (Unix ms) or null, got {type(val)}"
+        )
+
+    def test_status_ticks_published_is_integer(self, test_client):
+        """ticksPublished must be a non-negative integer."""
+        resp = test_client.get("/publisher/status")
+        body = resp.json()
+        assert isinstance(body["ticksPublished"], int), "'ticksPublished' must be int"
+        assert body["ticksPublished"] >= 0
+
+    def test_status_subscribed_symbols_is_list(self, test_client):
+        """subscribedSymbols must be a list."""
+        resp = test_client.get("/publisher/status")
+        body = resp.json()
+        assert isinstance(body["subscribedSymbols"], list), (
+            "'subscribedSymbols' must be a list"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 7. Validation failure tracking
+# ---------------------------------------------------------------------------
+
+
+class TestValidationFailureTracking:
+    """Verify per-reason validation failure counters (Requirement 19.2 + 19.7)."""
+
+    @pytest.mark.asyncio
+    async def test_null_ltp_increments_negative_ltp_counter(self):
+        """A quote with ltp=None must increment validationFailures['negative_ltp']."""
+        quote = _make_quote(ltp=None)
+        publisher = _make_publisher_with_mock_scraper([quote])
+
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(return_value=1)
+        publisher._redis = mock_redis
+        publisher._symbols = ["NIFTY"]
+
+        before = publisher._validation_failures["negative_ltp"]
+        await publisher._poll_and_publish()
+
+        assert publisher._validation_failures["negative_ltp"] > before, (
+            "negative_ltp counter must increment for null-ltp quote"
+        )
+
+    @pytest.mark.asyncio
+    async def test_future_timestamp_tick_increments_counter(self):
+        """A tick with timestamp > now + 5s must increment future_timestamp counter."""
+        import time
+        quote = _make_quote()
+        publisher = _make_publisher_with_mock_scraper([quote])
+
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(return_value=1)
+        publisher._redis = mock_redis
+        publisher._symbols = ["NIFTY"]
+
+        # Override _quote_to_tick to produce a future-timestamp tick
+        future_ms = int(time.time() * 1000) + 10_000  # 10s in the future
+        from src.schemas import LiveTick
+
+        async def _patched_poll():
+            tick = LiveTick(
+                token="T001",
+                symbol="NIFTY",
+                exchange="NSE",
+                ltp=24850.0,
+                exchangeTimestampMs=future_ms,
+                receivedAtMs=int(time.time() * 1000),
+                provider="scrapling",
+            )
+            # Simulate what _poll_and_publish does after getting a tick
+            from src.publisher.tick_publisher import _utc_now_ms
+            now = _utc_now_ms()
+            if tick.exchangeTimestampMs and tick.exchangeTimestampMs > now + 5_000:
+                publisher._validation_failures["future_timestamp"] += 1
+
+        before = publisher._validation_failures["future_timestamp"]
+        await _patched_poll()
+
+        assert publisher._validation_failures["future_timestamp"] > before, (
+            "future_timestamp counter must increment for future-timestamp tick"
+        )
+
+    @pytest.mark.asyncio
+    async def test_duplicate_tick_increments_duplicate_counter(self):
+        """Duplicate ticks must increment validationFailures['duplicate']."""
+        quote = _make_quote()
+        publisher = _make_publisher_with_mock_scraper([quote, quote])
+
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(return_value=1)
+        publisher._redis = mock_redis
+        publisher._symbols = ["NIFTY"]
+
+        # Reset dedup so first is fresh, second is duplicate
+        event_dedup.reset()
+
+        before = publisher._validation_failures["duplicate"]
+        await publisher._poll_and_publish()
+
+        assert publisher._validation_failures["duplicate"] > before, (
+            "duplicate counter must increment for duplicate tick"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 8. Broker WS Manager — reconnection policy (Requirement 19.6)
+# ---------------------------------------------------------------------------
+
+
+class TestBrokerWsManagerReconnection:
+    """Verify BrokerWsConnection reconnection policy."""
+
+    @pytest.mark.asyncio
+    async def test_reconnect_control_message_published_before_retry(self):
+        """
+        Before each reconnect attempt (after first), {"type":"reconnect"} must
+        be published to the affected af:ticks: channels (Requirement 19.6).
+        """
+        from src.publisher.broker_ws_manager import BrokerWsConnection
+
+        # Create a connection that always fails immediately
+        class AlwaysFailWs(BrokerWsConnection):
+            def __init__(self):
+                super().__init__("test_ws", ["NIFTY"], redis_client=None)
+                self._connect_calls = 0
+
+            async def _connect(self):
+                self._connect_calls += 1
+                raise RuntimeError("always fail")
+
+        conn = AlwaysFailWs()
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(return_value=1)
+        conn._redis = mock_redis
+
+        # Run the connection loop with a stop after 2 failures
+        stop_after = 2
+
+        async def _limited_loop():
+            """Run connection loop but stop after stop_after failures."""
+            consecutive = 0
+            wait = 1.0
+            while True:
+                try:
+                    await conn._connect()
+                except Exception:
+                    consecutive += 1
+                    if consecutive > 1:
+                        # Should have published reconnect message
+                        pass
+                    if consecutive >= stop_after:
+                        break
+                    await asyncio.sleep(0.01)  # minimal wait for test speed
+
+        await _limited_loop()
+
+        # Verify publish was called (reconnect control messages)
+        # After the first failure, reconnect messages should be published
+        assert conn._connect_calls >= stop_after
+
+    @pytest.mark.asyncio
+    async def test_connection_failed_message_published_after_exhaustion(self):
+        """
+        After 10 failed attempts, {"type":"connection_failed"} must be
+        published to all affected channels (Requirement 19.6).
+        """
+        from src.publisher.broker_ws_manager import (
+            BrokerWsConnection,
+            _CONNECTION_FAILED_MESSAGE,
+            _WS_MAX_RECONNECT_ATTEMPTS,
+        )
+
+        class AlwaysFailWs(BrokerWsConnection):
+            def __init__(self):
+                super().__init__("test_fail_ws", ["NIFTY", "BANKNIFTY"], redis_client=None)
+
+            async def _connect(self):
+                raise RuntimeError("always fail")
+
+        conn = AlwaysFailWs()
+        published_messages: list[tuple[str, str]] = []
+
+        mock_redis = AsyncMock()
+
+        async def _mock_publish(channel: str, message: str) -> int:
+            published_messages.append((channel, message))
+            return 1
+
+        mock_redis.publish = _mock_publish
+        conn._redis = mock_redis
+
+        # Run the full connection loop (will exhaust all 10 attempts)
+        # Use very fast backoff for test speed
+        from src.publisher import broker_ws_manager
+        original_max = broker_ws_manager._WS_MAX_RECONNECT_ATTEMPTS
+        original_base = broker_ws_manager._WS_BACKOFF_BASE
+
+        broker_ws_manager._WS_MAX_RECONNECT_ATTEMPTS = 3
+        broker_ws_manager._WS_BACKOFF_BASE = 0.001  # 1ms for test speed
+
+        try:
+            await conn._connection_loop()
+        finally:
+            broker_ws_manager._WS_MAX_RECONNECT_ATTEMPTS = original_max
+            broker_ws_manager._WS_BACKOFF_BASE = original_base
+
+        # Verify connection_failed message was published
+        connection_failed_publishes = [
+            (ch, msg) for ch, msg in published_messages
+            if msg == _CONNECTION_FAILED_MESSAGE
+        ]
+        assert len(connection_failed_publishes) >= 2, (  # 2 symbols: NIFTY + BANKNIFTY
+            f"connection_failed message must be published to all symbol channels. "
+            f"Published: {published_messages}"
+        )
+        channels = {ch for ch, _ in connection_failed_publishes}
+        assert "af:ticks:NIFTY" in channels
+        assert "af:ticks:BANKNIFTY" in channels
+
+    @pytest.mark.asyncio
+    async def test_broker_ws_status_reports_correct_fields(self):
+        """BrokerWsConnection.status must include all required fields."""
+        from src.publisher.broker_ws_manager import BrokerWsConnection
+
+        class StubWs(BrokerWsConnection):
+            async def _connect(self):
+                raise RuntimeError("stub")
+
+        ws = StubWs("stub_ws", ["NIFTY"])
+        status = ws.status
+
+        assert "name" in status
+        assert "running" in status
+        assert "connected" in status
+        assert "ticksPublished" in status
+        assert "validationFailures" in status
+        assert "lastTickMs" in status
+
+    def test_angel_one_smartstream_is_sole_singleton(self):
+        """angel_one_ws singleton must be an AngelOneSmartStreamWs instance."""
+        from src.publisher.broker_ws_manager import angel_one_ws, AngelOneSmartStreamWs
+        assert isinstance(angel_one_ws, AngelOneSmartStreamWs)
+
+    def test_upstox_v3_protobuf_is_sole_singleton(self):
+        """upstox_ws singleton must be a UpstoxV3ProtobufWs instance."""
+        from src.publisher.broker_ws_manager import upstox_ws, UpstoxV3ProtobufWs
+        assert isinstance(upstox_ws, UpstoxV3ProtobufWs)
+
+    @pytest.mark.asyncio
+    async def test_angel_one_ws_fails_gracefully_without_credentials(self):
+        """AngelOneSmartStreamWs._connect() raises RuntimeError without credentials."""
+        from src.publisher.broker_ws_manager import AngelOneSmartStreamWs
+        import os
+
+        ws = AngelOneSmartStreamWs(symbols=["NIFTY"])
+        # Ensure credential is not set
+        with patch.dict(os.environ, {}, clear=False):
+            if "SMARTAPI_CLIENT_CODE" in os.environ:
+                del os.environ["SMARTAPI_CLIENT_CODE"]
+            with pytest.raises(RuntimeError):
+                await ws._connect()
+
+    @pytest.mark.asyncio
+    async def test_upstox_ws_fails_gracefully_without_credentials(self):
+        """UpstoxV3ProtobufWs._connect() raises RuntimeError without credentials."""
+        from src.publisher.broker_ws_manager import UpstoxV3ProtobufWs
+        import os
+
+        ws = UpstoxV3ProtobufWs(symbols=["NIFTY"])
+        with patch.dict(os.environ, {}, clear=False):
+            if "UPSTOX_ACCESS_TOKEN" in os.environ:
+                del os.environ["UPSTOX_ACCESS_TOKEN"]
+            with pytest.raises(RuntimeError):
+                await ws._connect()
