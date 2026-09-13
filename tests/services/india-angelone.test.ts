@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+// eslint-disable-next-line no-restricted-imports -- unit test for the angelone adapter itself
 import {
   INDEX_TOKENS,
   angel,
@@ -261,7 +262,7 @@ describe("services/india/angelone helpers", () => {
     });
   });
 
-  describe("getQuotes({ allowFallback: false })", () => {
+  describe("getQuotes — unconfigured adapter (no credentials)", () => {
     const saved: Record<string, string | undefined> = {};
     beforeEach(() => {
       for (const k of SMARTAPI_VARS) {
@@ -276,15 +277,25 @@ describe("services/india/angelone helpers", () => {
       }
     });
 
-    it("returns empty placeholders (never Yahoo) when unconfigured and fallback is disabled", async () => {
-      const quotes = await angel.getQuotes(["RELIANCE", "^CNXIT"], {
-        allowFallback: false,
-      });
+    it("returns empty placeholders when unconfigured — registry withFailover() handles the next provider", async () => {
+      // V9: the internal Yahoo fallback was removed. When Angel One is not configured
+      // (resolveConfig() returns null), the adapter returns empty placeholders so the
+      // ProviderRegistry's withFailover() can route to the next provider in the chain.
+      // The adapter itself NEVER calls Yahoo — that is the registry's responsibility.
+      const quotes = await angel.getQuotes(["RELIANCE", "^CNXIT"]);
       expect(quotes).toHaveLength(2);
       for (const q of quotes) {
         expect(q.price).toBeNull();
-        expect(q.source).toBeUndefined();
+        // source field is absent from empty placeholders
+        expect((q as { source?: string }).source).toBeUndefined();
       }
+    });
+
+    it("opts.allowFallback is a no-op — adapter still returns empty placeholders when unconfigured", async () => {
+      // allowFallback was deprecated in V9; passing it does not change behaviour.
+      const quotes = await angel.getQuotes(["NIFTY"], { allowFallback: true });
+      expect(quotes).toHaveLength(1);
+      expect(quotes[0].price).toBeNull();
     });
   });
 });
