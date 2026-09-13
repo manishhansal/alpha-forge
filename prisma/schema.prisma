@@ -337,7 +337,7 @@ model IndiaDailyPick {
 /// after running the migration.
 ///
 /// `time`         — UTC epoch seconds for candle OPEN time (NOT close time).
-/// `intervalStr`  — candle width: "1m"|"3m"|"5m"|"10m"|"15m"|"30m"|"1h"|"1d"
+/// `intervalStr`  — candle width: "1m"|"5m"|"10m"|"15m"|"30m"|"1h"|"1d" (V8: "3m" was removed)
 /// `oi`           — open interest at candle close; null for equity instruments.
 /// `oiChange`     — OI delta vs previous session close; null for equity.
 model CandleBar {
@@ -397,6 +397,9 @@ model CandleBar {
   /// PostgreSQL can use the index for without a sequential scan).
   @@index([instrumentId, exchange, intervalStr, time])
   @@index([confirmedAt])
+  /// Covering index for ML window queries — time-descending range scans over a
+  /// fixed (instrument, exchange, interval) partition (e.g. feature engineering).
+  @@index([instrumentId, exchange, intervalStr, time(sort: Desc)], name: "idx_candle_bar_window")
   @@map("candle_bar")
 }
 
@@ -433,6 +436,9 @@ model OptionChainSnapshot {
 
   @@index([underlying, capturedAt])
   @@index([capturedAt])
+  /// Covering index for latest-chain queries — fetches the most recent snapshot
+  /// for a given (underlying, expiry) pair efficiently via time-descending scan.
+  @@index([underlying, expiry, capturedAt(sort: Desc)], name: "idx_option_chain_latest")
 }
 
 /// Data Foundation V5 (§25/§26): durable STRIKE-LEVEL option snapshot. Unlike
@@ -1129,8 +1135,16 @@ model DataProvenance {
   fetchedAt             DateTime
   /// Provider/exchange-declared source timestamp (if supplied).
   sourceTimestamp       DateTime?
+  /// UTC ISO-8601 — the time the data represents (candle or quote timestamp).
+  dataAsOf              DateTime?
   /// SHA-256 of the raw response payload.
   responseHash          String?
+  /// True when the raw response body exceeded 50 KB and was truncated before hashing.
+  responseTruncated     Boolean  @default(false)
+  /// UTC start of the requested candle range (historical fetches only).
+  fromTs                DateTime?
+  /// UTC end of the requested candle range (historical fetches only).
+  toTs                  DateTime?
   /// Dataset version string (e.g. "2026-09-12-v1").
   datasetVersion        String
   /// Instrument master snapshot version used at acquisition time.
@@ -1185,6 +1199,17 @@ model DataReconciliation {
   oiB             Float?
   /// Max absolute difference across OHLC fields.
   maxOhlcDiff     Float?
+  /// Specific OHLC field compared (e.g. "open" | "high" | "low" | "close" | "volume" | "ltp").
+  /// Null when the reconciliation covers all OHLC fields in aggregate.
+  fieldName       String?
+  /// Provider A value for the specific field (when fieldName is set).
+  valueA          Decimal?
+  /// Provider B value for the specific field (when fieldName is set).
+  valueB          Decimal?
+  /// abs((valueA - valueB) / ((valueA+valueB)/2)) * 100 — per-field deviation %.
+  deviationPct    Decimal?
+  /// True when this discrepancy has been reviewed and resolved.
+  resolved        Boolean  @default(false)
   /// "MATCHED" | "WITHIN_TOLERANCE" | "MINOR_DISCREPANCY" | "MAJOR_DISCREPANCY" | "SOURCE_ONLY" | "UNAVAILABLE"
   reconciliationStatus String
   /// Tolerance config used (from registry).
@@ -1255,9 +1280,20 @@ model HistoricalBackfillJob {
   /// IST date range (YYYY-MM-DD).
   fromDate        String
   toDate          String
+  /// UTC DateTime equivalents of fromDate / toDate for range queries and provenance joins.
+  fromTs          DateTime?
+  toTs            DateTime?
   /// "PENDING" | "RUNNING" | "SUCCESS" | "PARTIAL" | "FAILED" | "RETRYING" | "RATE_LIMITED" | "UNSUPPORTED" | "NO_DATA" | "INVALID_DATA"
   status          String   @default("PENDING")
   attempts        Int      @default(0)
+  /// Total number of date-range chunks this job is split into.
+  chunksTotal     Int?
+  /// Number of chunks successfully persisted.
+  chunksDone      Int      @default(0)
+  /// Number of chunks that failed after max retries.
+  chunksFailed    Int      @default(0)
+  /// UTC timestamp of the last successfully written candle (checkpoint for resumability).
+  lastCheckpointTs DateTime?
   rowsFetched     Int      @default(0)
   rowsPersisted   Int      @default(0)
   rowsInvalid     Int      @default(0)
