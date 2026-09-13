@@ -69,7 +69,7 @@ function stubProvider(id: ProviderId, results: ProviderResult): MarketDataProvid
     subscribe(_req: SubscribeRequest, _onTick: (t: LiveTick) => void): () => void { return () => {}; },
     unsubscribe(_tokens: string[]): void {},
     getProviderHealth(): ProviderHealth {
-      return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP99Ms: null };
+      return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP95Ms: null, latencyP99Ms: null, requestCount: 0, successCount: 0, errorCount: 0, successRate: null };
     },
   };
 }
@@ -242,8 +242,8 @@ describe("capability-based routing (withCapability)", () => {
 
 describe("circuit breaker integration", () => {
   it("skips providers whose circuit is open", async () => {
-    // Open angel_one circuit before the registry is involved
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "auth_failure");
+    // Open angel_one circuit (flat-40 rule: 2 auth_failures → score 0 < 20)
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "auth_failure");
     expect(isCircuitOpen("angel_one")).toBe(true);
 
     const r = new ProviderRegistry();
@@ -255,7 +255,7 @@ describe("circuit breaker integration", () => {
   });
 
   it("allows a probe after the circuit retry window elapses", () => {
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "auth_failure");
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "auth_failure");
     expect(isCircuitOpen("angel_one")).toBe(true);
 
     // Advance past the 30s retry window
@@ -276,7 +276,7 @@ describe("provider recovery", () => {
   });
 
   it("closes the circuit after a successful probe", () => {
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "auth_failure");
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "auth_failure");
     expect(isCircuitOpen("angel_one")).toBe(true);
 
     recordSuccess("angel_one", 50);

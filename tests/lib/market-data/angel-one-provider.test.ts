@@ -168,6 +168,7 @@ import {
   getProviderHealth,
   isTickStale,
 } from "@/lib/market-data/health";
+// eslint-disable-next-line no-restricted-imports -- unit test for the angelone provider adapter itself
 import { angel } from "@/services/india/angelone";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
