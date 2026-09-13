@@ -29,6 +29,8 @@ import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { datasetVersion } from "../dataset-version";
 import { mdLog } from "../health";
+import { MarketDataError } from "../types";
+import type { ProviderId } from "../types";
 
 export interface CapturedStrike {
   underlying: string;
@@ -58,7 +60,10 @@ export interface CaptureResult {
     | "PROVIDER_ERROR"
     | "NO_EXPIRIES";
   reason?: string;
-  provider: string | null;
+  /** The `ProviderId` that served the option chain (from `OptionChain.provider`). */
+  provider: ProviderId | null;
+  /** UTC ISO-8601 timestamp when the option chain data was fetched (from `OptionChain.fetchedAt`). */
+  fetchedAt: string | null;
 }
 
 /** Minimal shape of the provider OptionChain we consume. */
@@ -79,6 +84,10 @@ interface ProviderOptionChain {
   expiry: string;
   expiries?: string[];
   rows: Array<{ strike: number; ce: ProviderOptionLeg | null; pe: ProviderOptionLeg | null }>;
+  /** The `ProviderId` that served this chain (from `OptionChain.provider`). */
+  provider?: ProviderId;
+  /** UTC ISO-8601 timestamp when this chain was fetched (from `OptionChain.fetchedAt`). */
+  fetchedAt?: string;
 }
 
 /** Fetch a chain for one underlying+expiry from the provider adapters. */
@@ -91,6 +100,10 @@ export type ChainFetcher = (
  * Default chain fetcher: routes through the canonical ProviderRegistry
  * (DATA_SERVICE → ANGEL_ONE → UPSTOX). This ensures IV is populated where
  * Angel One's optionGreek API provides it, with Upstox as fallback.
+ *
+ * If the registry throws a `MarketDataError`, it is re-thrown with the
+ * original `code` intact — never wrapped or swallowed. The caller
+ * (`captureUnderlyingStrikes`) is responsible for deciding how to surface it.
  */
 export async function defaultChainFetcher(): Promise<{
   fetcher: ChainFetcher;
@@ -100,22 +113,36 @@ export async function defaultChainFetcher(): Promise<{
   await bootstrapRegistry();
   let lastProvider: string | null = null;
 
-  const fetcher: ChainFetcher = async (underlying, _expiry) => {
+  const fetcher: ChainFetcher = async (underlying, expiry) => {
+    // MarketDataError is re-thrown as-is — do NOT catch it here.
+    // Only log and swallow unexpected non-MarketDataError exceptions so that
+    // transient issues (e.g. JSON parse failure) produce null rather than a crash.
+    let chain: ProviderOptionChain | null;
     try {
-      const chain = (await registry.getOptionChain(underlying)) as unknown as ProviderOptionChain;
-      if (chain && chain.rows && chain.rows.length > 0) {
-        // Determine which provider served it from health state
-        const health = registry.getHealth();
-        const active = health.find((h) => h.status === "healthy" && h.consecutiveSuccesses > 0);
-        lastProvider = active?.providerId ?? "registry";
-        return chain;
-      }
-      lastProvider = "registry";
-      return chain ?? null;
+      chain = (await registry.getOptionChain(underlying, expiry)) as unknown as ProviderOptionChain;
     } catch (e) {
+      if (e instanceof MarketDataError) {
+        // Preserve original code — let the caller handle it.
+        throw e;
+      }
       mdLog("provider_degraded", { event: "OC_REGISTRY_FAIL", underlying, error: (e as Error).message.slice(0, 160) });
       return null;
     }
+
+    if (chain && chain.rows && chain.rows.length > 0) {
+      // Prefer the provider recorded on the chain response itself; fall back to
+      // health-state heuristic for legacy shapes that don't carry the field.
+      if (chain.provider) {
+        lastProvider = chain.provider;
+      } else {
+        const health = registry.getHealth();
+        const active = health.find((h) => h.status === "healthy" && h.consecutiveSuccesses > 0);
+        lastProvider = active?.providerId ?? "registry";
+      }
+      return chain;
+    }
+    lastProvider = chain?.provider ?? "registry";
+    return chain ?? null;
   };
   return { fetcher, providerLabel: () => lastProvider };
 }
@@ -225,6 +252,9 @@ export async function persistStrikes(
  * Capture current + next expiry strike data for one underlying and persist it.
  * Honest about off-hours: an empty leg set → EMPTY_PROVIDER_RESPONSE (no fake
  * rows). NULL IV/bid/ask are persisted with unavailable flags.
+ *
+ * If the registry throws a `MarketDataError`, it is re-thrown with the original
+ * `code` preserved — callers must handle provider failures explicitly.
  */
 export async function captureUnderlyingStrikes(
   underlying: string,
@@ -249,23 +279,41 @@ export async function captureUnderlyingStrikes(
   try {
     firstChain = await fetcher(underlying);
   } catch (e) {
-    return { underlying, expiriesCaptured: [], strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "PROVIDER_ERROR", reason: (e as Error).message.slice(0, 160), provider: providerLabel?.() ?? null };
+    // MarketDataError: re-throw preserving original code (Req 5.3 / 10.6).
+    if (e instanceof MarketDataError) {
+      throw e;
+    }
+    return { underlying, expiriesCaptured: [], strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "PROVIDER_ERROR", reason: (e as Error).message.slice(0, 160), provider: providerLabel?.() as ProviderId | null ?? null, fetchedAt: null };
   }
   if (!firstChain) {
-    return { underlying, expiriesCaptured: [], strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "NO_EXPIRIES", reason: "provider returned null chain", provider: providerLabel?.() ?? null };
+    return { underlying, expiriesCaptured: [], strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "NO_EXPIRIES", reason: "provider returned null chain", provider: providerLabel?.() as ProviderId | null ?? null, fetchedAt: null };
   }
+
+  // Record provenance from the chain response (Req 5.2).
+  const chainProvider: ProviderId | null = firstChain.provider ?? (providerLabel?.() as ProviderId | null) ?? null;
+  const chainFetchedAt: string | null = firstChain.fetchedAt ?? null;
 
   const expiries = selectCurrentAndNextExpiry(firstChain);
   const allStrikes: CapturedStrike[] = [];
   for (const expiry of expiries) {
-    const chain = expiry === firstChain.expiry ? firstChain : await fetcher(underlying, expiry);
+    let chain: ProviderOptionChain | null;
+    try {
+      chain = expiry === firstChain.expiry ? firstChain : await fetcher(underlying, expiry);
+    } catch (e) {
+      // MarketDataError: re-throw preserving original code (Req 5.3 / 10.6).
+      if (e instanceof MarketDataError) {
+        throw e;
+      }
+      mdLog("provider_degraded", { event: "OC_EXPIRY_FETCH_FAIL", underlying, expiry, error: (e as Error).message.slice(0, 160) });
+      continue;
+    }
     if (!chain || chain.rows.length === 0) continue;
-    const provider = providerLabel?.() ?? "unknown";
+    const provider = chain.provider ?? providerLabel?.() ?? "unknown";
     allStrikes.push(...chainToStrikes({ ...chain, expiry }, provider));
   }
 
   if (allStrikes.length === 0) {
-    return { underlying, expiriesCaptured: expiries, strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "EMPTY_PROVIDER_RESPONSE", reason: "no legs returned (likely market-closed / provider has no live quotes)", provider: providerLabel?.() ?? null };
+    return { underlying, expiriesCaptured: expiries, strikesWritten: 0, legsWithIv: 0, legsWithBid: 0, legsWithOi: 0, status: "EMPTY_PROVIDER_RESPONSE", reason: "no legs returned (likely market-closed / provider has no live quotes)", provider: chainProvider, fetchedAt: chainFetchedAt };
   }
 
   const written = await persistStrikes(allStrikes, { prisma, captureTimestamp });
@@ -273,7 +321,7 @@ export async function captureUnderlyingStrikes(
   const legsWithBid = allStrikes.filter((s) => s.bid != null).length;
   const legsWithOi = allStrikes.filter((s) => s.oi != null).length;
 
-  mdLog("provider_selected", { event: "OPTION_STRIKE_CAPTURE", underlying, expiries, strikesWritten: written, legsWithIv, legsWithBid, legsWithOi, provider: providerLabel?.() ?? null });
+  mdLog("provider_selected", { event: "OPTION_STRIKE_CAPTURE", underlying, expiries, strikesWritten: written, legsWithIv, legsWithBid, legsWithOi, provider: chainProvider });
 
   return {
     underlying,
@@ -283,6 +331,7 @@ export async function captureUnderlyingStrikes(
     legsWithBid,
     legsWithOi,
     status: "CAPTURED",
-    provider: providerLabel?.() ?? null,
+    provider: chainProvider,
+    fetchedAt: chainFetchedAt,
   };
 }
