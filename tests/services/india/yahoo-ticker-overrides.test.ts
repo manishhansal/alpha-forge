@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+// eslint-disable-next-line no-restricted-imports -- unit test for the yahoo adapter itself
 import { toYahooSymbol, getYahooSymbolOverrides } from "@/services/india/yahoo/index";
 
 describe("toYahooSymbol — RCA-003 regression: Yahoo ticker override map", () => {
