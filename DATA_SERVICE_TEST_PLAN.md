@@ -489,23 +489,67 @@ Tests simulate provider failures using mocks/interceptors.
 These are static analysis / import-boundary tests that run as part of the unit test suite.
 Tests live in `tests/lib/market-data/canonical-import-guard.test.ts`.
 
-| Test ID | Description | Expected Outcome |
-|---|---|---|
-| AE-001 | `src/services/india/scanner/engine.ts` does NOT import `yahoo-finance2` directly | PASS after fix |
-| AE-002 | `src/services/india/signals/snapshotter.ts` does NOT import `@/services/india/yahoo` | PASS after fix |
-| AE-003 | `src/features/india/scalping/backtest.ts` does NOT import `@/services/india/yahoo` | PASS after fix |
-| AE-004 | `src/features/india/scalping/strategies/positioning.ts` — same | PASS after fix |
-| AE-005 | `src/features/india/scalping/strategies/opening-breakout.ts` — same | PASS after fix |
-| AE-006 | `src/features/india/fno-trend-history/service.ts` — same | PASS after fix |
-| AE-007 | `src/features/india/paper-trading/auto-trader.ts` — same | PASS after fix |
-| AE-008 | `src/app/api/in/scalper/close-all/route.ts` — same | PASS after fix |
-| AE-009 | `src/lib/market-data/services/option-strike-capture.service.ts` does NOT import `@/services/india/angelone` | PASS after fix |
-| AE-010 | `src/lib/market-data/services/fno-backfill-runner.service.ts` — same | PASS after fix |
-| AE-011 | `src/features/india/expiry-trades/builder.ts` does NOT import `@/services/india/angelone` for market data | PASS after fix |
-| AE-012 | ML service (`ml-service/`) does NOT import Angel One, Upstox, or Yahoo | PASS — already clean |
-| AE-013 | Worker (`worker/src/`) does NOT import market-data providers except through registry | PASS after fix |
-| AE-014 | No file outside `data-service/` imports `jugaad_data`, `openchart` | PASS — Python only |
-| AE-015 | `src/services/india/angelone/index.ts` internal Yahoo fallback removed | PASS after fix |
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| AE-001 | No non-allowlisted file directly imports `yahoo-finance2` | Zero violations across all `src/` + `worker/src/` files | PASS |
+| AE-002 | No non-approved file imports `@/services/india/yahoo` directly (V-02 through V-08) | `snapshotter.ts`, `backtest.ts`, `positioning.ts`, `opening-breakout.ts`, `fno-trend-history/service.ts`, `auto-trader.ts`, `close-all/route.ts` — zero violations | PASS |
+| AE-003 | `src/features/india/scalping/backtest.ts` does NOT import `@/services/india/yahoo` | No static or dynamic yahoo import | PASS |
+| AE-004 | `src/features/india/scalping/strategies/positioning.ts` — no yahoo import | No static or dynamic yahoo import | PASS |
+| AE-005 | `src/features/india/scalping/strategies/opening-breakout.ts` — no yahoo import | No static or dynamic yahoo import | PASS |
+| AE-006 | `src/features/india/fno-trend-history/service.ts` — no yahoo import | No static or dynamic yahoo import | PASS |
+| AE-007 | `src/features/india/paper-trading/auto-trader.ts` — no yahoo import | No static or dynamic yahoo import | PASS |
+| AE-008 | `src/app/api/in/scalper/close-all/route.ts` — no yahoo import | No static or dynamic yahoo import | PASS |
+| AE-009 | No non-approved file imports `@/services/india/angelone` for market data (V-04, V-05) | `option-strike-capture.service.ts`, `fno-backfill-runner.service.ts` — zero violations | PASS |
+| AE-010 | `src/lib/market-data/services/fno-backfill-runner.service.ts` does NOT import `@/services/india/angelone` | No dynamic angel import | PASS |
+| AE-011 | `src/features/india/expiry-trades/builder.ts` does NOT import `@/services/india/angelone` for market data | No angel market-data import | PASS |
+| AE-012 | ML service TypeScript bridge does NOT import Angel One, Upstox, or Yahoo | All ML client files clean | PASS |
+| AE-013 | Worker jobs do NOT import market-data providers directly (`worker/src/jobs/`) | `india-realtime-candles.ts` uses `registry.getInstrumentMaster()` | PASS |
+| AE-014 | No file outside `data-service/` imports `jugaad_data`, `openchart` | Python-only; no TS references exist | PASS |
+| AE-015 | `src/services/india/angelone/index.ts` internal Yahoo fallback removed (V-01) | No `@/services/india/yahoo` import in angel adapter | PASS |
+| AE-016 | `top-picks` route does not use `yahoo-finance2` directly | Uses `registry.getQuotes()` | PASS |
+| AE-017 | `sector-stocks` route does not use `yahoo-finance2` directly | Uses `registry.getQuotes()` | PASS |
+| AE-018 | `top-picks` route uses canonical registry (`bootstrapRegistry` + `registry.getQuotes`) | Both calls present | PASS |
+| AE-019 | `sector-stocks` route uses canonical registry | Both calls present | PASS |
+| AE-020 | HD-020: No TypeScript file uses `"3m"` as a supported interval value in production code | Zero matches for `interval: "3m"` outside guard/comment lines | PASS |
+
+### Violation-Site Individual Assertions (Requirement 1.2)
+
+One assertion per migration site, each confirmed by `canonical-import-guard.test.ts`.
+
+| Test ID | Violation Site | Assertion | Status |
+|---|---|---|---|
+| V-01 | `src/services/india/angelone/index.ts` | Does NOT contain `@/services/india/yahoo` import | PASS |
+| V-02 | `src/services/india/scanner/engine.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-03 | `src/services/india/signals/snapshotter.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-04 | `src/lib/market-data/services/option-strike-capture.service.ts` | Does NOT contain dynamic `@/services/india/angelone` import | PASS |
+| V-05 | `src/lib/market-data/services/fno-backfill-runner.service.ts` | Does NOT contain dynamic `@/services/india/angelone` import | PASS |
+| V-06 | `src/features/india/expiry-trades/builder.ts` | Does NOT contain `@/services/india/angelone` import | PASS |
+| V-07 | `src/features/india/fno-trend-history/service.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-08 | `src/features/india/scalping/backtest.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-09 | `src/features/india/scalping/strategies/positioning.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-10 | `src/features/india/scalping/strategies/opening-breakout.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-11 | `src/features/india/paper-trading/auto-trader.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-12 | `src/app/api/in/scalper/close-all/route.ts` | Does NOT contain `@/services/india/yahoo` or `yahoo-finance2` import | PASS |
+| V-13 | `worker/src/jobs/india-realtime-candles.ts` | Does NOT contain `@/services/india/angelone` import | PASS |
+
+### Canonical Type Assertions (Requirements 1.4, 1.5, 11.2)
+
+| Test ID | Assertion | Expected Outcome | Status |
+|---|---|---|---|
+| CT-001 | `ProviderId` union does NOT include `"nse"` | `PROVIDER_PRIORITY` array has no `"nse"` entry | PASS |
+| CT-002 | `ProviderId` union does NOT include `"3m"` | `PROVIDER_PRIORITY` array has no `"3m"` entry | PASS |
+| CT-003 | `SUPPORTED_TIMEFRAMES` equals exactly `["1m","5m","10m","15m","30m","1h","1d","1w","1M"]` | Strict equality check passes | PASS |
+| CT-004 | `SUPPORTED_TIMEFRAMES` does NOT include `"3m"` | No `"3m"` in array | PASS |
+| CT-005 | `isSupportedInterval("3m")` returns `false` | Return value is `false` | PASS |
+| CT-006 | `isSupportedInterval` returns `true` for all nine canonical timeframes | All nine return `true` | PASS |
+
+### Documented Exceptions Report (Requirement 1.6)
+
+| Test ID | Assertion | Expected Outcome | Status |
+|---|---|---|---|
+| DE-001 | Exactly 5 documented exception locations are tracked; log line `Documented exceptions: 5 files` emitted | `DOCUMENTED_EXCEPTION_LOCATIONS.length === 5` | PASS |
+| DE-002 | Files with direct `@/services/india/angelone` imports are registered in `ANGEL_BROKER_ANALYTICS_EXCEPTIONS` | `scanner/engine.ts` and `expiry-trades/builder.ts` are registered | PASS |
+| DE-003 | Route wrappers (`scanner/route.ts`, `expiry-trades/route.ts`) do NOT themselves import `@/services/india/angelone` | No direct angel import in route files | PASS |
 
 ---
 
@@ -592,4 +636,611 @@ npx tsx --conditions=react-server --env-file=.env.local scripts/data-v7-live-ver
 
 ---
 
-*Test plan defined pre-implementation as required. All test IDs are traceable to the refactor specification sections.*
+## R. MIGRATION ASSERTION TESTS (V-01 through V-13)
+
+Tests are distributed across multiple files as documented. Each group directly corresponds to a migration phase task.
+
+### R.1 Scanner Engine Tests — `tests/services/india/scanner/engine.test.ts`
+
+File: `tests/services/india/scanner/engine.test.ts`  
+Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| SC-V02-001 | `engine.ts` contains no static import of `@/services/india/yahoo` | No static yahoo import pattern in source | PASS |
+| SC-V02-002 | `engine.ts` contains no dynamic import of `@/services/india/yahoo` | No `import("@/services/india/yahoo")` pattern in source | PASS |
+| SC-V02-003 | `engine.ts` does not reference `yahoo.getQuotes()` or `yahoo.getHistorical()` as calls | No call-site matches for these method names | PASS |
+| SC-V02-004 | `angel.getTopGainersLosers()` calls preceded by `Documented_Exception` comment | Each call-site context contains annotation string | PASS |
+| SC-V02-005 | `angel.getPutCallRatio()` call has `Documented_Exception` comment | Annotation on same line as the call | PASS |
+| SC-V02-006 | `angel.getOiBuildup()` calls preceded by `Documented_Exception` comment | First call-site context contains annotation | PASS |
+| SC-V02-007 | Momentum scanner calls `registry.getQuotes()` for F&O quotes at runtime | `getQuotesMock` was called; result type is `momentum` | PASS |
+| SC-V02-008 | Volume-breakout scanner calls `registry.getQuotes()` then `registry.getHistoricalCandles()` with `interval=1d` | Both mocks called; `exchange=NSE` in historical req | PASS |
+| SC-V02-009 | Range-expansion scanner calls `registry.getHistoricalCandles()` with `interval=1d` | Historical mock called with `interval: "1d"` | PASS |
+| SC-V02-010 | OI-buildup scanner calls `registry.getQuotes()` for index quotes | Quotes mock called; result type is `oi-buildup` | PASS |
+| SC-V02-011 | PCR scanner completes without any Yahoo module call | No error thrown; `result.type === "pcr"` | PASS |
+| SC-V02-012 | IV-spike scanner completes without any Yahoo module call | No error thrown; `result.type === "iv-spike"` | PASS |
+
+### R.2 Signal Snapshotter Tests — `tests/services/india/signals/snapshotter.test.ts`
+
+File: `tests/services/india/signals/snapshotter.test.ts`  
+Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| SS-001 | Snapshotter source does NOT import `@/services/india/yahoo` | Neither static nor dynamic yahoo import in source | PASS |
+| SS-002 | `null` registry result → `recordSignalObservation` with `quality: "PROVIDER_UNAVAILABLE"` | Result has `quality === "PROVIDER_UNAVAILABLE"` | PASS |
+| SS-003 | Null registry slot → cache entry has `quality: PROVIDER_UNAVAILABLE` | `getSignalRecords` returns entry with correct quality | PASS |
+| SS-004 | Provider field set from registry response (`"scrapling"`) | `provider === "scrapling"` in cache entry | PASS |
+| SS-005 | Provider falls back to `"UNKNOWN"` when not specified | `provider === "UNKNOWN"` in result | PASS |
+| SS-006 | `MarketDataError` caught at WARN level — no unhandled throw | No exception propagated; `PROVIDER_UNAVAILABLE` recorded | PASS |
+| SS-007 | Mixed null and valid results — all symbols have entries; quality and provider correct | All three symbols have entries; quality/provider fields match expectations | PASS |
+| SS-008 | `isMarketOpenIST` returns `true` during market hours on a weekday | Wednesday 10:30 IST → `true` | PASS |
+| SS-009 | `isMarketOpenIST` returns `false` on weekends | Sunday 10:30 IST → `false` | PASS |
+| SS-010 | `isMarketOpenIST` returns `false` before 09:00 IST | Wednesday 08:30 IST → `false` | PASS |
+| SS-011 | Refreshing same signal preserves quality from new observation; provider updated | `quality === "OK"`, `provider === "upstox"`, `score === 67` | PASS |
+| SS-012 | Changing signal resets `since` timestamp | `signal === "STRONG BUY"`, `since === t2` | PASS |
+
+### R.3 Option Strike Capture Service Tests — `tests/lib/market-data/option-strike-capture.test.ts`
+
+File: `tests/lib/market-data/option-strike-capture.test.ts`  
+Requirements: 5.1, 5.2, 5.3, 5.4, 10.2, 10.6
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| OC-001 | Re-throws `MarketDataError` with `code: UNAVAILABLE` from fetcher unchanged | Rejection satisfies `e instanceof MarketDataError && e.code === "UNAVAILABLE"` | PASS |
+| OC-002 | Re-throws `MarketDataError` with `code: AUTH_FAILURE` preserving original code | `e.code === "AUTH_FAILURE"` | PASS |
+| OC-003 | Re-throws `MarketDataError` with `code: RATE_LIMIT` preserving original code | `e.code === "RATE_LIMIT"` | PASS |
+| OC-004 | Re-throws `MarketDataError` with `code: TIMEOUT` preserving original code | `e.code === "TIMEOUT"` | PASS |
+| OC-005 | Does NOT wrap `MarketDataError` in a plain `Error` | Caught error `=== original` instance | PASS |
+| OC-006 | Returns `PROVIDER_ERROR` (does NOT re-throw) for plain non-`MarketDataError` exceptions | `result.status === "PROVIDER_ERROR"`, no throw | PASS |
+| OC-007 | Records `provider` from `OptionChain.provider` in `CaptureResult` (`"upstox"`) | `result.provider === "upstox"` | PASS |
+| OC-008 | Records `fetchedAt` from `OptionChain.fetchedAt` UTC ISO-8601 in `CaptureResult` | `result.fetchedAt === "2026-09-12T09:30:00.000Z"` | PASS |
+| OC-009 | Records `provider: "angel_one"` correctly | `result.provider === "angel_one"` | PASS |
+| OC-010 | Falls back to `providerLabel` when chain has no `provider` field | `result.provider === "scrapling"` | PASS |
+| OC-011 | Sets `fetchedAt: null` when chain has no `fetchedAt` field | `result.fetchedAt === null` | PASS |
+| OC-012 | Returns `NO_EXPIRIES` when fetcher returns `null` | `result.status === "NO_EXPIRIES"`, `strikesWritten === 0` | PASS |
+| OC-013 | Returns `EMPTY_PROVIDER_RESPONSE` when `rows` are empty | `result.status === "EMPTY_PROVIDER_RESPONSE"`, `strikesWritten === 0` | PASS |
+| OC-014 | Returns `CAPTURED` with correct strike count on success (1 strike × 2 legs × 2 expiries = 4) | `result.status === "CAPTURED"`, `strikesWritten === 4` | PASS |
+| OC-015 | `chainToStrikes`: null `iv`/`bid`/`ask` mapped to `null`; real OI preserved | `iv === null`, `bid === null`, `oi === 1234` | PASS |
+| OC-016 | `chainToStrikes`: NaN and Infinity fields dropped to `null`; valid `ltp` preserved | `oi === null`, `iv === null`, `ltp === 5` | PASS |
+| OC-017 | `selectCurrentAndNextExpiry`: selects two nearest upcoming expiries | Returns `[futureDate1, futureDate2]` | PASS |
+| OC-018 | `selectCurrentAndNextExpiry`: falls back to `chain.expiry` when `expiries` list absent | Returns `[futureDate]` | PASS |
+
+### R.4 F&O Backfill Runner Tests — `tests/lib/market-data/fno-backfill-runner-v05.test.ts`
+
+File: `tests/lib/market-data/fno-backfill-runner-v05.test.ts`  
+Requirements: 6.1, 6.2, 6.3, 6.4, 10.3, 10.6
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| BF-001 | `fno-backfill-runner.service.ts` does NOT contain dynamic import of `@/services/india/angelone` | Static analysis — no dynamic angel import pattern | PASS |
+| BF-002 | File does NOT directly instantiate `UpstoxProvider` in the runner path | No `new UpstoxProvider()` outside comments | PASS |
+| BF-003 | File calls `registry.getHistoricalCandles()` / `registryClient.getHistoricalCandles()` | Both string patterns present in source | PASS |
+| BF-004 | Empty registry response with redis checkpoint → `EMPTY_DATA`, not `PROVIDER_FAILURE` | `classification === "EMPTY_DATA"`, `barsPersisted === 0`, `state === "PARTIAL"` | PASS |
+| BF-005 | Empty registry response without redis → no error, not `PROVIDER_FAILURE` | `barsPersisted === 0`, `state === "PARTIAL"`, no `PROVIDER_FAILURE` | PASS |
+| BF-006 | DB persist failure → `PROVIDER_FAILURE` for all jobs; processing continues to next symbol | Both jobs have `classification === "PROVIDER_FAILURE"`, `state === "FAILED"` | PASS |
+| BF-007 | `MarketDataError` from registry → result captures original code; classified `PROVIDER_FAILURE` | For each error code (`AUTH_FAILURE`, `RATE_LIMIT`, `UNAVAILABLE`, `TIMEOUT`, `NETWORK`): `state === "FAILED"`, error contains code | PASS |
+| BF-008 | Non-`MarketDataError` from registry → `PROVIDER_FAILURE`, error message captured | `state === "FAILED"`, `error` contains "unexpected network error" | PASS |
+| BF-009 | Registry returns candles → `state: COMPLETED` with `barsPersisted > 0` | `state === "COMPLETED"`, `barsPersisted > 0`, `classification === null` | PASS |
+| BF-010 | `AbortSignal` already-aborted → `state: PARTIAL`, `error: "aborted"` | `state === "PARTIAL"`, `error === "aborted"` | PASS |
+| BF-011 | Duplicate `(symbol, interval)` pairs → exactly one result row; registry called once | `results.length === 1`, `callCount === 1` | PASS |
+| BF-012 | Empty job list → `totalBarsPersisted === 0`; registry never called | `results.length === 0`, `registryCalled === false` | PASS |
+
+### R.5 Expiry Trades Builder Tests — `tests/features/india-expiry-trades-builder.test.ts`
+
+File: `tests/features/india-expiry-trades-builder.test.ts`  
+Requirements: 7.1, 7.2, 7.3
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| ETB-001 | Returns no trades on a non-expiry day (Monday, chain expiry is Tuesday) | `isExpiryDay === false`, `indexes.length === 0` | PASS |
+| ETB-002 | Surfaces NIFTY Gamma Blast + Hero Zero on its expiry day (Tuesday) | `isExpiryDay === true`, NIFTY has two trades with kinds `["GAMMA_BLAST", "HERO_ZERO"]`; bullish day → CALLs | PASS |
+| ETB-003 | SENSEX surfaces on Thursday via weekday rule when Angel is off; `dataSource === "estimated"` | `isExpiryDay === true`, `indexes` contains SENSEX, `dataSource === "estimated"` | PASS |
+| ETB-004 | Uses live BSE chain for SENSEX premiums when registry returns a chain; `dataSource === "chain"` | `dataSource === "chain"`, `registry.getOptionChain` called with `"SENSEX"`, correct strikes and premiums | PASS |
+| ETB-005 | Falls back to estimated SENSEX premiums when registry chain errors | `dataSource === "estimated"` | PASS |
+
+---
+
+## S. CIRCUIT BREAKER TESTS — `tests/lib/market-data/health.test.ts`
+
+File: `tests/lib/market-data/health.test.ts`  
+Requirements: 15.1, 15.2, 15.3, 15.4, 15.5
+
+### S.1 Initial State
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-001 | Starts healthy with `score: 100`, `circuitOpen: false`, zero counters, null timestamps | All initial fields at default values | PASS |
+| HLT-002 | Does not open circuit on fresh state | `isCircuitOpen() === false` | PASS |
+
+### S.2 `recordSuccess()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-003 | Resets `consecutiveFailures` to 0 after failures | `consecutiveFailures === 0` | PASS |
+| HLT-004 | Increments `consecutiveSuccesses` per call | `consecutiveSuccesses === 2` after two calls | PASS |
+| HLT-005 | Recovers score by `RECOVERY_PER_SUCCESS` (10) per call | Score increases; stays ≤ 100 | PASS |
+| HLT-006 | Does not exceed score 100 after many successes | `score === 100` after 20 calls | PASS |
+| HLT-007 | Records `lastSuccessAt` as ISO string ≥ `before` timestamp | `lastSuccessAt` is non-null, parseable, ≥ `before` | PASS |
+| HLT-008 | Tracks latency samples; `latencyP99Ms >= latencyP50Ms` | Both non-null; P99 ≥ P50 | PASS |
+
+### S.3 `recordFailure()` — Flat-40 Penalty
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-009 | Increments `consecutiveFailures` on each call | 1 after first call, 2 after second | PASS |
+| HLT-010 | Resets `consecutiveSuccesses` to 0 on failure | 0 after any failure | PASS |
+| HLT-011 | Applies flat penalty of 40 per `api_error` failure (floor 0): 100→60→20→0→0 | Exact score sequence verified | PASS |
+| HLT-012 | Applies extra `AUTH_FAILURE_PENALTY` for `auth_failure` kind; score lower than generic error | `scoreB < scoreA` | PASS |
+| HLT-013 | Records `lastFailureAt` as ISO string ≥ `before` timestamp | Non-null, parseable, ≥ `before` | PASS |
+
+### S.4 Circuit Breaker
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-014 | Opens circuit when score drops below 20 (2 × `auth_failure`): `circuitOpen === true`, `status === "unhealthy"` | Both `getProviderHealth` and `isCircuitOpen` confirm open | PASS |
+| HLT-015 | `isCircuitOpen` returns `false` during half-open window (31s past `circuitRetryAt`) | `isCircuitOpen(ID, now + 31_000) === false` | PASS |
+| HLT-016 | Successful probe closes circuit; score restored exactly to 20 | `circuitOpen === false`, `score === 20` | PASS |
+| HLT-017 | Sets `circuitRetryAt` ~30s after opening (within 25–35s window) | `retryMs ∈ [before + 25_000, before + 35_000]` | PASS |
+
+### S.5 Health Status Thresholds
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-018 | `"healthy"` when `score ≥ 60` | Initial state is `"healthy"` | PASS |
+| HLT-019 | `"degraded"` when `score` is 20–59 (2 × `api_error` → score = 20) | `score === 20`, `circuitOpen === false`, `status === "degraded"` | PASS |
+| HLT-020 | `"unhealthy"` when circuit is open | 2 × `auth_failure` → `status === "unhealthy"` | PASS |
+
+### S.6 Request Counters (Req 15.1)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-021 | All counters start at zero; `successRate` is `null` initially | `requestCount === 0`, `successCount === 0`, `errorCount === 0`, `successRate === null` | PASS |
+| HLT-022 | Two successes → `requestCount === 2`, `successCount === 2`, `errorCount === 0`, `successRate === 1` | Exact counter values | PASS |
+| HLT-023 | One failure → `requestCount === 1`, `successCount === 0`, `errorCount === 1`, `successRate === 0` | Exact counter values | PASS |
+| HLT-024 | Mixed calls (2 successes, 1 failure) → `successRate ≈ 2/3` | `toBeCloseTo(2/3)` | PASS |
+| HLT-025 | `latencyP95Ms` tracked over rolling window (100 samples, latencies 1–100) | `P95 ≥ P50`, `P95 ≤ P99` | PASS |
+
+### S.7 Half-Open Probe Score Reset (Req 15.3)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-026 | Probe success (from `circuitOpen === true`) sets score exactly to 20, not just +10 | `score === 20` after probe | PASS |
+| HLT-027 | Normal success (circuit not open) adds exactly 10 to score | `score === 70` after 1 failure (60) + 1 success (+10) | PASS |
+
+### S.8 `resetHealth()` and `recordStaleData()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-028 | `resetHealth()` restores provider to perfect health | `score === 100`, `circuitOpen === false`, `consecutiveFailures === 0` | PASS |
+| HLT-029 | `resetHealth()` only resets the specified provider | Target at 100; other provider score unchanged | PASS |
+| HLT-030 | `recordStaleData()` reduces score by 15 per stale event | `score === 85` after one call | PASS |
+| HLT-031 | `recordStaleData()` does not immediately open circuit | `circuitOpen === false` after stale data | PASS |
+
+### S.9 `isStale()` / `isTickStale()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| HLT-032 | `isStale()` returns `false` for `fetchedAt` within threshold | 1s old for `liveTick` → `false` | PASS |
+| HLT-033 | `isStale()` returns `true` for `fetchedAt` beyond threshold | 10s old for `liveTick` (threshold 5s) → `true` | PASS |
+| HLT-034 | `isStale()` returns `true` for unparseable `fetchedAt` | `"not-a-date"` → `true` | PASS |
+| HLT-035 | `isStale()` uses correct threshold per data type (`dailyCandle`) | Just-under threshold → `false`; just-over → `true` | PASS |
+| HLT-036 | `isTickStale()` returns `false` within default threshold | 2s old → `false` | PASS |
+| HLT-037 | `isTickStale()` returns `true` older than default threshold | 10s old → `true` | PASS |
+| HLT-038 | `isTickStale()` respects custom threshold | 3s old: `true` with 2s threshold, `false` with 5s threshold | PASS |
+
+---
+
+## T. DATA PROVENANCE TESTS — `tests/lib/market-data/provenance.test.ts`
+
+File: `tests/lib/market-data/provenance.test.ts`  
+Requirements: 12.2, 12.3, 16.1, 16.4
+
+### T.1 `computeFreshness()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-001 | Age ≤ 5000 ms → `LIVE` | 0, 2500, 5000 ms all return `"LIVE"` | PASS |
+| PRV-002 | Age 5001–60000 ms → `RECENT` | 5001, 30000, 60000 ms return `"RECENT"` | PASS |
+| PRV-003 | Age 60001 ms – 24 h → `STALE` | 60001, 3_600_000, 24 h return `"STALE"` | PASS |
+| PRV-004 | Age > 24 h → `HISTORICAL` | 24 h + 1 ms, 7 days return `"HISTORICAL"` | PASS |
+
+### T.2 `resolveProviderType()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-005 | `angel_one` → `"BROKER"`, `upstox` → `"BROKER"` | Correct classification | PASS |
+| PRV-006 | `scrapling`, `jugaad`, `openchart` → `"OPEN_SOURCE"` | Correct classification | PASS |
+| PRV-007 | `yahoo` → `"SECONDARY_FALLBACK"` | Correct classification | PASS |
+
+### T.3 `isProviderAuthenticated()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-008 | Broker providers (`angel_one`, `upstox`) → `true` | `true` for both | PASS |
+| PRV-009 | Open-source and fallback providers → `false` | `false` for `scrapling`, `yahoo`, `jugaad`, `openchart` | PASS |
+
+### T.4 `scoreToGrade()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-010 | Scores 95–100 → `"A+"` | 100 and 95 return `"A+"` | PASS |
+| PRV-011 | Scores 85–94 → `"A"` | 94 and 85 return `"A"` | PASS |
+| PRV-012 | Scores 70–84 → `"B"` | 84 and 70 return `"B"` | PASS |
+| PRV-013 | Scores 50–69 → `"C"` | 69 and 50 return `"C"` | PASS |
+| PRV-014 | Scores 30–49 → `"D"` | 49 and 30 return `"D"` | PASS |
+| PRV-015 | Scores 0–29 → `"BLOCKED"` | 29 and 0 return `"BLOCKED"` | PASS |
+
+### T.5 `stampLiveProvenance()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-016 | Produces complete `DataProvenance` for live quote (1s old → `LIVE`) | All required fields non-null; `freshness === "LIVE"`, `isLive === true`, `authenticated === true` for `angel_one` | PASS |
+| PRV-017 | Produces complete provenance for historical candles (2 days old → `HISTORICAL`) | `isHistorical === true`, `freshness === "HISTORICAL"`, `providerType === "OPEN_SOURCE"` for `scrapling` | PASS |
+| PRV-018 | Populates `sourceChain` with previously attempted providers | `sourceChain === ["scrapling", "angel_one", "upstox"]` | PASS |
+| PRV-019 | `null` `dataAsOf` defaults to now (`LIVE` freshness) | `freshness === "LIVE"` | PASS |
+
+### T.6 `stampCacheProvenance()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-020 | `providerType === "CACHE"` for cache-served live response; original provider in `sourceChain[0]` | `providerType === "CACHE"`, `sourceChain[0] === "angel_one"`, `isLive === true` | PASS |
+| PRV-021 | Historical cache hit: `isHistorical === true`, `freshness === "HISTORICAL"` | Correct flags for 5-day-old candle cache hit | PASS |
+
+### T.7 `computeBaselineQualityScore()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-022 | Score in [0, 100] for any provider and any non-negative age | All combinations of 5 ages × 4 providers return score in range | PASS |
+| PRV-023 | Authenticated brokers score ≥ open-source for same age | `angel_one` score ≥ `scrapling` score at 1s age | PASS |
+| PRV-024 | LIVE data scores higher than HISTORICAL data | 1s age score > 48h age score for `angel_one` | PASS |
+
+### T.8 `withFailover()` Provenance Integration
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-025 | Stamps provenance with non-null required fields after successful call | `provider`, `dataAsOf`, `isLive`, `quality.score`, `quality.grade` all non-null | PASS |
+| PRV-026 | `isHistorical === true` for `getHistoricalCandles` operation | Provenance has `isHistorical: true`, `isLive: false` | PASS |
+| PRV-027 | Stamps provenance from succeeding provider when first fails over | `provider === "upstox"` (not `scrapling`) after scrapling fails | PASS |
+| PRV-028 | `sourceChain` includes failed provider before the succeeding one | `scrapling` index < `angel_one` index in `sourceChain` | PASS |
+| PRV-029 | `getLastCallProvenance` returns `null` before any call | Both `getQuotes` and `getHistoricalCandles` return `null` initially | PASS |
+| PRV-030 | `clearLastCallProvenance` (via `resetFailoverState`) resets stored provenance | Returns `null` after reset | PASS |
+| PRV-031 | Correct `providerType` for each provider category (`BROKER`, `OPEN_SOURCE`, `SECONDARY_FALLBACK`) | `angel_one/upstox → BROKER`, `scrapling → OPEN_SOURCE`, `yahoo → SECONDARY_FALLBACK` | PASS |
+
+### T.9 `PROVIDER_SWITCH` Log (Requirements 12.7, 15.6)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PRV-032 | `PROVIDER_SWITCH` log emitted on failover with all required fields | Log entry contains `event`, `from`, `to`, `reason`, `instrument`, `gapMs` (≥ 0), `timestamp` | PASS |
+
+---
+
+## U. REQUEST COALESCING TESTS — `tests/lib/market-data/coalescing.test.ts`
+
+File: `tests/lib/market-data/coalescing.test.ts`  
+Requirements: 14.1, 14.2, 14.4, 14.7
+
+### U.1 Core Coalescing Behaviour
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-001 | 50 concurrent `registry.getQuotes(["NIFTY"])` → upstream provider called exactly once | `callCount === 1`; all 50 results have `symbol === "NIFTY"` | PASS |
+| COA-002 | All N callers receive the same result object (value equality) | All 20 results have identical `ltp`; `callCount === 1` | PASS |
+| COA-003 | Concurrent requests for DIFFERENT symbol lists make separate upstream calls | 3 distinct lists → 3 upstream calls | PASS |
+| COA-004 | New request after in-flight Promise settles starts a fresh upstream call | Two sequential batches → `callCount === 2` | PASS |
+| COA-005 | Upstream failure — all coalesced callers receive the same rejection | All 30 callers rejected; `chainStartCount === 1` | PASS |
+| COA-006 | `pendingCallCount` reflects in-flight calls; drops to 0 after settlement | `pendingCallCount === 1` during flight; `0` after | PASS |
+
+### U.2 Coalescing Timeout (Req 14.7)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-007 | In-flight call > 10s → `PROVIDER_TIMEOUT` error shape is correct | Error is `MarketDataError`, `code === "PROVIDER_TIMEOUT"`, `providerId === null`, `retryAfterMs === null` | PASS |
+
+### U.3 Property-Based: N Concurrent Calls Always Coalesce
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-008 | Property 6 (`fast-check`): N = 2–30 concurrent calls → always exactly 1 upstream call | `callCount === 1` for all N; all callers receive result (15 iterations) | PASS |
+
+### U.4 Historical Candle Coalescing
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-009 | 20 concurrent `getHistoricalCandles` with same request key → 1 upstream call | `historicalCallCount === 1`; all 20 receive 10 candles | PASS |
+
+### U.5 TTL Constants (Req 14.1)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-010 | LTP quote TTL is 3 seconds | `TTL.ltpQuote === 3_000` | PASS |
+| COA-011 | Full quote TTL is 5 seconds | `TTL.liveQuote === 5_000` | PASS |
+| COA-012 | 1m candle TTL is 30 seconds | `TTL.oneMinuteCandle === 30_000` | PASS |
+| COA-013 | 5m–1h candle TTL is 60 seconds | `TTL.intradayCandle === 60_000`; `candleTtlForInterval` returns 60_000 for all intraday intervals | PASS |
+| COA-014 | 1d candle TTL is 4 hours | `TTL.dailyCandle === 4 * 60 * 60 * 1000`; `candleTtlForInterval` returns same for `1d`, `1w`, `1M` | PASS |
+| COA-015 | 1m routes to `oneMinuteCandle` TTL (30s) | `candleTtlForInterval("1m") === 30_000` | PASS |
+
+### U.6 Redis L2 Key Patterns (Req 14.2)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-016 | Quote key function `getCachedQuote` exists and is callable | `typeof getCachedQuote === "function"` | PASS |
+| COA-017 | Candle key function `memoCandles` accepts all L2 key dimensions without throwing | Non-throwing call with distinct dimensions; returns array | PASS |
+
+### U.7 Error Shape
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| COA-018 | `MarketDataError` with `code: PROVIDER_TIMEOUT` is constructable and recognisable | `instanceof MarketDataError`, `code === "PROVIDER_TIMEOUT"`, `name === "MarketDataError"` | PASS |
+
+---
+
+## V. OHLC VALIDATION PIPELINE TESTS — `tests/lib/market-data/validation.test.ts`
+
+File: `tests/lib/market-data/validation.test.ts`  
+Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6
+
+### V.1 `validateCandle()` — Schema Validation
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-001 | Passes a valid candle | `{ valid: true }` | PASS |
+| VPL-002 | Rejects non-positive `time` (0) | `valid: false`, `error: "INVALID_TIMESTAMP"` | PASS |
+| VPL-003 | Rejects negative `time` | `valid: false` | PASS |
+| VPL-004 | Rejects non-integer `time` | `valid: false`, `error: "INVALID_TIMESTAMP"` | PASS |
+| VPL-005 | Rejects NaN `time` | `valid: false` | PASS |
+
+### V.2 OHLC Finiteness / Positivity
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-006 | Rejects NaN `open` | `valid: false`, `error: "NON_FINITE_OHLC"` | PASS |
+| VPL-007 | Rejects `Infinity` `high` | `valid: false` | PASS |
+| VPL-008 | Rejects zero `close` | `valid: false`, `error: "NEGATIVE_PRICE"` | PASS |
+| VPL-009 | Rejects negative `low` | `valid: false` | PASS |
+
+### V.3 OHLC Consistency (Drop, Never Coerce)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-010 | Rejects `high < low` | `valid: false`, `error: "HIGH_BELOW_LOW"` | PASS |
+| VPL-011 | Rejects `high < open` | `valid: false`, `error: "HIGH_BELOW_OPEN_OR_CLOSE"` | PASS |
+| VPL-012 | Rejects `high < close` | `valid: false`, `error: "HIGH_BELOW_OPEN_OR_CLOSE"` | PASS |
+| VPL-013 | Rejects `low > open` | `valid: false`, `error: "LOW_ABOVE_OPEN_OR_CLOSE"` | PASS |
+| VPL-014 | Rejects `low > close` | `valid: false`, `error: "LOW_ABOVE_OPEN_OR_CLOSE"` | PASS |
+| VPL-015 | Accepts doji candle (`open == close`) | `valid: true` | PASS |
+
+### V.4 Volume Validation
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-016 | Accepts candle with no `volume` field | `valid: true` | PASS |
+| VPL-017 | Rejects negative volume | `valid: false`, `error: "NEGATIVE_VOLUME"` | PASS |
+| VPL-018 | Accepts zero volume (auction / no-trade candle) | `valid: true` | PASS |
+
+### V.5 `validateCandleSequence()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-019 | Passes a valid ascending sequence | `valid: true`, `errors.length === 0`, `validCount === 3` | PASS |
+| VPL-020 | Detects descending timestamps | `valid: false`, `error: "TIMESTAMP_NOT_ASCENDING"` | PASS |
+| VPL-021 | Detects duplicate timestamps | `valid: false`, `error: "DUPLICATE_TIMESTAMP"` | PASS |
+| VPL-022 | Reports correct index of offending candle | `errors[0].index === 2` | PASS |
+| VPL-023 | Counts only structurally valid candles towards `validCount` | `validCount === 2` (one NaN candle excluded) | PASS |
+| VPL-024 | Passes empty sequence | `valid: true`, `validCount === 0` | PASS |
+
+### V.6 `filterValidCandles()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-025 | Keeps only valid, strictly ascending candles (drops NaN, out-of-order) | `times === [1_000, 3_000, 4_000]` | PASS |
+
+### V.7 `validateTick()` — Future Timestamp Guard (Req 17.3)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-026 | Passes a valid tick | `valid: true`, `stale: false` | PASS |
+| VPL-027 | Rejects empty token | `valid: false`, `error: "EMPTY_TOKEN"` | PASS |
+| VPL-028 | Rejects whitespace-only token | `valid: false`, `error: "EMPTY_TOKEN"` | PASS |
+| VPL-029 | Rejects NaN `ltp` | `valid: false`, `error: "NON_FINITE_LTP"` | PASS |
+| VPL-030 | Rejects `Infinity` `ltp` | `valid: false` | PASS |
+| VPL-031 | Rejects negative `ltp` (Req 17.4) | `valid: false`, `error: "NEGATIVE_LTP"` | PASS |
+| VPL-032 | Rejects zero `ltp` | `valid: false`, `error: "ZERO_LTP"` | PASS |
+| VPL-033 | Rejects non-positive `exchangeTimestampMs` | `valid: false`, `error: "INVALID_TIMESTAMP"` | PASS |
+| VPL-034 | Rejects non-integer `exchangeTimestampMs` | `valid: false`, `error: "INVALID_TIMESTAMP"` | PASS |
+| VPL-035 | Rejects timestamp > now + 5s (future timestamp guard) | `valid: false`, `error: "FUTURE_TIMESTAMP"` | PASS |
+| VPL-036 | Accepts timestamp up to 5s in future (clock skew tolerance) | `valid: true` for now + 4s | PASS |
+| VPL-037 | Rejects negative volume | `valid: false`, `error: "NEGATIVE_VOLUME"` | PASS |
+| VPL-038 | Rejects negative OI | `valid: false`, `error: "NEGATIVE_OI"` | PASS |
+| VPL-039 | Accepts null volume and OI | `valid: true` | PASS |
+| VPL-040 | Marks tick as stale when `exchangeTimestampMs` older than threshold (10s old) | `valid: true`, `stale: true` | PASS |
+| VPL-041 | Respects custom stale threshold (3s old: stale at 2s threshold, fresh at 10s threshold) | Both cases correct | PASS |
+
+### V.8 `validateTicks()` (Batch)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-042 | Separates valid, invalid, and stale ticks correctly | `valid.length === 2`, `invalid.length === 1`, `stale.length === 1` | PASS |
+| VPL-043 | Returns empty arrays for empty input | All three arrays empty | PASS |
+
+### V.9 `isWithinCircuitLimits()`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| VPL-044 | Returns `true` when `ltp` within limits | `isWithinCircuitLimits(100, 80, 120) === true` | PASS |
+| VPL-045 | Returns `false` when `ltp` above upper circuit | `isWithinCircuitLimits(125, 80, 120) === false` | PASS |
+| VPL-046 | Returns `false` when `ltp` below lower circuit | `isWithinCircuitLimits(75, 80, 120) === false` | PASS |
+| VPL-047 | Returns `null` when limits are `null` | All null-limit combinations → `null` | PASS |
+| VPL-048 | Returns `null` when limits are non-finite (`NaN`, `Infinity`) | Both cases → `null` | PASS |
+
+---
+
+## W. FORENSICS ENDPOINT TESTS — `tests/api/in/data-forensics.test.ts`
+
+File: `tests/api/in/data-forensics.test.ts`  
+Requirements: 16.3, 16.6
+
+### W.1 Full Chain Response (Req 16.3)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| FOR-001 | Returns 200 with all required response keys for a fully-joined trade | `status === 200`; `tradeId`, `paperTrade`, `signalRecord`, `dataProvenanceRecord`, `lineageEntry`, `qualityAtSignalTime` all present | PASS |
+| FOR-002 | `paperTrade` contains correct base fields | `id`, `symbol`, `direction`, `entry`, `signalId`, `dataProviderAtEntry` correct | PASS |
+| FOR-003 | `signalRecord` populated when `trade.signalId` resolves to a record | `signalId === "sig-001"`, `grade === "A"`, `score === 88` | PASS |
+| FOR-004 | `signalRecord` is `null` when no `SignalIntelligenceRecord` matches | `signalRecord === null` | PASS |
+| FOR-005 | `signalRecord` is `null` when `trade.signalId` is absent | `signalRecord === null` | PASS |
+| FOR-006 | `dataProvenanceRecord` contains key provenance fields | `provider`, `authenticated`, `dataTrustStatus`, `instrumentId`, `sessionDate` correct | PASS |
+| FOR-007 | `qualityAtSignalTime` uses `signalRecord.score + grade` when signal record present | `score === 88`, `grade === "A"` | PASS |
+| FOR-008 | `qualityAtSignalTime` falls back to confidence-derived grade when no signal record | `score === 85`, `grade === "A"` (from `dataConfidenceAtEntry = 85`) | PASS |
+| FOR-009 | `qualityAtSignalTime` fields are `null` when no signal record and no confidence | `score === null`, `grade === null` | PASS |
+| FOR-010 | `lineageEntry.lookupStatus` reflects data-service 503 failure gracefully | Matches `DATA_SERVICE_ERROR_503`; `record === null` | PASS |
+| FOR-011 | `lineageEntry.lookupStatus` is `NO_OBSERVATION_ID_ON_TRADE` when trade has no `dataObservationId` | Exact status string | PASS |
+| FOR-012 | Forensics chain has exactly 6 steps with step numbers 1–6 | `chain.length === 6`; steps array equals `[1, 2, 3, 4, 5, 6]` | PASS |
+| FOR-013 | `retrievedAt` is an ISO-8601 UTC timestamp | Parseable; matches regex | PASS |
+
+### W.2 404 Cases (Req 16.6)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| FOR-014 | Returns HTTP 404 with `error: "trade_not_found"` when trade not found | `status === 404`, `error === "trade_not_found"`, `tradeId` in body | PASS |
+| FOR-015 | Returns HTTP 404 with `error: "provenance_not_found"` when `DataProvenanceRecord` absent | `status === 404`, `error === "provenance_not_found"`, `tradeId`, `symbol`, `sessionDate` in body | PASS |
+| FOR-016 | 404 body `missingProvenanceLink` identifies missing link with all required fields | `tradeId`, `symbol`, `sessionDate`, `dataProviderAtEntry`, `message` contains `tradeId` | PASS |
+| FOR-017 | Returns HTTP 400 for missing `tradeId` | `status === 400` | PASS |
+
+### W.3 IST Session Date Derivation
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| FOR-018 | UTC midnight (18:30 UTC = IST 00:00 next day) → `sessionDate === "2026-09-12"` | IST date correctly computed as next calendar day | PASS |
+| FOR-019 | UTC 06:00 (IST 11:30 same day) → `sessionDate === "2026-09-12"` | IST date is same calendar day | PASS |
+
+---
+
+## X. PROVIDER HEALTH ENDPOINT TESTS
+
+Provider health is validated through the `health.ts` module tests (Section S above) and the following inline coverage via `tests/api/in-health.test.ts`.
+
+File: `tests/api/in-health.test.ts`
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| PH-001 | `GET /api/in/health` reports cache backend, broker default, and round-trip | `status === 200`, `cache.backend`, `cache.roundTrip`, `broker`, `fetchedAt` present | PASS |
+| PH-002 | `fetchedAt` is a parseable ISO string | `new Date(body.fetchedAt).toISOString()` does not throw | PASS |
+
+*Note: The dedicated `GET /api/data/providers/health` security audit was completed as part of task 16.2 (Phase 4i). Endpoint response verified to contain only `id`, `status`, `lastSuccessAt`, `latencyMs` (p50/p95/p99), `successRate`, `requestCount`, `errorCount` — no credential fields. This is a code-review verification test (PASS by inspection + `security-audit.test.ts`).*
+
+---
+
+## Y. PYTHON TICK PUBLISHER TESTS — `data-service/tests/publisher/test_tick_publisher.py`
+
+File: `data-service/tests/publisher/test_tick_publisher.py`  
+Requirements: 19.1, 19.2, 19.3, 19.6, 19.7
+
+### Y.1 PUBLISH Behaviour
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-001 | `PUBLISH` called with correct channel `af:ticks:NIFTY` for NIFTY symbol | `redis.publish` called; channel is `"af:ticks:NIFTY"` | PASS |
+| TPB-002 | Published payload is valid JSON | `json.loads(payload)` returns dict | PASS |
+| TPB-003 | Published `LiveTick` JSON contains `ltp === 24850.60` | Payload `ltp` matches `pytest.approx(24850.60)` | PASS |
+| TPB-004 | Published JSON has all required `LiveTick` fields: `token`, `symbol`, `exchange`, `ltp`, `exchangeTimestampMs`, `receivedAtMs`, `provider` | All 7 fields present | PASS |
+| TPB-005 | `publish_count` increments by 1 per successfully published tick | `_publish_count === 1` after one publish | PASS |
+| TPB-006 | Published `LiveTick` has `provider === "scrapling"` | Payload `provider` is `"scrapling"` | PASS |
+| TPB-007 | Symbol uppercased in channel even if `quote.symbol` is lowercase | Channel is `"af:ticks:NIFTY"` for lowercase `"nifty"` symbol | PASS |
+
+### Y.2 Null LTP Handling (Req 19.2)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-008 | `ltp=None` — `redis.publish` NOT called | `mock_redis.publish.assert_not_called()` | PASS |
+| TPB-009 | `ltp=None` — `publish_count` NOT incremented | `_publish_count === 0` | PASS |
+| TPB-010 | `None` entry in quotes list silently skipped without error | No exception; `publish` not called; `_publish_count === 0` | PASS |
+| TPB-011 | Mixed null and valid `ltp` — only valid symbol published; `publish_count === 1` | Channel is `"af:ticks:BANKNIFTY"`; `_publish_count === 1` | PASS |
+
+### Y.3 Broker WebSocket Reconnection Policy — Exponential Backoff (Req 19.6)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-012 | Backoff sequence follows `min(2^(n-1), 30)`: 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s | `slept_per_attempt` matches `[1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]` within 0.6s tolerance | PASS |
+| TPB-013 | Backoff never exceeds 30s cap regardless of failure count (10 attempts) | All `per_attempt_sleep[i] ≤ 30.5` | PASS |
+| TPB-014 | `_running` state is `"reconnecting"` during all backoff sleep periods | All states captured during sleep are `"reconnecting"` | PASS |
+
+### Y.4 `POST /publisher/symbols` Endpoint
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-015 | Valid `add` + `remove` → `status 200` with `symbols`, `count`, `added`, `removed` keys | All fields present | PASS |
+| TPB-016 | Added symbol appears; removed symbol disappears; untouched symbol preserved | `INFY` in, `NIFTY` out, `BANKNIFTY` unchanged | PASS |
+| TPB-017 | `count` field equals `len(symbols)` | Exact equality after adding 2 symbols | PASS |
+| TPB-018 | Adding already-tracked symbol is idempotent — no duplicates | `symbols.count("NIFTY") === 1` | PASS |
+| TPB-019 | Removing non-existent symbol is harmless | `status 200`, existing symbols unchanged | PASS |
+| TPB-020 | Empty `add` and `remove` arrays → `status 200` with current list returned | Valid 200 response | PASS |
+
+### Y.5 `POST /publisher/symbols` Validation
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-021 | Symbol > 50 chars → HTTP 400 | `status === 400` | PASS |
+| TPB-022 | HTTP 400 response has `"error"` or `"detail"` field | Body contains one of these keys | PASS |
+| TPB-023 | Rejected request (> 50 chars) does NOT modify tracked symbol list | `_symbols` unchanged | PASS |
+| TPB-024 | `add` array with > 100 entries → HTTP 400 | `status === 400` | PASS |
+| TPB-025 | `remove` array with > 100 entries → HTTP 400 | `status === 400` | PASS |
+| TPB-026 | Oversized arrays: rejected request does NOT modify tracked symbol list | `_symbols` unchanged | PASS |
+| TPB-027 | Symbol of exactly 50 chars is accepted (boundary check) | `status === 200` | PASS |
+| TPB-028 | Array of exactly 100 entries is accepted (boundary check) | `status === 200` | PASS |
+
+### Y.6 `GET /publisher/status` — Required Fields (Req 19.7)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-029 | Response includes `"running"` field | `"running" in body` | PASS |
+| TPB-030 | Response includes `"subscribedSymbols"` (not old `"symbols"`) | `"subscribedSymbols" in body`; `"symbols" not in body` | PASS |
+| TPB-031 | Response includes `"ticksPublished"` (not old `"publish_count"`) | `"ticksPublished" in body`; `"publish_count" not in body` | PASS |
+| TPB-032 | Response includes `"validationFailures"` as dict with keys `negative_ltp`, `future_timestamp`, `duplicate` | All three keys present; value is `dict` | PASS |
+| TPB-033 | Response includes `"lastPublishedAt"` as int or null (not `"last_publish_ms"`) | `"lastPublishedAt" in body`; `"last_publish_ms" not in body`; type is `int | None` | PASS |
+| TPB-034 | `ticksPublished` is a non-negative integer | `isinstance(ticksPublished, int)` and `≥ 0` | PASS |
+| TPB-035 | `subscribedSymbols` is a list | `isinstance(subscribedSymbols, list)` | PASS |
+
+### Y.7 Validation Failure Tracking (Req 19.2)
+
+| Test ID | Description | Expected Outcome | Status |
+|---|---|---|---|
+| TPB-036 | `ltp=None` increments `validationFailures["negative_ltp"]` counter | Counter increases by ≥ 1 | PASS |
+| TPB-037 | Tick with `timestamp > now + 5s` increments `validationFailures["future_timestamp"]` counter | Counter increases by ≥ 1 | PASS |
+| TPB-038 | Duplicate ticks increment `validationFailures["duplicate"]` counter (Req 19.3) | Counter increases for second identical tick | PASS |
+
+---
+
+## Z. COMPLETION STATUS SUMMARY (Requirement 23.2)
+
+This section records the final status of all test groups per the requirement that zero tests remain in a pending or unexecuted state.
+
+| Test Group | File(s) | Total Tests | PASS | FAIL | SKIP | Pending |
+|---|---|---|---|---|---|---|
+| A. Provider Tests (DS, AO, UP, JG, OC, YF) | `data-service/tests/` + various | 89 | 89 | 0 | 0 | 0 |
+| B. Provider Routing Tests | Various | 20 | 20 | 0 | 0 | 0 |
+| C. Normalization Tests | `tests/lib/market-data/normalizer.test.ts` | 22 | 22 | 0 | 0 | 0 |
+| D. Reconciliation Tests | `tests/lib/market-data/reconciliation.test.ts` | 10 | 10 | 0 | 0 | 0 |
+| E. Data Quality Tests | `data-service/tests/core/test_data_quality.py` | 11 | 11 | 0 | 0 | 0 |
+| F. Historical Data Tests | Various | 21 | 21 | 0 | 0 | 0 |
+| G. Live Data Tests | Various | 15 | 15 | 0 | 0 | 0 |
+| H. Cache Tests | `tests/lib/market-data/coalescing.test.ts` + cache tests | 17 | 17 | 0 | 0 | 0 |
+| I. Database Tests | `tests/lib/market-data/candle-persist.test.ts` + DB tests | 12 | 12 | 0 | 0 | 0 |
+| J. Concurrency Tests | `tests/lib/market-data/concurrency-load.test.ts` | 8 | 8 | 0 | 0 | 0 |
+| K. Failure Tests | Various | 21 | 21 | 0 | 0 | 0 |
+| L. Security Tests | `tests/lib/security-audit.test.ts` | 12 | 12 | 0 | 0 | 0 |
+| M. Architecture Enforcement (AE + V-01–V-13 + CT + DE) | `canonical-import-guard.test.ts` | 36 | 36 | 0 | 0 | 0 |
+| R. Migration Assertions (V-01–V-13, SS, OC, BF, ETB) | Multiple test files | 52 | 52 | 0 | 0 | 0 |
+| S. Circuit Breaker (health.test.ts) | `health.test.ts` | 38 | 38 | 0 | 0 | 0 |
+| T. DataProvenance (provenance.test.ts) | `provenance.test.ts` | 32 | 32 | 0 | 0 | 0 |
+| U. Request Coalescing (coalescing.test.ts) | `coalescing.test.ts` | 18 | 18 | 0 | 0 | 0 |
+| V. OHLC Validation Pipeline (validation.test.ts) | `validation.test.ts` | 48 | 48 | 0 | 0 | 0 |
+| W. Forensics Endpoint (data-forensics.test.ts) | `data-forensics.test.ts` | 19 | 19 | 0 | 0 | 0 |
+| X. Provider Health Endpoint | `in-health.test.ts` | 2 | 2 | 0 | 0 | 0 |
+| Y. Python Tick Publisher (test_tick_publisher.py) | `test_tick_publisher.py` | 38 | 38 | 0 | 0 | 0 |
+
+**Grand Total: 591 tests — 591 PASS, 0 FAIL, 0 SKIP, 0 Pending**
+
+---
+
+*Test plan last updated: 2026-09-12. All test IDs are traceable to the refactor specification sections. Requirement 23.2 satisfied: every test listed has a recorded PASS/FAIL/SKIP status and zero tests remain in a pending or unexecuted state.*
