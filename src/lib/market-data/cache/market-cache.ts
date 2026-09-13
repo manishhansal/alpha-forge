@@ -26,10 +26,28 @@ function key(...parts: string[]): string {
 }
 
 // ── TTL constants (ms) ────────────────────────────────────────────────────────
+//
+// Requirements 14.1, 14.2 — canonical TTLs used for both L1 (in-process) and
+// L2 (Redis) cache layers.
+//
+//   LTP quotes      3 s   — tightest freshness; broker feeds update sub-second
+//   Full quotes     5 s   — includes Greeks/depth, slightly looser bound
+//   1m candles     30 s   — current bar updates every tick during market hours
+//   5m–1h candles  60 s   — intraday bars settle more slowly than 1m
+//   1d+ candles     4 h   — historical bars are stable during the trading day
+//   Option chains  15 s   — OI and IV change rapidly; keep tight
+//   Instrument master 12 h — ScripMaster changes rarely
 
 export const TTL = {
-  liveQuote: 3_000,
-  intradayCandle: 30_000,
+  /** LTP-only quotes (3 s). Requirement 14.1. */
+  ltpQuote: 3_000,
+  /** Full quotes including Greeks, depth etc. (5 s). Requirement 14.1. */
+  liveQuote: 5_000,
+  /** 1-minute intraday candles (30 s). Requirement 14.1. */
+  oneMinuteCandle: 30_000,
+  /** 5m–1h intraday candles (60 s). Requirement 14.1. */
+  intradayCandle: 60_000,
+  /** Daily / weekly / monthly candles (4 h). Requirement 14.1. */
   dailyCandle: 4 * 60 * 60 * 1_000,
   optionChain: 15_000,
   instrumentMaster: 12 * 60 * 60 * 1_000,
@@ -50,6 +68,7 @@ export async function setCachedQuote(
   provider: ProviderId,
   quote: MDQuote,
 ): Promise<void> {
+  // Use liveQuote (5s full-quote TTL) for set operations.
   await cache.set(key("quote", provider, symbol), quote, TTL.liveQuote);
 }
 
@@ -67,6 +86,21 @@ export async function memoQuote(
 
 // ── Candle cache ──────────────────────────────────────────────────────────────
 
+/**
+ * Derive the correct cache TTL for a given candle interval.
+ *
+ * Requirements 14.1:
+ *   1m   → 30 s  (oneMinuteCandle)
+ *   5m–1h → 60 s  (intradayCandle)
+ *   1d+  → 4 h   (dailyCandle)
+ */
+export function candleTtlForInterval(interval: string): number {
+  if (interval === "1m") return TTL.oneMinuteCandle;
+  if (interval === "1d" || interval === "1w" || interval === "1M") return TTL.dailyCandle;
+  // 5m, 10m, 15m, 30m, 1h
+  return TTL.intradayCandle;
+}
+
 function candleCacheKey(
   symbol: string,
   exchange: string,
@@ -75,6 +109,8 @@ function candleCacheKey(
   to: string,
   provider: ProviderId,
 ): string {
+  // L2 Redis key pattern: md:candles:{provider}:{exchange}:{symbol}:{interval}:{from}:{to}
+  // Requirement 14.2
   return key("candles", provider, exchange, symbol, interval, from, to);
 }
 
@@ -87,8 +123,7 @@ export async function memoCandles(
   provider: ProviderId,
   loader: () => Promise<OHLCVCandle[]>,
 ): Promise<OHLCVCandle[]> {
-  const isDailyOrLonger = interval === "1d" || interval === "1w" || interval === "1M";
-  const ttl = isDailyOrLonger ? TTL.dailyCandle : TTL.intradayCandle;
+  const ttl = candleTtlForInterval(interval);
   const cacheKey = candleCacheKey(symbol, exchange, interval, from, to, provider);
   return cache.memo(cacheKey, ttl, loader);
 }
@@ -137,6 +172,9 @@ export async function invalidateInstrumentMaster(provider: ProviderId): Promise<
  * aligned with the caller's `symbols` order — two callers requesting the same
  * symbols in the same order share one in-flight request and one cached payload,
  * which is the common polling case (the tick loop always uses a stable order).
+ *
+ * TTL: 3s (ltpQuote) — live batch quotes are treated as LTP-level freshness.
+ * Requirement 14.1.
  */
 export async function memoQuoteBatch(
   symbols: string[],
@@ -145,5 +183,7 @@ export async function memoQuoteBatch(
 ): Promise<Array<MDQuote | null>> {
   if (symbols.length === 0) return [];
   const orderedKey = symbols.map((s) => s.toUpperCase()).join(",");
-  return cache.memo(key("quotes-batch", provider, orderedKey), TTL.liveQuote, loader);
+  // L2 Redis key pattern: md:quotes-batch:{provider}:{SYM1,SYM2,...}
+  // Uses ltpQuote (3s) TTL — live batch quotes.  Requirement 14.1, 14.2.
+  return cache.memo(key("quotes-batch", provider, orderedKey), TTL.ltpQuote, loader);
 }
