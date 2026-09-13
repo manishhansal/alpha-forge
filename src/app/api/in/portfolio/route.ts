@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+// angel.getFunds/getHoldings/getPositions are broker account APIs — not market-data.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { angel } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";

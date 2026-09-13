@@ -17,6 +17,9 @@
  *   SMARTAPI_API_KEY, SMARTAPI_CLIENT_CODE, SMARTAPI_PIN, SMARTAPI_TOTP_SECRET
  *   SMARTAPI_PUBLIC_IP=<your public IP>   (curl -s https://api.ipify.org)
  */
+// This is a developer verification script — not production code.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 
 function line(label: string, ok: boolean, detail = ""): void {

@@ -13,6 +13,9 @@
 //               receive a full snapshot rather than a stale diff slice.
 
 import type { FeedDiff, FeedTick, Quote } from "@/types/india";
+// yahoo is used as a fallback quote source for the WebSocket feed gateway.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { yahoo } from "@/services/india/yahoo";
 import {
   isTickStale,
