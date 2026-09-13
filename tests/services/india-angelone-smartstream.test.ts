@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
+// eslint-disable-next-line no-restricted-imports -- unit test for the angelone smartstream adapter itself
 import {
   SMART_EXCHANGE_TYPE,
   SMART_MODE,

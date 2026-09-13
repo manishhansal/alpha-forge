@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+// eslint-disable-next-line no-restricted-imports -- type imports for angelone derivatives test
 import type { DerivOiBuildup, DerivPcr } from "@/services/india/angelone/derivatives";
 import type { Candle, OptionChain, OptionChainAnalytics } from "@/types/india";
 import { __internals } from "@/features/ai-signals/india-builder";

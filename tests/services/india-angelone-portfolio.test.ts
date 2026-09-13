@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+// eslint-disable-next-line no-restricted-imports -- unit test for the angelone portfolio adapter itself
 import {
   parseFunds,
   parseHoldings,
