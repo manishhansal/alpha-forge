@@ -406,7 +406,15 @@ export type ProviderHealth = {
   /** UTC ISO-8601 of when the circuit will attempt to re-close (half-open). */
   circuitRetryAt: string | null;
   latencyP50Ms: number | null;
+  /** p95 latency over the rolling window of the last 100 requests (Req 15.1). */
+  latencyP95Ms: number | null;
   latencyP99Ms: number | null;
+  /** Cumulative counters since last reset (Req 15.1). */
+  requestCount: number;
+  successCount: number;
+  errorCount: number;
+  /** Fraction of successful requests; null when no requests have been recorded. */
+  successRate: number | null;
 };
 
 // ── Subscription ─────────────────────────────────────────────────────────────
@@ -416,6 +424,130 @@ export type SubscriptionMode = "ltp" | "quote" | "full";
 export type SubscribeRequest = {
   tokens: Array<{ token: string; exchange: Exchange }>;
   mode: SubscriptionMode;
+};
+
+// ── Data Provenance ──────────────────────────────────────────────────────────
+
+/**
+ * How fresh the data is relative to now.
+ *   LIVE       — data age ≤ 5 seconds
+ *   RECENT     — 6–60 seconds
+ *   STALE      — 61 seconds – 24 hours
+ *   HISTORICAL — older than 24 hours
+ */
+export type DataFreshness = "LIVE" | "RECENT" | "STALE" | "HISTORICAL";
+
+/**
+ * High-level trust classification for a data record.
+ *   TRUSTED    — passed all validation steps, credential verified
+ *   UNVERIFIED — no credential / open-source provider; data may be correct
+ *   DEGRADED   — partial data or minor quality issues
+ *   BLOCKED    — quality score < 30; signal engine must treat as hard stop
+ */
+export type DataTrustStatus = "TRUSTED" | "UNVERIFIED" | "DEGRADED" | "BLOCKED";
+
+/**
+ * Derived quality grade from the numeric score (0–100).
+ *   A+  95–100
+ *   A   85–94
+ *   B   70–84
+ *   C   50–69
+ *   D   30–49
+ *   BLOCKED < 30
+ */
+export type QualityGrade = "A+" | "A" | "B" | "C" | "D" | "BLOCKED";
+
+/**
+ * Outcome of cross-provider reconciliation for a data record.
+ *   CONFIRMED          — two providers agree (deviation ≤ 0.5% on all fields)
+ *   MINOR_DISCREPANCY  — deviation > 0.5% but ≤ 2% on at least one field
+ *   MAJOR_DISCREPANCY  — deviation > 2% on at least one field
+ *   UNRECONCILED       — fewer than 2 providers available; check skipped
+ */
+export type ReconciliationStatus =
+  | "CONFIRMED"
+  | "MINOR_DISCREPANCY"
+  | "MAJOR_DISCREPANCY"
+  | "UNRECONCILED";
+
+/**
+ * Immutable provenance record attached to every data response returned by the
+ * registry. Consumers MUST NOT modify this object.
+ *
+ * When the response is served from cache (L1 in-process or L2 Redis), set
+ * `providerType: "CACHE"` and record the original live provider in
+ * `sourceChain[0]`.
+ *
+ * The `quality.score` drives the signal engine hard-stop threshold:
+ *   - score < 30  → grade BLOCKED → signal engine MUST NOT use this data
+ *   - score 30–49 → grade D       → use with caution; log a warning
+ *
+ * Freshness rules:
+ *   - LIVE:       data age ≤ 5 s
+ *   - RECENT:     6 – 60 s
+ *   - STALE:      61 s – 24 h
+ *   - HISTORICAL: > 24 h
+ */
+export type DataProvenance = {
+  /** The provider that ultimately served this data. */
+  provider: ProviderId;
+  /**
+   * Broad category of the serving entity.
+   *   BROKER            — authenticated broker API (Angel One, Upstox)
+   *   OPEN_SOURCE       — unauthenticated open-source feed (jugaad, openchart)
+   *   SECONDARY_FALLBACK — last-resort delayed feed (yahoo)
+   *   CACHE             — data was served from L1/L2 cache
+   *   DERIVED           — computed/synthesised from one or more primary sources
+   */
+  providerType:
+    | "BROKER"
+    | "OPEN_SOURCE"
+    | "SECONDARY_FALLBACK"
+    | "CACHE"
+    | "DERIVED";
+  /** Whether the provider call was authenticated with valid credentials. */
+  authenticated: boolean;
+  /** UTC ISO-8601 timestamp of when this request was initiated. */
+  requestedAt: string;
+  /** UTC ISO-8601 timestamp representing when the data itself is current as-of. */
+  dataAsOf: string;
+  /** True when this is a live / real-time data response. */
+  isLive: boolean;
+  /** True when this is a historical candle response. */
+  isHistorical: boolean;
+  /** Data freshness classification relative to `Date.now()`. */
+  freshness: DataFreshness;
+  quality: {
+    /** Composite quality score 0–100. */
+    score: number;
+    /** Derived letter grade from `score`. */
+    grade: QualityGrade;
+    /** Percentage of expected data points that were present (0–100). */
+    completeness: number;
+    /**
+     * Freshness sub-score (0–1). A candle is considered fresh if its timestamp
+     * is within 2 × candle interval duration of `Date.now()`.
+     */
+    freshness: number;
+    /** Accuracy sub-score (0–1): proportion of candles that passed OHLC validation. */
+    accuracy: number;
+    /** Overall validation outcome for this batch. */
+    validationStatus: "PASSED" | "FAILED" | "PARTIAL" | "PENDING";
+    /** Cross-provider reconciliation result. */
+    reconciliationStatus: ReconciliationStatus;
+    /** Number of detected gaps in the expected bar sequence. */
+    gapCount?: number;
+    /** Number of candles dropped by OHLC / price validation. */
+    invalidCount?: number;
+    /** Number of candles flagged by the 20% spike detector (kept in output). */
+    suspiciousCount?: number;
+  };
+  /**
+   * Ordered list of providers involved in producing this response.
+   * Index 0 is the original live provider; subsequent entries are failover
+   * providers. When `providerType === "CACHE"` the live provider is at index 0.
+   */
+  sourceChain: ProviderId[];
 };
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -443,7 +575,8 @@ export type MarketDataErrorCode =
   | "AUTHORIZATION_FAILURE" // 403 — forbidden / WAF / gateway block
   | "RATE_LIMIT"            // 429 — too many requests
   | "UNAVAILABLE"           // 503 / 5xx — provider temporarily degraded
-  | "TIMEOUT"               // request exceeded deadline
+  | "TIMEOUT"               // request exceeded deadline (provider-level)
+  | "PROVIDER_TIMEOUT"      // coalescing timeout: in-flight call exceeded 10s (Req 14.7)
   | "NETWORK"               // ECONNRESET / DNS / connection refused
   | "MALFORMED_RESPONSE"    // body present but failed validation/parse
   | "CAPABILITY"            // provider does not support this capability
