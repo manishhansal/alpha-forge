@@ -22,17 +22,18 @@ import type { Candle } from "@/types/india";
  * option-chain strategies have no historical data source, so they're
  * scored off the live paper-trade record instead (see `score-board.ts`).
  *
- * Candles are daily bars over ~5 years from Yahoo for a basket of liquid
- * F&O large-caps. Each module is replayed bar-by-bar across the whole
- * basket; the pooled trades are summarised and fed through the shared
- * `scoreIndiaStrategy` engine so a backtested score sits on the exact
- * same 0–100 scale as a paper-trade score.
+ * Candles are daily bars over ~5 years for a basket of liquid F&O large-caps,
+ * fetched via the canonical `registry.getHistoricalCandles()` call (data-service
+ * → Angel One → Upstox → Yahoo fallback chain). Each module is replayed
+ * bar-by-bar across the whole basket; the pooled trades are summarised and fed
+ * through the shared `scoreIndiaStrategy` engine so a backtested score sits on
+ * the exact same 0–100 scale as a paper-trade score.
  *
  * Results are cached in-process for 24h — the daily-bar suite barely
  * shifts intraday and the fetch (≈12 symbols × 5y) is the slow part.
  */
 
-/** Liquid F&O large-caps with deep, clean Yahoo daily history. */
+/** Liquid F&O large-caps used for the 5-year daily-bar backtest universe. */
 export const INDIA_BACKTEST_UNIVERSE: ReadonlyArray<string> = [
   "RELIANCE",
   "HDFCBANK",
@@ -49,7 +50,7 @@ export const INDIA_BACKTEST_UNIVERSE: ReadonlyArray<string> = [
 ];
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-/** Fewer than this many bars for a symbol → skip it (Yahoo came up short). */
+/** Fewer than this many bars for a symbol → skip it (provider returned insufficient history). */
 const MIN_USEFUL_CANDLES = 400;
 
 type BacktestScoreMap = Partial<Record<IndiaScalpStrategyId, IndiaStrategyScore>>;
