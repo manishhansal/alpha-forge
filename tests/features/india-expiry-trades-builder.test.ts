@@ -4,8 +4,6 @@ import type { OptionChain } from "@/types/india";
 
 const getOptionChainMock = vi.fn();
 const getLatestQuoteMock = vi.fn();
-const getAngelChainMock = vi.fn();
-let angelConfigured = false;
 
 // `cache.memo` just runs the producer in tests (no real caching).
 vi.mock("@/services/india/cache", () => ({
@@ -23,8 +21,8 @@ vi.mock("@/lib/market-data/registry", () => ({
 }));
 
 vi.mock("@/services/india/angelone", () => ({
-  angel: { getOptionChain: (s: string) => getAngelChainMock(s) },
-  isAngelConfigured: () => angelConfigured,
+  angel: {},
+  isAngelConfigured: () => false,
 }));
 vi.mock("@/features/india/best-time/engine", () => ({
   getBestTimeStatus: () => ({ active: { slug: "ideal", label: "Morning" } }),
@@ -60,9 +58,7 @@ function chain(
 
 beforeEach(() => {
   vi.useFakeTimers();
-  angelConfigured = false;
   getOptionChainMock.mockReset();
-  getAngelChainMock.mockReset();
   getLatestQuoteMock.mockReset();
   // registry.getLatestQuote returns an MDQuote (ltp, changePct etc.)
   getLatestQuoteMock.mockImplementation((s: string) =>
@@ -122,29 +118,33 @@ describe("getIndiaExpiryTrades", () => {
     expect(sensex?.dataSource).toBe("estimated");
   });
 
-  it("uses the live BSE chain for SENSEX premiums when Angel One is configured", async () => {
-    // Thursday 2026-06-18 — SENSEX BSE weekly expiry. Angel returns a chain
+  it("uses the live BSE chain for SENSEX premiums when the registry returns a chain", async () => {
+    // Thursday 2026-06-18 — SENSEX BSE weekly expiry. Registry returns a chain
     // whose nearest expiry is today, with real ATM/OTM CALL LTPs.
     vi.setSystemTime(new Date("2026-06-18T05:00:00Z"));
-    getOptionChainMock.mockResolvedValue(chain("23-JUN-2026")); // NIFTY: not today
-    angelConfigured = true;
-    getAngelChainMock.mockResolvedValue(
-      chain("18-JUN-2026", {
-        symbol: "SENSEX",
-        spot: 75000,
-        rows: [
-          // ATM (bullish day → CE) and 3-steps-OTM CE carry live LTPs.
-          { strike: 75000, ce: { ltp: 180 }, pe: { ltp: 120 } },
-          { strike: 75300, ce: { ltp: 42 }, pe: { ltp: 8 } },
-        ] as unknown as OptionChain["rows"],
-      }),
-    );
+    // NIFTY: not expiring today; SENSEX: expiring today
+    getOptionChainMock.mockImplementation((s: string) => {
+      if (s === "NIFTY") return Promise.resolve(chain("23-JUN-2026"));
+      if (s === "SENSEX")
+        return Promise.resolve(
+          chain("18-JUN-2026", {
+            symbol: "SENSEX",
+            spot: 75000,
+            rows: [
+              // ATM (bullish day → CE) and 3-steps-OTM CE carry live LTPs.
+              { strike: 75000, ce: { ltp: 180 }, pe: { ltp: 120 } },
+              { strike: 75300, ce: { ltp: 42 }, pe: { ltp: 8 } },
+            ] as unknown as OptionChain["rows"],
+          }),
+        );
+      return Promise.reject(new Error("Unknown symbol"));
+    });
 
     const res = await getIndiaExpiryTrades();
     const sensex = res.indexes.find((b) => b.index === "SENSEX");
     expect(sensex).toBeDefined();
     expect(sensex?.dataSource).toBe("chain");
-    expect(getAngelChainMock).toHaveBeenCalledWith("SENSEX");
+    expect(getOptionChainMock).toHaveBeenCalledWith("SENSEX");
     // Bullish ^BSESN change → CALLs, priced from the live chain LTPs.
     const gamma = sensex?.trades.find((t) => t.kind === "GAMMA_BLAST");
     expect(gamma?.optionType).toBe("CE");
@@ -155,11 +155,13 @@ describe("getIndiaExpiryTrades", () => {
     expect(hero?.entryPremium).toBe(42);
   });
 
-  it("falls back to estimated SENSEX premiums when the Angel chain errors", async () => {
+  it("falls back to estimated SENSEX premiums when the registry chain errors", async () => {
     vi.setSystemTime(new Date("2026-06-18T05:00:00Z"));
-    getOptionChainMock.mockResolvedValue(chain("23-JUN-2026"));
-    angelConfigured = true;
-    getAngelChainMock.mockRejectedValue(new Error("SmartAPI down"));
+    getOptionChainMock.mockImplementation((s: string) => {
+      if (s === "NIFTY") return Promise.resolve(chain("23-JUN-2026"));
+      // SENSEX registry call fails — should fall back to estimated
+      return Promise.reject(new Error("Provider unavailable"));
+    });
 
     const res = await getIndiaExpiryTrades();
     const sensex = res.indexes.find((b) => b.index === "SENSEX");

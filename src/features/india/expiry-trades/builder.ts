@@ -5,10 +5,11 @@
  * *today* — and nothing on any other day. Expiry detection and premiums are
  * driven by live option chains where we have them:
  *   - NIFTY  → the NSE option chain's nearest expiry + LTPs.
- *   - SENSEX → the BSE (BFO) chain synthesised by the Angel One adapter, gated
+ *   - SENSEX → the BSE (BFO) chain routed through the registry, gated
  *              behind the Thursday weekday so the rate-limited per-strike
  *              quoting only runs on plausible expiry days. Falls back to the
- *              weekday rule + spot/VIX estimate when Angel One isn't configured.
+ *              weekday rule + spot/VIX estimate when the registry chain is
+ *              unavailable or the chain expiry does not match today.
  *
  * Post Sep-2025 SEBI realignment:
  *   - NIFTY (NSE) weekly + monthly expiry → Tuesday
@@ -26,11 +27,6 @@ import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { istDateKey } from "@/features/india/daily-picks/engine";
 import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { cache as indiaCache } from "@/services/india/cache";
-// angel.getOptionChain("SENSEX") is a DOCUMENTED EXCEPTION:
-// The BSE/BFO SENSEX option chain is only available via Angel One's SmartAPI
-// (synthesised from BFO scrip subset). There is no generic registry route for
-// BSE exchange option chains. See DATA_SERVICE_PRE_REFACTOR_AUDIT.md §5.
-import { angel, isAngelConfigured } from "@/services/india/angelone";
 import type { OptionChain } from "@/types/india";
 
 import {
@@ -151,12 +147,12 @@ async function buildNiftyBlock(
 }
 
 /**
- * Resolve the SENSEX block from the live BSE option chain (synthesised by the
- * Angel One adapter from the BFO scrip subset). Cheap-gated on the Thursday
- * weekly-expiry weekday first so we don't pay the rate-limited per-strike
- * quoting on the other four days, then confirmed by the chain's nearest
- * expiry. Falls back to the spot + VIX estimate when Angel One isn't
- * configured or the chain is unreachable.
+ * Resolve the SENSEX block from the live BSE option chain routed through
+ * the registry. Cheap-gated on the Thursday weekly-expiry weekday first so
+ * we don't pay the rate-limited per-strike quoting on the other four days,
+ * then confirmed by the chain's nearest expiry. Falls back to the spot +
+ * VIX estimate when the registry chain is unreachable or the chain expiry
+ * does not match today.
  */
 async function buildSensexBlock(
   now: number,
@@ -164,12 +160,14 @@ async function buildSensexBlock(
   vix: number | null,
 ): Promise<ExpiryIndexBlock | null> {
   if (istWeekday(new Date(now)) !== EXPIRY_WEEKDAY.SENSEX) return null;
-  if (!isAngelConfigured()) {
-    return buildEstimatedBlock("SENSEX", now, tradeDate, vix);
-  }
   try {
-    const chain = await angel.getOptionChain("SENSEX");
-    if (!isExpiryDayFromChain(chain.expiry, tradeDate)) return null;
+    const mdChain = await registry.getOptionChain("SENSEX");
+    const chain = mdChain as unknown as OptionChain;
+    if (!isExpiryDayFromChain(chain.expiry, tradeDate)) {
+      // Chain is available but today is not expiry — fall back to weekday
+      // rule + estimated premiums.
+      return buildEstimatedBlock("SENSEX", now, tradeDate, vix);
+    }
 
     const spotMd = await registry.getLatestQuote("^BSESN");
     const spot = chain.spot ?? spotMd?.ltp ?? 0;
@@ -196,7 +194,7 @@ async function buildSensexBlock(
       bias,
       dataSource: "chain",
       trades,
-      note: "Premiums from the live BSE option chain (Angel One).",
+      note: "Premiums from the live BSE option chain (via registry).",
     };
   } catch {
     // Chain unavailable — fall back to the Thursday weekday rule + estimates.
