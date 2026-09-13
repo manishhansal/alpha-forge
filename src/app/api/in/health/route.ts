@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { cache } from "@/services/india/cache";
+// isAngelConfigured is a broker config check — not market-data acquisition.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { isAngelConfigured } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";

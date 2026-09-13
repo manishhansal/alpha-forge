@@ -18,7 +18,11 @@ import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 import type { MDQuote } from "@/lib/market-data/types";
+// angel is imported for broker-analytics only (PCR, OI buildup, gainers/losers) — no MarketDataProvider equivalent.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { angel, isAngelConfigured } from "@/services/india/angelone";
+// eslint-disable-next-line no-restricted-imports
 import type {
   DerivOiBuildup,
   DerivPcr,

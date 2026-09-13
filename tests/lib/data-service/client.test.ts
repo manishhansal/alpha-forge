@@ -74,7 +74,8 @@ function makeHealth(): ProviderHealth {
     lastSuccessAt: new Date().toISOString(), lastFailureAt: null,
     consecutiveFailures: 0, consecutiveSuccesses: 10,
     circuitOpen: false, circuitRetryAt: null,
-    latencyP50Ms: 80, latencyP99Ms: 200,
+    latencyP50Ms: 80, latencyP95Ms: 150, latencyP99Ms: 200,
+    requestCount: 10, successCount: 10, errorCount: 0, successRate: 1,
   };
 }
 

@@ -192,7 +192,8 @@ async function gateHitsByData(
 
 /**
  * For every OPEN `FnoTrendScan` row on today's date, fetch the latest quote
- * from Yahoo and check TP1 / SL. Rows still open at 15:30 IST are CLOSED.
+ * from the canonical registry and check TP1 / SL. Rows still open at 15:30 IST
+ * are CLOSED.
  */
 export async function trackOpenFnoTrendScans(prisma?: PrismaClient): Promise<void> {
   const db = prisma ?? safeGetPrisma();

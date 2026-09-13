@@ -61,22 +61,45 @@ class SymbolUpdateRequest(BaseModel):
 
 @publisher_router.get("/publisher/status", response_class=JSONResponse)
 async def get_publisher_status() -> JSONResponse:
-    """Return a snapshot of the TickPublisher state.
+    """Return a snapshot of the TickPublisher state and broker WS connections.
 
     Always responds within 2 seconds — reads in-memory state only, no I/O.
 
-    Response shape::
+    Response shape (Requirement 19.7)::
 
         {
             "running": true | false | "reconnecting",
-            "symbols": ["NIFTY", "BANKNIFTY", ...],   // capped at 500 entries
-            "publish_count": 1250,
-            "last_publish_ms": 1700000000000 | null
+            "subscribedSymbols": ["NIFTY", "BANKNIFTY", ...],   // capped at 500 entries
+            "ticksPublished": 1250,
+            "validationFailures": {
+                "negative_ltp": 0,
+                "future_timestamp": 3,
+                "duplicate": 47,
+                "missing_token": 0,
+                "missing_exchange": 0
+            },
+            "lastPublishedAt": 1700000000000 | null,
+            "brokerConnections": {
+                "angel_one_smartstream": {"connected": false, ...},
+                "upstox_v3_protobuf":    {"connected": false, ...}
+            }
         }
     """
     from src.publisher.tick_publisher import tick_publisher  # local import avoids circular refs
 
-    return JSONResponse(content=tick_publisher.status, status_code=200)
+    status = tick_publisher.status
+
+    # Augment with broker WS connection status (Requirement 19.1)
+    try:
+        from src.publisher.broker_ws_manager import angel_one_ws, upstox_ws
+        status["brokerConnections"] = {
+            "angel_one_smartstream": angel_one_ws.status,
+            "upstox_v3_protobuf": upstox_ws.status,
+        }
+    except Exception:
+        status["brokerConnections"] = {}
+
+    return JSONResponse(content=status, status_code=200)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +127,7 @@ async def update_publisher_symbols(body: SymbolUpdateRequest) -> JSONResponse:
     from src.publisher.tick_publisher import tick_publisher  # local import avoids circular refs
 
     # Capture counts before mutation
-    symbols_before: set[str] = set(tick_publisher.status["symbols"])
+    symbols_before: set[str] = set(tick_publisher.status["subscribedSymbols"])
 
     # Apply changes synchronously — safe inside the asyncio event loop since
     # the sync variants only mutate the in-memory list (no I/O).
@@ -112,7 +135,7 @@ async def update_publisher_symbols(body: SymbolUpdateRequest) -> JSONResponse:
     tick_publisher.remove_symbols_sync(body.remove)
 
     # Capture counts after mutation
-    symbols_after: list[str] = tick_publisher.status["symbols"]
+    symbols_after: list[str] = tick_publisher.status["subscribedSymbols"]
     symbols_after_set: set[str] = set(symbols_after)
 
     added = len(symbols_after_set - symbols_before)

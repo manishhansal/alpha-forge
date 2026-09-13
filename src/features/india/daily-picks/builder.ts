@@ -30,6 +30,9 @@ import {
   nseCloseMsForDateIST,
   nseOpenMsForDateIST,
 } from "@/lib/india/market-hours";
+// angel is used for broker-analytics only (PCR, OI buildup, portfolio) — no MarketDataProvider equivalent.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { pickBrokerChain } from "@/services/india/broker/factory";
 import { registry, bootstrapRegistry } from "@/lib/market-data/registry";

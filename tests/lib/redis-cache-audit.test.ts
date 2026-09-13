@@ -201,13 +201,10 @@ describe("Health scoring — circuit breaker correctness", () => {
     );
     resetHealth("yahoo");
 
-    // The circuit opens when score < 20. Starting at 100:
-    // Each auth_failure: base = min(40, 5*n) + 25 (auth extra)
-    // Need enough failures to bring score below 20.
-    // After 1 auth failure: 100 - 5 - 25 = 70
-    // After 2: 70 - 10 - 25 = 35
-    // After 3: 35 - 15 - 25 = -5 → clamped to 0 → circuit opens
-    for (let i = 0; i < 3; i++) {
+    // Flat-40 penalty per failure (Req 15.2).
+    // Each auth_failure: -40 (base) - 25 (auth extra) = -65 per call.
+    // After 1: 100 - 65 = 35. After 2: 35 - 65 → 0 → circuit opens.
+    for (let i = 0; i < 2; i++) {
       recordFailure("yahoo", "auth_failure");
     }
 
@@ -220,8 +217,8 @@ describe("Health scoring — circuit breaker correctness", () => {
       await import("@/lib/market-data/health");
     resetHealth("yahoo");
 
-    // Open circuit with 3 auth failures
-    for (let i = 0; i < 3; i++) recordFailure("yahoo", "auth_failure");
+    // Open circuit with 2 auth failures (flat-40 rule)
+    for (let i = 0; i < 2; i++) recordFailure("yahoo", "auth_failure");
     expect(isCircuitOpen("yahoo")).toBe(true);
 
     recordSuccess("yahoo", 50);

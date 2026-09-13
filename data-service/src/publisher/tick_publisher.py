@@ -136,6 +136,15 @@ class TickPublisher:
         self._publish_count: int = 0
         self._last_publish_ms: int | None = None
 
+        # Per-reason validation failure counters (Requirement 19.7)
+        self._validation_failures: dict[str, int] = {
+            "negative_ltp": 0,
+            "future_timestamp": 0,
+            "duplicate": 0,
+            "missing_token": 0,
+            "missing_exchange": 0,
+        }
+
         # Optional scraper override (mostly for testing)
         self._scraper = scraper
 
@@ -258,6 +267,13 @@ class TickPublisher:
                     "tick_skipped_null_ltp",
                     symbol=quote.symbol if hasattr(quote, "symbol") else "unknown",
                 )
+                # Track per-reason validation failure (Requirement 19.7)
+                if quote.ltp is None or quote.ltp <= 0:
+                    self._validation_failures["negative_ltp"] += 1
+                elif not getattr(quote, "token", None):
+                    self._validation_failures["missing_token"] += 1
+                elif not getattr(quote, "exchange", None):
+                    self._validation_failures["missing_exchange"] += 1
                 continue
 
             # ── Deduplication ─────────────────────────────────────────────
@@ -274,6 +290,21 @@ class TickPublisher:
             )
             if event_dedup.is_duplicate(event_id):
                 logger.debug("tick_deduplicated", symbol=tick.symbol, event_id=event_id)
+                self._validation_failures["duplicate"] += 1
+                continue
+
+            # ── Future timestamp guard ────────────────────────────────────
+            # Reject ticks whose exchange timestamp is more than 5 s ahead of
+            # the data-service system clock. (Requirement 19.2, 17.4)
+            now_ms = _utc_now_ms()
+            if tick.exchangeTimestampMs and tick.exchangeTimestampMs > now_ms + 5_000:
+                logger.debug(
+                    "tick_future_timestamp_rejected",
+                    symbol=tick.symbol,
+                    exchange_ts_ms=tick.exchangeTimestampMs,
+                    now_ms=now_ms,
+                )
+                self._validation_failures["future_timestamp"] += 1
                 continue
 
             # ── Gap detection ─────────────────────────────────────────────
@@ -561,12 +592,21 @@ class TickPublisher:
 
     @property
     def status(self) -> dict[str, Any]:
-        """Snapshot of publisher state for the ``/publisher/status`` endpoint."""
+        """Snapshot of publisher state for the ``/publisher/status`` endpoint.
+
+        Returns the fields required by Requirement 19.7:
+          - running: bool | "reconnecting"
+          - subscribedSymbols: list[str]   (capped at 500)
+          - ticksPublished: int             (cumulative)
+          - validationFailures: dict[str, int]  (per-reason breakdown)
+          - lastPublishedAt: int | null     (Unix millisecond timestamp)
+        """
         return {
             "running": self._running,
-            "symbols": self._symbols[:500],   # cap at 500 entries per spec
-            "publish_count": self._publish_count,
-            "last_publish_ms": self._last_publish_ms,
+            "subscribedSymbols": self._symbols[:500],   # cap at 500 entries per spec
+            "ticksPublished": self._publish_count,
+            "validationFailures": dict(self._validation_failures),
+            "lastPublishedAt": self._last_publish_ms,
         }
 
     # ------------------------------------------------------------------

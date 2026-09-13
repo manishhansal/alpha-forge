@@ -12,9 +12,11 @@ import type {
 
 /**
  * IO orchestrator for the **Opening Breakout** F&O strategy. Fetches each
- * underlying's 5-min candles (Yahoo) + an option chain (NSE) for the index /
- * leader names, folds them into the pure builder in `opening-breakout-core.ts`,
- * and returns confirmed-first, confidence-ranked signals.
+ * underlying's 5-min candles via the canonical ProviderRegistry
+ * (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO fallback chain) + an option
+ * chain for the index / leader names, folds them into the pure builder in
+ * `opening-breakout-core.ts`, and returns confirmed-first, confidence-ranked
+ * signals.
  *
  * Kept separate from `fetch-signals.ts` (scanner-backed) and `positioning.ts`
  * (option-positioning) so the three signal families evolve independently and
@@ -25,7 +27,7 @@ interface OrbUniverseEntry {
   /** NSE ticker without `.NS` and the `IndiaScalpSignal.symbol` value. */
   symbol: string;
   symbolName: string;
-  /** Yahoo ticker used for the 5-min chart (e.g. "^NSEI", "RELIANCE"). */
+  /** Provider symbol used for the 5-min chart (e.g. "^NSEI", "RELIANCE"). */
   yahooSymbol: string;
   /** NSE option-chain underlying (for PCR / OI / max-pain confirmation). */
   optionUnderlying: string;
@@ -33,7 +35,7 @@ interface OrbUniverseEntry {
 
 /**
  * Liquid F&O cash names that respect opening-range geometry. Kept compact so
- * the 5-min fan-out stays fast / within Yahoo rate limits.
+ * the 5-min fan-out stays fast and within provider rate limits.
  */
 const ORB_STOCKS = [
   "RELIANCE",

@@ -14,8 +14,9 @@ export const runtime  = "nodejs";
  *   - The market is closed and stale open positions need clearing
  *   - The user wants to manually reset all positions
  *
- * Fetches the latest Yahoo price for each symbol; falls back to entry
- * price (0 P&L) when the quote is unavailable.
+ * Fetches the latest price for each symbol via the canonical registry
+ * (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO failover); falls back to
+ * entry price (0 P&L) when the quote is unavailable.
  */
 export async function POST() {
   try {

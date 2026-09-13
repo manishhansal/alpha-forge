@@ -111,16 +111,18 @@ describe("recordFailure()", () => {
     expect(getProviderHealth(ID).consecutiveSuccesses).toBe(0);
   });
 
-  it("progressively penalises the score (each failure hurts more)", () => {
-    const scores: number[] = [100];
-    for (let i = 0; i < 5; i++) {
-      recordFailure(ID, "api_error");
-      scores.push(getProviderHealth(ID).score);
-    }
-    // Each step should reduce the score
-    for (let i = 1; i < scores.length; i++) {
-      expect(scores[i]).toBeLessThan(scores[i - 1]!);
-    }
+  it("applies a flat penalty of 40 points per failure (floor 0)", () => {
+    // Starting at 100: each api_error removes exactly 40 points.
+    // After 1: 60, after 2: 20, after 3+: 0 (clamped).
+    recordFailure(ID, "api_error");
+    expect(getProviderHealth(ID).score).toBe(60);
+    recordFailure(ID, "api_error");
+    expect(getProviderHealth(ID).score).toBe(20);
+    recordFailure(ID, "api_error");
+    expect(getProviderHealth(ID).score).toBe(0);
+    // Additional failures can't go below 0.
+    recordFailure(ID, "api_error");
+    expect(getProviderHealth(ID).score).toBe(0);
   });
 
   it("applies extra AUTH_FAILURE_PENALTY for auth_failure kind", () => {
@@ -150,10 +152,9 @@ describe("recordFailure()", () => {
 
 describe("circuit breaker", () => {
   it("opens the circuit when score drops below 20", () => {
-    // Each auth_failure = -5 (base for 1st failure) + -25 (auth extra) = -30 per call
-    // Start 100. After 1st: 100 - (5+25) = 70. After 2nd: 70 - (10+25) = 35.
-    // After 3rd: 35 - (15+25) = -5 → clamped to 0 → circuit opens.
-    for (let i = 0; i < 3; i++) recordFailure(ID, "auth_failure");
+    // Each auth_failure: -40 (base) - 25 (auth extra) = -65 per call.
+    // Start 100. After 1st: 100 - 65 = 35. After 2nd: 35 - 65 → 0 → circuit opens.
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     const h = getProviderHealth(ID);
     expect(h.circuitOpen).toBe(true);
     expect(h.status).toBe("unhealthy");
@@ -162,7 +163,7 @@ describe("circuit breaker", () => {
 
   it("isCircuitOpen returns false during the half-open window", () => {
     // Drive circuit open
-    for (let i = 0; i < 3; i++) recordFailure(ID, "auth_failure");
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     expect(isCircuitOpen(ID)).toBe(true);
 
     // Simulate time advancing past the retry window (30s)
@@ -170,18 +171,21 @@ describe("circuit breaker", () => {
     expect(isCircuitOpen(ID, future)).toBe(false);
   });
 
-  it("closes the circuit on a successful probe call", () => {
-    for (let i = 0; i < 3; i++) recordFailure(ID, "auth_failure");
+  it("closes the circuit on a successful probe call and restores score to 20", () => {
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     expect(getProviderHealth(ID).circuitOpen).toBe(true);
 
     recordSuccess(ID, 50);
-    expect(getProviderHealth(ID).circuitOpen).toBe(false);
+    const h = getProviderHealth(ID);
+    expect(h.circuitOpen).toBe(false);
     expect(isCircuitOpen(ID)).toBe(false);
+    // Probe success restores score exactly to CIRCUIT_PROBE_RESTORE_SCORE (20), not just +10.
+    expect(h.score).toBe(20);
   });
 
   it("sets circuitRetryAt ~30s after opening", () => {
     const before = Date.now();
-    for (let i = 0; i < 3; i++) recordFailure(ID, "auth_failure");
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     const h = getProviderHealth(ID);
     expect(h.circuitRetryAt).not.toBeNull();
     const retryMs = Date.parse(h.circuitRetryAt!);
@@ -198,17 +202,90 @@ describe("health status", () => {
   });
 
   it("is 'degraded' when score is between 20 and 59", () => {
-    // 4 api_error failures: 100 - 5 - 10 - 15 - 20 = 50
-    for (let i = 0; i < 4; i++) recordFailure(ID, "api_error");
+    // Flat-40 penalty: after 2 api_error failures: 100 - 40 - 40 = 20.
+    // Score of 20 is not < CIRCUIT_OPEN_THRESHOLD (20), so circuit stays closed.
+    // Score of 20 is < DEGRADED_THRESHOLD (60) → "degraded".
+    for (let i = 0; i < 2; i++) recordFailure(ID, "api_error");
     const h = getProviderHealth(ID);
+    expect(h.score).toBe(20);
     expect(h.score).toBeLessThan(60);
-    expect(h.score).toBeGreaterThan(20);
+    expect(h.circuitOpen).toBe(false);
     expect(h.status).toBe("degraded");
   });
 
   it("is 'unhealthy' when circuit is open", () => {
-    for (let i = 0; i < 3; i++) recordFailure(ID, "auth_failure");
+    // 2 auth_failures open the circuit (score → 0 < 20).
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     expect(getProviderHealth(ID).status).toBe("unhealthy");
+  });
+});
+
+// ── Req 15.1 — requestCount / successCount / errorCount / successRate ─────────
+
+describe("request counters (Req 15.1)", () => {
+  it("starts with all counters at zero", () => {
+    const h = getProviderHealth(ID);
+    expect(h.requestCount).toBe(0);
+    expect(h.successCount).toBe(0);
+    expect(h.errorCount).toBe(0);
+    expect(h.successRate).toBeNull();
+  });
+
+  it("increments requestCount and successCount on success", () => {
+    recordSuccess(ID, 10);
+    recordSuccess(ID, 20);
+    const h = getProviderHealth(ID);
+    expect(h.requestCount).toBe(2);
+    expect(h.successCount).toBe(2);
+    expect(h.errorCount).toBe(0);
+    expect(h.successRate).toBe(1);
+  });
+
+  it("increments requestCount and errorCount on failure", () => {
+    recordFailure(ID, "api_error");
+    const h = getProviderHealth(ID);
+    expect(h.requestCount).toBe(1);
+    expect(h.successCount).toBe(0);
+    expect(h.errorCount).toBe(1);
+    expect(h.successRate).toBe(0);
+  });
+
+  it("computes successRate correctly across mixed calls", () => {
+    recordSuccess(ID, 10);
+    recordSuccess(ID, 10);
+    recordFailure(ID, "api_error");
+    const h = getProviderHealth(ID);
+    expect(h.requestCount).toBe(3);
+    expect(h.successCount).toBe(2);
+    expect(h.errorCount).toBe(1);
+    expect(h.successRate).toBeCloseTo(2 / 3);
+  });
+
+  it("tracks latencyP95Ms over the rolling window", () => {
+    for (let i = 0; i < 100; i++) recordSuccess(ID, i + 1); // latencies 1..100
+    const h = getProviderHealth(ID);
+    expect(h.latencyP95Ms).not.toBeNull();
+    expect(h.latencyP95Ms!).toBeGreaterThanOrEqual(h.latencyP50Ms!);
+    expect(h.latencyP95Ms!).toBeLessThanOrEqual(h.latencyP99Ms!);
+  });
+});
+
+// ── Req 15.3 — probe success resets score to 20 ───────────────────────────────
+
+describe("half-open probe score reset (Req 15.3)", () => {
+  it("probe success sets score exactly to 20, not just +10", () => {
+    // Drive to 0 (circuit open).
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
+    expect(getProviderHealth(ID).score).toBe(0);
+    // Successful probe should restore to exactly 20.
+    recordSuccess(ID, 50);
+    expect(getProviderHealth(ID).score).toBe(20);
+  });
+
+  it("normal success (not from half-open) adds 10 to the score", () => {
+    recordFailure(ID, "api_error"); // score → 60
+    recordSuccess(ID, 50);          // score → 70 (normal +10)
+    expect(getProviderHealth(ID).score).toBe(70);
   });
 });
 
@@ -216,7 +293,7 @@ describe("health status", () => {
 
 describe("resetHealth()", () => {
   it("restores a provider to perfect health", () => {
-    for (let i = 0; i < 5; i++) recordFailure(ID, "auth_failure");
+    for (let i = 0; i < 2; i++) recordFailure(ID, "auth_failure");
     resetHealth(ID);
     const h = getProviderHealth(ID);
     expect(h.score).toBe(100);

@@ -6,6 +6,11 @@
  *   - Let callers request a provider by capability (e.g. "needs option chain").
  *   - Expose enable/disable controls for runtime provider management.
  *   - Route operations through the failover engine.
+ *   - Request coalescing: concurrent calls for the same cache key share one
+ *     upstream provider call (Requirements 14.4, 14.7).
+ *   - 10-second timeout: in-flight coalesced calls that exceed 10 s cancel and
+ *     reject all waiters with MarketDataError({ code: "PROVIDER_TIMEOUT" })
+ *     (Requirement 14.7).
  */
 
 import type {
@@ -24,13 +29,104 @@ import type {
   ProviderCallOptions,
   RegisteredProvider,
 } from "./provider";
-import { withFailover } from "./failover";
+import { withFailover, getLastCallProvenance } from "./failover";
 import { getAllProviderHealth } from "./health";
+import { persistProvenance } from "./provenance";
+import { MarketDataError } from "./types";
+
+// ── Coalescing constants ──────────────────────────────────────────────────────
+
+/**
+ * Maximum time (ms) an in-flight coalesced upstream call may run before all
+ * waiters are rejected with `MarketDataError({ code: "PROVIDER_TIMEOUT" })`.
+ * Requirement 14.7.
+ */
+const COALESCE_TIMEOUT_MS = 10_000;
+
+// ── Coalescing helpers ────────────────────────────────────────────────────────
+
+/**
+ * Wrap an async `operation` with a hard timeout.
+ *
+ * If `operation` does not settle within `timeoutMs`, the returned promise
+ * rejects with a `MarketDataError({ code: "PROVIDER_TIMEOUT", retryAfterMs: null })`.
+ * The underlying operation is NOT aborted (JS has no generic cancellation for
+ * arbitrary Promises), but the registry no longer awaits it and cleans up the
+ * pending-calls entry so subsequent requests start fresh.
+ */
+function withCoalesceTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new MarketDataError(
+          `Provider call timed out after ${timeoutMs}ms (coalescing timeout)`,
+          null,
+          "PROVIDER_TIMEOUT",
+          undefined,
+          undefined, // retryAfterMs: null per spec
+        ),
+      );
+    }, timeoutMs);
+  });
+  return Promise.race([operation, timeoutPromise]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
+/**
+ * Generate a deterministic cache key for request coalescing at the registry
+ * level. The key is used ONLY to deduplicate concurrent in-flight calls —
+ * it is distinct from the L1/L2 cache key namespace.
+ */
+function coalescingKey(operation: string, ...parts: string[]): string {
+  return `coalesce:${operation}:${parts.join(":")}`;
+}
 
 // ── Registry singleton ────────────────────────────────────────────────────────
 
 export class ProviderRegistry {
   private readonly entries: RegisteredProvider[] = [];
+
+  /**
+   * In-flight coalesced calls, keyed by a deterministic string.
+   *
+   * When a second (third, … Nth) request for the same key arrives while the
+   * first upstream call has not yet settled, it awaits the same Promise rather
+   * than starting a new provider call.  After the Promise settles (resolve OR
+   * reject), the key is removed so the next request starts a fresh call.
+   *
+   * Requirement 14.4, 14.7.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly pendingCalls = new Map<string, Promise<any>>();
+
+  /**
+   * Execute `operation` with registry-level request coalescing and a 10s
+   * hard timeout.  All concurrent callers with the same `key` share one
+   * upstream call and receive the same result (or same error).
+   *
+   * Requirement 14.4: "the upstream provider SHALL be called exactly once"
+   * Requirement 14.7: "if the upstream call does not complete within 10 seconds,
+   *                    cancel it and return MarketDataError({ code: PROVIDER_TIMEOUT })"
+   */
+  private coalesced<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const existing = this.pendingCalls.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+
+    const upstream = withCoalesceTimeout(operation(), COALESCE_TIMEOUT_MS);
+    // Wrap to guarantee cleanup regardless of outcome.
+    const managed: Promise<T> = upstream.finally(() => {
+      this.pendingCalls.delete(key);
+    });
+    this.pendingCalls.set(key, managed);
+    return managed;
+  }
+
+  // ── Registry management ────────────────────────────────────────────────────
 
   /**
    * Register a provider. Providers are sorted by `priority` (ascending) so
@@ -83,12 +179,41 @@ export class ProviderRegistry {
     opts?: ProviderCallOptions,
   ): Promise<OHLCVCandle[]> {
     const providers = this.withCapability("historicalCandles");
-    return withFailover(
-      providers,
-      (p) => p.getHistoricalCandles(req, opts),
+    // Coalescing key includes all request dimensions so distinct candle requests
+    // are never collapsed together.  L2 key pattern (Req 14.2):
+    // md:candles:{provider*}:{exchange}:{symbol}:{interval}:{from}:{to}
+    // At the registry level we omit provider (it's selected at runtime) and use
+    // the same dimensions.
+    const key = coalescingKey(
       "getHistoricalCandles",
-      "historicalCandles",
+      req.symbol,
+      req.exchange,
+      req.interval,
+      req.from,
+      req.to,
     );
+    const candles = await this.coalesced(key, () =>
+      withFailover(
+        providers,
+        (p) => p.getHistoricalCandles(req, opts),
+        "getHistoricalCandles",
+        "historicalCandles",
+      ),
+    );
+
+    // ── DataProvenanceRecord persistence (Requirements 16.2, 21.5) ─────────
+    // Fire-and-forget: write a DataProvenanceRecord for every successful
+    // historical candle fetch.
+    const lastProv = getLastCallProvenance("getHistoricalCandles");
+    if (lastProv) {
+      const isAuthenticated =
+        lastProv.authenticated ??
+        (lastProv.provider === "angel_one" || lastProv.provider === "upstox");
+      void persistProvenance(lastProv.provider, req, "", isAuthenticated);
+    }
+    // ── End DataProvenanceRecord persistence ─────────────────────────────────
+
+    return candles;
   }
 
   async getLatestQuote(
@@ -96,11 +221,17 @@ export class ProviderRegistry {
     opts?: ProviderCallOptions,
   ): Promise<MDQuote | null> {
     const providers = this.withCapability("liveQuotes");
-    return withFailover(
-      providers,
-      (p) => p.getLatestQuote(symbol, opts),
-      "getLatestQuote",
-      "liveQuotes",
+    // Coalescing key for single quote: symbol only.
+    // L2 key pattern (Req 14.2): md:quote:{provider}:{SYMBOL} — provider resolved
+    // at runtime so we key on symbol at the coalescing layer.
+    const key = coalescingKey("getLatestQuote", symbol.toUpperCase());
+    return this.coalesced(key, () =>
+      withFailover(
+        providers,
+        (p) => p.getLatestQuote(symbol, opts),
+        "getLatestQuote",
+        "liveQuotes",
+      ),
     );
   }
 
@@ -109,11 +240,20 @@ export class ProviderRegistry {
     opts?: ProviderCallOptions,
   ): Promise<Array<MDQuote | null>> {
     const providers = this.withCapability("liveQuotes");
-    return withFailover(
-      providers,
-      (p) => p.getQuotes(symbols, opts),
+    // Coalescing key: ordered, upper-cased symbol list — same ordering as
+    // market-cache.ts memoQuoteBatch so concurrent requests for the same set
+    // collapse to one upstream call.
+    const key = coalescingKey(
       "getQuotes",
-      "liveQuotes",
+      symbols.map((s) => s.toUpperCase()).join(","),
+    );
+    return this.coalesced(key, () =>
+      withFailover(
+        providers,
+        (p) => p.getQuotes(symbols, opts),
+        "getQuotes",
+        "liveQuotes",
+      ),
     );
   }
 
@@ -123,11 +263,18 @@ export class ProviderRegistry {
     opts?: ProviderCallOptions,
   ): Promise<OptionChain> {
     const providers = this.withCapability("optionChain");
-    return withFailover(
-      providers,
-      (p) => p.getOptionChain(underlying, expiry, opts),
+    const key = coalescingKey(
       "getOptionChain",
-      "optionChain",
+      underlying.toUpperCase(),
+      expiry ?? "nearest",
+    );
+    return this.coalesced(key, () =>
+      withFailover(
+        providers,
+        (p) => p.getOptionChain(underlying, expiry, opts),
+        "getOptionChain",
+        "optionChain",
+      ),
     );
   }
 
@@ -136,11 +283,19 @@ export class ProviderRegistry {
     opts?: ProviderCallOptions,
   ): Promise<Instrument[]> {
     const providers = this.withCapability("instrumentMaster");
-    return withFailover(
-      providers,
-      (p) => p.getInstrumentMaster(filter, opts),
-      "getInstrumentMaster",
-      "instrumentMaster",
+    // Instrument master is large and rarely changes — coalesce on a stable key
+    // derived from the filter dimensions.
+    const filterKey = filter
+      ? `${filter.exchange ?? "all"}:${filter.instrumentType ?? "all"}:${filter.underlying ?? "all"}`
+      : "all";
+    const key = coalescingKey("getInstrumentMaster", filterKey);
+    return this.coalesced(key, () =>
+      withFailover(
+        providers,
+        (p) => p.getInstrumentMaster(filter, opts),
+        "getInstrumentMaster",
+        "instrumentMaster",
+      ),
     );
   }
 
@@ -175,6 +330,22 @@ export class ProviderRegistry {
   getProviderHealth(id: ProviderId): ProviderHealth | undefined {
     const entry = this.get(id);
     return entry?.provider.getProviderHealth();
+  }
+
+  /**
+   * Expose the number of currently pending coalesced calls (test/observability
+   * helper).
+   */
+  get pendingCallCount(): number {
+    return this.pendingCalls.size;
+  }
+
+  /**
+   * Clear all pending coalesced calls (test helper — do NOT call in production).
+   * Existing waiters will still resolve/reject when the in-flight Promise settles.
+   */
+  clearPendingCalls(): void {
+    this.pendingCalls.clear();
   }
 }
 

@@ -97,7 +97,7 @@ function makeScriptedProvider(id: ProviderId, script: AttemptOutcome[] | Attempt
     subscribe(_r: SubscribeRequest, _t: (t: LiveTick) => void) { return () => {}; },
     unsubscribe() {},
     getProviderHealth(): ProviderHealth {
-      return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP99Ms: null };
+      return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP95Ms: null, latencyP99Ms: null, requestCount: 0, successCount: 0, errorCount: 0, successRate: null };
     },
   };
   return { provider, calls: () => call };
@@ -176,7 +176,9 @@ describe("403 handling", () => {
   });
 
   it("drives the angel_one score down and opens the circuit under repeated 403", async () => {
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "hard_block");
+    // Flat-40 + 40 hard-block extra = 80 per failure.
+    // After 1: 100-80=20 (not < 20, stays closed). After 2: 20-80→0 → opens.
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "hard_block");
     expect(isCircuitOpen("angel_one")).toBe(true);
   });
 });
@@ -249,9 +251,9 @@ describe("chaos: full provider failover chain", () => {
   });
 
   it("TEST 3 — Angel recovers → circuit re-closes and it returns to primary", async () => {
-    // Open the circuit. 503/unavailable is deliberately more forgiving than a
-    // 403/auth failure, so it takes a short burst (not a single failure) to trip.
-    for (let i = 0; i < 4; i++) recordFailure("angel_one", "unavailable");
+    // Open the circuit. With flat-40 + 15 pressure penalty = 55 per unavailable:
+    // after 1 failure score = 45, after 2 failures score = 0 (circuit opens).
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "unavailable");
     expect(isCircuitOpen("angel_one")).toBe(true);
     // Successful probe closes it.
     recordSuccess("angel_one", 50);
@@ -264,7 +266,7 @@ describe("chaos: full provider failover chain", () => {
 
   it("TEST 4 — Angel keeps failing → Upstox stays primary, Angel not hammered", async () => {
     // Open angel circuit under a sustained 503 storm.
-    for (let i = 0; i < 4; i++) recordFailure("angel_one", "unavailable");
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "unavailable");
     const angel = entry("angel_one", 1, "ok"); // would succeed, but circuit is open
     const upstox = entry("upstox", 2, "ok");
     const result = await withFailover([angel, upstox], op, "getLatestQuote", "liveQuotes");
@@ -279,7 +281,8 @@ describe("chaos: full provider failover chain", () => {
 describe("capability-aware circuit breakers", () => {
   it("historical DEGRADED does not down live", () => {
     const cap: Capability = "historicalCandles";
-    for (let i = 0; i < 4; i++) recordFailure("angel_one", "unavailable", "503", cap);
+    // Flat-40+15 pressure = 55 per unavailable: opens on 2nd failure.
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "unavailable", "503", cap);
     // The historical capability circuit is open…
     expect(isCapabilityCircuitOpen("angel_one", "historicalCandles")).toBe(true);
     // …but live is unaffected.
@@ -290,7 +293,7 @@ describe("capability-aware circuit breakers", () => {
 
   it("routes live to Angel while historical fails over off Angel", async () => {
     const cap: Capability = "historicalCandles";
-    for (let i = 0; i < 4; i++) recordFailure("angel_one", "unavailable", "503", cap);
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "unavailable", "503", cap);
 
     // Historical: Angel's historical circuit is open → Upstox serves.
     const angelH = entry("angel_one", 1, "ok");

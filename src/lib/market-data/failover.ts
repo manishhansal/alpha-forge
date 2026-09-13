@@ -7,13 +7,16 @@
  *   - Switch providers only when retries are exhausted OR circuit is open.
  *   - A cooldown period prevents oscillating between providers rapidly.
  *   - Structured logs are emitted for every significant event.
+ *   - DataProvenance is stamped on every successful provider call.
  *
  * Provider priority: DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO
  * NSE is NOT in the chain. Direct NSE data acquisition is forbidden in production.
+ *
+ * Requirements: 12.7, 15.6, 16.1, 16.4
  */
 
 import type { MarketDataProvider, RegisteredProvider } from "./provider";
-import type { ProviderId } from "./types";
+import type { DataProvenance, ProviderId } from "./types";
 import {
   isCircuitOpen,
   isCapabilityCircuitOpen,
@@ -26,6 +29,7 @@ import {
   type Capability,
 } from "./health";
 import { MarketDataError } from "./types";
+import { stampLiveProvenance } from "./provenance";
 
 // ── Retry policy ─────────────────────────────────────────────────────────────
 
@@ -82,6 +86,54 @@ function backoffForKind(
   }
   return backoffMs(attempt);
 }
+
+// ── Provenance store ──────────────────────────────────────────────────────────
+
+/**
+ * Per-operation provenance from the most recent `withFailover()` call.
+ *
+ * Keyed by `operationId` (e.g. "getQuotes", "getHistoricalCandles").
+ * Consumers that need the full `DataProvenance` object for a call they just
+ * made should call `getLastCallProvenance(operationId)` immediately after the
+ * `withFailover` call resolves.  The entry is overwritten on the next call
+ * with the same operationId, so it is NOT safe to use across asynchronous
+ * boundaries unless the caller awaits the registry method before reading.
+ *
+ * Requirements 16.1, 16.4
+ */
+const lastProvenanceByOperation = new Map<string, DataProvenance>();
+
+/**
+ * Return the `DataProvenance` stamped by the most recent successful
+ * `withFailover()` call for the given `operationId`, or `null` when no
+ * successful call has been recorded yet.
+ */
+export function getLastCallProvenance(operationId: string): DataProvenance | null {
+  return lastProvenanceByOperation.get(operationId) ?? null;
+}
+
+/** Clear all stored provenance entries (used in tests to reset state). */
+export function clearLastCallProvenance(): void {
+  lastProvenanceByOperation.clear();
+}
+
+/** Reset the failover cooldown state (used in tests). */
+export function resetFailoverState(): void {
+  lastProvenanceByOperation.clear();
+  providerLastSuccessMs.clear();
+  lastFailover = null;
+}
+
+// ── Per-provider last-success timestamp (for gapMs computation) ───────────────
+
+/**
+ * Tracks the UTC epoch-ms of the last successful response from each provider.
+ * Used to compute `gapMs` in the PROVIDER_SWITCH structured log (Req 12.7).
+ *
+ * gapMs = time between the last successful response from the outgoing provider
+ *         and the moment the incoming provider is first invoked.
+ */
+const providerLastSuccessMs = new Map<ProviderId, number>();
 
 // ── Failover cooldown ─────────────────────────────────────────────────────────
 
@@ -226,7 +278,13 @@ function retryAfterMsOf(err: unknown): number | null {
  * Emits two events:
  *   - `provider_failover` (legacy, kept for existing log consumers / tests)
  *   - `provider_switch`   (the richer, traceable event required by the spec:
- *      from / to / reason / httpStatus / operationId — a permanent audit record)
+ *      from / to / reason / instrument / gapMs / timestamp — a permanent audit
+ *      record emitted at WARN level per Requirements 12.7 and 15.6)
+ *
+ * `gapMs` is the elapsed time in ms between the last successful response from
+ * the outgoing provider and the moment the incoming provider is first invoked
+ * (i.e. now).  It is 0 when the outgoing provider has never succeeded in this
+ * process lifetime (hot-failover from an uninitialized provider).
  */
 function maybeLogFailover(
   eligible: RegisteredProvider[],
@@ -242,8 +300,18 @@ function maybeLogFailover(
   const toId = nextEntry.provider.id;
   if (isFailoverCoolingDown(fromId, toId)) return;
 
-  lastFailover = { from: fromId, to: toId, at: Date.now() };
+  const now = Date.now();
+  lastFailover = { from: fromId, to: toId, at: now };
   const httpStatus = err instanceof MarketDataError ? err.httpStatus ?? null : null;
+
+  // Compute gapMs: elapsed ms since the outgoing provider last succeeded.
+  // 0 when the provider has never succeeded (first failover in this process).
+  const lastOkMs = providerLastSuccessMs.get(fromId);
+  const gapMs = lastOkMs != null ? Math.max(0, now - lastOkMs) : 0;
+
+  // instrument is the operationId label (e.g. "getQuotes::NIFTY" if the caller
+  // passes it; otherwise fall back to the operationId itself).
+  const instrument = operationId;
 
   mdLog("provider_failover", {
     operationId,
@@ -253,16 +321,24 @@ function maybeLogFailover(
     consecutiveAttempts: RETRY_COUNT,
   });
 
-  // Traceable, never-silent provider switch record.
-  mdLog("provider_switch", {
+  // Traceable, never-silent provider switch record — emitted at WARN level.
+  // Fields: event, from, to, reason, instrument, gapMs, timestamp (Req 12.7, 15.6).
+  const switchPayload = {
     event: "PROVIDER_SWITCH",
     from: fromId,
     to: toId,
     reason: httpStatus ? `HTTP_${httpStatus}` : kind.toUpperCase(),
+    instrument,
+    gapMs,
     operationId,
     httpStatus,
-    timestamp: new Date().toISOString(),
-  });
+    timestamp: new Date(now).toISOString(),
+  };
+  // Use console.warn so PROVIDER_SWITCH events are distinguishable at WARN
+  // level in observability pipelines (Requirement 15.6).
+  console.warn(JSON.stringify({ ts: new Date(now).toISOString(), level: "WARN", ...switchPayload }));
+  // Also route through mdLog so existing log consumers / tests still work.
+  mdLog("provider_switch", switchPayload);
 }
 
 // ── Core failover executor ────────────────────────────────────────────────────
@@ -276,6 +352,11 @@ function maybeLogFailover(
  * @param operationId Human-readable label for structured logs (e.g. "getQuotes").
  * @returns           The result from the first provider that succeeds.
  * @throws            `MarketDataError` when all providers are exhausted.
+ *
+ * Provenance (Requirements 16.1, 16.4):
+ *   After every successful provider call, a `DataProvenance` object is computed
+ *   and stored in `lastProvenanceByOperation` keyed by `operationId`.
+ *   Callers retrieve it via `getLastCallProvenance(operationId)`.
  */
 export async function withFailover<T>(
   providers: RegisteredProvider[],
@@ -293,6 +374,10 @@ export async function withFailover<T>(
       "NO_PROVIDER",
     );
   }
+
+  // Track the providers attempted so far for sourceChain in provenance.
+  const attemptedProviders: ProviderId[] = [];
+  const requestedAtMs = Date.now();
 
   let lastError: unknown = null;
 
@@ -323,6 +408,11 @@ export async function withFailover<T>(
 
     mdLog("provider_selected", { providerId: id, capability: capability ?? null, operationId });
 
+    // Track this provider as attempted for sourceChain provenance.
+    if (!attemptedProviders.includes(id)) {
+      attemptedProviders.push(id);
+    }
+
     // Tracks the failure kind + retry-after from the *previous* attempt so the
     // pre-attempt sleep can back off appropriately (503/429 ladder, Retry-After).
     let pendingKind: FailureKind | null = null;
@@ -339,6 +429,41 @@ export async function withFailover<T>(
         const result = await operation(provider);
         const latency = Date.now() - startMs;
         recordSuccess(id, latency, capability);
+
+        // ── Provenance stamping (Requirements 16.1, 16.4) ─────────────────
+        // Classify the operation for isLive / isHistorical flags.
+        const isLive =
+          operationId === "getQuotes" || operationId === "getLatestQuote";
+        const isHistorical = operationId === "getHistoricalCandles";
+
+        // Extract dataAsOf from the result when available.
+        // MDQuote[] → first element's fetchedAt; OHLCVCandle[] → first candle's time; OptionChain → fetchedAt.
+        let dataAsOf: string | number | null = null;
+        if (Array.isArray(result)) {
+          const first = result[0];
+          if (first && typeof (first as Record<string, unknown>)["fetchedAt"] === "string") {
+            dataAsOf = (first as Record<string, unknown>)["fetchedAt"] as string;
+          } else if (first && typeof (first as Record<string, unknown>)["time"] === "number") {
+            // OHLCVCandle: time is epoch seconds → convert to ms
+            dataAsOf = ((first as Record<string, unknown>)["time"] as number) * 1_000;
+          }
+        } else if (result && typeof (result as Record<string, unknown>)["fetchedAt"] === "string") {
+          dataAsOf = (result as Record<string, unknown>)["fetchedAt"] as string;
+        }
+
+        const provenance = stampLiveProvenance({
+          providerId: id,
+          dataAsOf,
+          isLive,
+          isHistorical,
+          requestedAtMs,
+          sourceChain: attemptedProviders.slice(0, -1), // providers before the current one
+        });
+
+        lastProvenanceByOperation.set(operationId, provenance);
+        providerLastSuccessMs.set(id, Date.now());
+        // ── End provenance stamping ────────────────────────────────────────
+
         return result;
       } catch (err) {
         lastError = err;

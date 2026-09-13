@@ -56,6 +56,7 @@ vi.mock("yahoo-finance2", () => {
   return { default: MockYahooFinance };
 });
 
+// eslint-disable-next-line no-restricted-imports -- unit test for the yahoo adapter itself
 import { YahooAdapter } from "@/services/india/yahoo";
 
 // ---------------------------------------------------------------------------

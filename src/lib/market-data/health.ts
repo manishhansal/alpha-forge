@@ -24,16 +24,17 @@ import type { ProviderHealth, ProviderHealthStatus, ProviderId } from "./types";
 
 // ── Thresholds ───────────────────────────────────────────────────────────────
 
-const CIRCUIT_OPEN_THRESHOLD = 20;   // score below this opens the circuit
-const DEGRADED_THRESHOLD = 60;        // score below this = degraded
-const CIRCUIT_RETRY_MS = 30_000;      // base half-open window (first probe)
+const CIRCUIT_OPEN_THRESHOLD = 20;        // score below this opens the circuit
+const CIRCUIT_PROBE_RESTORE_SCORE = 20;   // score restored to on a successful half-open probe
+const DEGRADED_THRESHOLD = 60;            // score below this = degraded
+const CIRCUIT_RETRY_MS = 30_000;          // base half-open window (first probe)
 const CIRCUIT_RETRY_MAX_MS = 5 * 60_000; // cap on the escalating half-open window
-const MAX_FAILURE_PENALTY = 40;       // maximum points removed per failure
-const RECOVERY_PER_SUCCESS = 10;      // points recovered per success
-const STALE_DATA_PENALTY = 15;        // flat penalty for stale data event
-const AUTH_FAILURE_PENALTY = 25;      // extra penalty for auth failures
-const HARD_BLOCK_PENALTY = 40;        // 403 / forbidden — treat as a hard, non-retryable block
-const RATE_PRESSURE_PENALTY = 15;     // 429 / 503 — transient provider pressure; back off fast
+const FAILURE_PENALTY = 40;               // flat points removed per failure (Req 15.2)
+const RECOVERY_PER_SUCCESS = 10;          // points recovered per success
+const STALE_DATA_PENALTY = 15;            // flat penalty for stale data event
+const AUTH_FAILURE_PENALTY = 25;          // extra penalty for auth failures (Req 15.2)
+const HARD_BLOCK_PENALTY = 40;            // 403 / forbidden — treat as a hard, non-retryable block
+const RATE_PRESSURE_PENALTY = 15;         // 429 / 503 — transient provider pressure; back off fast
 
 /**
  * When a provider keeps failing, we don't want to emit a `provider_failure`
@@ -45,8 +46,8 @@ const RATE_PRESSURE_PENALTY = 15;     // 429 / 503 — transient provider pressu
 const LOG_THROTTLE_AFTER = 5;         // start throttling after this many consecutive failures
 const LOG_THROTTLE_EVERY = 20;        // then log only 1-in-N repeated failures
 
-/** Rolling window for latency percentile estimation (last N calls). */
-const LATENCY_WINDOW = 50;
+/** Rolling window for latency percentile estimation (last N calls, per Req 15.1). */
+const LATENCY_WINDOW = 100;
 
 // ── Per-provider mutable state ───────────────────────────────────────────────
 
@@ -59,6 +60,10 @@ interface HealthState {
   circuitOpen: boolean;
   circuitRetryAt: number | null;  // UTC epoch ms
   latencySamples: number[];
+  /** Cumulative counters (Req 15.1). */
+  requestCount: number;
+  successCount: number;
+  errorCount: number;
 }
 
 function freshState(): HealthState {
@@ -71,6 +76,9 @@ function freshState(): HealthState {
     circuitOpen: false,
     circuitRetryAt: null,
     latencySamples: [],
+    requestCount: 0,
+    successCount: 0,
+    errorCount: 0,
   };
 }
 
@@ -172,20 +180,29 @@ export function resetAllHealth(): void {
 /**
  * Record a successful call. Reduces consecutive failure count, recovers score,
  * and closes the circuit if it was in half-open state.
+ *
+ * Per Req 15.3: when the circuit is in half-open state and the probe succeeds,
+ * the score is restored to CIRCUIT_PROBE_RESTORE_SCORE (20) rather than
+ * applying the normal +10 recovery, ensuring the circuit transitions from
+ * half-open to closed at a well-defined baseline score.
  */
 export function recordSuccess(id: ProviderId, latencyMs: number, capability?: Capability): void {
   const s = getState(id, capability);
   s.consecutiveFailures = 0;
   s.consecutiveSuccesses += 1;
   s.lastSuccessAt = Date.now();
-  s.score = Math.min(100, s.score + RECOVERY_PER_SUCCESS);
+  s.requestCount += 1;
+  s.successCount += 1;
   recordLatency(s, latencyMs);
 
-  // Close the circuit on a successful probe.
   if (s.circuitOpen) {
+    // Half-open probe succeeded — restore score to the threshold baseline and close.
+    s.score = CIRCUIT_PROBE_RESTORE_SCORE;
     s.circuitOpen = false;
     s.circuitRetryAt = null;
     mdLog("provider_recovery", { providerId: id, capability: capability ?? null, score: s.score });
+  } else {
+    s.score = Math.min(100, s.score + RECOVERY_PER_SUCCESS);
   }
 }
 
@@ -285,8 +302,9 @@ function shouldThrottleLog(consecutiveFailures: number): boolean {
 
 /**
  * Record a failed call. Increments consecutive failure count, applies a
- * progressive score penalty, and opens the circuit when score falls below
- * the threshold.
+ * flat score penalty (Req 15.2: exactly 40 points per failure, floor 0),
+ * with extra penalties for auth failures (+25) and hard blocks (+40), and
+ * opens the circuit when score falls below the threshold.
  */
 export function recordFailure(
   id: ProviderId,
@@ -298,21 +316,20 @@ export function recordFailure(
   s.consecutiveSuccesses = 0;
   s.consecutiveFailures += 1;
   s.lastFailureAt = Date.now();
+  s.requestCount += 1;
+  s.errorCount += 1;
 
-  // Progressive penalty: each additional failure hurts more.
-  const base = Math.min(MAX_FAILURE_PENALTY, 5 * s.consecutiveFailures);
+  // Flat penalty per failure (Req 15.2: decrease by exactly 40 points per consecutive failure).
   const authExtra = kind === "auth_failure" ? AUTH_FAILURE_PENALTY : 0;
   // A hard block (403) is as bad as an auth failure — drive the score down
   // fast so we open the circuit and stop retrying immediately.
   const hardBlockExtra = kind === "hard_block" ? HARD_BLOCK_PENALTY : 0;
   // Rate-limit (429) and unavailable (503) are transient provider-pressure
-  // signals. We still want to back off and eventually open the circuit under a
-  // sustained storm, so apply a moderate extra penalty — enough that a burst of
-  // 429/503 opens the circuit quickly (protecting the provider from a request
-  // storm) without permanently condemning it the way a 403/auth failure does.
+  // signals. Apply a moderate extra penalty so a burst of 429/503 opens the
+  // circuit quickly (protecting the provider from a request storm).
   const pressureExtra =
     kind === "rate_limit" || kind === "unavailable" ? RATE_PRESSURE_PENALTY : 0;
-  s.score = Math.max(0, s.score - base - authExtra - hardBlockExtra - pressureExtra);
+  s.score = Math.max(0, s.score - FAILURE_PENALTY - authExtra - hardBlockExtra - pressureExtra);
 
   if (!shouldThrottleLog(s.consecutiveFailures)) {
     mdLog("provider_failure", {
@@ -383,7 +400,13 @@ export function getProviderHealth(id: ProviderId, capability?: Capability): Prov
     circuitRetryAt:
       s.circuitRetryAt != null ? new Date(s.circuitRetryAt).toISOString() : null,
     latencyP50Ms: percentile(sorted, 50),
+    latencyP95Ms: percentile(sorted, 95),
     latencyP99Ms: percentile(sorted, 99),
+    requestCount: s.requestCount,
+    successCount: s.successCount,
+    errorCount: s.errorCount,
+    /** successRate: null when no requests have been made yet. */
+    successRate: s.requestCount > 0 ? s.successCount / s.requestCount : null,
   };
 }
 
@@ -426,7 +449,20 @@ export function getProviderCapabilityHealth(id: ProviderId): {
       : score < DEGRADED_THRESHOLD
         ? "degraded"
         : "healthy";
-    capabilities[cap] = { ...capHealth, status, score, circuitOpen };
+    // Merge cumulative counters (provider-wide + capability-specific).
+    const requestCount = provider.requestCount + capHealth.requestCount;
+    const successCount = provider.successCount + capHealth.successCount;
+    const errorCount = provider.errorCount + capHealth.errorCount;
+    capabilities[cap] = {
+      ...capHealth,
+      status,
+      score,
+      circuitOpen,
+      requestCount,
+      successCount,
+      errorCount,
+      successRate: requestCount > 0 ? successCount / requestCount : null,
+    };
   }
   return { provider, capabilities };
 }
@@ -488,7 +524,8 @@ type LogEvent =
   | "rate_limited"
   | "capability_circuit_open"
   | "stale_data"
-  | "data_mismatch";
+  | "data_mismatch"
+  | "provenance_persist_error";
 
 /** Structured log emitter. Replace with your observability sink as needed. */
 export function mdLog(event: LogEvent, payload: Record<string, unknown>): void {

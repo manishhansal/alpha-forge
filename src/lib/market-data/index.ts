@@ -119,6 +119,18 @@ export type {
   FilterCandlesReport,
 } from "./validation/candle-validator";
 
+// ── 9-Step Candle Validation Pipeline ────────────────────────────────────────
+export { runCandlePipeline, OHLCVCandleSchema, PIPELINE_INTERVAL_SECONDS } from "./validation/candle-validation-pipeline";
+
+export type {
+  RawCandle,
+  ValidatedCandle,
+  PipelineDroppedCandle,
+  ReconciliationConflict,
+  CandlePipelineResult,
+  CandlePipelineOptions,
+} from "./validation/candle-validation-pipeline";
+
 export {
   validateTick,
   validateTicks,

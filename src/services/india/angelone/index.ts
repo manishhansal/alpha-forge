@@ -31,6 +31,7 @@ import type {
   Quote,
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
+import { MarketDataError, httpStatusToErrorCode } from "@/lib/market-data/types";
 import { cache } from "../cache";
 import {
   parseGainersLosers,
@@ -275,9 +276,17 @@ async function timedFetch(
   } catch (e: unknown) {
     const err = e as { name?: string };
     if (err?.name === "TimeoutError" || err?.name === "AbortError") {
-      throw new Error(`SmartAPI ${url} timed out after ${timeoutMs}ms`);
+      throw new MarketDataError(
+        `SmartAPI ${url} timed out after ${timeoutMs}ms`,
+        "angel_one",
+        "TIMEOUT",
+      );
     }
-    throw e;
+    throw new MarketDataError(
+      `SmartAPI network error for ${url}: ${e instanceof Error ? e.message : String(e)}`,
+      "angel_one",
+      "NETWORK",
+    );
   }
 }
 
@@ -305,12 +314,26 @@ async function smartApiPost<T>(
     // rate-limit 403 ("Access denied because of exceeding access rate") from a
     // genuine auth/WAF block. The body is plain text for gateway rejections.
     const detail = await res.text().catch(() => "");
-    throw new Error(`SmartAPI ${path}: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 160)}` : ""}`);
+    const code = httpStatusToErrorCode(res.status);
+    throw new MarketDataError(
+      `SmartAPI ${path}: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 160)}` : ""}`,
+      "angel_one",
+      code,
+      res.status,
+    );
   }
   const env = (await res.json()) as SmartApiEnvelope<T>;
   if (!env.status) {
-    throw new Error(
-      `SmartAPI ${path} failed: ${env.message ?? "unknown"} (${env.errorcode ?? "?"})`,
+    // errorcode "AB1010" = invalid token/session; "AB8050" = rate limit exceeded
+    const ec = env.errorcode ?? "";
+    const code: import("@/lib/market-data/types").MarketDataErrorCode =
+      ec === "AB1010" || ec === "AB1002" ? "AUTH_FAILURE" :
+      ec === "AB8050" ? "RATE_LIMIT" :
+      "UNAVAILABLE";
+    throw new MarketDataError(
+      `SmartAPI ${path} failed: ${env.message ?? "unknown"} (${ec || "?"})`,
+      "angel_one",
+      code,
     );
   }
   return env.data;
@@ -327,11 +350,16 @@ async function smartApiGet<T>(
     headers: smartApiHeaders(cfg, jwt),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`SmartAPI ${path}: HTTP ${res.status}`);
+  if (!res.ok) {
+    const code = httpStatusToErrorCode(res.status);
+    throw new MarketDataError(`SmartAPI ${path}: HTTP ${res.status}`, "angel_one", code, res.status);
+  }
   const env = (await res.json()) as SmartApiEnvelope<T>;
   if (!env.status) {
-    throw new Error(
+    throw new MarketDataError(
       `SmartAPI ${path} failed: ${env.message ?? "unknown"} (${env.errorcode ?? "?"})`,
+      "angel_one",
+      "UNAVAILABLE",
     );
   }
   return env.data;
@@ -1154,12 +1182,18 @@ async function fetchUnderlyingSpot(
 // ── Adapter ────────────────────────────────────────────────────────────────
 
 /**
- * Controls cross-source fallback inside the adapter. The selected-source-only
- * resolver passes `allowFallback: false` so Angel One never silently reaches
- * for Yahoo when the user didn't select it; unservable symbols come back empty
- * and the resolver tries the next *selected* source instead.
+ * Options for Angel One adapter calls.
+ *
+ * `allowFallback` is a no-op since V9. The internal Yahoo fallback was removed;
+ * provider failover is exclusively the responsibility of `withFailover()` in the
+ * ProviderRegistry. The field is retained only for call-site compatibility during
+ * the migration window.
+ *
+ * @deprecated Use `registry.getQuotes()` / `registry.getHistoricalCandles()` for
+ *   automatic failover. Direct adapter calls should not rely on this option.
  */
 export interface AngelFetchOptions {
+  /** @deprecated No-op since V9 — failover is the registry's responsibility. */
   allowFallback?: boolean;
 }
 
@@ -1176,11 +1210,12 @@ export class AngelOneAdapter implements BrokerAdapter {
   }
 
   /**
-   * Live FULL-mode quotes from SmartAPI. By default, symbols Angel One can't
-   * resolve return empty placeholders — the caller (ProviderRegistry via
-   * withFailover) decides whether to try the next provider. The Yahoo fallback
-   * was removed in V9: failover is the registry's responsibility, not the
-   * adapter's. Pass `{ allowFallback: false }` (no-op now, kept for compat).
+   * Live FULL-mode quotes from SmartAPI. Symbols Angel One cannot resolve
+   * return empty placeholders; any SmartAPI error throws a `MarketDataError`
+   * so `withFailover()` in the ProviderRegistry can route to the next provider.
+   *
+   * The internal Yahoo fallback was removed in V9 — provider failover is
+   * exclusively the registry's responsibility. `opts.allowFallback` is a no-op.
    */
   async getQuotes(symbols: string[], opts?: AngelFetchOptions): Promise<Quote[]> {
     if (symbols.length === 0) return [];
@@ -1222,8 +1257,10 @@ export class AngelOneAdapter implements BrokerAdapter {
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error(`angelone.getQuotes:`, msg);
-          // Return empty — registry's withFailover will escalate to next provider
-          return symbols.map(emptyAngelQuote);
+          // Re-throw as MarketDataError so withFailover() can route to next provider.
+          // Do NOT return empty placeholders here — the registry decides the fallback.
+          if (e instanceof MarketDataError) throw e;
+          throw new MarketDataError(msg, "angel_one", "UNAVAILABLE");
         }
       },
     );
@@ -1264,8 +1301,9 @@ export class AngelOneAdapter implements BrokerAdapter {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`angelone.getHistorical(${req.symbol}):`, msg);
-        // Throw so registry's withFailover classifies the failure correctly.
-        throw e;
+        // Throw as MarketDataError so withFailover() routes to the next provider.
+        if (e instanceof MarketDataError) throw e;
+        throw new MarketDataError(msg, "angel_one", "UNAVAILABLE");
       }
     });
   }
@@ -1578,8 +1616,8 @@ export class AngelOneAdapter implements BrokerAdapter {
    * opens a single socket and emits a {@link Quote} per decoded frame. Any
    * setup failure (no credentials, no feed token, no resolvable tokens) — and
    * the unconfigured-Angel case — degrades transparently to {@link subscribeFeed}
-   * (the 5s FULL-quote poll, itself backed by Yahoo when needed), so the caller
-   * always receives a working unsubscribe handle.
+   * (the 5s FULL-quote poll), so the caller always receives a working unsubscribe
+   * handle.
    */
   async subscribeFeedWs(
     symbols: string[],
@@ -1651,8 +1689,8 @@ export class AngelOneAdapter implements BrokerAdapter {
     intervalMs = 5_000,
   ): () => void {
     if (symbols.length === 0) return () => {};
-    // `getQuotes` resolves credentials itself and falls back to Yahoo when
-    // Angel One isn't configured, so the polling loop works in every case.
+    // `getQuotes` resolves credentials itself; the polling loop works whether or
+    // not Angel One is configured (unconfigured = empty placeholders returned).
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;

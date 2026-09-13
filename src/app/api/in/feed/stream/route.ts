@@ -2,6 +2,9 @@ import { buildFeedStream } from "@/services/india/websocket/gateway";
 import { pickBrokerChain } from "@/services/india/broker/factory";
 import { resolveQuotes } from "@/services/india/resolve";
 import { getActiveSelections } from "@/features/settings/active-sources";
+// angel.subscribeFeedWs is a broker WebSocket subscription — not market-data acquisition.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import { angel } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";

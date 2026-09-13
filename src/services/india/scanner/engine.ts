@@ -13,6 +13,8 @@ import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 // angel is imported for SmartAPI-specific broker analytics only (PCR, OI buildup, gainers/losers).
 // These endpoints have no equivalent in the MarketDataProvider interface.
 // All generic market-data calls (quotes, historical candles) route through the registry.
+// DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
+// eslint-disable-next-line no-restricted-imports
 import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 
@@ -46,14 +48,16 @@ async function fnoQuotes(): Promise<Quote[]> {
 
 /**
  * Angel One first-party F&O momentum — true price gainers/losers from the
- * derivatives segment (NEAR expiry), not a % move derived off Yahoo cash
+ * derivatives segment (NEAR expiry), not a % move derived off registry cash
  * quotes. Returns null when SmartAPI is unconfigured / empty so the caller
- * falls back to the Yahoo path.
+ * falls back to the registry path.
  */
 async function runMomentumAngel(limit: number): Promise<ScannerResult | null> {
   if (!isAngelConfigured()) return null;
   const [gainers, losers] = await Promise.all([
+    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
     angel.getTopGainersLosers("PercPriceGainers", "NEAR"),
+    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
     angel.getTopGainersLosers("PercPriceLosers", "NEAR"),
   ]);
   const merged = [...gainers, ...losers];
@@ -158,7 +162,7 @@ async function runVolumeBreakout(limit: number): Promise<ScannerResult> {
       const ratio = avg && avg > 0 && q.volume ? q.volume / avg : null;
       return { q, avg, ratio };
     },
-    8, // cap at 8 concurrent Yahoo historical fetches — same as FnO trend scanners
+    8, // cap at 8 concurrent registry historical fetches — same as FnO trend scanners
   );
 
   const sorted = ratios
@@ -227,7 +231,7 @@ async function indexChains() {
  */
 async function runPcrAngel(limit: number): Promise<ScannerResult | null> {
   if (!isAngelConfigured()) return null;
-  const rows = await angel.getPutCallRatio();
+  const rows = await angel.getPutCallRatio(); // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
   if (rows.length === 0) return null;
 
   const hits: ScannerHit[] = rows
@@ -324,6 +328,7 @@ async function runIvSpike(): Promise<ScannerResult> {
 async function runOiBuildupAngel(limit: number): Promise<ScannerResult | null> {
   if (!isAngelConfigured()) return null;
   const [longBuilt, shortBuilt, shortCover, longUnwind] = await Promise.all([
+    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
     angel.getOiBuildup("Long Built Up", "NEAR"),
     angel.getOiBuildup("Short Built Up", "NEAR"),
     angel.getOiBuildup("Short Covering", "NEAR"),

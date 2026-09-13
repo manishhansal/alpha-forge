@@ -163,6 +163,30 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         log.error("tick_publisher_start_failed", error=str(exc))
 
     # ------------------------------------------------------------------
+    # 5. Start Broker WebSocket connections (Requirement 19.1)
+    #    data-service is the SOLE owner of Angel One SmartStream WS and
+    #    Upstox v3 Protobuf WS. They start in degraded mode when credentials
+    #    are absent and fail gracefully without crashing the service.
+    # ------------------------------------------------------------------
+    from src.publisher.broker_ws_manager import angel_one_ws, upstox_ws
+
+    try:
+        await angel_one_ws.start(redis_client=_redis_client)
+        _component_status["angel_one_ws"] = "ok"
+        log.info("angel_one_smartstream_ws_started")
+    except Exception as exc:
+        _component_status["angel_one_ws"] = str(exc)
+        log.warning("angel_one_smartstream_ws_degraded", error=str(exc))
+
+    try:
+        await upstox_ws.start(redis_client=_redis_client)
+        _component_status["upstox_ws"] = "ok"
+        log.info("upstox_v3_protobuf_ws_started")
+    except Exception as exc:
+        _component_status["upstox_ws"] = str(exc)
+        log.warning("upstox_v3_protobuf_ws_degraded", error=str(exc))
+
+    # ------------------------------------------------------------------
     # Log final startup state
     # ------------------------------------------------------------------
     degraded_components = {k: v for k, v in _component_status.items() if v != "ok"}
@@ -188,6 +212,15 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         shutdown_log.info("tick_publisher_stopped")
     except Exception as exc:  # pragma: no cover
         shutdown_log.warning("tick_publisher_stop_error", error=str(exc))
+
+    # Stop broker WebSocket connections (Requirement 19.1)
+    try:
+        from src.publisher.broker_ws_manager import angel_one_ws as _ao_ws, upstox_ws as _up_ws
+        await _ao_ws.stop()
+        await _up_ws.stop()
+        shutdown_log.info("broker_ws_connections_stopped")
+    except Exception as exc:  # pragma: no cover
+        shutdown_log.warning("broker_ws_stop_error", error=str(exc))
 
     # Close the persistent HTTP client
     try:

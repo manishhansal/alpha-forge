@@ -55,7 +55,7 @@ function makeProvider(
     },
     subscribe(_req: SubscribeRequest, _onTick: (t: LiveTick) => void) { return () => {}; },
     unsubscribe(_tokens: string[]) {},
-    getProviderHealth(): ProviderHealth { return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP99Ms: null }; },
+    getProviderHealth(): ProviderHealth { return { providerId: id, status: "healthy", score: 100, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, consecutiveSuccesses: 0, circuitOpen: false, circuitRetryAt: null, latencyP50Ms: null, latencyP95Ms: null, latencyP99Ms: null, requestCount: 0, successCount: 0, errorCount: 0, successRate: null }; },
   };
 }
 
@@ -124,7 +124,8 @@ describe("withFailover()", () => {
   it("skips providers with open circuits", async () => {
     // Open angel_one circuit by recording enough failures
     const { recordFailure } = await import("@/lib/market-data/health");
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "auth_failure");
+    // Flat-40 rule: 2 auth_failures open the circuit (100→35→0).
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "auth_failure");
     expect(isCircuitOpen("angel_one")).toBe(true);
 
     const entries = [
@@ -191,8 +192,8 @@ describe("provider recovery", () => {
   it("closes the circuit when the probe call succeeds", async () => {
     const { recordFailure, recordSuccess, isCircuitOpen } = await import("@/lib/market-data/health");
 
-    // Open the circuit
-    for (let i = 0; i < 3; i++) recordFailure("angel_one", "auth_failure");
+    // Open the circuit (flat-40 rule: 2 auth_failures → score 0 < 20)
+    for (let i = 0; i < 2; i++) recordFailure("angel_one", "auth_failure");
     expect(isCircuitOpen("angel_one")).toBe(true);
 
     // Successful probe closes it

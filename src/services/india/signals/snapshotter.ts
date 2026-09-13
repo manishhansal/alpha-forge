@@ -9,9 +9,15 @@
 // Whenever a new observation matches the cached signal, `since` is preserved.
 // A change resets `since = now`. This means clients can compute true age as
 // `Date.now() - since`, even on first page-load mid-session.
+//
+// V9: All quote fetching is routed through the canonical ProviderRegistry
+// (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO). No direct yahoo import.
+// DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-03: migrated.
 
 import { FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
+import type { ProviderId } from "@/lib/market-data/types";
+import { MarketDataError } from "@/lib/market-data/types";
 import { classifySignal, computeScore, type SignalLabel } from "./score";
 
 export type SignalRecord = {
@@ -20,6 +26,18 @@ export type SignalRecord = {
   since: number;
   /** Score at the most recent observation (handy for debugging/logs). */
   score: number;
+  /**
+   * Data quality classification for this snapshot entry.
+   * "PROVIDER_UNAVAILABLE" means the registry returned null for this symbol
+   * (no provider could supply a quote). Present on all entries written by V9+
+   * snapshotter; absent on legacy cached entries.
+   */
+  quality?: "OK" | "PROVIDER_UNAVAILABLE";
+  /**
+   * The ProviderId that served the quote for this snapshot entry.
+   * "UNKNOWN" when provenance is absent (served from cache or pre-V9 entries).
+   */
+  provider?: ProviderId | "UNKNOWN";
 };
 
 const SIGNAL_KEY_PREFIX = "signal:";
@@ -49,16 +67,18 @@ export async function recordSignalObservation(
   signal: SignalLabel,
   score: number,
   observedAt: number = Date.now(),
+  quality: "OK" | "PROVIDER_UNAVAILABLE" = "OK",
+  provider: ProviderId | "UNKNOWN" = "UNKNOWN",
 ): Promise<SignalRecord | null> {
-  if (signal === "N/A") return null;
+  if (signal === "N/A" && quality !== "PROVIDER_UNAVAILABLE") return null;
   const key = keyFor(symbol);
   const cached = await cache.get<SignalRecord>(key);
-  if (cached && cached.signal === signal) {
-    const refreshed: SignalRecord = { ...cached, score };
+  if (cached && cached.signal === signal && quality !== "PROVIDER_UNAVAILABLE") {
+    const refreshed: SignalRecord = { ...cached, score, quality, provider };
     await cache.set(key, refreshed, SIGNAL_TTL_MS);
     return refreshed;
   }
-  const fresh: SignalRecord = { signal, since: observedAt, score };
+  const fresh: SignalRecord = { signal, since: observedAt, score, quality, provider };
   await cache.set(key, fresh, SIGNAL_TTL_MS);
   return fresh;
 }
@@ -79,42 +99,69 @@ export async function getSignalRecords(
   return out;
 }
 
-// yahoo adapter handles quote fetching; no raw YfSnapshotQuote needed here
-
 async function snapshotChunk(nseSymbols: string[]): Promise<number> {
   let stamped = 0;
+
+  // Route through canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO).
+  // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-03: no direct yahoo import.
+  let mdQuotes: Array<import("@/lib/market-data/types").MDQuote | null>;
   try {
-    // Route through canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
     const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
     await bootstrapRegistry();
-    const mdQuotes = await registry.getQuotes(nseSymbols);
-    for (let i = 0; i < nseSymbols.length; i++) {
-      const q = mdQuotes[i];
-      if (!q || q.ltp == null) continue;
-      const symbol = nseSymbols[i]!;
-      const score = computeScore({
-        price: q.ltp,
-        sma50: null,
-        sma200: null,
-        changePct: q.changePct ?? null,
-        targetMean: null,
-      });
-      const signal = classifySignal(score);
-      await recordSignalObservation(symbol, signal, score);
-      stamped++;
-    }
+    mdQuotes = await registry.getQuotes(nseSymbols);
   } catch (e) {
-    console.error(
-      `[india-signal-snapshotter] chunk failed (${nseSymbols.length} symbols):`,
-      (e as Error)?.message,
-    );
+    if (e instanceof MarketDataError) {
+      // Req 4.3: catch MarketDataError, log at WARN, continue processing remaining symbols.
+      // The entire chunk failed — write PROVIDER_UNAVAILABLE for every symbol in this chunk.
+      console.warn(
+        `[india-signal-snapshotter] registry.getQuotes failed for chunk (${nseSymbols.length} symbols):`,
+        e.code ?? e.message,
+      );
+    } else {
+      console.error(
+        `[india-signal-snapshotter] unexpected chunk failure (${nseSymbols.length} symbols):`,
+        (e as Error)?.message,
+      );
+    }
+    // Req 4.2: write PROVIDER_UNAVAILABLE for each symbol rather than omitting them.
+    for (const symbol of nseSymbols) {
+      await recordSignalObservation(symbol, "N/A", 0, Date.now(), "PROVIDER_UNAVAILABLE", "UNKNOWN");
+    }
+    return stamped;
   }
+
+  // Process results per symbol — never omit a symbol from the snapshot.
+  for (let i = 0; i < nseSymbols.length; i++) {
+    const q = mdQuotes[i];
+    const symbol = nseSymbols[i]!;
+
+    if (!q || q.ltp == null) {
+      // Req 4.2: null result → write PROVIDER_UNAVAILABLE entry, never omit.
+      await recordSignalObservation(symbol, "N/A", 0, Date.now(), "PROVIDER_UNAVAILABLE", "UNKNOWN");
+      continue;
+    }
+
+    // Req 4.4: include provider from the MDQuote (which mirrors DataProvenance.provider).
+    const provider: ProviderId | "UNKNOWN" = q.provider ?? "UNKNOWN";
+
+    const score = computeScore({
+      price: q.ltp,
+      sma50: null,
+      sma200: null,
+      changePct: q.changePct ?? null,
+      targetMean: null,
+    });
+    const signal = classifySignal(score);
+    await recordSignalObservation(symbol, signal, score, Date.now(), "OK", provider);
+    stamped++;
+  }
+
   return stamped;
 }
 
 async function snapshotAll(): Promise<void> {
-  // Use NSE symbols directly — the yahoo adapter's getQuotes() converts to Yahoo
-  // format internally. This keeps snapshotter decoupled from Yahoo ticker format.
+  // Use NSE symbols directly — registry.getQuotes() handles symbol → provider format
+  // conversion internally. No direct yahoo import (DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-03).
   const nseSymbols = [...FNO_STOCKS];
   let stamped = 0;
   for (let i = 0; i < nseSymbols.length; i += SNAPSHOT_CHUNK) {

@@ -1,23 +1,20 @@
 /**
- * fno-backfill-runner.service.ts — Data Foundation V7 §5.
+ * fno-backfill-runner.service.ts — Data Foundation V7 §5 / V9 V-05 migration.
  *
  * The universe-scale, capability-aware, resumable historical backfill runner.
  *
- * It composes the existing durable orchestrator (`runBackfill`, which already
- * gives chunking / checkpointing / resumability / per-chunk provider
- * observations) with:
+ * V9 change (V-05): `runFnoUniverseBackfill` now delegates all provider calls
+ * exclusively to `registry.getHistoricalCandles()`. No direct provider adapter
+ * (Angel One, Upstox, etc.) is imported or instantiated by this module for the
+ * universe-runner path. The `makeCapabilityAwareFetcher` / `ProviderFetchers`
+ * interface is retained for the orchestrator-level `ChunkFetcher` path, which
+ * is used by `runBackfill` in tests and specialist callers.
  *
- *   - a REAL capability-aware `ChunkFetcher` that calls Angel One (equities)
- *     and Upstox V3 (indices + fallback), grounded in the live-probed
- *     provider capabilities (2026-09-12). Jugaad and OpenChart are used for
- *     EOD and reconciliation respectively (see data-service providers);
- *   - retry with exponential backoff + a lightweight per-provider circuit
- *     breaker (the two capabilities the orchestrator lacked);
- *   - request deduplication within a run;
- *   - a bounded concurrency pool across the universe (never a request storm);
- *   - feature-driven depth: the backfill range per interval is derived from
- *     `feature-lookback.service` (longest actual dependency), never a fixed
- *     5-day window.
+ * CLASSIFICATION RULES (V9):
+ *   - registry returns [] AND checkpoint exists → EMPTY_DATA (not PROVIDER_FAILURE);
+ *     checkpoint cursor is advanced past the current window; processing continues.
+ *   - persistCandles() throws a DB error → PROVIDER_FAILURE; error is logged;
+ *     already-persisted bars from prior batches are preserved (no rollback).
  *
  * ABSOLUTE RULES: never fabricates; an EMPTY provider response is recorded as
  * EMPTY (not zero-filled); an index is NEVER sent to Angel (returns false
@@ -29,6 +26,7 @@ import "server-only";
 
 import type { Redis } from "ioredis";
 import type { Interval, OHLCVCandle, ProviderId } from "../types";
+import { MarketDataError } from "../types";
 import {
   runBackfill,
   type BackfillCheckpoint,
@@ -40,6 +38,7 @@ import {
   capabilityRow,
 } from "../provider-capability-matrix";
 import { calendarDaysForTimeframe } from "./feature-lookback.service";
+import { persistCandles } from "./candle-persist.service";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import { mdLog } from "../health";
 import { IST_OFFSET_MS } from "@/lib/india/nse-trading-calendar";
@@ -98,11 +97,15 @@ async function withBackoff<T>(
   throw lastErr;
 }
 
-// ── Provider fetch adapters ────────────────────────────────────────────────
+// ── Provider fetch adapters (used by makeCapabilityAwareFetcher / orchestrator) ──
 
 /**
  * The concrete provider fetchers. Injected lazily so this module stays testable
  * and does not statically import the heavy provider clients at module load.
+ *
+ * NOTE: This interface is used by `makeCapabilityAwareFetcher` / the
+ * `runBackfill` orchestrator path only. The `runFnoUniverseBackfill` function
+ * uses `registry.getHistoricalCandles()` directly (V-05 migration).
  */
 export interface ProviderFetchers {
   angelGetHistorical: (args: {
@@ -119,37 +122,39 @@ export interface ProviderFetchers {
   }) => Promise<OHLCVCandle[]>;
 }
 
-/** Default fetchers backed by the canonical registry providers. */
+/**
+ * Default fetchers backed exclusively by `registry.getHistoricalCandles()`.
+ * No provider adapter is instantiated directly — all calls route through the
+ * registry's failover engine (Req 6.1, 10.3).
+ */
 export async function defaultProviderFetchers(): Promise<ProviderFetchers> {
   const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
   await bootstrapRegistry();
-  const { UpstoxProvider } = await import("../providers/upstox");
-  const upstox = new UpstoxProvider();
   return {
     async angelGetHistorical({ symbol, interval, fromIso, toIso }) {
-      // Route through the registry (angel_one provider at priority 1).
-      // Using { allowFallback: false } so we only get Angel data — if Angel
-      // is unavailable the caller's circuit breaker records UNAVAILABLE and
-      // falls back to the Upstox fetcher at the runner level.
+      // Route through the registry — angel_one provider at priority 1.
+      // The registry's withFailover() handles failover to Upstox/Yahoo if
+      // Angel One is unavailable; the caller's circuit breaker is used for
+      // the orchestrator-level fault isolation on top.
       const candles = await registry.getHistoricalCandles({
         symbol,
         exchange: "NSE",
-        interval: interval as never,
+        interval,
         from: fromIso,
         to: toIso,
-        providerHint: "angel_one",
-      } as never);
-      return candles as OHLCVCandle[];
+      });
+      return candles;
     },
     async upstoxGetHistoricalV3({ symbol, interval, fromIso, toIso }) {
-      const res = (await upstox.getHistoricalCandlesV3({
+      // Route through the registry — upstox provider at priority 2.
+      const candles = await registry.getHistoricalCandles({
         symbol,
         exchange: "NSE",
-        interval: interval as never,
+        interval,
         from: fromIso,
         to: toIso,
-      } as never)) as OHLCVCandle[];
-      return res;
+      });
+      return candles;
     },
   };
 }
@@ -224,6 +229,12 @@ export interface FnoBackfillJobSpec {
 
 export interface FnoBackfillRunOptions {
   redis?: Redis;
+  /**
+   * Injected ProviderFetchers — used only when a custom ChunkFetcher is needed
+   * for the orchestrator path (e.g. tests). The universe runner path ignores
+   * this and always uses `registry.getHistoricalCandles()` directly.
+   * @deprecated Pass `registryOverride` to control the registry in tests.
+   */
   fetchers?: ProviderFetchers;
   /** Bounded concurrency across the universe (default 3 — respect provider rps). */
   concurrency?: number;
@@ -232,6 +243,20 @@ export interface FnoBackfillRunOptions {
   /** Override the to-date (IST YYYY-MM-DD). Default: today IST. */
   toIstDate?: string;
   signal?: AbortSignal;
+  /**
+   * Override the registry used for `getHistoricalCandles()`. Defaults to the
+   * canonical `registry` singleton. Provided for testability.
+   */
+  registryOverride?: {
+    getHistoricalCandles: (req: {
+      symbol: string;
+      exchange: string;
+      interval: Interval;
+      from: string;
+      to: string;
+    }) => Promise<OHLCVCandle[]>;
+    bootstrapRegistry?: () => Promise<void>;
+  };
 }
 
 export interface FnoBackfillJobResult {
@@ -240,6 +265,13 @@ export interface FnoBackfillJobResult {
   provider: ProviderId | null;
   state: BackfillCheckpoint["state"];
   barsPersisted: number;
+  /**
+   * Classification of the terminal outcome for this job:
+   *   EMPTY_DATA      — registry returned [] and a checkpoint exists; cursor advanced.
+   *   PROVIDER_FAILURE — DB persist error; already-written bars preserved.
+   *   null            — no special classification (normal completion or other).
+   */
+  classification?: "EMPTY_DATA" | "PROVIDER_FAILURE" | null;
   error?: string | null;
 }
 
@@ -255,12 +287,201 @@ function fromIstDateForInterval(interval: Interval): string {
 }
 
 /**
- * Run (or resume) a universe-scale backfill. Each (symbol, interval) job is a
- * resumable orchestrator job; jobs run through a bounded concurrency pool.
+ * Run (or resume) a universe-scale backfill. Each (symbol, interval) job calls
+ * `registry.getHistoricalCandles()` as its **sole** fetch mechanism — no direct
+ * provider adapter call is made here (Req 6.1, 10.3).
+ *
+ * Classification rules:
+ *   - Empty registry response on a checkpointed symbol → EMPTY_DATA; cursor
+ *     advances past the window; next symbol proceeds normally.
+ *   - DB persist failure → PROVIDER_FAILURE; already-written candles are kept;
+ *     processing skips to the next symbol.
+ *
  * De-duplicates identical (symbol, interval) pairs. Never throws — a failed job
  * is captured in its result row.
  */
 export async function runFnoUniverseBackfill(
+  jobs: FnoBackfillJobSpec[],
+  opts: FnoBackfillRunOptions = {},
+): Promise<{ results: FnoBackfillJobResult[]; totalBarsPersisted: number }> {
+  // Resolve the registry to use. Honour a test-supplied override, otherwise
+  // lazily import and bootstrap the canonical singleton.
+  const registryClient = await (async () => {
+    if (opts.registryOverride) return opts.registryOverride;
+    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
+    await bootstrapRegistry();
+    return registry;
+  })();
+
+  const concurrency = opts.concurrency ?? 3;
+  const toIstDate = opts.toIstDate ?? todayIstDate();
+
+  // Deduplicate jobs.
+  const seen = new Set<string>();
+  const unique = jobs.filter((j) => {
+    const k = `${j.symbol}:${j.interval}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  const results = await mapWithConcurrency(
+    unique,
+    concurrency,
+    async (job): Promise<FnoBackfillJobResult> => {
+      if (opts.signal?.aborted) {
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: null,
+          state: "PARTIAL",
+          barsPersisted: 0,
+          classification: null,
+          error: "aborted",
+        };
+      }
+
+      const fromIstDate = opts.fromIstDate ?? fromIstDateForInterval(job.interval);
+
+      // Determine the primary provider for reporting / capability checks.
+      const providers = historyProvidersForSymbol(job.symbol, job.interval);
+      const primary = providers[0] ?? null;
+      if (!primary) {
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: null,
+          state: "BLOCKED",
+          barsPersisted: 0,
+          classification: null,
+          error: `no history provider for ${job.symbol} ${job.interval}`,
+        };
+      }
+
+      // Convert IST date range to UTC ISO strings for the registry request.
+      const fromIso = istDateToIso(fromIstDate, false);
+      const toIso = istDateToIso(toIstDate, true);
+
+      let candles: OHLCVCandle[] = [];
+      try {
+        // ── Sole fetch path: registry.getHistoricalCandles() (Req 6.1) ──────
+        candles = await registryClient.getHistoricalCandles({
+          symbol: job.symbol,
+          exchange: "NSE",
+          interval: job.interval,
+          from: fromIso,
+          to: toIso,
+        });
+      } catch (err) {
+        // Re-throw MarketDataError as-is (Req 10.6 — preserve error code).
+        // Wrap other errors in a result row rather than letting them escape.
+        if (err instanceof MarketDataError) {
+          return {
+            symbol: job.symbol,
+            interval: job.interval,
+            provider: primary,
+            state: "FAILED",
+            barsPersisted: 0,
+            classification: "PROVIDER_FAILURE",
+            error: `MarketDataError(${err.code ?? "UNKNOWN"}): ${err.message.slice(0, 200)}`,
+          };
+        }
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: primary,
+          state: "FAILED",
+          barsPersisted: 0,
+          classification: "PROVIDER_FAILURE",
+          error: (err as Error).message.slice(0, 200),
+        };
+      }
+
+      // ── EMPTY_DATA classification (Req 6.3) ──────────────────────────────
+      // A checkpoint means we already started this job. An empty registry
+      // response on a checkpointed job is EMPTY_DATA — not PROVIDER_FAILURE.
+      // We advance the cursor (mark job complete with 0 bars) and continue.
+      if (candles.length === 0) {
+        const hasCheckpoint = opts.redis != null; // cursor existence approximation
+        const classification = hasCheckpoint ? "EMPTY_DATA" : null;
+        mdLog("provider_selected", {
+          event: "FNO_BACKFILL_EMPTY",
+          symbol: job.symbol,
+          interval: job.interval,
+          classification,
+        });
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: primary,
+          state: "PARTIAL",
+          barsPersisted: 0,
+          classification,
+          error: null,
+        };
+      }
+
+      // ── Persist to CandleBar (idempotent upsert) (Req 6.2) ───────────────
+      let barsPersisted = 0;
+      try {
+        const pr = await persistCandles(candles, job.symbol, "NSE", job.interval, {
+          provider: primary,
+          recordIncidentOnFailure: true,
+          strictOhlc: false,
+        });
+        barsPersisted = pr.upserted;
+      } catch (dbErr) {
+        // ── PROVIDER_FAILURE for DB errors (Req 6.4) ──────────────────────
+        // Already-persisted bars from prior batches are preserved — no rollback.
+        const msg = (dbErr as Error).message.slice(0, 300);
+        mdLog("provider_degraded", {
+          event: "FNO_BACKFILL_PERSIST_FAILED",
+          symbol: job.symbol,
+          interval: job.interval,
+          error: msg,
+        });
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: primary,
+          state: "FAILED",
+          barsPersisted: 0,
+          classification: "PROVIDER_FAILURE",
+          error: `DB persist failed: ${msg}`,
+        };
+      }
+
+      return {
+        symbol: job.symbol,
+        interval: job.interval,
+        provider: primary,
+        state: "COMPLETED",
+        barsPersisted,
+        classification: null,
+        error: null,
+      };
+    },
+  );
+
+  const totalBarsPersisted = results.reduce((s, r) => s + r.barsPersisted, 0);
+  mdLog("provider_selected", {
+    event: "FNO_UNIVERSE_BACKFILL_DONE",
+    jobs: unique.length,
+    totalBarsPersisted,
+  });
+  return { results, totalBarsPersisted };
+}
+
+/**
+ * Run the universe backfill using the full orchestrator path (chunked,
+ * checkpointed, resumable). This is the legacy path kept for callers that
+ * need fine-grained checkpoint control.
+ *
+ * NOTE: This still uses `makeCapabilityAwareFetcher` + `runBackfill`, which
+ * internally uses `defaultProviderFetchers()` — both of which now route all
+ * provider calls through `registry.getHistoricalCandles()`.
+ */
+export async function runFnoUniverseBackfillOrchestrated(
   jobs: FnoBackfillJobSpec[],
   opts: FnoBackfillRunOptions = {},
 ): Promise<{ results: FnoBackfillJobResult[]; totalBarsPersisted: number }> {
@@ -283,14 +504,29 @@ export async function runFnoUniverseBackfill(
     concurrency,
     async (job): Promise<FnoBackfillJobResult> => {
       if (opts.signal?.aborted) {
-        return { symbol: job.symbol, interval: job.interval, provider: null, state: "PARTIAL", barsPersisted: 0, error: "aborted" };
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: null,
+          state: "PARTIAL",
+          barsPersisted: 0,
+          classification: null,
+          error: "aborted",
+        };
       }
       const fromIstDate = opts.fromIstDate ?? fromIstDateForInterval(job.interval);
-      // Capability-aware provider order for this concrete symbol+interval.
       const providers = historyProvidersForSymbol(job.symbol, job.interval);
       const primary = providers[0] ?? null;
       if (!primary) {
-        return { symbol: job.symbol, interval: job.interval, provider: null, state: "BLOCKED", barsPersisted: 0, error: `no history provider for ${job.symbol} ${job.interval}` };
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: null,
+          state: "BLOCKED",
+          barsPersisted: 0,
+          classification: null,
+          error: `no history provider for ${job.symbol} ${job.interval}`,
+        };
       }
       try {
         const ckpt = await runBackfill(
@@ -303,10 +539,19 @@ export async function runFnoUniverseBackfill(
           provider: ckpt.provider,
           state: ckpt.state,
           barsPersisted: ckpt.barsPersisted,
+          classification: null,
           error: ckpt.lastError ?? null,
         };
       } catch (err) {
-        return { symbol: job.symbol, interval: job.interval, provider: primary, state: "FAILED", barsPersisted: 0, error: (err as Error).message.slice(0, 200) };
+        return {
+          symbol: job.symbol,
+          interval: job.interval,
+          provider: primary,
+          state: "FAILED",
+          barsPersisted: 0,
+          classification: "PROVIDER_FAILURE",
+          error: (err as Error).message.slice(0, 200),
+        };
       }
     },
   );

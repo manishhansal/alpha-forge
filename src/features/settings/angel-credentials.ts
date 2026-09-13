@@ -1,6 +1,9 @@
 import "server-only";
 
 import { auth } from "@/lib/auth";
+// AngelCredentials is a type import for broker credential shape — not a market-data call.
+// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
+// eslint-disable-next-line no-restricted-imports
 import type { AngelCredentials } from "@/services/india/angelone";
 
 import { readAngelCredentials } from "./api-keys";

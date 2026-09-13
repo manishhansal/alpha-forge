@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+// eslint-disable-next-line no-restricted-imports -- unit test for the angelone adapter itself
 import {
   mapOiBuildupKind,
   parseGainersLosers,

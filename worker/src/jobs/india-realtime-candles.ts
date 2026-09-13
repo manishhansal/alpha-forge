@@ -74,9 +74,18 @@ async function startListener(child: ReturnType<typeof log.child>): Promise<void>
     child.warn("credential load failed", { err: (err as Error).message });
   }
 
-  const tokens = await resolveTokens(symbols);
+  let tokens: Array<{ token: string; exchange: "NSE" }>;
+  try {
+    tokens = await resolveTokens(symbols);
+  } catch (err) {
+    child.error("getInstrumentMaster threw — realtime listener not started this cycle", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
   if (tokens.length === 0) {
-    child.warn("no tokens resolved — realtime listener not started", { symbols });
+    child.error("getInstrumentMaster returned empty array — realtime listener not started this cycle", { symbols });
     return;
   }
 
