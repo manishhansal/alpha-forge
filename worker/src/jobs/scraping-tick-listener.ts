@@ -25,7 +25,7 @@ const log = createLogger("worker:scraping-tick-listener");
  * @deprecated Use `subscribeToTicks` from `@/lib/data-service/client` instead.
  */
 export function startScrapingTickListener(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _onTick: (tick: unknown) => void,
 ): void {
   log.info(
