@@ -55,6 +55,13 @@ function buildUrl(): string {
   return `${base}?streams=!forceOrder@arr`;
 }
 
+/** Build WebSocket options, injecting the API key header when configured. */
+function buildWsOptions(): WebSocket.ClientOptions | undefined {
+  const apiKey = workerConfig.dataService.apiKey;
+  if (!apiKey) return undefined;
+  return { headers: { "X-API-KEY": apiKey } };
+}
+
 const symbolFilter = new Set(workerConfig.liquidations.symbols);
 
 async function handleForceOrder(raw: RawForceOrder): Promise<void> {
@@ -149,7 +156,7 @@ function connect(): void {
   log.info("connecting", { url, symbols: workerConfig.liquidations.symbols });
   let socket: WebSocket;
   try {
-    socket = new WebSocket(url);
+    socket = new WebSocket(url, undefined, buildWsOptions());
   } catch (err) {
     log.error("failed to construct socket", { err: (err as Error).message });
     scheduleReconnect();

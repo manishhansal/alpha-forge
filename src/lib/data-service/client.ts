@@ -363,13 +363,20 @@ export async function getDeribitOptionsOverview(): Promise<unknown[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the WebSocket URL from the HTTP base URL.
+ * Derive the WebSocket URL from the HTTP base URL, appending the API key as
+ * a query parameter when DATA_SERVICE_API_KEY is set.
+ *
  * http://...  → ws://...
  * https://... → wss://...
+ *
+ * The `api_key` query param is the server-accepted fallback for WebSocket
+ * connections where the X-API-KEY header cannot be set by the caller.
  */
 function wsUrl(path: string): string {
   const base = getBaseUrl().replace(/^http/, "ws");
-  return `${base}${path}`;
+  const url = `${base}${path}`;
+  const apiKey = process.env.DATA_SERVICE_API_KEY;
+  return apiKey ? `${url}?api_key=${encodeURIComponent(apiKey)}` : url;
 }
 
 /**

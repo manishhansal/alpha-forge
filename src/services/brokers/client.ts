@@ -41,12 +41,29 @@ function buildPairs(): BrokerPairs {
 }
 
 /**
+ * Build the authenticated WebSocket URL for data-service2.0.
+ *
+ * Browsers cannot send custom request headers during the WebSocket handshake,
+ * so the API key is passed as the `api_key` query parameter instead.
+ * NEXT_PUBLIC_DATA_SERVICE_API_KEY is the browser-safe, public env var.
+ */
+function buildWsUrl(): string {
+  const dsUrl = (
+    process.env.NEXT_PUBLIC_DATA_SERVICE_2_URL ??
+    process.env.NEXT_PUBLIC_DATA_SERVICE_URL ??
+    "http://localhost:8200"
+  ).replace(/^http/, "ws");
+  const base = `${dsUrl}/v1/stream/ticks`;
+  const apiKey = process.env.NEXT_PUBLIC_DATA_SERVICE_API_KEY;
+  return apiKey ? `${base}?api_key=${encodeURIComponent(apiKey)}` : base;
+}
+
+/**
  * Creates a data-service2.0-backed ticker stream.
  * Connects to the data-service2.0 WebSocket endpoint.
  */
 function createDataServiceTickerStream(opts: TickerStreamOptions): BrokerStreamClient {
-  const dsUrl = (process.env.DATA_SERVICE_2_URL ?? process.env.DATA_SERVICE_URL ?? "http://localhost:8200").replace(/^http/, "ws");
-  const wsUrl = `${dsUrl}/v1/stream/ticks`;
+  const wsUrl = buildWsUrl();
   let ws: WebSocket | null = null;
   let closed = false;
 
@@ -109,8 +126,7 @@ function createDataServiceTickerStream(opts: TickerStreamOptions): BrokerStreamC
  * Liquidation data comes from data-service2.0's crypto stream.
  */
 function createDataServiceLiquidationStream(opts: LiquidationStreamOptions): BrokerStreamClient {
-  const dsUrl = (process.env.DATA_SERVICE_2_URL ?? process.env.DATA_SERVICE_URL ?? "http://localhost:8200").replace(/^http/, "ws");
-  const wsUrl = `${dsUrl}/v1/stream/ticks`;
+  const wsUrl = buildWsUrl();
   let ws: WebSocket | null = null;
   let closed = false;
 
