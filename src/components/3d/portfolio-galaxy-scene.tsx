@@ -46,6 +46,13 @@ function ParticleSystem({ positions }: ParticleSystemProps) {
     const posArray = new Float32Array(positions.length * 3);
     const colArray = new Float32Array(positions.length * 3);
 
+    // Deterministic jitter: LCG-style hash so the same positions always
+    // produce the same geometry (pure function — no Math.random()).
+    const deterministicJitter = (seed: number): number => {
+      const x = Math.sin(seed * 9301 + 49297) * 233280;
+      return (x - Math.floor(x)) - 0.5;
+    };
+
     positions.forEach((pos, i) => {
       // Fibonacci sphere distribution for even spacing
       const goldenAngle = Math.PI * (3 - Math.sqrt(5));
@@ -53,11 +60,11 @@ function ParticleSystem({ positions }: ParticleSystemProps) {
       const y = 1 - (i / (positions.length - 1)) * 2;
       const radius = Math.sqrt(1 - y * y) * 2.0;
 
-      // Slight random offset for organic feel
+      // Slight deterministic offset for organic feel
       const jitter = pos.size * 0.3 + 0.1;
-      posArray[i * 3]     = radius * Math.cos(theta) + (Math.random() - 0.5) * jitter;
-      posArray[i * 3 + 1] = y * 2.0 + (Math.random() - 0.5) * jitter;
-      posArray[i * 3 + 2] = radius * Math.sin(theta) + (Math.random() - 0.5) * jitter;
+      posArray[i * 3]     = radius * Math.cos(theta) + deterministicJitter(i * 3)     * jitter;
+      posArray[i * 3 + 1] = y * 2.0 + deterministicJitter(i * 3 + 1) * jitter;
+      posArray[i * 3 + 2] = radius * Math.sin(theta) + deterministicJitter(i * 3 + 2) * jitter;
 
       const color = pnlToColor(pos.pnlPct);
       colArray[i * 3]     = color.r;
