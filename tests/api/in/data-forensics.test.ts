@@ -339,13 +339,7 @@ describe("GET /api/in/data/forensics/:tradeId — Requirement 16.6 (404 cases)",
     const res = await GET(makeRequest("trade-abc123"), makeParams("trade-abc123"));
 
     expect(res.status).toBe(404);
-    const body = await res.json() as {
-      error: string;
-      tradeId: string;
-      symbol: string;
-      sessionDate: string;
-      missingProvenanceLink: Record<string, unknown>;
-    };
+    const body = await res.json() as Record<string, unknown>;
 
     expect(body.error).toBe("provenance_not_found");
     expect(body.tradeId).toBe("trade-abc123");

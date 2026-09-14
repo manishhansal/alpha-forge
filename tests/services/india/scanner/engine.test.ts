@@ -17,7 +17,8 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type { ScannerResult } from "@/types/india/scanner";
-import type { MDQuote, OHLCVCandle } from "@/lib/market-data/types";
+import type { MarketQuote, OHLCVCandle } from "@/lib/market-data/types";
+type MDQuote = MarketQuote;
 
 // ─── 1. Static import guard — no yahoo import in engine.ts ───────────────────
 
@@ -66,9 +67,9 @@ const getQuotesMock = vi.fn();
 const getHistoricalMock = vi.fn();
 const getOptionChainMock = vi.fn();
 vi.mock("@/lib/data-service/client", () => ({
-  getQuotes: (...args) => getQuotesMock(...args),
-  getHistorical: (...args) => getHistoricalMock(...args),
-  getOptionChain: (...args) => getOptionChainMock(...args),
+  getQuotes: (...args: unknown[]) => getQuotesMock(...args),
+  getHistorical: (...args: unknown[]) => getHistoricalMock(...args),
+  getOptionChain: (...args: unknown[]) => getOptionChainMock(...args),
   DataServiceUnavailableError: class DataServiceUnavailableError extends Error {},
 }));
 vi.mock("@/services/india/cache", () => ({
@@ -78,12 +79,13 @@ vi.mock("@/services/india/cache", () => ({
 }));
 
 // Minimal MDQuote factory
-function makeQuote(symbol: string): MDQuote {
+function makeQuote(symbol: string): MarketQuote {
+  const now = new Date().toISOString();
   return {
+    instrumentId: "NSE:" + symbol + ":EQ",
     symbol,
-    token: null,
-    exchange: "NSE",
     name: null,
+    exchange: "NSE",
     ltp: 100,
     change: 1,
     changePct: 1,
@@ -93,15 +95,16 @@ function makeQuote(symbol: string): MDQuote {
     low: 98,
     volume: 500_000,
     oi: null,
+    tradedValue: null,
+    bid: null,
+    ask: null,
     weekHigh52: null,
     weekLow52: null,
-    upperCircuit: null,
-    lowerCircuit: null,
-    totalBuyQty: null,
-    totalSellQty: null,
+    marketStatus: "OPEN",
     lastTradeTime: null,
-    provider: "scrapling",
-    fetchedAt: new Date().toISOString(),
+    dataAsOf: now,
+    fetchedAt: now,
+    provider: "angel_one",
   };
 }
 

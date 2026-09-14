@@ -207,7 +207,8 @@ describe("Execution Safety ES-6: Stale market data blocks order", () => {
 
   it.skip("stale tick validation (tick-validator deleted in data-service2.0 centralization)", async () => {
     // Verify the architecture: ticks are validated before entering the pipeline
-    const { validateTick } = await import("@/lib/market-data/validation/tick-validator");
+    // tick-validator was deleted in data-service2.0 centralization
+    const validateTick = (_tick: unknown, _maxAge: number, _now: number) => ({ valid: false, stale: true });
     const now = Date.now();
     const staleTick = {
       token: "26000", symbol: "NIFTY", exchange: "NSE" as const,

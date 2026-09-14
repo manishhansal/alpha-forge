@@ -136,8 +136,8 @@ export interface OHLCVCandle {
   low: number;
   close: number;
   volume: number;
-  /** Open interest at candle close. Null for cash equities. */
-  oi: number | null;
+  /** Open interest at candle close. Null for cash equities. Optional for backward compat. */
+  oi?: number | null;
 }
 
 /** Request parameters for historical OHLCV data. */

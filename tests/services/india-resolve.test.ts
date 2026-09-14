@@ -81,7 +81,7 @@ describe("services/india/resolve (data-service2.0 delegation)", () => {
       getHistoricalMock.mockResolvedValue(candles);
       const { resolveHistorical } = await import("@/services/india/resolve");
 
-      const result = await resolveHistorical(null, { symbol: "RELIANCE", interval: "1d" as const });
+      const result = await resolveHistorical(null, { symbol: "RELIANCE", interval: "1d" as const, range: "1y" });
       expect(result.candles).toHaveLength(1);
       expect(result.source).toBe("data-service2");
     });
@@ -94,7 +94,7 @@ describe("services/india/resolve (data-service2.0 delegation)", () => {
       getHistoricalMock.mockResolvedValue(candles);
       const { resolveHistorical } = await import("@/services/india/resolve");
 
-      const result = await resolveHistorical(null, { symbol: "NIFTY", interval: "5m" as const });
+      const result = await resolveHistorical(null, { symbol: "NIFTY", interval: "5m" as const, range: "1y" });
       expect(result.candles).toHaveLength(2);
       expect(result.source).toBe("data-service2");
     });
@@ -103,7 +103,7 @@ describe("services/india/resolve (data-service2.0 delegation)", () => {
       getHistoricalMock.mockResolvedValue([]);
       const { resolveHistorical } = await import("@/services/india/resolve");
 
-      const result = await resolveHistorical(null, { symbol: "UNKNOWN", interval: "1d" as const });
+      const result = await resolveHistorical(null, { symbol: "UNKNOWN", interval: "1d" as const, range: "1y" });
       expect(result.candles).toHaveLength(0);
       expect(result.source).toBe("data-service2");
     });
@@ -114,7 +114,7 @@ describe("services/india/resolve (data-service2.0 delegation)", () => {
       ]);
       const { resolveHistorical } = await import("@/services/india/resolve");
 
-      const result = await resolveHistorical(null, { symbol: "RELIANCE", interval: "1d" as const });
+      const result = await resolveHistorical(null, { symbol: "RELIANCE", interval: "1d" as const, range: "1y" });
       expect(getHistoricalMock).toHaveBeenCalledTimes(1);
       expect(result.source).toBe("data-service2");
     });
