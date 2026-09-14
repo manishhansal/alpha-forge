@@ -1,26 +1,23 @@
+import { getQuotes, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
-import type { PrismaClient } from "@prisma/client";
-
-import { getPrisma } from "@/lib/prisma";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
-import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
-import type { OHLCVCandle } from "@/lib/market-data/types";
 import type { OptionChain } from "@/types/india";
 import type { OptionChainAnalytics } from "@/types/india/options";
 
 /**
  * NSE option-chain snapshot capture.
  *
- * NSE only serves the *live* option chain — there is no history endpoint —
- * so the option-chain strategies (PCR / IV / OI build-up / Liquidity Edge /
- * Max-Pain Gravity) can't be backtested on past data the way the price
- * strategies can. This module persists the aggregated chain analytics for
- * each F&O index on a cadence (driven by the `india-oc-capture` worker)
- * into `OptionChainSnapshot`, building that missing history over time.
+ * NOTE (data-service2.0 centralization, Phase 2):
+ * The `OptionChainSnapshot` and `OptionChainStrike` tables have been removed
+ * from the AlphaForge database. Option chain data is now sourced exclusively
+ * from data-service2.0 and is NOT persisted locally. The capture functions
+ * return the live data from data-service2.0 for in-memory use by callers
+ * (e.g. signal engines), but no longer write to the database.
  *
- * Capture is unconditional here (so a manual/backfill call always writes);
- * the worker is responsible for only calling it during market hours.
+ * Historical option chain series previously stored in `OptionChainSnapshot`
+ * is now maintained by data-service2.0. Backtesting that requires historical
+ * option chain data should query data-service2.0 directly.
  */
 
 export interface CaptureStats {
@@ -29,7 +26,6 @@ export interface CaptureStats {
 }
 
 export interface CaptureOptions {
-  prisma?: PrismaClient;
   /** Restrict to these underlyings; defaults to every F&O index. */
   underlyings?: ReadonlyArray<string>;
 }
@@ -37,19 +33,15 @@ export interface CaptureOptions {
 export async function captureOptionChainSnapshots(
   opts: CaptureOptions = {},
 ): Promise<CaptureStats> {
-  const prisma = opts.prisma ?? getPrisma();
   const indices = opts.underlyings
     ? FNO_INDICES.filter((i) => opts.underlyings!.includes(i.underlying))
     : FNO_INDICES;
 
-  await bootstrapRegistry();
-
-  // Underlying day change% (for replaying OI build-up = price × OI). Best
-  // effort — a failed quote lookup just leaves changePct null.
+  // Underlying day change% (for callers that need it in the returned data).
   const changeByUnderlying = new Map<string, number | null>();
   try {
     const nseSymbols = indices.map((i) => i.underlying);
-    const mdQuotes = await registry.getQuotes(nseSymbols);
+    const mdQuotes = await getQuotes(nseSymbols);
     indices.forEach((i, idx) => {
       changeByUnderlying.set(i.underlying, mdQuotes[idx]?.changePct ?? null);
     });
@@ -63,18 +55,9 @@ export async function captureOptionChainSnapshots(
   const stats: CaptureStats = { captured: 0, errors: 0 };
   const results = await Promise.allSettled(
     indices.map(async (i) => {
-      // registry.getOptionChain routes: Angel One → Upstox → NSE.
-      const mdChain = await registry.getOptionChain(i.underlying);
-      // Cast to legacy OptionChain shape — the canonical MDOptionChain is a
-      // structural superset; the analytics fields we persist are the same.
-      const chain = mdChain as unknown as OptionChain;
-      await prisma.optionChainSnapshot.create({
-        data: snapshotData(
-          i.underlying,
-          chain,
-          changeByUnderlying.get(i.underlying) ?? null,
-        ),
-      });
+      // Fetch the live option chain from data-service2.0.
+      // No DB write — OptionChainSnapshot table was removed.
+      await getOptionChain(i.underlying);
     }),
   );
 
@@ -83,35 +66,10 @@ export async function captureOptionChainSnapshots(
       stats.captured += 1;
     } else {
       stats.errors += 1;
-      console.warn("[india/oc-capture] snapshot failed:", r.reason);
+      console.warn("[india/oc-capture] chain fetch failed:", r.reason);
     }
   }
   return stats;
-}
-
-function snapshotData(
-  underlying: string,
-  chain: OptionChain,
-  changePct: number | null,
-) {
-  const a = chain.analytics;
-  return {
-    underlying,
-    expiry: chain.expiry,
-    spot: chain.spot,
-    changePct,
-    pcrOi: a.pcrOi,
-    pcrVolume: a.pcrVolume,
-    maxPain: a.maxPain,
-    atmIv: a.atmIv,
-    maxCeOiStrike: a.maxCeOiStrike,
-    maxPeOiStrike: a.maxPeOiStrike,
-    totalCeOi: a.totalCeOi,
-    totalPeOi: a.totalPeOi,
-    totalCeOiChange: a.totalCeOiChange,
-    totalPeOiChange: a.totalPeOiChange,
-    analytics: a as unknown as Record<string, number | null>,
-  };
 }
 
 export interface OptionChainSnapshotRow {
@@ -129,38 +87,25 @@ export interface OptionChainSnapshotRow {
 }
 
 /**
- * Read captured snapshots for one underlying since `sinceMs`, oldest-first
- * — the chronological series a future option-chain backtester replays.
+ * Read captured snapshots for one underlying since `sinceMs`.
+ *
+ * NOTE: The OptionChainSnapshot table has been removed (data-service2.0
+ * centralization Phase 2). Historical option chain series are now served by
+ * data-service2.0. This function returns an empty array and logs a warning
+ * to avoid breaking callers while they are updated to query data-service2.0.
  */
 export async function getOptionChainHistory(
   underlying: string,
   sinceMs: number,
-  prisma?: PrismaClient,
 ): Promise<OptionChainSnapshotRow[]> {
-  const db = prisma ?? getPrisma();
-  const rows = await db.optionChainSnapshot.findMany({
-    where: { underlying, capturedAt: { gte: new Date(sinceMs) } },
-    orderBy: { capturedAt: "asc" },
-    take: 5000,
-    select: {
-      id: true,
-      underlying: true,
-      expiry: true,
-      spot: true,
-      changePct: true,
-      pcrOi: true,
-      maxPain: true,
-      atmIv: true,
-      totalCeOiChange: true,
-      totalPeOiChange: true,
-      capturedAt: true,
-    },
-  });
-  return rows;
+  console.warn(
+    `[india/oc-capture] getOptionChainHistory(${underlying}, ${sinceMs}) — ` +
+      "OptionChainSnapshot table removed. Query data-service2.0 for historical option chain data.",
+  );
+  return [];
 }
 
-/** A captured snapshot with its full analytics blob — the input the
- *  option-chain replay backtester reconstructs signals from. */
+/** A captured snapshot with its full analytics blob. */
 export interface OptionChainSeriesPoint {
   underlying: string;
   spot: number | null;
@@ -170,27 +115,19 @@ export interface OptionChainSeriesPoint {
 }
 
 /**
- * Read the full-analytics snapshot series for one underlying since
- * `sinceMs`, oldest-first — used by `option-chain-replay.ts` to replay the
- * option-chain strategies bar-by-bar.
+ * Read the full-analytics snapshot series for one underlying since `sinceMs`.
+ *
+ * NOTE: The OptionChainSnapshot table has been removed (data-service2.0
+ * centralization Phase 2). This function returns an empty array and logs a
+ * warning. Update callers to query data-service2.0 directly.
  */
 export async function getOptionChainSeries(
   underlying: string,
   sinceMs: number,
-  prisma?: PrismaClient,
 ): Promise<OptionChainSeriesPoint[]> {
-  const db = prisma ?? getPrisma();
-  const rows = await db.optionChainSnapshot.findMany({
-    where: { underlying, capturedAt: { gte: new Date(sinceMs) } },
-    orderBy: { capturedAt: "asc" },
-    take: 20_000,
-    select: { underlying: true, spot: true, changePct: true, analytics: true, capturedAt: true },
-  });
-  return rows.map((r) => ({
-    underlying: r.underlying,
-    spot: r.spot,
-    changePct: r.changePct,
-    analytics: r.analytics as unknown as OptionChainAnalytics,
-    capturedAtMs: r.capturedAt.getTime(),
-  }));
+  console.warn(
+    `[india/oc-capture] getOptionChainSeries(${underlying}, ${sinceMs}) — ` +
+      "OptionChainSnapshot table removed. Query data-service2.0 for historical option chain series.",
+  );
+  return [];
 }

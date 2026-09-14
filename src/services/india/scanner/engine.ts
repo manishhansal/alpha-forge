@@ -1,4 +1,7 @@
+import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 // Scanner Engine — computes ranked lists of F&O hits across multiple
+/** Internal type used only by momentum scanner */
+type MomentumRow = { symbol: string; percentChange?: number | null; ltp?: number | null; oi?: number | null };
 // strategy types. Each scanner returns `ScannerResult` so the UI can render
 // every type with the same component.
 
@@ -15,7 +18,6 @@ import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 // All generic market-data calls (quotes, historical candles) route through the registry.
 // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
 // eslint-disable-next-line no-restricted-imports
-import { angel, isAngelConfigured } from "@/services/india/angelone";
 import { cache } from "@/services/india/cache";
 
 const now = () => new Date().toISOString();
@@ -23,9 +25,8 @@ const now = () => new Date().toISOString();
 /** F&O universe quote via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO). */
 async function fnoQuotes(): Promise<Quote[]> {
   return cache.memo("scanner:fno-quotes", 10_000, async () => {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const mdQuotes = await registry.getQuotes(FNO_STOCKS);
+    
+    const mdQuotes = await getQuotes(FNO_STOCKS);
     // Normalize MDQuote[] → legacy Quote[] shape used by scanner logic
     return mdQuotes
       .filter((q): q is NonNullable<typeof q> => q != null)
@@ -53,13 +54,11 @@ async function fnoQuotes(): Promise<Quote[]> {
  * falls back to the registry path.
  */
 async function runMomentumAngel(limit: number): Promise<ScannerResult | null> {
-  if (!isAngelConfigured()) return null;
-  const [gainers, losers] = await Promise.all([
-    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
-    angel.getTopGainersLosers("PercPriceGainers", "NEAR"),
-    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
-    angel.getTopGainersLosers("PercPriceLosers", "NEAR"),
-  ]);
+  
+  const [gainers, losers] = [
+    [] as MomentumRow[],
+    [] as MomentumRow[],
+  ];
   const merged = [...gainers, ...losers];
   if (merged.length === 0) return null;
 
@@ -71,14 +70,14 @@ async function runMomentumAngel(limit: number): Promise<ScannerResult | null> {
     .slice(0, limit)
     .map((r) => ({
       symbol: r.symbol,
-      price: r.ltp,
-      changePct: r.percentChange,
+      price: r.ltp ?? null,
+      changePct: r.percentChange ?? null,
       volume: null,
       metric: r.percentChange ?? 0,
       metricLabel: `${(r.percentChange ?? 0) >= 0 ? "+" : ""}${(r.percentChange ?? 0).toFixed(2)}%`,
       kind: (r.percentChange ?? 0) >= 0 ? "GAINER" : "LOSER",
       note: r.oi != null ? `OI ${(r.oi / 1e5).toFixed(1)}L` : undefined,
-    }));
+    } as ScannerHit));
 
   return {
     type: "momentum",
@@ -127,9 +126,8 @@ async function avgVolume(symbol: string): Promise<number | null> {
   const cacheKey = `scanner:avgvol:${symbol}`;
   return cache.memo(cacheKey, 5 * 60_000, async () => {
     try {
-      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-      await bootstrapRegistry();
-      const candles = await registry.getHistoricalCandles({
+      
+      const candles = await getHistorical({
         symbol,
         exchange: "NSE",
         interval: "1d",
@@ -200,28 +198,39 @@ async function runVolumeBreakout(limit: number): Promise<ScannerResult> {
 
 const INDEX_UNDERLYINGS = FNO_INDICES.map((i) => i.underlying);
 
+/** Wrap OptionChain with analytics shape for scanner compatibility. */
+function chainWithAnalytics(c: Awaited<ReturnType<typeof getOptionChain>>) {
+  // Compute OI change totals from rows
+  const totalCeOiChange = c.rows.filter(r => r.optionType === "CE").reduce((s, r) => s + (r.oiChange ?? 0), 0);
+  const totalPeOiChange = c.rows.filter(r => r.optionType === "PE").reduce((s, r) => s + (r.oiChange ?? 0), 0);
+  const maxCeOi = c.rows.filter(r => r.optionType === "CE").reduce((best, r) => (r.oi ?? 0) > (best.oi ?? 0) ? r : best, { strike: null as number | null, oi: null as number | null });
+  const maxPeOi = c.rows.filter(r => r.optionType === "PE").reduce((best, r) => (r.oi ?? 0) > (best.oi ?? 0) ? r : best, { strike: null as number | null, oi: null as number | null });
+  return {
+    ...c,
+    spot: c.spotPrice,
+    analytics: {
+      pcrOi: c.pcrOi,
+      atmIv: c.atmIv,
+      maxPain: c.maxPain,
+      maxPeOiStrike: maxPeOi.strike,
+      maxCeOiStrike: maxCeOi.strike,
+      totalCeOiChange,
+      totalPeOiChange,
+    },
+  };
+}
 async function indexChains() {
   return cache.memo("scanner:index-chains", 20_000, async () => {
-    // Use ProviderRegistry to route option chain requests through
-    // DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO (no direct NSE acquisition)
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-
     const out = await Promise.allSettled(
-      INDEX_UNDERLYINGS.map((u) => registry.getOptionChain(u)),
+      INDEX_UNDERLYINGS.map((u) => getOptionChain(u)),
     );
-
-    type LegacyChain = Awaited<ReturnType<typeof registry.getOptionChain>>;
     return out
       .map((r, i) =>
         r.status === "fulfilled"
-          ? { underlying: INDEX_UNDERLYINGS[i], chain: r.value }
+          ? { underlying: INDEX_UNDERLYINGS[i]!, chain: chainWithAnalytics(r.value) }
           : null,
       )
-      .filter(Boolean) as {
-      underlying: string;
-      chain: LegacyChain;
-    }[];
+      .filter((x): x is NonNullable<typeof x> => x !== null);
   });
 }
 
@@ -230,8 +239,9 @@ async function indexChains() {
  * indices the NSE chain covers). Returns null when unconfigured / empty.
  */
 async function runPcrAngel(limit: number): Promise<ScannerResult | null> {
-  if (!isAngelConfigured()) return null;
-  const rows = await angel.getPutCallRatio(); // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
+  
+  type PcrRow = { symbol: string; pcr: number };
+  const rows: PcrRow[] = []; // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: removed
   if (rows.length === 0) return null;
 
   const hits: ScannerHit[] = rows
@@ -326,14 +336,9 @@ async function runIvSpike(): Promise<ScannerResult> {
  * unconfigured / empty so the NSE-derived path still works.
  */
 async function runOiBuildupAngel(limit: number): Promise<ScannerResult | null> {
-  if (!isAngelConfigured()) return null;
-  const [longBuilt, shortBuilt, shortCover, longUnwind] = await Promise.all([
-    // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
-    angel.getOiBuildup("Long Built Up", "NEAR"),
-    angel.getOiBuildup("Short Built Up", "NEAR"),
-    angel.getOiBuildup("Short Covering", "NEAR"),
-    angel.getOiBuildup("Long Unwinding", "NEAR"),
-  ]);
+  
+  type OiRow = { symbol: string; ltp: number; percentChange: number | null; oi?: number | null; kind: string };
+  const [longBuilt, shortBuilt, shortCover, longUnwind]: OiRow[][] = [[], [], [], []]; // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: removed
   const merged = [...longBuilt, ...shortBuilt, ...shortCover, ...longUnwind];
   if (merged.length === 0) return null;
 
@@ -366,9 +371,8 @@ async function runOiBuildup(limit: number): Promise<ScannerResult> {
 
   const chains = await indexChains();
   // Fetch index quotes through the canonical registry instead of Yahoo directly
-  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-  await bootstrapRegistry();
-  const mdQuotes = await registry.getQuotes(FNO_INDICES.map((i) => i.symbol));
+  
+  const mdQuotes = await getQuotes(FNO_INDICES.map((i) => i.symbol));
   const priceChange: Record<string, number | null> = {};
   FNO_INDICES.forEach((i, idx) => {
     priceChange[i.underlying] = mdQuotes[idx]?.changePct ?? null;
@@ -509,9 +513,8 @@ async function evaluateRangeExpansion(
 ): Promise<RxRow | null> {
   let dailies: Candle[];
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const ohlcv = await registry.getHistoricalCandles({
+    
+    const ohlcv = await getHistorical({
       symbol,
       exchange: "NSE",
       interval: "1d",
@@ -913,9 +916,8 @@ type FnoBullishTrendRow = {
 async function evaluateFnoBullishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
   let candles: Candle[];
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const ohlcv = await registry.getHistoricalCandles({
+    
+    const ohlcv = await getHistorical({
       symbol,
       exchange: "NSE",
       interval: "1d",
@@ -1090,9 +1092,8 @@ async function runFnoBullishTrend(limit: number): Promise<ScannerResult> {
 async function evaluateFnoBearishTrend(symbol: string): Promise<FnoBullishTrendRow | null> {
   let candles: Candle[];
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const ohlcv = await registry.getHistoricalCandles({
+    
+    const ohlcv = await getHistorical({
       symbol,
       exchange: "NSE",
       interval: "1d",

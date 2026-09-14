@@ -18,16 +18,17 @@
 
 import { NextResponse } from "next/server";
 import { DataServiceClient } from "@/lib/data-service/client";
+import type { ProviderHealthEntry } from "@/lib/data-service/client";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const health = await DataServiceClient.observability.providerHealth();
+    const health = await DataServiceClient.observability.providers();
 
     // Map to the public API shape — explicitly exclude anything credential-related
-    const providers = health.map((h) => ({
+    const providers = health.map((h: ProviderHealthEntry) => ({
       id: h.providerId,
       status: h.status,
       score: h.score,
@@ -40,8 +41,8 @@ export async function GET() {
       latencyP50Ms: h.latencyP50Ms,
       latencyP99Ms: h.latencyP99Ms,
       // Friendly status labels per spec §32
-      connected: h.status === "healthy",
-      authStatus: h.circuitOpen ? "CIRCUIT_OPEN" : h.status === "unhealthy" ? "AUTH_FAILED" : "CONNECTED",
+      connected: h.status === "UP",
+      authStatus: h.circuitOpen ? "CIRCUIT_OPEN" : h.status === "DOWN" ? "AUTH_FAILED" : "CONNECTED",
     }));
 
     return NextResponse.json({

@@ -18,9 +18,8 @@ import {
   type StrategyScoreBreakdown,
 } from "@/features/scalping/strategy-score";
 import type { ScalpStrategyId } from "@/features/scalping/types";
-import { binanceServerAdapter } from "@/services/brokers/binance/adapter";
 import { getServerBroker } from "@/services/brokers/registry";
-import type { KlineInterval } from "@/services/binance/klines";
+import type { KlineInterval } from "@/features/scalping/backtest-intervals";
 import type { ServerBrokerAdapter } from "@/services/brokers/server-types";
 import type { KlineCandle, SymbolId } from "@/types/market";
 
@@ -333,31 +332,8 @@ async function loadCandlesForSymbol(
     return { symbol, candles: activeCandles, source: "active-broker" };
   }
 
-  // Active broker came up short. Try Binance directly — `binanceServerAdapter`
-  // is its own thing so this works even when Binance isn't the active broker.
-  const fallbackPair = binanceServerAdapter.pairs.spot[symbol];
-  if (fallbackPair && activeBroker.id !== "binance") {
-    try {
-      const fallbackCandles = await binanceServerAdapter.fetchKlinesRange(
-        fallbackPair,
-        fetchInterval,
-        startMs,
-        endMs,
-      );
-      if (fallbackCandles.length > activeCandles.length) {
-        console.info(
-          `[strategy-backtest] using Binance fallback for ${symbol} ${fetchInterval} (active broker returned ${activeCandles.length} bars, Binance returned ${fallbackCandles.length})`,
-        );
-        return { symbol, candles: fallbackCandles, source: "binance-fallback" };
-      }
-    } catch (err) {
-      console.warn(
-        `[strategy-backtest] Binance fallback fetch failed for ${fallbackPair} ${fetchInterval}:`,
-        (err as Error).message,
-      );
-    }
-  }
-
+  // Active broker came up short — skip fallback since Binance adapter is removed.
+  // data-service2.0 handles all historical candle fetching via the server broker.
   if (activeCandles.length > 0) {
     return { symbol, candles: activeCandles, source: "active-broker" };
   }

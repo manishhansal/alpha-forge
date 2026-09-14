@@ -13,7 +13,6 @@ import { getPrisma } from "@/lib/prisma";
 import {
   FNOUniverseService,
   buildUnavailableCoverageSnapshot,
-  formatCoverageSummary,
 } from "@/lib/signal-intelligence";
 
 export const dynamic = "force-dynamic";
@@ -33,53 +32,12 @@ export async function GET(req: NextRequest) {
   try {
     const prisma = getPrisma();
 
-    const [universeSummary, coverageSnap] = await Promise.all([
-      Promise.resolve(FNOUniverseService.getSummary()),
-      prisma.universeCoverageSnapshot.findFirst({
-        where: { sessionDate },
-        orderBy: { capturedAt: "desc" },
-      }),
-    ]);
-
-    const coverage = coverageSnap
-      ? {
-          sessionDate: coverageSnap.sessionDate,
-          capturedAtMs: coverageSnap.capturedAt.getTime(),
-          expectedInstruments: coverageSnap.expectedInstruments,
-          availableInstruments: coverageSnap.availableInstruments,
-          scannedInstruments: coverageSnap.scannedInstruments,
-          dataCompleteInstruments: coverageSnap.dataCompleteInstruments,
-          dataPartialInstruments: coverageSnap.dataPartialInstruments,
-          dataMissingInstruments: coverageSnap.dataMissingInstruments,
-          strategyEvaluatedInstruments: coverageSnap.strategyEvaluatedInstruments,
-          paperEligibleInstruments: coverageSnap.paperEligibleInstruments,
-          excludedInstruments: coverageSnap.excludedInstruments,
-          exclusionReasons: coverageSnap.exclusionReasons,
-          coverageScore: coverageSnap.coverageScore,
-          isValid: coverageSnap.isValid,
-          minValidCoverage: 0.8,
-          summary: formatCoverageSummary({
-            sessionDate: coverageSnap.sessionDate,
-            capturedAtMs: coverageSnap.capturedAt.getTime(),
-            expectedInstruments: coverageSnap.expectedInstruments,
-            availableInstruments: coverageSnap.availableInstruments,
-            scannedInstruments: coverageSnap.scannedInstruments,
-            dataCompleteInstruments: coverageSnap.dataCompleteInstruments,
-            dataPartialInstruments: coverageSnap.dataPartialInstruments,
-            dataMissingInstruments: coverageSnap.dataMissingInstruments,
-            strategyEvaluatedInstruments: coverageSnap.strategyEvaluatedInstruments,
-            paperEligibleInstruments: coverageSnap.paperEligibleInstruments,
-            excludedInstruments: coverageSnap.excludedInstruments,
-            exclusionReasons: coverageSnap.exclusionReasons as Array<{ instrument: string; reason: string }>,
-            coverageScore: coverageSnap.coverageScore,
-            isValid: coverageSnap.isValid,
-            minValidCoverage: 0.8,
-          }),
-        }
-      : {
-          ...buildUnavailableCoverageSnapshot(sessionDate, "No snapshot found — scanner has not run yet"),
-          summary: `Coverage: 0/${universeSummary.total} (0.0%) — INVALID`,
-        };
+    const universeSummary = FNOUniverseService.getSummary();
+    // universeCoverageSnapshot table dropped — always return unavailable snapshot
+    const coverage = {
+      ...buildUnavailableCoverageSnapshot(sessionDate, "No snapshot found — universeCoverageSnapshot table removed"),
+      summary: `Coverage: 0/${universeSummary.total} (0.0%) — INVALID`,
+    };
 
     return NextResponse.json({
       universe: universeSummary,

@@ -1,17 +1,28 @@
 /**
- * Client-safe catalog of supported data sources, plus the canonical shape of
- * the per-user selections stored in `UserSetting.dataSourcesJson`.
+ * src/features/settings/data-sources-shared.ts
  *
- * Everything here is plain data — no Prisma, no `server-only`, no secrets —
- * so it can be imported from both the settings form (browser) and the server
- * actions/route handlers that consume the selections.
+ * Client-safe catalog of data sources for the AlphaForge dashboard.
+ *
+ * After the data-service2.0 centralization refactor, all market data flows
+ * exclusively through data-service2.0. Provider-specific data source selection
+ * (Angel One, Upstox, Yahoo, NSE, Scrapling, Binance, Delta) has been removed.
+ *
+ * AlphaForge has exactly one market-data source: data-service2.0.
+ * The DataSourceId type is retained for backward compatibility.
  */
 
 export type Market = "india" | "crypto";
 
-/** Stable identifiers for every broker the dashboard can pull data from. */
+/**
+ * Stable identifier for the single canonical data source.
+ * Legacy provider IDs retained for type compatibility — they are no longer
+ * selectable and resolve to data-service2.0.
+ *
+ * @deprecated All data comes from data-service2.0. Use "data-service2" only.
+ */
 export type DataSourceId =
-  // India
+  | "data-service2"
+  // Legacy IDs retained for type compatibility
   | "yahoo"
   | "groww"
   | "zerodha"
@@ -19,274 +30,133 @@ export type DataSourceId =
   | "angel"
   | "upstox"
   | "openalgo"
-  // Crypto
   | "binance"
   | "delta";
 
-/** What kind of market data a broker can serve. UI uses this to badge each
- *  source and to surface what falls back when one is unchecked. */
 export type Capability = "quotes" | "history" | "optionChain" | "oi" | "feed";
 
 export interface DataSourceMeta {
   id: DataSourceId;
   market: Market;
   label: string;
-  /** One-liner shown under the label in the settings card. */
   blurb: string;
-  /** Capabilities this source can fulfil. Pure metadata — used only by the
-   *  UI today; the per-route resolver still has its own fallback chain. */
   capabilities: readonly Capability[];
-  /** Whether this source requires an API key/secret stored in the
-   *  "Exchange API keys" card. */
   requiresApiKey: boolean;
-  /** False if the adapter is not yet implemented in this codebase — the
-   *  picker still shows it but disables it and tags "Coming soon". */
-  implemented: boolean;
-  /** Marketing/home URL — used for an external link icon. */
+  available: boolean;
   homeUrl: string;
 }
 
+/** The single canonical data source. */
 export const DATA_SOURCES: readonly DataSourceMeta[] = [
-  // ── India ────────────────────────────────────────────────────────────────
   {
-    id: "yahoo",
+    id: "data-service2",
     market: "india",
-    label: "Yahoo Finance",
-    blurb: "Public quotes, OHLCV history. No credentials required.",
-    capabilities: ["quotes", "history"],
-    requiresApiKey: false,
-    implemented: true,
-    homeUrl: "https://finance.yahoo.com",
-  },
-  {
-    id: "groww",
-    market: "india",
-    label: "Groww",
-    blurb: "Trade API — quotes, history, option chain, OI when authenticated.",
-    capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
-    requiresApiKey: true,
-    implemented: true,
-    homeUrl: "https://groww.in",
-  },
-  {
-    id: "zerodha",
-    market: "india",
-    label: "Zerodha Kite",
-    blurb: "Kite Connect — quotes, history, option chain, OI.",
-    capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
-    requiresApiKey: true,
-    implemented: false,
-    homeUrl: "https://kite.trade",
-  },
-  {
-    id: "bse",
-    market: "india",
-    label: "BSE",
-    blurb: "Bombay Stock Exchange — SENSEX + cash/derivatives reference data.",
-    capabilities: ["quotes", "oi"],
-    requiresApiKey: false,
-    implemented: false,
-    homeUrl: "https://www.bseindia.com",
-  },
-  {
-    id: "angel",
-    market: "india",
-    label: "Angel One SmartAPI",
-    blurb:
-      "First-party broker REST — live quotes, intraday/daily candles, polled feed, and option chain (ScripMaster + Quote + Greeks IV). Requires SmartAPI credentials.",
-    capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
-    requiresApiKey: true,
-    implemented: true,
-    homeUrl: "https://smartapi.angelone.in",
-  },
-  {
-    id: "upstox",
-    market: "india",
-    label: "Upstox Analytics API",
-    blurb:
-      "Upstox v2 REST — historical candles, live quotes, WebSocket feed, and option chain with greeks. Requires UPSTOX_ACCESS_TOKEN.",
-    capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
-    requiresApiKey: true,
-    implemented: true,
-    homeUrl: "https://upstox.com/developer/api-documentation",
-  },
-  {
-    id: "openalgo",
-    market: "india",
-    label: "OpenAlgo",
-    blurb:
-      "OpenAlgo-compatible broker adapter — quotes, history, and live order execution via any OpenAlgo-compatible Indian broker. Requires OPENALGO_BASE_URL and OPENALGO_API_KEY.",
-    capabilities: ["quotes", "history", "feed"],
-    requiresApiKey: true,
-    implemented: true,
-    homeUrl: "https://openalgo.in",
-  },
-
-  // ── Crypto ───────────────────────────────────────────────────────────────
-  {
-    id: "binance",
-    market: "crypto",
-    label: "Binance",
-    blurb: "Spot + perp tickers, OI, funding, liquidations, long/short ratio.",
-    capabilities: ["quotes", "history", "oi", "feed"],
-    requiresApiKey: false,
-    implemented: true,
-    homeUrl: "https://www.binance.com",
-  },
-  {
-    id: "delta",
-    market: "crypto",
-    label: "Delta Exchange India",
-    blurb: "INR-settled BTC/ETH/SOL perpetuals, options, OI history.",
+    label: "data-service2.0",
+    blurb: "The single canonical market-data platform. All Indian and crypto market data is served from here.",
     capabilities: ["quotes", "history", "optionChain", "oi", "feed"],
     requiresApiKey: false,
-    implemented: true,
-    homeUrl: "https://www.delta.exchange",
+    available: true,
+    homeUrl: "https://github.com/manishhansal/data-service2.0",
   },
 ];
 
-/** Convenience map for O(1) lookup in resolvers and the UI. */
-export const DATA_SOURCES_BY_ID = DATA_SOURCES.reduce(
-  (acc, s) => {
-    acc[s.id] = s;
-    return acc;
-  },
-  {} as Record<DataSourceId, DataSourceMeta>,
-);
-
-export function dataSourcesFor(market: Market): readonly DataSourceMeta[] {
-  return DATA_SOURCES.filter((s) => s.market === market);
-}
-
-/**
- * Footer copy for the India sidebar card, derived from the active quote-source
- * chain (highest-priority first). Pure + client-safe so the sidebar and tests
- * share one source of truth for the wording.
- */
-export function indiaSourceFooter(labels: readonly string[]): {
-  title: string;
-  sub: string;
-} {
-  if (labels.length === 0) {
-    return {
-      title: "Live data via Yahoo Finance",
-      sub: "Public quotes — no broker keys required.",
-    };
-  }
-  const [primary, ...rest] = labels;
-  return {
-    title: `Live data via ${primary}`,
-    sub:
-      rest.length > 0
-        ? `Backfill stays within your selection: ${labels.join(" · ")}.`
-        : `Only ${primary} is selected — no fallback to other sources.`,
+/** Default selections — data-service2.0 is always selected. */
+export interface DataSelections {
+  india: {
+    selected: readonly DataSourceId[];
+    optionChain: DataSourceId;
+    history: DataSourceId;
+  };
+  crypto: {
+    selected: readonly DataSourceId[];
   };
 }
 
-/** Map data-source ids to their display labels (unknown ids pass through). */
-export function dataSourceLabels(ids: readonly DataSourceId[]): string[] {
-  return ids.map((id) => DATA_SOURCES_BY_ID[id]?.label ?? id);
-}
-
-/**
- * OI for the Indian market intentionally bypasses Yahoo (no live OI) and NSE
- * direct (acquisition removed 2026-09-03). The picker only offers brokers that
- * actually publish chain/OI data via a supported adapter.
- */
-export const INDIA_OI_SOURCES: readonly DataSourceId[] = [
-  "angel",
-  "upstox",
-  "groww",
-  "bse",
-];
-
-/* ───────────────── Per-user selection shape ───────────────── */
-
-export interface IndiaSelections {
-  /** Brokers the user toggled on for India quotes/history. */
-  selected: DataSourceId[];
-  /** Which OI-capable source to use for option chain & OI routes.
-   *  Defaults to "angel" (Angel One SmartAPI). */
-  optionChain: DataSourceId;
-}
-
-export interface CryptoSelections {
-  selected: DataSourceId[];
-  /** The single broker that owns the live WS ticker stream. Most surfaces
-   *  can multi-source quotes, but only one WS pipe at a time keeps the
-   *  socket budget sane. */
-  primary: DataSourceId;
-}
-
-export interface DataSourceSelections {
-  india: IndiaSelections;
-  crypto: CryptoSelections;
-}
-
-export const DEFAULT_SELECTIONS: DataSourceSelections = {
-  // "yahoo" as the default optionChain is intentional: the ProviderRegistry
-  // (DATA_SERVICE → Angel One → Upstox) handles option chains automatically
-  // regardless of this setting. When "yahoo" is the configured optionChain,
-  // getOptionChainBroker() returns the yahoo adapter, which throws — the route
-  // then falls through to the ProviderRegistry path. New users with no broker
-  // credentials will get a working option chain via the ProviderRegistry
-  // instead of a hard 502 from a missing-credentials angel error.
-  india: { selected: ["yahoo"], optionChain: "yahoo" },
-  crypto: { selected: ["binance", "delta"], primary: "delta" },
+export const DEFAULT_SELECTIONS: DataSelections = {
+  india: {
+    selected: ["data-service2"],
+    optionChain: "data-service2",
+    history: "data-service2",
+  },
+  crypto: {
+    selected: ["data-service2"],
+  },
 };
 
 /**
- * Validate & sanitize a stored JSON blob from the DB (or a form submission)
- * into a guaranteed-well-formed `DataSourceSelections`. Falls back to the
- * default whenever a field is missing/invalid so the app never crashes on
- * an unfamiliar shape (e.g. produced by a future or older version).
+ * Returns the canonical active selections — always data-service2.0.
+ * Provider selection is no longer configurable.
  */
-export function normalizeSelections(raw: unknown): DataSourceSelections {
-  const out: DataSourceSelections = {
-    india: { ...DEFAULT_SELECTIONS.india, selected: [...DEFAULT_SELECTIONS.india.selected] },
-    crypto: { ...DEFAULT_SELECTIONS.crypto, selected: [...DEFAULT_SELECTIONS.crypto.selected] },
+export function getDefaultSelections(): DataSelections {
+  return DEFAULT_SELECTIONS;
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compat exports for consumers that haven't been fully migrated
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns display labels for a list of source IDs.
+ * After centralization, always returns "data-service2.0".
+ * @deprecated All data comes from data-service2.0.
+ */
+export function dataSourceLabels(_ids: readonly DataSourceId[]): string[] {
+  return ["data-service2.0"];
+}
+
+/**
+ * Returns a footer string for the India data source indicator.
+ * @deprecated All data comes from data-service2.0.
+ */
+export function indiaSourceFooter(_labels: string[]): string {
+  return "data-service2.0";
+}
+
+/**
+ * @deprecated Use getExecutionBroker() for order execution.
+ * Market data comes from data-service2.0.
+ */
+export type DataSourceSelections = DataSelections;
+
+// ---------------------------------------------------------------------------
+// Missing exports required by data-sources-actions.ts and data-sources.ts
+// ---------------------------------------------------------------------------
+
+export const DATA_SOURCES_BY_ID = Object.fromEntries(
+  DATA_SOURCES.map((d) => [d.id, d]),
+) as Record<DataSourceId, DataSourceMeta>;
+
+export const INDIA_OI_SOURCES: readonly DataSourceId[] = ["data-service2"];
+
+export function dataSourcesFor(_market: Market): readonly DataSourceMeta[] {
+  return DATA_SOURCES;
+}
+
+export function normalizeSelections(
+  input: Partial<{
+    india: Partial<DataSelections["india"]> & { selected?: readonly DataSourceId[] | DataSourceId[] };
+    crypto: Partial<DataSelections["crypto"]> & { selected?: readonly DataSourceId[] | DataSourceId[] };
+  }> | null | undefined,
+): DataSelections {
+  if (!input) return DEFAULT_SELECTIONS;
+  return {
+    india: {
+      selected:
+        Array.isArray(input.india?.selected) && input.india.selected.length > 0
+          ? (input.india.selected as DataSourceId[])
+          : DEFAULT_SELECTIONS.india.selected,
+      optionChain: input.india?.optionChain ?? DEFAULT_SELECTIONS.india.optionChain,
+      history: input.india?.history ?? DEFAULT_SELECTIONS.india.history,
+    },
+    crypto: {
+      selected:
+        Array.isArray(input.crypto?.selected) && input.crypto.selected.length > 0
+          ? (input.crypto.selected as DataSourceId[])
+          : DEFAULT_SELECTIONS.crypto.selected,
+    },
   };
-  if (!raw || typeof raw !== "object") return out;
-  const r = raw as { india?: unknown; crypto?: unknown };
-
-  if (r.india && typeof r.india === "object") {
-    const i = r.india as { selected?: unknown; optionChain?: unknown };
-    const selected = filterIds(i.selected, "india");
-    if (selected.length > 0) out.india.selected = selected;
-    if (typeof i.optionChain === "string" && isOiSource(i.optionChain)) {
-      out.india.optionChain = i.optionChain as DataSourceId;
-    }
-  }
-  if (r.crypto && typeof r.crypto === "object") {
-    const c = r.crypto as { selected?: unknown; primary?: unknown };
-    const selected = filterIds(c.selected, "crypto");
-    if (selected.length > 0) out.crypto.selected = selected;
-    if (typeof c.primary === "string" && isCryptoSource(c.primary)) {
-      out.crypto.primary = c.primary as DataSourceId;
-    } else if (!out.crypto.selected.includes(out.crypto.primary)) {
-      out.crypto.primary = out.crypto.selected[0];
-    }
-  }
-  return out;
 }
 
-function filterIds(raw: unknown, market: Market): DataSourceId[] {
-  if (!Array.isArray(raw)) return [];
-  const allowed = new Set(dataSourcesFor(market).map((s) => s.id));
-  const out: DataSourceId[] = [];
-  for (const v of raw) {
-    if (typeof v === "string" && allowed.has(v as DataSourceId)) {
-      const id = v as DataSourceId;
-      if (!out.includes(id)) out.push(id);
-    }
-  }
-  return out;
-}
-
-function isOiSource(id: string): boolean {
-  return (INDIA_OI_SOURCES as readonly string[]).includes(id);
-}
-
-function isCryptoSource(id: string): boolean {
-  return dataSourcesFor("crypto").some((s) => s.id === id);
-}
+// Aliases for legacy consumers that import CryptoSelections / IndiaSelections
+export type IndiaSelections = DataSelections["india"];
+export type CryptoSelections = DataSelections["crypto"];

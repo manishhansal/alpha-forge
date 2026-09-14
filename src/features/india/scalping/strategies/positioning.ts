@@ -1,5 +1,5 @@
 import "server-only";
-
+import { getOptionChain, getQuotes } from "@/lib/data-service/client";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
 
@@ -90,10 +90,9 @@ async function loadPositioningInputs(
     const quoteBySymbol = await loadIndexQuotes();
 
     // Route through ProviderRegistry instead of direct NSE calls
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
+    
     const settled = await Promise.allSettled(
-      FNO_INDICES.map((i) => registry.getOptionChain(i.underlying)),
+      FNO_INDICES.map((i) => getOptionChain(i.underlying)),
     );
 
     const inputs: PositioningInput[] = [];
@@ -120,7 +119,7 @@ async function loadPositioningInputs(
         changePct: quote?.changePct ?? null,
         prevClose: quote?.prevClose ?? null,
         // Cast analytics from canonical OptionChainAnalytics to legacy OptionChainAnalytics
-        analytics: chain.analytics as unknown as PositioningInput["analytics"],
+        analytics: (chain as unknown as { analytics?: PositioningInput["analytics"] }).analytics as PositioningInput["analytics"],
         triggeredAt: Date.parse(chain.fetchedAt) || Date.now(),
       });
     });
@@ -131,9 +130,8 @@ async function loadPositioningInputs(
 async function loadIndexQuotes() {
   const map = new Map<string, { symbol: string; ltp: number | null; changePct: number | null; prevClose: number | null }>();
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const mdQuotes = await registry.getQuotes(FNO_INDICES.map((i) => i.symbol));
+    
+    const mdQuotes = await getQuotes(FNO_INDICES.map((i) => i.symbol));
     for (const q of mdQuotes) {
       if (q) map.set(q.symbol, { symbol: q.symbol, ltp: q.ltp ?? null, changePct: q.changePct ?? null, prevClose: q.prevClose ?? null });
     }

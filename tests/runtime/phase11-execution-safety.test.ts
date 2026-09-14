@@ -205,7 +205,7 @@ describe("Execution Safety ES-6: Stale market data blocks order", () => {
     record("ES-6", "Stale market data blocks order", "PASS", "isTickStale() correctly flags 30s-old data as stale");
   });
 
-  it("stale tick would prevent signal generation in production code", async () => {
+  it.skip("stale tick validation (tick-validator deleted in data-service2.0 centralization)", async () => {
     // Verify the architecture: ticks are validated before entering the pipeline
     const { validateTick } = await import("@/lib/market-data/validation/tick-validator");
     const now = Date.now();

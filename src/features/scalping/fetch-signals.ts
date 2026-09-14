@@ -10,7 +10,7 @@ import type {
   ScalpTimeframe,
 } from "@/features/scalping/types";
 import { getServerBroker } from "@/services/brokers/registry";
-import type { KlineInterval } from "@/services/binance/klines";
+import type { KlineInterval } from "@/features/scalping/backtest-intervals";
 
 export interface FetchScalpOptions {
   /** Defaults to 5m — the timeframe most actively traded by scalp setups. */

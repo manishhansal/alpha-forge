@@ -4,7 +4,6 @@ import { openPaperTrade, resolveOpenTrades } from "@/features/scalping/paper-tra
 import type { ScalpStrategyId, ScalpTimeframe } from "@/features/scalping/types";
 import { TRACKED_SYMBOLS } from "@/lib/constants";
 import { getServerBroker } from "@/services/brokers/registry";
-import type { KlineInterval } from "@/services/binance/klines";
 import { checkAndSetTradeGuard, WorkerCheckpoint } from "@/lib/chaos/worker-resilience";
 import { withDbRetry, paperTradeDLQ } from "@/lib/chaos/db-resilience";
 
@@ -40,7 +39,7 @@ const INDICATOR_CONFIG: IndicatorConfig = {
   bollingerK: 2,
 };
 
-const TIMEFRAME_TO_INTERVAL: Record<ScalpTimeframe, KlineInterval> = {
+const TIMEFRAME_TO_INTERVAL: Record<ScalpTimeframe, string> = {
   "1m": "1m",
   "5m": "5m",
   "15m": "15m",

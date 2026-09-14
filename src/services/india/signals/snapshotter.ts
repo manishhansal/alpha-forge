@@ -1,3 +1,4 @@
+import { getQuotes } from "@/lib/data-service/client";
 // Server-side "signal-since" log. The dashboard's modal asks "how long has
 // this stock been STRONG BUY?" — to answer accurately regardless of when the
 // user opens the page, we snapshot every F&O stock's signal label every 60s
@@ -106,15 +107,14 @@ async function snapshotChunk(nseSymbols: string[]): Promise<number> {
   // DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-03: no direct yahoo import.
   let mdQuotes: Array<import("@/lib/market-data/types").MDQuote | null>;
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    mdQuotes = await registry.getQuotes(nseSymbols);
+    
+    mdQuotes = await getQuotes(nseSymbols);
   } catch (e) {
     if (e instanceof MarketDataError) {
       // Req 4.3: catch MarketDataError, log at WARN, continue processing remaining symbols.
       // The entire chunk failed — write PROVIDER_UNAVAILABLE for every symbol in this chunk.
       console.warn(
-        `[india-signal-snapshotter] registry.getQuotes failed for chunk (${nseSymbols.length} symbols):`,
+        `[india-signal-snapshotter] getQuotes failed for chunk (${nseSymbols.length} symbols):`,
         e.code ?? e.message,
       );
     } else {
@@ -142,7 +142,7 @@ async function snapshotChunk(nseSymbols: string[]): Promise<number> {
     }
 
     // Req 4.4: include provider from the MDQuote (which mirrors DataProvenance.provider).
-    const provider: ProviderId | "UNKNOWN" = q.provider ?? "UNKNOWN";
+    const provider: ProviderId | "UNKNOWN" = (q.provider as ProviderId | "UNKNOWN") ?? "UNKNOWN";
 
     const score = computeScore({
       price: q.ltp,
@@ -160,7 +160,7 @@ async function snapshotChunk(nseSymbols: string[]): Promise<number> {
 }
 
 async function snapshotAll(): Promise<void> {
-  // Use NSE symbols directly — registry.getQuotes() handles symbol → provider format
+  // Use NSE symbols directly — getQuotes() handles symbol → provider format
   // conversion internally. No direct yahoo import (DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-03).
   const nseSymbols = [...FNO_STOCKS];
   let stamped = 0;

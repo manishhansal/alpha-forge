@@ -14,8 +14,13 @@
  * Real network test: NOT_TESTED (requires live data-service + NSE session)
  */
 
+// Phase 5: prefer DATA_SERVICE_2_URL (data-service2.0), fall back to DATA_SERVICE_URL for
+// compatibility with environments that have not yet migrated the env var name.
 const DATA_SERVICE_URL =
-  process.env.DATA_SERVICE_URL ?? process.env.NEXT_PUBLIC_DATA_SERVICE_URL ?? "http://localhost:8200";
+  process.env.DATA_SERVICE_2_URL ??
+  process.env.DATA_SERVICE_URL ??
+  process.env.NEXT_PUBLIC_DATA_SERVICE_URL ??
+  "http://localhost:8200";
 
 // ---------------------------------------------------------------------------
 // Types — mirror of data-service GateRequest / gate response

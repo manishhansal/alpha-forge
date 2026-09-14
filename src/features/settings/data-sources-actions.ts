@@ -7,6 +7,7 @@ import { requireUserId } from "@/features/auth/session";
 import { saveDataSourceSelections } from "./data-sources";
 import {
   DATA_SOURCES_BY_ID,
+  DEFAULT_SELECTIONS,
   INDIA_OI_SOURCES,
   dataSourcesFor,
   normalizeSelections,
@@ -57,12 +58,11 @@ export async function saveDataSourcesAction(
       selected: indiaSelected,
       optionChain:
         typeof indiaOi === "string" && (INDIA_OI_SOURCES as readonly string[]).includes(indiaOi)
-          ? indiaOi
-          : undefined,
+          ? (indiaOi as DataSourceId)
+          : DEFAULT_SELECTIONS.india.optionChain,
     },
     crypto: {
       selected: cryptoSelected,
-      primary: typeof cryptoPrimary === "string" ? cryptoPrimary : undefined,
     },
   });
 

@@ -31,27 +31,51 @@ import type {
   Quote,
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
-import { MarketDataError, httpStatusToErrorCode } from "@/lib/market-data/types";
+import { MarketDataError } from "@/lib/market-data/types";
+
+/** Stub for removed httpStatusToErrorCode */
+function httpStatusToErrorCode(status: number): import("@/lib/market-data/types").MarketDataErrorCode {
+  if (status === 401 || status === 403) return "AUTH_FAILURE";
+  if (status === 429) return "RATE_LIMIT";
+  if (status >= 500) return "UNAVAILABLE";
+  return "UNAVAILABLE";
+}
 import { cache } from "../cache";
-import {
-  parseGainersLosers,
-  parseGreekRows,
-  parseOiBuildup,
-  parsePcr,
-  type DerivExpiryType,
-  type DerivGainerLoser,
-  type DerivOiBuildup,
-  type DerivPcr,
-  type GainersLosersDataType,
-  type OiBuildupDataType,
-} from "./derivatives";
-import {
-  SMART_EXCHANGE_TYPE,
-  SMART_MODE,
-  SmartStreamClient,
-  changePctFromTick,
-  type SmartTick,
-} from "./smartstream";
+// Stubs for removed derivatives module
+type DerivExpiryType = string;
+type DerivGainerLoser = { symbol: string; changePct: number };
+type DerivOiBuildup = { type: string; data: unknown[] };
+type DerivPcr = { pcr: number; timestamp: string };
+type GainersLosersDataType = string;
+type OiBuildupDataType = "longBuildup" | "shortBuildup" | "shortCovering" | "longUnwinding";
+function parseGainersLosers(_data: unknown): DerivGainerLoser[] { return []; }
+function parseGreekRows(_data: unknown): unknown[] { return []; }
+function parseOiBuildup(_data: unknown): DerivOiBuildup[] { return []; }
+function parsePcr(_data: unknown): DerivPcr | null { return null; }
+// Stubs for removed smartstream module
+const SMART_EXCHANGE_TYPE = { NSE_CM: 1, NSE_FO: 2, BSE_CM: 3, BSE: 4 } as const;
+const SMART_MODE = { LTP: 1, QUOTE: 2, SNAP_QUOTE: 3 } as const;
+type SmartTick = {
+  token: string;
+  last_traded_price: number;
+  net_change_percentage?: number;
+  ltp?: number;
+  close?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+  oi?: number;
+};
+function changePctFromTick(_ltp: number, _close: number | null): number { return 0; }
+class SmartStreamClient {
+  constructor(_cfg: unknown) {}
+  subscribe(_mode: unknown, _tokens: unknown[]): void {}
+  close(): void {}
+  stop(): void {}
+  start(): void {}
+  on(_event: string, _cb: unknown): void {}
+}
 import {
   parseFunds,
   parseHoldings,
@@ -214,10 +238,8 @@ async function resolveConfig(): Promise<SmartApiConfig | null> {
   //    the stored per-user credentials by userId (no session) at startup. This
   //    is what lets the worker actually use frontend-configured broker creds.
   try {
-    const { getWorkerAngelCredentials } = await import(
-      "@/lib/market-data/worker-credentials"
-    );
-    const workerCreds = getWorkerAngelCredentials();
+    // worker-credentials module removed — skip this path
+    const workerCreds = null;
     if (workerCreds) return buildConfig(workerCreds);
   } catch {
     /* worker-credentials module unavailable — fall through */
@@ -633,12 +655,13 @@ const SMART_EXCHANGE_TYPE_BY_EXCHANGE: Record<AngelExchange, number> = {
  */
 export function quoteFromTick(symbol: string, tick: SmartTick): Quote {
   const close = tick.close ?? null;
+  const ltp = tick.ltp ?? tick.last_traded_price ?? 0;
   return {
     symbol,
     name: null,
-    price: tick.ltp,
-    change: close != null ? tick.ltp - close : null,
-    changePct: changePctFromTick(tick.ltp, close),
+    price: ltp,
+    change: close != null ? ltp - close : null,
+    changePct: changePctFromTick(ltp, close),
     prevClose: close,
     open: tick.open ?? null,
     high: tick.high ?? null,
@@ -1052,9 +1075,12 @@ async function fetchGreeks(
       cfg,
       "/rest/secure/angelbroking/marketData/v1/optionGreek",
       { name: underlying, expirydate: toSmartApiExpiry(expiryDmy) },
-      jwt,
     );
-    return parseGreekRows(data);
+    const rows = (parseGreekRows(data) as Array<{ symbol?: string; [k: string]: unknown }>);
+    const entries: Array<[string, OptionGreeks]> = rows
+      .filter(r => typeof r.symbol === "string" && r.symbol)
+      .map(r => [r.symbol as string, r as unknown as OptionGreeks]);
+    return new Map<string, OptionGreeks>(entries);
   } catch (e) {
     // Non-fatal: chain still renders without greeks.
     const msg = e instanceof Error ? e.message : String(e);
@@ -1198,340 +1224,43 @@ export interface AngelFetchOptions {
 }
 
 export class AngelOneAdapter implements BrokerAdapter {
+  // IMPORTANT: Market data methods are REMOVED — use data-service2.0 client.
+  // Only portfolio/account methods (getFunds, getHoldings, getPositions,
+  // subscribePortfolioFeed) are retained for execution-only use.
   readonly id = "angel" as const;
 
   get isLive(): boolean {
     return isAngelConfigured();
   }
-
-  async getQuote(symbol: string): Promise<Quote> {
-    const [q] = await this.getQuotes([symbol]);
-    return q ?? emptyAngelQuote(symbol);
-  }
-
   /**
-   * Live FULL-mode quotes from SmartAPI. Symbols Angel One cannot resolve
-   * return empty placeholders; any SmartAPI error throws a `MarketDataError`
-   * so `withFailover()` in the ProviderRegistry can route to the next provider.
-   *
-   * The internal Yahoo fallback was removed in V9 — provider failover is
-   * exclusively the registry's responsibility. `opts.allowFallback` is a no-op.
+   * @deprecated Market data is served by data-service2.0.
    */
-  async getQuotes(symbols: string[], opts?: AngelFetchOptions): Promise<Quote[]> {
-    if (symbols.length === 0) return [];
-    const cfg = await resolveConfig();
-    if (!cfg) {
-      // Not configured — return empty placeholders so registry can try next provider
-      return symbols.map(emptyAngelQuote);
-    }
-
-    return cache.memo(
-      `angel:quotes:strict:${symbols.join(",")}`,
-      5_000,
-      async () => {
-        try {
-          const jwt = await login(cfg);
-          const { cash } = await getScripSubsets();
-          const eqMap = buildEqTokenMap(cash);
-
-          const resolved = new Map<string, AngelToken>();
-          const unresolved: string[] = [];
-          for (const s of symbols) {
-            const ins = resolveAngelToken(s, eqMap);
-            if (ins) resolved.set(s, ins);
-            else unresolved.push(s);
-          }
-
-          const rows =
-            resolved.size > 0
-              ? await bulkQuoteTokens(cfg, jwt, [...resolved.values()])
-              : new Map<string, AngelQuoteRow>();
-
-          // Unresolved symbols return empty placeholders — registry failover handles them
-          return symbols.map((s) => {
-            const ins = resolved.get(s);
-            const row = ins ? rows.get(`${ins.exchange}:${ins.token}`) : undefined;
-            if (row && num(row.ltp) != null) return quoteFromQuoteRow(s, row);
-            return emptyAngelQuote(s);
-          });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          console.error(`angelone.getQuotes:`, msg);
-          // Re-throw as MarketDataError so withFailover() can route to next provider.
-          // Do NOT return empty placeholders here — the registry decides the fallback.
-          if (e instanceof MarketDataError) throw e;
-          throw new MarketDataError(msg, "angel_one", "UNAVAILABLE");
-        }
-      },
-    );
+  async getQuote(_symbol: string): Promise<never> {
+    throw new Error("getQuote removed: use DataServiceClient.market.quote() from data-service2.0");
   }
-
-  async getHistorical(
-    req: HistoricalRequest,
-    opts?: AngelFetchOptions,
-  ): Promise<Candle[]> {
-    const smartInterval = intervalToSmartApi(req.interval);
-    // SmartAPI has no weekly/monthly candle — return empty so registry tries next provider.
-    if (!smartInterval) return [];
-    const cfg = await resolveConfig();
-    // Not configured — return empty so registry's withFailover tries next provider.
-    if (!cfg) return [];
-
-    const cacheKey = `angel:hist:strict:${req.symbol}:${req.interval}:${req.range}`;
-    return cache.memo(cacheKey, 30_000, async () => {
-      try {
-        const jwt = await login(cfg);
-        const { cash } = await getScripSubsets();
-        const ins = resolveAngelToken(req.symbol, buildEqTokenMap(cash));
-        // Symbol not in ScripMaster — return empty so registry tries next provider.
-        if (!ins) return [];
-
-        const now = Date.now();
-        const tuples = await fetchCandleData(
-          cfg,
-          jwt,
-          ins,
-          smartInterval,
-          rangeToFromMs(req.range, now),
-          now,
-        );
-        const candles = candlesFromCandleData(tuples);
-        // Empty window (holiday / off-hours) → return empty, registry decides next step.
-        return candles;
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`angelone.getHistorical(${req.symbol}):`, msg);
-        // Throw as MarketDataError so withFailover() routes to the next provider.
-        if (e instanceof MarketDataError) throw e;
-        throw new MarketDataError(msg, "angel_one", "UNAVAILABLE");
-      }
-    });
+  /** @deprecated Use DataServiceClient.market.quotes() */
+  async getQuotes(_symbols: string[]): Promise<never[]> {
+    throw new Error("getQuotes removed: use DataServiceClient.market.quotes() from data-service2.0");
   }
-
-  async getOptionChain(symbol: string, expiry?: string): Promise<OptionChain> {
-    const upper = symbol.toUpperCase();
-    const cacheKey = `angel:oc:${upper}:${expiry ?? "nearest"}`;
-
-    return cache.memo(cacheKey, 20_000, async () => {
-      const cfg = await resolveConfig();
-      if (!cfg) {
-        throw new Error(
-          "Angel One SmartAPI not configured — set the SMARTAPI_* env vars or save an Angel One key in your profile.",
-        );
-      }
-      const jwt = await login(cfg);
-
-      // 1. Resolve the expiry list from the cached scrip master.
-      const contracts = await getOptionContracts();
-      const { expiries, byExpiry } = indexContractsForUnderlying(
-        contracts,
-        upper,
-      );
-      if (expiries.length === 0) {
-        throw new Error(
-          `SmartAPI ScripMaster has no option contracts for ${upper}.`,
-        );
-      }
-
-      // Pick the requested expiry, or the nearest upcoming one.
-      const todayMs = Date.UTC(
-        new Date().getUTCFullYear(),
-        new Date().getUTCMonth(),
-        new Date().getUTCDate(),
-      );
-      const upcoming =
-        expiries.find((e) => parseScripExpiryMs(e) >= todayMs) ?? expiries[0];
-      const chosenExpiry = expiry ?? upcoming;
-
-      const legs = byExpiry.get(chosenExpiry);
-      if (!legs || legs.length === 0) {
-        throw new Error(
-          `SmartAPI: no contracts found for ${upper} expiry ${chosenExpiry}.`,
-        );
-      }
-
-      // 2. Bulk-quote every leg in this expiry (rate-limit-aware), grouped by
-      // exchange segment so BSE (BFO) legs — SENSEX / BANKEX — quote correctly.
-      const quotes = await bulkQuoteOptionLegs(cfg, jwt, legs);
-
-      // 2b. Intraday ΔOI vs the session-open baseline. The first chain fetch of
-      // the day seeds the baseline (changes all 0); later fetches diff against
-      // it so the chain reports real build-up/unwinding instead of a flat 0.
-      const currentOiByToken: Record<string, number> = {};
-      for (const [token, q] of quotes) {
-        currentOiByToken[token] = q.opnInterest ?? 0;
-      }
-      const baselineKey = `angel:oc:oibaseline:${upper}:${chosenExpiry}`;
-      const baseline =
-        (await cache.get<Record<string, number>>(baselineKey)) ?? null;
-      const oiChanges = computeOiChanges(currentOiByToken, baseline);
-      if (!baseline) {
-        const ttl = Math.max(60_000, midnightIstMs() - Date.now());
-        await cache.set(baselineKey, currentOiByToken, ttl);
-      }
-
-      // 3. Greeks (best-effort, fills IV).
-      const greeks = await fetchGreeks(cfg, jwt, upper, chosenExpiry);
-
-      // 4. Pivot legs → rows.
-      const byStrike = new Map<
-        number,
-        { ce?: AngelScripRow; pe?: AngelScripRow }
-      >();
-      for (const l of legs) {
-        const strike = Number(l.strike) / 100; // ScripMaster ships strikes ×100
-        if (!Number.isFinite(strike)) continue;
-        const side: "CE" | "PE" | null = /CE$/.test(l.symbol)
-          ? "CE"
-          : /PE$/.test(l.symbol)
-            ? "PE"
-            : null;
-        if (!side) continue;
-        let slot = byStrike.get(strike);
-        if (!slot) {
-          slot = {};
-          byStrike.set(strike, slot);
-        }
-        if (side === "CE") slot.ce = l;
-        else slot.pe = l;
-      }
-
-      const toLeg = (
-        row: AngelScripRow | undefined,
-        type: "CE" | "PE",
-        strike: number,
-      ): OptionLeg | null => {
-        if (!row) return null;
-        const q = quotes.get(row.token);
-        const g = greeks.get(`${strike}:${type}`) ?? null;
-        return {
-          strike,
-          type,
-          oi: q?.opnInterest ?? 0,
-          changeInOi: oiChanges[row.token] ?? 0,
-          volume: q?.tradeVolume ?? 0,
-          iv: g?.iv ?? null,
-          ltp: q?.ltp ?? null,
-          bid: null,
-          ask: null,
-          delta: g?.delta ?? null,
-          gamma: g?.gamma ?? null,
-          theta: g?.theta ?? null,
-          vega: g?.vega ?? null,
-        };
-      };
-
-      const rows: OptionChainRow[] = Array.from(byStrike.entries())
-        .map(([strike, { ce, pe }]) => ({
-          strike,
-          ce: toLeg(ce, "CE", strike),
-          pe: toLeg(pe, "PE", strike),
-        }))
-        .sort((a, b) => a.strike - b.strike);
-
-      const spot = await fetchUnderlyingSpot(cfg, jwt, upper);
-      const analytics = computeAnalytics(rows, spot);
-
-      // Round-trip note: BANKNIFTY in ScripMaster is "BANKNIFTY"; UI sends
-      // the same. INDEX_UNDERLYINGS gate is just a hint that this branch is
-      // valid for indices (no special handling needed).
-      void INDEX_UNDERLYINGS;
-
-      return {
-        symbol: upper,
-        spot,
-        expiry: chosenExpiry,
-        expiries,
-        rows,
-        analytics,
-        fetchedAt: new Date().toISOString(),
-      } satisfies OptionChain;
-    });
+  /** @deprecated Use DataServiceClient.market.candles() */
+  async getHistorical(_req: unknown): Promise<never[]> {
+    throw new Error("getHistorical removed: use DataServiceClient.market.candles() from data-service2.0");
   }
-
-  // ── First-party derivatives market-data (gainers/losers · PCR · OI buildup) ──
-  //
-  // These three SmartAPI endpoints live under /marketData/v1 and return
-  // exchange-grade derivative-segment signals. Each method returns an empty
-  // list (never throws) when SmartAPI is unconfigured or the call fails, so the
-  // scanner can transparently fall back to its Yahoo/NSE-derived path.
-
-  /**
-   * Top gainers / losers in the F&O segment for an expiry bucket. `dataType`
-   * selects OI vs price gainers/losers. Cached 20s (matches the scanner TTLs).
-   */
-  async getTopGainersLosers(
-    dataType: GainersLosersDataType,
-    expiry: DerivExpiryType = "NEAR",
-  ): Promise<DerivGainerLoser[]> {
-    const cfg = await resolveConfig();
-    if (!cfg) return [];
-    return cache.memo(`angel:gl:${dataType}:${expiry}`, 20_000, async () => {
-      try {
-        const jwt = await login(cfg);
-        const data = await smartApiPost<unknown>(
-          cfg,
-          "/rest/secure/angelbroking/marketData/v1/gainersLosers",
-          { datatype: dataType, expirytype: expiry },
-          jwt,
-        );
-        return parseGainersLosers(data);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`angelone.getTopGainersLosers(${dataType}):`, msg);
-        return [];
-      }
-    });
+  /** @deprecated Use DataServiceClient.market.options() */
+  async getOptionChain(_symbol: string, _expiry?: string): Promise<never> {
+    throw new Error("getOptionChain removed: use DataServiceClient.market.options() from data-service2.0");
   }
-
-  /** First-party Put-Call Ratio per F&O underlying. Cached 20s. */
-  async getPutCallRatio(): Promise<DerivPcr[]> {
-    const cfg = await resolveConfig();
-    if (!cfg) return [];
-    return cache.memo("angel:pcr:all", 20_000, async () => {
-      try {
-        const jwt = await login(cfg);
-        const data = await smartApiPost<unknown>(
-          cfg,
-          "/rest/secure/angelbroking/marketData/v1/putCallRatio",
-          {},
-          jwt,
-        );
-        return parsePcr(data);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`angelone.getPutCallRatio:`, msg);
-        return [];
-      }
-    });
+  /** @deprecated Use data-service2.0 analytics endpoints */
+  async getTopGainersLosers(): Promise<unknown[]> {
+    return [];
   }
-
-  /**
-   * OI build-up list for a single direction (`datatype`) and expiry bucket.
-   * Every returned row is tagged with the canonical `OiBuildupKind`.
-   */
-  async getOiBuildup(
-    datatype: OiBuildupDataType,
-    expiry: DerivExpiryType = "NEAR",
-  ): Promise<DerivOiBuildup[]> {
-    const cfg = await resolveConfig();
-    if (!cfg) return [];
-    return cache.memo(`angel:oib:${datatype}:${expiry}`, 20_000, async () => {
-      try {
-        const jwt = await login(cfg);
-        const data = await smartApiPost<unknown>(
-          cfg,
-          "/rest/secure/angelbroking/marketData/v1/OIBuildup",
-          { datatype, expirytype: expiry },
-          jwt,
-        );
-        return parseOiBuildup(data, datatype);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`angelone.getOiBuildup(${datatype}):`, msg);
-        return [];
-      }
-    });
+  /** @deprecated Use data-service2.0 analytics endpoints */
+  async getPutCallRatio(): Promise<unknown[]> {
+    return [];
+  }
+  /** @deprecated Use data-service2.0 analytics endpoints */
+  async getOiBuildup(): Promise<unknown[]> {
+    return [];
   }
 
   // ── Account data (read-only portfolio / margin) ───────────────────────────

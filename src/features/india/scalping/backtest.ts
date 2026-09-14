@@ -1,3 +1,4 @@
+import { getQuote, getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
 import {
@@ -23,7 +24,7 @@ import type { Candle } from "@/types/india";
  * scored off the live paper-trade record instead (see `score-board.ts`).
  *
  * Candles are daily bars over ~5 years for a basket of liquid F&O large-caps,
- * fetched via the canonical `registry.getHistoricalCandles()` call (data-service
+ * fetched via the canonical `getHistorical()` call (data-service
  * → Angel One → Upstox → Yahoo fallback chain). Each module is replayed
  * bar-by-bar across the whole basket; the pooled trades are summarised and fed
  * through the shared `scoreIndiaStrategy` engine so a backtested score sits on
@@ -81,12 +82,11 @@ export function getIndiaBacktestScores(opts?: {
 }
 
 async function computeBacktestScores(): Promise<BacktestScoreMap> {
-  const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-  await bootstrapRegistry();
+  
 
   const loaded = await Promise.allSettled(
     INDIA_BACKTEST_UNIVERSE.map(async (symbol) => {
-      const ohlcv = await registry.getHistoricalCandles({
+      const ohlcv = await getHistorical({
         symbol,
         exchange: "NSE",
         interval: "1d",

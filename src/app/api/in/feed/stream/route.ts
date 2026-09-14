@@ -1,11 +1,4 @@
 import { buildFeedStream } from "@/services/india/websocket/gateway";
-import { pickBrokerChain } from "@/services/india/broker/factory";
-import { resolveQuotes } from "@/services/india/resolve";
-import { getActiveSelections } from "@/features/settings/active-sources";
-// angel.subscribeFeedWs is a broker WebSocket subscription — not market-data acquisition.
-// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
-// eslint-disable-next-line no-restricted-imports
-import { angel } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,36 +6,17 @@ export const revalidate = 0;
 /**
  * GET /api/in/feed/stream?symbols=RELIANCE,TCS&interval=5000
  *
- * Server-Sent Events stream emitting `FeedDiff` payloads. Behaves like a
- * broker WebSocket: only changed symbols are sent each cycle. The quote source
- * is the user's active India broker (e.g. Angel One SmartAPI when selected,
- * otherwise Yahoo) — the client (`hooks/india/useFeedStream`) doesn't change.
+ * Server-Sent Events stream emitting FeedDiff payloads.
+ * All market data comes from data-service2.0 via the gateway.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const raw = searchParams.get("symbols") ?? "";
-  const symbols = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const intervalMs = Number(searchParams.get("interval") ?? 5000);
+  const symbols = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const intervalMs = Math.max(1000, Number(searchParams.get("interval") ?? 5000));
 
-  const selections = await getActiveSelections();
-  const chain = pickBrokerChain(selections.india.selected);
+  const stream = buildFeedStream({ symbols, intervalMs });
 
-  // When Angel One is the active broker, drive the feed off the SmartStream
-  // WebSocket 2.0 binary tick stream. `subscribeFeedWs` self-falls-back to the
-  // FULL-quote poll (→ Yahoo) on any setup failure, so this is always safe.
-  const useAngelWs = chain[0]?.id === "angel";
-
-  const stream = buildFeedStream({
-    symbols,
-    intervalMs,
-    fetchQuotes: (s) => resolveQuotes(chain, s).then((r) => r.quotes),
-    subscribe: useAngelWs
-      ? (onQuote) => angel.subscribeFeedWs(symbols, onQuote, intervalMs)
-      : undefined,
-  });
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",

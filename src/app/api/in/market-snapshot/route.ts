@@ -1,113 +1,82 @@
 import { NextResponse } from "next/server";
-import { pickBrokerChain, getBrokerById } from "@/services/india/broker/factory";
-import { resolveQuotes } from "@/services/india/resolve";
-import { resolveQuotesViaRegistry } from "@/services/india/registry-resolve";
-import { getActiveSelections } from "@/features/settings/active-sources";
-import type { DataSourceId } from "@/features/settings/data-sources-shared";
-import {
-  FNO_INDICES,
-  SUPPLEMENTARY_INDICES,
-} from "@/lib/india/fno-symbols";
-import type { IndexQuote, Snapshot } from "@/types/india";
+import { getQuotes, DataServiceUnavailableError } from "@/lib/data-service/client";
+import { FNO_INDICES, SUPPLEMENTARY_INDICES } from "@/lib/india/fno-symbols";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// NSE Sectoral indices on Yahoo Finance (only the ones with a heatmap tile).
 const SECTORS: { name: string; symbol: string }[] = [
-  { name: "Bank", symbol: "^NSEBANK" },
-  { name: "IT", symbol: "^CNXIT" },
-  { name: "Auto", symbol: "^CNXAUTO" },
-  { name: "Pharma", symbol: "^CNXPHARMA" },
-  { name: "FMCG", symbol: "^CNXFMCG" },
-  { name: "Metal", symbol: "^CNXMETAL" },
-  { name: "Energy", symbol: "^CNXENERGY" },
-  { name: "Realty", symbol: "^CNXREALTY" },
-  { name: "Fin Services", symbol: "^CNXFIN" },
-  { name: "Media", symbol: "^CNXMEDIA" },
-  { name: "PSU Bank", symbol: "^CNXPSUBANK" },
-  { name: "Infra", symbol: "^CNXINFRA" },
+  { name: "Bank", symbol: "NSEBANK" },
+  { name: "IT", symbol: "CNXIT" },
+  { name: "Auto", symbol: "CNXAUTO" },
+  { name: "Pharma", symbol: "CNXPHARMA" },
+  { name: "FMCG", symbol: "CNXFMCG" },
+  { name: "Metal", symbol: "CNXMETAL" },
+  { name: "Energy", symbol: "CNXENERGY" },
+  { name: "Realty", symbol: "CNXREALTY" },
+  { name: "Fin Services", symbol: "CNXFIN" },
+  { name: "Media", symbol: "CNXMEDIA" },
+  { name: "PSU Bank", symbol: "CNXPSUBANK" },
+  { name: "Infra", symbol: "CNXINFRA" },
 ];
 
 const ALL_INDICES = [...FNO_INDICES, ...SUPPLEMENTARY_INDICES];
 
 export async function GET() {
-  const selections = await getActiveSelections();
-  const selected = selections.india.selected;
-  const chain = pickBrokerChain(selected);
-
   const indexSyms = ALL_INDICES.map((i) => i.symbol);
   const sectorSyms = SECTORS.map((s) => s.symbol);
+  const allSyms = [...new Set([...indexSyms, ...sectorSyms])];
 
-  const [indexRes, sectorRes] = await Promise.all([
-    resolveQuotes(chain, indexSyms),
-    resolveQuotes(chain, sectorSyms),
-  ]);
-  const indexQuotes = indexRes.quotes;
-  const sectorQuotes = sectorRes.quotes;
+  try {
+    const allQuotes = await getQuotes(allSyms, "NSE");
+    const quoteMap = new Map(
+      allSyms.map((sym, i) => [sym, allQuotes[i] ?? null]),
+    );
 
-  // Registry-only sources (Upstox today) have no legacy BrokerAdapter, so the
-  // adapter chain above silently skips them and falls back to Yahoo. When the
-  // user actually selected such a source, resolve those quotes through the
-  // ProviderRegistry so the snapshot carries genuine provenance (e.g. Upstox)
-  // instead of mislabelling Yahoo data.
-  const registryOnlySelected = selected.filter((id) => getBrokerById(id) == null);
-  const wantsRegistry = registryOnlySelected.length > 0;
-
-  if (wantsRegistry) {
-    const [regIdx, regSec] = await Promise.all([
-      resolveQuotesViaRegistry(indexSyms, registryOnlySelected),
-      resolveQuotesViaRegistry(sectorSyms, registryOnlySelected),
-    ]);
-    // Prefer registry values (they carry the user-selected source) but keep
-    // legacy-chain values for anything the registry couldn't serve.
-    indexSyms.forEach((sym, i) => {
-      const q = regIdx.bySymbol.get(sym);
-      if (q) indexQuotes[i] = q;
+    const indexQuotes = indexSyms.map((sym) => {
+      const q = quoteMap.get(sym);
+      return {
+        symbol: sym,
+        ltp: q?.ltp ?? null,
+        changePct: q?.changePct ?? null,
+        change: q?.change ?? null,
+        open: q?.open ?? null,
+        high: q?.high ?? null,
+        low: q?.low ?? null,
+        volume: q?.volume ?? null,
+        oi: q?.oi ?? null,
+      };
     });
-    sectorSyms.forEach((sym, i) => {
-      const q = regSec.bySymbol.get(sym);
-      if (q) sectorQuotes[i] = q;
+
+    const sectorQuotes = SECTORS.map((s) => {
+      const q = quoteMap.get(s.symbol);
+      return {
+        name: s.name,
+        symbol: s.symbol,
+        ltp: q?.ltp ?? null,
+        changePct: q?.changePct ?? null,
+      };
     });
+
+    return NextResponse.json(
+      {
+        indices: indexQuotes,
+        sectors: sectorQuotes,
+        source: "data-service2",
+        fetchedAt: new Date().toISOString(),
+      },
+      { headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" } },
+    );
+  } catch (err) {
+    if (err instanceof DataServiceUnavailableError) {
+      return NextResponse.json(
+        { error: "DATA_SERVICE_UNAVAILABLE", indices: [], sectors: [] },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json(
+      { error: (err as Error).message, indices: [], sectors: [] },
+      { status: 502 },
+    );
   }
-
-  // Rebuild the distinct source list from the FINAL, merged quotes so the badge
-  // reflects exactly what served each value (post registry override).
-  const sources: DataSourceId[] = [];
-  for (const q of [...indexQuotes, ...sectorQuotes]) {
-    if (q.source && !sources.includes(q.source)) sources.push(q.source);
-  }
-
-  const indices: IndexQuote[] = ALL_INDICES.map((m, i) => {
-    const q = indexQuotes[i];
-    return {
-      ...q,
-      name: m.name,
-      symbol: m.symbol,
-    };
-  });
-
-  const sectors: IndexQuote[] = SECTORS.map((m, i) => {
-    const q = sectorQuotes[i];
-    return {
-      ...q,
-      name: m.name,
-      symbol: m.symbol,
-    };
-  });
-
-  const snapshot: Snapshot = {
-    indices,
-    sectors,
-    fetchedAt: new Date().toISOString(),
-    source: sources[0] ?? (chain[0]?.id ?? "yahoo") as DataSourceId,
-    sources,
-  };
-
-  return NextResponse.json(snapshot, {
-    // 8s shared-cache: market snapshot is the same for every user.
-    // s-maxage=8 means up to 8s of stale data — acceptable for index quotes
-    // that themselves only update every few seconds on NSE.
-    headers: { "Cache-Control": "public, s-maxage=8, stale-while-revalidate=15" },
-  });
 }

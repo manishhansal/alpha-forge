@@ -145,8 +145,9 @@ function FooterCard({
   let sub: string;
   if (market === "india") {
     const info = indiaSourceFooter(indiaSourceLabels);
-    title = info.title;
-    sub   = info.sub;
+    // indiaSourceFooter returns a string after centralization — use as title
+    title = typeof info === "string" ? info : (info as { title: string }).title ?? String(info);
+    sub   = typeof info === "string" ? "data-service2.0" : (info as { sub: string }).sub ?? "data-service2.0";
   } else {
     title = "Markets stream live via Binance WS";
     sub   = "Public endpoint — no API key required";

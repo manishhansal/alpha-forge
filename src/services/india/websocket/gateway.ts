@@ -1,215 +1,135 @@
-// Server-side feed gateway. Exposes a long-lived ReadableStream of
-// FeedDiff JSON-lines, one per polling cycle. Only changed symbols are
-// emitted (diff updates) — this is the same pattern a real broker WS would
-// use, so client logic stays identical when we swap in Groww's binary feed.
-//
-// Chaos Engineering Hardening:
-//   Scenario 4: isTickStale() filters quotes older than 30s before emission.
-//   Scenario 5: TickDeduplicator drops ticks with the same (symbol, ts).
-//   Scenario 6: TickSequenceBuffer reorders out-of-order ticks within a 2s
-//               hold window before emitting to the client.
-//   Scenario 12: The gateway tolerates rapid EventSource reconnects — the
-//               `last` diff map is scoped to each stream instance so reconnects
-//               receive a full snapshot rather than a stale diff slice.
-
-import type { FeedDiff, FeedTick, Quote } from "@/types/india";
-// yahoo is used as a fallback quote source for the WebSocket feed gateway.
-// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
-// eslint-disable-next-line no-restricted-imports
-import { yahoo } from "@/services/india/yahoo";
-import {
-  isTickStale,
-  TickDeduplicator,
-  TickSequenceBuffer,
-} from "@/lib/chaos/market-data-resilience";
+/**
+ * Server-side feed gateway.
+ *
+ * After the data-service2.0 centralization, live market data is served
+ * exclusively by data-service2.0. This gateway provides a ReadableStream
+ * of FeedDiff JSON-lines, polling data-service2.0 via the canonical client.
+ *
+ * Direct broker WebSocket connections (Angel One SmartStream, Upstox WS)
+ * have been removed. data-service2.0 handles provider connections.
+ */
+import type { FeedTick, Quote } from "@/types/india";
+import { getQuotes } from "@/lib/data-service/client";
+import { isTickStale } from "@/lib/chaos/market-data-resilience";
+import type { MarketTick } from "@/lib/chaos/market-data-resilience";
 
 export type GatewayOptions = {
   symbols: string[];
   intervalMs?: number;
-  /**
-   * Quote fetcher backing the stream. Defaults to the Yahoo poller so the SSE
-   * feed works with zero credentials, but the route injects the user's active
-   * broker (e.g. Angel One SmartAPI) so the live feed reflects their choice.
-   * Always used for the initial snapshot, and for the polling loop when no
-   * push `subscribe` source is provided.
-   */
+  /** Optional override for quote fetching (e.g. in tests). Defaults to data-service2.0. */
   fetchQuotes?: (symbols: string[]) => Promise<Quote[]>;
-  /**
-   * Optional push tick source (e.g. Angel One SmartStream WebSocket 2.0). When
-   * provided, the per-cycle poll is replaced by this real-time subscription —
-   * `fetchQuotes` still serves the one-shot initial snapshot. Returns (or
-   * resolves to) an unsubscribe handle invoked on stream cancel.
-   */
-  subscribe?: (
-    onQuote: (q: Quote) => void,
-  ) => (() => void) | Promise<() => void>;
 };
 
-/**
- * Build a ReadableStream emitting `data: {FeedDiff}\n\n` SSE events.
- * Closes when the consumer cancels OR when the underlying controller
- * becomes invalid (e.g. the client disconnected unexpectedly).
- */
-export function buildFeedStream(opts: GatewayOptions): ReadableStream<Uint8Array> {
-  const enc = new TextEncoder();
-  const symbols = Array.from(new Set(opts.symbols)).slice(0, 100);
-  const intervalMs = Math.max(1500, opts.intervalMs ?? 5000);
-  const fetchQuotes = opts.fetchQuotes ?? ((s: string[]) => yahoo.getQuotes(s));
-  const last = new Map<string, FeedTick>();
+/** Deduplication map — track last seen timestamp per symbol */
+class SimpleDeduplicator {
+  private readonly seen = new Map<string, number>();
+  private readonly windowMs: number;
+  constructor(windowMs = 5_000) { this.windowMs = windowMs; }
+  isDuplicate(symbol: string, ts: number): boolean {
+    this._evict();
+    const key = `${symbol}:${ts}`;
+    if (this.seen.has(key)) return true;
+    this.seen.set(key, ts);
+    return false;
+  }
+  private _evict(): void {
+    const cutoff = Date.now() - this.windowMs;
+    for (const [key, ts] of this.seen) { if (ts < cutoff) this.seen.delete(key); }
+  }
+}
 
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let unsubscribe: (() => void) | null = null;
+/**
+ * Build a Server-Sent Events ReadableStream of FeedDiff payloads.
+ * All quotes come from data-service2.0.
+ */
+export function buildFeedStream(opts: GatewayOptions): ReadableStream {
+  const { symbols, intervalMs = 5000 } = opts;
+  const fetchQuotes = opts.fetchQuotes ?? ((syms: string[]) =>
+    getQuotes(syms, "NSE").then((qs) =>
+      qs.map((q, i): Quote => ({
+        symbol: symbols[i] ?? "",
+        price: q?.ltp ?? 0,
+        change: q?.change ?? null,
+        changePct: q?.changePct ?? null,
+        prevClose: q?.prevClose ?? null,
+        open: q?.open ?? null,
+        high: q?.high ?? null,
+        low: q?.low ?? null,
+        volume: q?.volume ?? null,
+        oi: q?.oi ?? null,
+        fetchedAt: q?.dataAsOf ?? new Date().toISOString(),
+      }))
+    )
+  );
+
+  const encoder = new TextEncoder();
+  const dedup = new SimpleDeduplicator();
+  const lastBySymbol = new Map<string, FeedTick>();
   let closed = false;
 
-  // ── Chaos Scenarios 5 & 6: Per-stream dedup + reorder ───────────────────
-  // Each stream instance gets its own deduplicator and reorder buffer so
-  // state does not leak across SSE reconnects (Scenario 12).
-  const deduplicator = new TickDeduplicator(10_000);
-  const sequenceBuffer = new TickSequenceBuffer({ flushDelayMs: 2_000, maxGapMs: 10_000 });
+  function sse(payload: unknown): Uint8Array {
+    return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+  }
 
-  const stop = () => {
-    if (closed) return;
-    closed = true;
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-    if (unsubscribe) {
-      try {
-        unsubscribe();
-      } catch {
-        /* ignore */
-      }
-      unsubscribe = null;
-    }
-  };
-
-  const tickerToFeed = (q: Quote): FeedTick => ({
-    symbol: q.symbol,
-    ltp: q.price ?? 0,
-    changePct: q.changePct,
-    volume: q.volume ?? null,
-    ts: Date.now(),
-  });
-
-  return new ReadableStream<Uint8Array>({
+  return new ReadableStream({
     async start(controller) {
-      const safeEnqueue = (chunk: Uint8Array): boolean => {
-        if (closed) return false;
-        try {
-          controller.enqueue(chunk);
-          return true;
-        } catch {
-          stop();
-          return false;
-        }
-      };
-
-      const send = (payload: unknown) =>
-        safeEnqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
-
-      // ── Chaos Scenario 12: Full snapshot on every (re)connect ──────────
-      // The `last` map is cleared on each new stream instance (it's scoped to
-      // this closure), so reconnecting clients always receive a fresh full
-      // snapshot rather than an incremental diff from a previous connection.
+      // Initial snapshot
       try {
         const quotes = await fetchQuotes(symbols);
-        if (closed) return;
-        const ticks = quotes
-          .map(tickerToFeed)
-          .filter((t) => {
-            // ── Chaos Scenario 4: Drop stale initial snapshot ticks ──────
-            if (isTickStale(t, { maxAgeMs: 60_000, label: "snapshot" })) return false;
-            return true;
-          });
-        for (const t of ticks) last.set(t.symbol, t);
-        send({ ticks, ts: Date.now() } satisfies FeedDiff);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "snapshot failed";
-        send({ error: msg });
-      }
-
-      /** Process a single quote through dedup + reorder + stale filters,
-       *  then emit any ticks that are ready to go. */
-      const processQuote = (q: Quote) => {
-        if (closed) return;
-        const next = tickerToFeed(q);
-
-        // ── Chaos Scenario 4: Stale tick filter ──────────────────────────
-        if (isTickStale(next, { maxAgeMs: 30_000, label: "push" })) return;
-
-        // ── Chaos Scenario 5: Duplicate tick filter ───────────────────────
-        if (deduplicator.isDuplicate({ symbol: next.symbol, ts: next.ts })) return;
-
-        // ── Chaos Scenario 6: Out-of-order reorder buffer ────────────────
-        const toEmit = sequenceBuffer.push({
-          symbol: next.symbol,
-          ts: next.ts,
-          price: next.ltp,
-          volume: next.volume,
-        });
-
-        for (const tick of toEmit) {
-          // Rebuild FeedTick from buffer output (price already ordered)
-          const feedTick: FeedTick = {
-            symbol: tick.symbol,
-            ltp: tick.price,
-            changePct: next.changePct, // preserve original diff
-            volume: tick.volume ?? null,
-            ts: tick.ts,
+        const ticks: Record<string, FeedTick> = {};
+        quotes.forEach((q, i) => {
+          const sym = symbols[i];
+          if (!sym || !q) return;
+          const price = (q as Quote & { ltp?: number }).ltp ?? q.price ?? 0;
+          const tick: FeedTick = {
+            symbol: sym,
+            ltp: price,
+            changePct: q.changePct ?? null,
+            ts: q.fetchedAt ? Date.parse(q.fetchedAt) : Date.now(),
           };
-          const prev = last.get(feedTick.symbol);
-          if (!prev || prev.ltp !== feedTick.ltp || prev.changePct !== feedTick.changePct) {
-            last.set(feedTick.symbol, feedTick);
-            send({ ticks: [feedTick], ts: Date.now() } satisfies FeedDiff);
-          }
-        }
-      };
-
-      // Push path: a real-time subscription replaces the poll loop. The timer
-      // becomes a keep-alive heartbeat so proxies don't drop an idle stream.
-      if (opts.subscribe) {
-        try {
-          const handle = await opts.subscribe(processQuote);
-          if (closed) {
-            try {
-              handle();
-            } catch {
-              /* already closing */
-            }
-            return;
-          }
-          unsubscribe = handle;
-          timer = setInterval(() => {
-            safeEnqueue(enc.encode(`: ping\n\n`));
-          }, 15_000);
-          return;
-        } catch (e: unknown) {
-          // Subscription setup failed — fall through to polling so the feed
-          // still flows.
-          const msg = e instanceof Error ? e.message : "subscribe failed";
-          send({ error: msg });
-        }
+          ticks[sym] = tick;
+          lastBySymbol.set(sym, tick);
+        });
+        controller.enqueue(sse({ type: "snapshot", ticks, ts: Date.now() }));
+      } catch {
+        controller.enqueue(sse({ type: "error", error: "DATA_SERVICE_UNAVAILABLE", ts: Date.now() }));
       }
 
       const poll = async () => {
         if (closed) return;
         try {
           const quotes = await fetchQuotes(symbols);
-          if (closed) return;
-          for (const q of quotes) {
-            processQuote(q);
+          const diffTicks: FeedTick[] = [];
+          quotes.forEach((q, i) => {
+            const sym = symbols[i];
+            if (!sym || !q) return;
+            const staleTick: MarketTick = { symbol: sym, ts: q.fetchedAt ? Date.parse(q.fetchedAt) : Date.now(), price: 0 };
+            if (isTickStale(staleTick)) return;
+            const ts = q.fetchedAt ? Date.parse(q.fetchedAt) : Date.now();
+            if (dedup.isDuplicate(sym, ts)) return;
+            const price = (q as Quote & { ltp?: number }).ltp ?? q.price ?? 0;
+            const tick: FeedTick = { symbol: sym, ltp: price, changePct: q.changePct ?? null, ts };
+            const last = lastBySymbol.get(sym);
+            if (!last || last.ltp !== tick.ltp || last.changePct !== tick.changePct) {
+              diffTicks.push(tick);
+              lastBySymbol.set(sym, tick);
+            }
+          });
+          if (diffTicks.length > 0) {
+            controller.enqueue(sse({ type: "diff", ticks: diffTicks, ts: Date.now() }));
+          } else {
+            controller.enqueue(encoder.encode(": heartbeat\n\n"));
           }
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "poll failed";
-          send({ error: msg });
+        } catch {
+          controller.enqueue(sse({ type: "error", error: "DATA_SERVICE_UNAVAILABLE", ts: Date.now() }));
         }
+        if (!closed) setTimeout(poll, intervalMs);
       };
 
-      timer = setInterval(poll, intervalMs);
+      setTimeout(poll, intervalMs);
     },
     cancel() {
-      stop();
+      closed = true;
     },
   });
 }

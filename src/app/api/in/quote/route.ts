@@ -1,40 +1,43 @@
 import { NextResponse } from "next/server";
-import { pickBrokerChain } from "@/services/india/broker/factory";
-import { resolveQuotes } from "@/services/india/resolve";
-import { getActiveSelections } from "@/features/settings/active-sources";
+import { getQuotes, DataServiceUnavailableError } from "@/lib/data-service/client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** GET /api/in/quote?symbols=RELIANCE,TCS,^NSEI */
+/** GET /api/in/quote?symbols=RELIANCE,TCS,NIFTY */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const raw = searchParams.get("symbols") ?? "";
   const symbols = raw
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => s.trim().replace(/^\^/, "")) // strip ^NSEI → NIFTY convention
     .filter(Boolean);
 
   if (symbols.length === 0) {
     return NextResponse.json({ quotes: [] });
   }
 
-  const selections = await getActiveSelections();
-  const chain = pickBrokerChain(selections.india.selected);
-  const { quotes, sources } = await resolveQuotes(chain, symbols);
-  return NextResponse.json(
-    {
-      quotes,
-      // `source` = the user's primary selected source; `sources` = the
-      // distinct upstreams that actually produced data (true provenance).
-      source: chain[0]?.id ?? "yahoo",
-      sources,
-      fetchedAt: new Date().toISOString(),
-    },
-    {
-      // 5s shared-cache: quote data refreshes frequently but is identical
-      // for all users requesting the same symbols within a 5s window.
-      headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" },
-    },
-  );
+  try {
+    const quotes = await getQuotes(symbols, "NSE");
+    return NextResponse.json(
+      {
+        quotes,
+        source: "data-service2",
+        sources: ["data-service2"],
+        fetchedAt: new Date().toISOString(),
+      },
+      { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
+    );
+  } catch (err) {
+    if (err instanceof DataServiceUnavailableError) {
+      return NextResponse.json(
+        { error: "DATA_SERVICE_UNAVAILABLE", quotes: [] },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json(
+      { error: (err as Error).message, quotes: [] },
+      { status: 502 },
+    );
+  }
 }

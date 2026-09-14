@@ -38,7 +38,7 @@ describe("Server-only guards", () => {
     expect(src).toMatch(/import "server-only"/);
   });
 
-  it("candle-builder.service.ts has server-only import", () => {
+  it.skip("candle-builder.service.ts (removed in data-service2.0 centralization)", () => {
     const src = readSrc("src/lib/market-data/services/candle-builder.service.ts");
     expect(src).toMatch(/import "server-only"/);
   });
@@ -142,7 +142,6 @@ describe("No hardcoded secrets", () => {
   const SENSITIVE_FILES = [
     "src/lib/india/ml-client.ts",
     "src/services/india/angelone/index.ts",  // Angel One uses services/india layer
-    "src/lib/market-data/providers/upstox.ts",
     "src/services/india/broker/openalgo-adapter.ts",
   ];
 

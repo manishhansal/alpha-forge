@@ -11,14 +11,8 @@ vi.mock("@/services/india/cache", () => ({
 }));
 
 // Mock the canonical registry — expiry-trades/builder.ts now calls
-// registry.getOptionChain() and registry.getLatestQuote().
-vi.mock("@/lib/market-data/registry", () => ({
-  registry: {
-    getOptionChain: (s: string) => getOptionChainMock(s),
-    getLatestQuote: (s: string) => getLatestQuoteMock(s),
-  },
-  bootstrapRegistry: () => Promise.resolve(),
-}));
+// data-service2.0 client mock (replaces old registry)
+vi.mock("@/lib/data-service/client", () => ({ getOptionChain: (s: string) => getOptionChainMock(s), getQuote: (s: string) => getLatestQuoteMock(s), getQuotes: vi.fn().mockResolvedValue([]), getHistorical: vi.fn().mockResolvedValue([]), DataServiceUnavailableError: class DataServiceUnavailableError extends Error {} }));
 
 vi.mock("@/services/india/angelone", () => ({
   angel: {},

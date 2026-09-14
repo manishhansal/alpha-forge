@@ -1,17 +1,17 @@
 "use client";
-
+/**
+ * src/services/brokers/client.ts
+ *
+ * Browser-side market data stream client — now backed by data-service2.0.
+ *
+ * After the data-service2.0 centralization, all live market data (including
+ * crypto tickers and liquidations) flows through data-service2.0's WebSocket
+ * stream rather than directly from Binance or Delta Exchange.
+ *
+ * The public interface is preserved so consumers don't break.
+ */
 import { TRACKED_SYMBOLS } from "@/lib/constants";
-import { env } from "@/lib/env";
 import type { SymbolId } from "@/types/market";
-
-import {
-  createBinanceLiquidationStream,
-  createBinanceTickerStream,
-} from "./binance/client";
-import {
-  createDeltaLiquidationStream,
-  createDeltaTickerStream,
-} from "./delta/ws";
 import type {
   BrokerCapabilities,
   BrokerId,
@@ -21,11 +21,6 @@ import type {
   TickerStreamOptions,
 } from "./types";
 
-/**
- * Browser-side broker descriptor — narrower than `BrokerAdapter` because the
- * client only needs metadata + the WS factories. REST calls go through Next
- * route handlers, never directly from the browser.
- */
 export interface ClientBroker {
   readonly id: BrokerId;
   readonly displayName: string;
@@ -35,48 +30,151 @@ export interface ClientBroker {
   createLiquidationStream(opts: LiquidationStreamOptions): BrokerStreamClient;
 }
 
-function buildPairs(brokerId: "binance" | "delta"): BrokerPairs {
-  const spot: Record<SymbolId, string> = { BTC: "", ETH: "", SOL: "" };
-  const futures: Record<SymbolId, string> = { BTC: "", ETH: "", SOL: "" };
-  for (const s of TRACKED_SYMBOLS) {
-    spot[s.id] = s.brokers[brokerId].spot;
-    futures[s.id] = s.brokers[brokerId].futures;
+function buildPairs(): BrokerPairs {
+  const spot: Record<SymbolId, string> = { BTC: "BTCUSDT", ETH: "ETHUSDT", SOL: "SOLUSDT" };
+  const futures: Record<SymbolId, string> = { BTC: "BTCUSDT", ETH: "ETHUSDT", SOL: "SOLUSDT" };
+  for (const sym of TRACKED_SYMBOLS) {
+    spot[sym.id] = sym.id === "BTC" ? "BTCUSDT" : sym.id === "ETH" ? "ETHUSDT" : "SOLUSDT";
+    futures[sym.id] = spot[sym.id]!;
   }
   return { spot, futures };
 }
 
-const binanceClient: ClientBroker = {
-  id: "binance",
-  displayName: "Binance",
-  pairs: buildPairs("binance"),
-  capabilities: { liquidations: true, longShortRatio: true, openInterestHistory: true },
-  createTickerStream: createBinanceTickerStream,
-  createLiquidationStream: createBinanceLiquidationStream,
-};
+/**
+ * Creates a data-service2.0-backed ticker stream.
+ * Connects to the data-service2.0 WebSocket endpoint.
+ */
+function createDataServiceTickerStream(opts: TickerStreamOptions): BrokerStreamClient {
+  const dsUrl = (process.env.DATA_SERVICE_2_URL ?? process.env.DATA_SERVICE_URL ?? "http://localhost:8200").replace(/^http/, "ws");
+  const wsUrl = `${dsUrl}/v1/stream/ticks`;
+  let ws: WebSocket | null = null;
+  let closed = false;
 
-const deltaClient: ClientBroker = {
-  id: "delta",
-  displayName: "Delta Exchange India",
-  pairs: buildPairs("delta"),
-  capabilities: { liquidations: false, longShortRatio: false, openInterestHistory: true },
-  createTickerStream: createDeltaTickerStream,
-  createLiquidationStream: createDeltaLiquidationStream,
-};
+  function connect() {
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (err) {
+      opts.onStatusChange?.("error");
+      return;
+    }
+    ws.onopen = () => {
+      opts.onStatusChange?.("open");
+      const symbols = opts.pairs.map((p) => p);
+      ws?.send(JSON.stringify({ action: "subscribe", symbols, market: "crypto" }));
+    };
+    ws.onmessage = (event) => {
+      if (closed) return;
+      try {
+        const tick = JSON.parse(event.data as string);
+        if (tick.symbol && tick.ltp !== undefined) {
+          opts.onTicker?.({
+            pair: tick.symbol,
+            close: tick.ltp,
+            open: tick.open ?? tick.ltp,
+            high: tick.high ?? tick.ltp,
+            low: tick.low ?? tick.ltp,
+            volume: tick.volume ?? 0,
+            quoteVolume: tick.tradedValue ?? 0,
+            eventTime: tick.timestamp ? new Date(tick.timestamp).getTime() : Date.now(),
+          });
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+    ws.onerror = () => opts.onStatusChange?.("error");
+    ws.onclose = () => {
+      if (!closed) opts.onStatusChange?.("closed");
+    };
+  }
 
-const CLIENT_BROKERS: Record<BrokerId, ClientBroker> = {
-  binance: binanceClient,
-  delta: deltaClient,
-};
+  return {
+    connect() {
+      connect();
+    },
+    disconnect() {
+      closed = true;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: "unsubscribe", symbols: opts.pairs }));
+        ws.close(1000, "client disconnect");
+      }
+      ws = null;
+      opts.onStatusChange?.("closed");
+    },
+  };
+}
 
 /**
- * Resolve the active client broker. Reads `NEXT_PUBLIC_ACTIVE_BROKER`, which
- * is the public mirror of the server-side `ACTIVE_BROKER` value. Default:
- * delta.
+ * Creates a data-service2.0-backed liquidation stream.
+ * Liquidation data comes from data-service2.0's crypto stream.
  */
-export function getActiveClientBrokerId(): BrokerId {
-  return env.NEXT_PUBLIC_ACTIVE_BROKER;
+function createDataServiceLiquidationStream(opts: LiquidationStreamOptions): BrokerStreamClient {
+  const dsUrl = (process.env.DATA_SERVICE_2_URL ?? process.env.DATA_SERVICE_URL ?? "http://localhost:8200").replace(/^http/, "ws");
+  const wsUrl = `${dsUrl}/v1/stream/ticks`;
+  let ws: WebSocket | null = null;
+  let closed = false;
+
+  return {
+    connect() {
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+          ws?.send(JSON.stringify({ action: "subscribe", symbols: opts.pairs, market: "crypto", type: "liquidation" }));
+        };
+        ws.onmessage = (event) => {
+          if (closed) return;
+          try {
+            const data = JSON.parse(event.data as string);
+            if (data.type === "liquidation" || data.liquidation) {
+              opts.onLiquidation?.({
+                pair: data.symbol ?? "",
+                side: data.side ?? "BUY",
+                price: data.price ?? 0,
+                qty: data.qty ?? 0,
+                notionalUsd: (data.qty ?? 0) * (data.price ?? 0),
+                ts: data.timestamp ? new Date(data.timestamp).getTime() : Date.now(),
+              });
+            }
+          } catch {
+            // ignore
+          }
+        };
+        ws.onerror = () => opts.onStatusChange?.("error");
+        ws.onclose = () => {
+          if (!closed) opts.onStatusChange?.("closed");
+        };
+      } catch {
+        opts.onStatusChange?.("error");
+      }
+    },
+    disconnect() {
+      closed = true;
+      ws?.close(1000, "client disconnect");
+      ws = null;
+    },
+  };
 }
 
-export function getClientBroker(id?: BrokerId): ClientBroker {
-  return CLIENT_BROKERS[id ?? getActiveClientBrokerId()];
+const DATA_SERVICE_BROKER: ClientBroker = {
+  id: "binance" as BrokerId, // kept for backward compat — actual source is data-service2.0
+  displayName: "Market Data (via data-service2.0)",
+  pairs: buildPairs(),
+  capabilities: {
+    spotTicker: true,
+    futuresTicker: true,
+    liquidations: true,
+    klines: true,
+  },
+  createTickerStream: createDataServiceTickerStream,
+  createLiquidationStream: createDataServiceLiquidationStream,
+};
+
+export function getClientBroker(_id?: BrokerId): ClientBroker {
+  return DATA_SERVICE_BROKER;
 }
+
+export function getActiveBroker(): ClientBroker {
+  return DATA_SERVICE_BROKER;
+}
+
+export { DATA_SERVICE_BROKER as clientBroker };

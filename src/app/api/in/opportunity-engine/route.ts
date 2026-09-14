@@ -40,9 +40,9 @@ import {
   type ReturnSeries,
 } from "@/lib/opportunity-engine";
 import type { OpportunityV1, OpportunityFunnel, QualityTier } from "@/lib/opportunity-engine";
-import { bootstrapRegistry } from "@/lib/market-data/registry";
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
-import type { OHLCVCandle } from "@/lib/market-data/types";
+import { getHistorical } from "@/lib/data-service/client";
+
+import type { OHLCVCandle } from "@/lib/data-service/types";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 
 export const dynamic = "force-dynamic";
@@ -140,7 +140,6 @@ export async function GET(req: NextRequest) {
     // bars for every unique instrument + NIFTY (for regime detection).
     // Concurrency cap of 8 matches the india-builder's YAHOO_HIST_CONCURRENCY
     // to avoid provider rate-limits.
-    await bootstrapRegistry();
 
     const candidateSignals = signals.filter(
       (s) => s.action !== "WAIT" && s.market === "india",
@@ -154,11 +153,11 @@ export async function GET(req: NextRequest) {
 
     // Fetch NIFTY + all candidate instrument daily candles in parallel
     const [niftyDailyCandles, ...perSymbolCandles] = await Promise.all([
-      getHistoricalCandlesByRange("NIFTY", "1d", "1y", "NSE", { tolerateInvalidCandles: true }).catch(() => [] as OHLCVCandle[]),
+      getHistorical({ symbol: "NIFTY", exchange: "NSE", interval: "1d", from: new Date(Date.now() - 365*24*60*60*1000).toISOString().split("T")[0] }).catch(() => [] as OHLCVCandle[]),
       ...await mapWithConcurrency(
         uniqueSymbols,
         8,
-        (sym) => getHistoricalCandlesByRange(sym, "1d", "1y", "NSE", { tolerateInvalidCandles: true })
+        (sym) => getHistorical({ symbol: sym, exchange: "NSE", interval: "1d", from: new Date(Date.now() - 365*24*60*60*1000).toISOString().split("T")[0] })
           .catch(() => [] as OHLCVCandle[]),
       ),
     ]);

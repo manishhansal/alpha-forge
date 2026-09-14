@@ -1,90 +1,136 @@
 /**
  * GET /api/in/providers/upstox/callback
  *
- * Upstox OAuth 2.0 callback handler.
+ * Upstox OAuth 2.0 callback handler for EXECUTION-ONLY broker connection.
  *
- * Upstox redirects here after the user authorizes the application.
- * This endpoint exchanges the authorization code for an access token
- * SERVER-SIDE, then redirects the user back to the dashboard.
+ * NOTE: Upstox is connected here only for ORDER EXECUTION (placing/modifying
+ * orders). Market data does NOT flow through Upstox — all market data comes
+ * from data-service2.0.
  *
- * SECURITY INVARIANTS:
- *   - The authorization code is exchanged SERVER-SIDE only
- *   - UPSTOX_CLIENT_SECRET is used only here, server-side, and is NEVER
- *     included in any response sent to the browser
- *   - The access token is stored in server memory (_oauthState) only
- *   - The frontend is redirected to the dashboard page with only a status
- *     flag — no token, no code, no secret
- *   - Error details are logged server-side; only generic messages reach browser
+ * SECURITY:
+ *   - Code exchanged server-side only
+ *   - UPSTOX_CLIENT_SECRET never reaches the browser
+ *   - Token stored in server-side state only
+ *   - Only a status flag is sent back to the browser
  */
-
 import { type NextRequest, NextResponse } from "next/server";
-import { exchangeUpstoxCode } from "@/lib/market-data/providers/upstox";
-import { setConnected, setError } from "@/lib/market-data/providers/upstox-token-state";
-import { mdLog } from "@/lib/market-data/health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// In-memory OAuth state (server-side only)
+type UpstoxOAuthState = {
+  status: "DISCONNECTED" | "AUTHORIZING" | "CONNECTED" | "ERROR";
+  accessToken: string | null;
+  expiresAt: number | null;
+  error: string | null;
+};
+
+// Module-level state (persists for the lifetime of the server process)
+let _oauthState: UpstoxOAuthState = {
+  status: "DISCONNECTED",
+  accessToken: null,
+  expiresAt: null,
+  error: null,
+};
+
+export function getUpstoxTokenState(): Readonly<UpstoxOAuthState> {
+  return _oauthState;
+}
+
 export async function GET(request: NextRequest): Promise<Response> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const dashboardUrl = `${appUrl}/in/settings?upstox=`;
-
   const { searchParams } = new URL(request.url);
-  const code  = searchParams.get("code");
+  const code = searchParams.get("code");
   const error = searchParams.get("error");
   const errorDesc = searchParams.get("error_description");
 
-  // Handle OAuth error from Upstox
   if (error) {
-    const reason = errorDesc ?? error;
-    setError(`OAuth error: ${reason}`);
-    mdLog("provider_failure", {
-      providerId: "upstox",
-      kind:       "auth_failure",
-      message:    `OAuth callback error: ${error}`,
-      // errorDesc may contain user-readable info — log but don't include raw
-    });
+    _oauthState = {
+      status: "ERROR",
+      accessToken: null,
+      expiresAt: null,
+      error: `OAuth error: ${errorDesc ?? error}`,
+    };
+    console.warn("[upstox/callback] OAuth error:", error, errorDesc);
     return NextResponse.redirect(`${dashboardUrl}error&reason=oauth_denied`);
   }
 
   if (!code) {
-    setError("No authorization code received from Upstox");
+    _oauthState = {
+      status: "ERROR",
+      accessToken: null,
+      expiresAt: null,
+      error: "No authorization code received",
+    };
     return NextResponse.redirect(`${dashboardUrl}error&reason=no_code`);
   }
 
-  const redirectUri = process.env.UPSTOX_REDIRECT_URI
-    ?? `${appUrl}/api/in/providers/upstox/callback`;
+  const clientId = process.env.UPSTOX_CLIENT_ID;
+  const clientSecret = process.env.UPSTOX_CLIENT_SECRET;
+  const redirectUri =
+    process.env.UPSTOX_REDIRECT_URI ??
+    `${appUrl}/api/in/providers/upstox/callback`;
+
+  if (!clientId || !clientSecret) {
+    _oauthState = {
+      status: "ERROR",
+      accessToken: null,
+      expiresAt: null,
+      error: "Upstox client credentials not configured",
+    };
+    return NextResponse.redirect(`${dashboardUrl}error&reason=not_configured`);
+  }
 
   try {
-    // Exchange code for token SERVER-SIDE (client_secret never reaches browser)
-    const { accessToken, expiresIn } = await exchangeUpstoxCode(code, redirectUri);
-
-    // Store in server-side token state — import setConnected from token-state module
-    setConnected(accessToken, expiresIn);
-
-    mdLog("provider_selected", {
-      providerId: "upstox",
-      event:      "oauth_connected",
-      expiresIn,
+    const tokenRes = await fetch("https://api.upstox.com/v2/login/authorization/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+      signal: AbortSignal.timeout(15_000),
     });
 
-    // Redirect to dashboard with success flag — NO token in URL
+    if (!tokenRes.ok) {
+      const body = await tokenRes.text();
+      throw new Error(`Token exchange failed: HTTP ${tokenRes.status} — ${body}`);
+    }
+
+    const data = (await tokenRes.json()) as {
+      access_token?: string;
+      expires_in?: number;
+    };
+
+    if (!data.access_token) {
+      throw new Error("No access_token in Upstox response");
+    }
+
+    _oauthState = {
+      status: "CONNECTED",
+      accessToken: data.access_token,
+      expiresAt: data.expires_in
+        ? Date.now() + data.expires_in * 1000
+        : null,
+      error: null,
+    };
+
+    console.info("[upstox/callback] OAuth connected (execution-only)");
     return NextResponse.redirect(`${dashboardUrl}connected`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-
-    // Redact any token material from error messages before logging
-    const sanitized = msg
-      .replace(/code=\S+/gi, "code=[REDACTED]")
-      .replace(/access_token=\S+/gi, "access_token=[REDACTED]");
-
-    setError(`Token exchange failed: ${sanitized}`);
-    mdLog("provider_failure", {
-      providerId: "upstox",
-      kind:       "auth_failure",
-      message:    "OAuth code exchange failed",
-    });
-
-    return NextResponse.redirect(`${dashboardUrl}error&reason=exchange_failed`);
+    const message = err instanceof Error ? err.message : String(err);
+    _oauthState = {
+      status: "ERROR",
+      accessToken: null,
+      expiresAt: null,
+      error: message,
+    };
+    console.error("[upstox/callback] Token exchange error:", message);
+    return NextResponse.redirect(`${dashboardUrl}error&reason=token_exchange_failed`);
   }
 }

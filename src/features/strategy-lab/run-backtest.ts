@@ -10,7 +10,7 @@ import {
   type StrategyPeriod,
 } from "@/features/strategy-lab/types";
 import { getServerBroker } from "@/services/brokers/registry";
-import type { KlineInterval } from "@/services/binance/klines";
+import type { KlineInterval } from "@/features/scalping/backtest-intervals";
 import type { SymbolId } from "@/types/market";
 
 /**

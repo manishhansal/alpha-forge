@@ -96,7 +96,7 @@ async function computeReplayScores(
 
   const loaded = await Promise.allSettled(
     FNO_INDICES.map(async (idx) => {
-      const points = await getOptionChainSeries(idx.underlying, since, prisma);
+      const points = await getOptionChainSeries(idx.underlying, since);
       return toReplaySnapshots(points);
     }),
   );

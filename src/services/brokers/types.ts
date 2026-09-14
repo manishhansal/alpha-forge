@@ -1,4 +1,5 @@
-import type { KlineInterval } from "@/services/binance/klines";
+/** Kline interval — string alias after data-service2.0 centralization. */
+export type KlineInterval = string;
 import type { KlineCandle, SymbolId } from "@/types/market";
 
 /**
@@ -186,6 +187,12 @@ export interface BrokerAdapter {
   /** Every perpetual on the broker, used for heatmap top-movers. */
   fetchAllFuturesTickers(): Promise<NormalizedFuturesTicker[]>;
 
+  /* data-service2.0 compatibility helpers (optional) */
+  getQuote?: (symbol: string, exchange?: string) => Promise<unknown>;
+  getQuotes?: (symbols: string[], exchange?: string) => Promise<unknown[]>;
+  getHistorical?: (req: { symbol: string; interval: string; exchange?: string }) => Promise<unknown[]>;
+  getOptionChain?: (symbol: string) => Promise<unknown>;
+
   /* WS: streaming. Adapters that lack a given stream return a client whose
    *  `connect()` immediately reports "unavailable" status and never calls the
    *  data callback. This keeps caller logic uniform. */
@@ -197,8 +204,14 @@ export interface BrokerCapabilities {
   /** Whether `createLiquidationStream` is wired to a real upstream feed. */
   liquidations: boolean;
   /** Whether `fetchLongShortRatio` returns non-empty data. */
-  longShortRatio: boolean;
+  longShortRatio?: boolean;
   /** Whether `fetchOpenInterestHistory` returns historical points (not just
    *  the latest snapshot). */
-  openInterestHistory: boolean;
+  openInterestHistory?: boolean;
+  /** Whether spot ticker fetching is supported. */
+  spotTicker?: boolean;
+  /** Whether futures ticker fetching is supported. */
+  futuresTicker?: boolean;
+  /** Whether kline (candlestick) fetching is supported. */
+  klines?: boolean;
 }

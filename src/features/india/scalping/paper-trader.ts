@@ -1,11 +1,10 @@
+import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
-import { bootstrapRegistry } from "@/lib/market-data/registry";
 import {
   executeExactlyOnce,
   buildTradeGuardKey,
@@ -302,19 +301,13 @@ export async function resolveIndiaOpenTrades(
   const now = Date.now();
 
   for (const t of open) {
-    let candles: Awaited<ReturnType<typeof getHistoricalCandlesByRange>> | undefined;
+    let candles: import("@/lib/data-service/types").OHLCVCandle[] | undefined;
     try {
       // Use "1d" range for the resolver — it's sufficient for intraday trades
       // and uses a distinct cache key from the ATR fetch ("5d"), preventing
       // the resolver from re-using a pre-open candle snapshot cached by
       // getIndiaIntradayAtr earlier in the same tick.
-      const ohlcv = await getHistoricalCandlesByRange(
-        t.symbol,
-        "5m",
-        "1d",
-        "NSE",
-        { tolerateInvalidCandles: true },
-      );
+      const ohlcv = await getHistorical({ symbol: t.symbol, interval: "5m", exchange: "NSE" });
       // OHLCVCandle is a strict superset of legacy Candle.
       candles = ohlcv as unknown as typeof candles;
     } catch (err) {
@@ -423,14 +416,8 @@ export async function getIndiaIntradayAtr(
   period = 14,
 ): Promise<number | null> {
   try {
-    await bootstrapRegistry();
-    const ohlcv = await getHistoricalCandlesByRange(
-      symbol,
-      "5m",
-      "5d",
-      "NSE",
-      { tolerateInvalidCandles: true },
-    );
+    
+    const ohlcv = await getHistorical({ symbol, interval: "5m", exchange: "NSE" });
     return atrFromCandles(ohlcv as unknown as Parameters<typeof atrFromCandles>[0], period);
   } catch {
     return null;

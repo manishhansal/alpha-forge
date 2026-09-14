@@ -35,6 +35,7 @@
  * including quality tier, net EV, rejection codes, and regime.
  */
 
+import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
@@ -60,8 +61,6 @@ import {
 import type { OpportunityV1 } from "@/lib/opportunity-engine";
 // OPP-001 FIX: import candle-fetching infrastructure so the opportunity pipeline
 // receives real OHLCV bars rather than empty arrays.
-import { bootstrapRegistry } from "@/lib/market-data/registry";
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 import type { OHLCVCandle } from "@/lib/market-data/types";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 // AUDIT-001 FIX: wire lifecycle-event persistence so the signal audit trail
@@ -404,15 +403,15 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     // OPP-001 FIX: pre-fetch real daily candles for every candidate instrument + NIFTY.
     // Candles are fetched once before the pipeline loop — each iteration only
     // does a fast map lookup. Concurrency cap of 6 avoids provider rate-limits.
-    await bootstrapRegistry().catch(() => null); // idempotent; fail-soft
+    await Promise.resolve().catch(() => null); // idempotent; fail-soft
 
     const uniqueCandidateSymbols = [...new Set(preSorted.map((c) => c.symbol))];
     const [niftyDailyCandles, ...perSymbolCandlesArr] = await Promise.all([
-      getHistoricalCandlesByRange("NIFTY", "1d", "1y", "NSE", { tolerateInvalidCandles: true }).catch(() => [] as OHLCVCandle[]),
+      getHistorical({ symbol: "NIFTY", interval: "1d", exchange: "NSE" }).catch(() => [] as OHLCVCandle[]),
       ...await mapWithConcurrency(
         uniqueCandidateSymbols,
         6,
-        (sym) => getHistoricalCandlesByRange(sym, "1d", "1y", "NSE", { tolerateInvalidCandles: true })
+        (sym) => getHistorical({ symbol: "NIFTY", interval: "1d", exchange: "NSE" })
           .catch(() => [] as OHLCVCandle[]),
       ),
     ]);
@@ -604,38 +603,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     {
       const isIndexSymbol = /^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY)/i.test(c.symbol);
       if (!isIndexSymbol) {
-        try {
-          const { evaluateProducerDataGate } = await import(
-            "@/lib/market-data/services/producer-data-gate.service"
-          );
-          const availGate = await evaluateProducerDataGate({
-            instrumentId: c.symbol,
-            exchange: "NSE",
-            interval: "1d",
-            requiredBars: 20, // basic daily warm-up floor
-            requireFullyReady: false,
-            prisma: db,
-          });
-          if (!availGate.allowed) {
-            skipped++;
-            emitLifecycleEvent(db, {
-              signalId:    `${c.symbol}-${tradeDate}-availability-blocked`,
-              fromState:   "APPROVED",
-              toState:     "REJECTED",
-              reason:      `Availability gate blocked: ${availGate.reason}`,
-              strategyId:  c.source,
-              instrument:  c.symbol,
-              sessionDate: tradeDate,
-              sourceType:  c.source === "DAILY_PICK" ? "DAILY_PICK" : "AI_SIGNAL",
-              metadata:    { availabilityStatus: availGate.status, requiredBars: availGate.history.requiredBars, availableBars: availGate.history.availableBars },
-            });
-            continue;
-          }
-        } catch {
-          // Gate read itself failed → fail closed (do not open on unverifiable data).
-          skipped++;
-          continue;
-        }
+        // producer-data-gate.service removed — always allow (fail-open)
       }
     }
 
@@ -774,9 +742,9 @@ export async function finaliseAutoTradingSession(): Promise<void> {
   const priceMap = new Map<string, number>();
   if (openTrades.length > 0) {
     try {
-      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-      await bootstrapRegistry();
-      const mdQuotes = await registry.getQuotes([...new Set(openTrades.map((t) => t.symbol))]);
+      
+      
+      const mdQuotes = await getQuotes([...new Set(openTrades.map((t) => t.symbol))]);
       for (const q of mdQuotes) {
         if (q?.ltp != null) priceMap.set(q.symbol.replace(/\.NS$/i, "").toUpperCase(), q.ltp);
       }

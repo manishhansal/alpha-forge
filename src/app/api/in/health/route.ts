@@ -3,7 +3,6 @@ import { cache } from "@/services/india/cache";
 // isAngelConfigured is a broker config check — not market-data acquisition.
 // See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
 // eslint-disable-next-line no-restricted-imports
-import { isAngelConfigured } from "@/services/india/angelone";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,7 +40,7 @@ export async function GET() {
       live: Boolean(process.env.GROWW_API_KEY && process.env.GROWW_API_SECRET),
     },
     angel: {
-      live: isAngelConfigured(),
+      live: false,
     },
     fetchedAt: new Date().toISOString(),
   });
