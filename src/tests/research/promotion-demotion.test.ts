@@ -2,9 +2,9 @@
  * Phase 27 — Unit Tests: Promotion & Demotion Rules
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { evaluatePromotion, applyDemotion } from "@/lib/research/promotion/strategy-promotion-engine";
-import type { PerformanceMetrics, CostAttributionReport } from "@/lib/research/types";
+import type { PerformanceMetrics, CostAttributionReport, DecayMonitorState } from "@/lib/research/types";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -136,12 +136,12 @@ describe("evaluatePromotion — LIVE_CANDIDATE → MANUAL_APPROVAL → LIVE", ()
       fromStatus: "LIVE_CANDIDATE",
       paperMetrics: makeMetrics({ tradeCount: 50, sharpe: 1.2, profitFactor: 1.8 }),
       paperSessionCount: 45,
-      decayMonitor: { state: "HEALTHY" } as any,
+      decayMonitor: { state: "HEALTHY" } as Partial<DecayMonitorState> as DecayMonitorState,
       costReport: {
         costFragile: false,
         breakEvenCostMultiple: 2.5,
         strategyId: "UT_SMC",
-      } as any,
+      } as Partial<CostAttributionReport> as CostAttributionReport,
     });
     // LIVE_CANDIDATE → MANUAL_APPROVAL requires sessionCount ≥ 20 and paper Sharpe ≥ 0.6
     expect(record.fromStatus).toBe("LIVE_CANDIDATE");
