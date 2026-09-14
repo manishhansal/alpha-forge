@@ -184,6 +184,40 @@ function qs(params: Record<string, string | number | boolean | undefined>): stri
 // ---------------------------------------------------------------------------
 
 /**
+ * Normalise raw `MarketQuote` fields returned by data-service2.0.
+ *
+ * data-service2.0 sometimes serialises numeric fields as strings (matching
+ * upstream broker wire formats). Coerce every numeric field to a proper JS
+ * number so downstream code can safely call Number.isFinite(), arithmetic
+ * operations, and formatPrice() without unexpected "—" results.
+ */
+function normalizeMarketQuote(raw: MarketQuote): MarketQuote {
+  const n = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const nOrNull = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  };
+  return {
+    ...raw,
+    ltp:        nOrNull(raw.ltp) ?? 0,
+    open:       nOrNull(raw.open),
+    high:       nOrNull(raw.high),
+    low:        nOrNull(raw.low),
+    prevClose:  nOrNull(raw.prevClose),
+    change:     nOrNull(raw.change),
+    changePct:  nOrNull(raw.changePct),
+    volume:     nOrNull(raw.volume),
+    oi:         nOrNull(raw.oi),
+    bid:        nOrNull(raw.bid),
+    ask:        nOrNull(raw.ask),
+    weekHigh52: nOrNull(raw.weekHigh52),
+    weekLow52:  nOrNull(raw.weekLow52),
+    tradedValue: nOrNull(raw.tradedValue),
+  };
+}
+
+/**
  * Fetch the live quote for a single Indian equity / index / derivative.
  *
  * @param symbol  NSE/BSE symbol, e.g. "RELIANCE", "NIFTY"
@@ -195,8 +229,8 @@ export async function getQuote(
 ): Promise<MarketQuote> {
   const params = qs({ exchange: exchange ?? "NSE" });
   const raw = await dsGet<MarketQuote>(`/v1/india/quotes/${encodeURIComponent(symbol)}${params}`);
-  // Populate backward-compat alias fields
-  return { ...raw, fetchedAt: raw.dataAsOf, name: raw.name ?? null, weekHigh52: raw.weekHigh52 ?? null, weekLow52: raw.weekLow52 ?? null, spot: undefined } as MarketQuote;
+  // Populate backward-compat alias fields and normalise numeric strings
+  return normalizeMarketQuote({ ...raw, fetchedAt: raw.dataAsOf, name: raw.name ?? null, weekHigh52: raw.weekHigh52 ?? null, weekLow52: raw.weekLow52 ?? null, spot: undefined } as MarketQuote);
 }
 
 /**
@@ -337,9 +371,12 @@ export async function getCryptoOHLCV(
 export async function getCryptoTicker(
   symbol: string,
 ): Promise<{ symbol: string; price: number }> {
-  return dsGet<{ symbol: string; price: number }>(
+  const raw = await dsGet<{ symbol: string; price: number | string }>(
     `/v1/crypto/${encodeURIComponent(symbol)}/ticker`,
   );
+  // data-service2.0 serialises price as a string (Binance API format).
+  // Normalise to number here so every consumer gets a real numeric value.
+  return { symbol: raw.symbol, price: Number(raw.price) || 0 };
 }
 
 /**
