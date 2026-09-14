@@ -40,17 +40,22 @@ const dataService2Adapter: ServerBrokerAdapter = {
   },
   async fetch24hrTickers(pairs: string[]) {
     const tickers = await Promise.all(pairs.map((p) => getCryptoTicker(p)));
-    return tickers.map((t) => ({
-      pair: t.symbol ?? "",
-      price: t.price ?? 0,
-      change: 0,
-      changePct: 0,
-      high: t.price ?? 0,
-      low: t.price ?? 0,
-      volume: 0,
-      quoteVolume: 0,
-      ts: Date.now(),
-    }));
+    // data-service2.0 returns price as a string despite the TypeScript type
+    // annotation. Coerce to number here so downstream formatPrice() calls work.
+    return tickers.map((t) => {
+      const price = Number(t.price) || 0;
+      return {
+        pair: t.symbol ?? "",
+        price,
+        change: 0,
+        changePct: 0,
+        high: price,
+        low: price,
+        volume: 0,
+        quoteVolume: 0,
+        ts: Date.now(),
+      };
+    });
   },
   async fetchAllFuturesTickers() {
     const overview = await getFuturesOverview();
