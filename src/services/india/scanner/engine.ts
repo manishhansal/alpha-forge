@@ -15,9 +15,6 @@ import type {
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 // angel is imported for SmartAPI-specific broker analytics only (PCR, OI buildup, gainers/losers).
 // These endpoints have no equivalent in the MarketDataProvider interface.
-// All generic market-data calls (quotes, historical candles) route through the registry.
-// DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception — no MarketDataProvider equivalent
-// eslint-disable-next-line no-restricted-imports
 import { cache } from "@/services/india/cache";
 
 const now = () => new Date().toISOString();

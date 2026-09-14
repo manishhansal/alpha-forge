@@ -9,7 +9,6 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { getPrisma } from "@/lib/prisma";
 import {
   FNOUniverseService,
   buildUnavailableCoverageSnapshot,
@@ -30,8 +29,6 @@ export async function GET(req: NextRequest) {
   const sessionDate = dateParam ?? todayIST();
 
   try {
-    const prisma = getPrisma();
-
     const universeSummary = FNOUniverseService.getSummary();
     // universeCoverageSnapshot table dropped — always return unavailable snapshot
     const coverage = {

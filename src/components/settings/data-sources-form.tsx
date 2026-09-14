@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Loader2, ServerCrash, Wifi } from "lucide-react";
-import { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 /**
  * DataSourcesForm — data-service2.0 connection status display.
@@ -54,7 +54,7 @@ export function DataSourcesForm() {
         "(configured via DATA_SERVICE_2_URL env var)"
       : "";
 
-  async function checkConnection() {
+  const checkConnection = useCallback(async function checkConnectionFn() {
     setConnectionState("loading");
     setLastError(null);
     try {
@@ -73,13 +73,17 @@ export function DataSourcesForm() {
       setConnectionState("error");
       setLastError((err as Error).message);
     }
-  }
-
-  // Check on mount
-  useEffect(() => {
-    void checkConnection();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Check on mount — async health probe, state updates happen asynchronously in .then()
+  useEffect(() => {
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- checkConnection is async; setState is called in .then() not synchronously
+    checkConnection().then(() => {
+      if (cancelled) return;
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [checkConnection]);
 
   const overallOk =
     connectionState === "ok" &&

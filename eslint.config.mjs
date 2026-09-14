@@ -3,46 +3,73 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
 /**
- * Canonical Import Boundary — no-restricted-imports
+ * Data-Service2.0 Import Boundary — no-restricted-imports
  *
- * All market-data access MUST flow through the ProviderRegistry (registry.ts).
- * Direct imports of broker/provider SDKs outside the Approved_Provider_Allowlist
- * are forbidden at CI time.
+ * After the data-service2.0 centralization refactor, all market-data access
+ * MUST flow through the canonical client:
+ *   @/lib/data-service/client
  *
- * Allowlist (files that MAY import these modules directly):
- *   src/lib/market-data/providers/angel-one.ts
- *   src/lib/market-data/providers/upstox.ts
- *   src/lib/market-data/providers/yahoo.ts
- *   src/lib/market-data/providers/scrapling.ts
- *   src/services/india/angelone/**  (adapter implementation)
- *   src/services/india/upstox/**    (adapter implementation)
- *   src/services/india/yahoo/**     (adapter implementation)
+ * Direct imports of any market-data provider SDK or service are forbidden.
+ * The old ProviderRegistry, provider adapters, and broker market-data modules
+ * no longer exist. Any import of them is a build error.
  *
- * Documented exceptions (broker-analytics endpoints with no MarketDataProvider
- * equivalent) must disable this rule inline with a comment referencing
- * DATA_SERVICE_PRE_REFACTOR_AUDIT.md. See canonical-import-guard.ts.
+ * Allowed: @/services/india/angelone (portfolio/execution only — not market data)
+ *          @/services/india/broker   (order execution only)
  */
-const canonicalImportBoundaryRule = [
+const dataServiceBoundaryRule = [
   "error",
   {
     patterns: [
+      // Deleted market-data provider modules — must not be re-imported
+      {
+        group: ["yahoo-finance2", "**/yahoo-finance2*"],
+        message:
+          "yahoo-finance2 was removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/lib/market-data/registry*", "@/lib/market-data/registry*"],
+        message:
+          "ProviderRegistry was removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/lib/market-data/providers/**", "@/lib/market-data/providers/**"],
+        message:
+          "Provider adapters were removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/lib/market-data/services/**", "@/lib/market-data/services/**"],
+        message:
+          "Market-data services were removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
       {
         group: ["**/services/india/yahoo*", "@/services/india/yahoo*"],
         message:
-          "Use registry.getQuotes() or registry.getHistoricalCandles() instead. See canonical-import-guard.ts.",
+          "Yahoo adapter was removed. Use DataServiceClient from @/lib/data-service/client.",
       },
       {
-        group: [
-          "**/services/india/angelone*",
-          "@/services/india/angelone*",
-        ],
+        group: ["**/services/india/nse*", "@/services/india/nse*"],
         message:
-          "Use registry.getQuotes() etc. See canonical-import-guard.ts for documented exceptions.",
+          "NSE direct access was removed. Use DataServiceClient from @/lib/data-service/client.",
       },
       {
-        group: ["yahoo-finance2"],
+        group: ["**/services/india/groww*", "@/services/india/groww*"],
         message:
-          "Use registry.getHistoricalCandles(). Direct Yahoo Finance access is prohibited outside the allowlist.",
+          "Groww adapter was removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/services/binance*", "@/services/binance*"],
+        message:
+          "Binance direct access was removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/services/deribit*", "@/services/deribit*"],
+        message:
+          "Deribit direct access was removed. Use DataServiceClient from @/lib/data-service/client.",
+      },
+      {
+        group: ["**/services/coingecko*", "@/services/coingecko*"],
+        message:
+          "CoinGecko direct access was removed. Use DataServiceClient from @/lib/data-service/client.",
       },
     ],
   },
@@ -51,34 +78,14 @@ const canonicalImportBoundaryRule = [
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  // Canonical import boundary: enforce for all files by default.
+  // Data-service2.0 boundary: enforce for all files.
   {
     rules: {
-      "no-restricted-imports": canonicalImportBoundaryRule,
-    },
-  },
-  // Allowlist: provider adapter files may import broker SDKs directly.
-  // The no-restricted-imports rule is disabled for these files only.
-  {
-    files: [
-      "src/lib/market-data/providers/angel-one.ts",
-      "src/lib/market-data/providers/upstox.ts",
-      "src/lib/market-data/providers/yahoo.ts",
-      "src/lib/market-data/providers/scrapling.ts",
-      "src/services/india/angelone/**/*.ts",
-      "src/services/india/angelone/**/*.tsx",
-      "src/services/india/upstox/**/*.ts",
-      "src/services/india/upstox/**/*.tsx",
-      "src/services/india/yahoo/**/*.ts",
-      "src/services/india/yahoo/**/*.tsx",
-    ],
-    rules: {
-      "no-restricted-imports": "off",
+      "no-restricted-imports": dataServiceBoundaryRule,
     },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
