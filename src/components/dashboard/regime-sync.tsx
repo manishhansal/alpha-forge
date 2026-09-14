@@ -36,10 +36,10 @@ export function RegimeSync() {
     const indices = snapshot?.indices ?? [];
 
     const vixEntry    = indices.find((idx) =>
-      idx.name.toUpperCase().includes("VIX"),
+      idx.name?.toUpperCase().includes("VIX"),
     );
     const niftyEntry  = indices.find((idx) =>
-      idx.name.toUpperCase().includes("NIFTY 50"),
+      idx.name?.toUpperCase().includes("NIFTY 50"),
     );
 
     const vix           = vixEntry?.price ?? null;

@@ -29,7 +29,7 @@ export function SignalBadge({
 }: SignalBadgeProps) {
   const isPositive = action === "LONG" || action === "BUY";
   const isNegative = action === "SHORT" || action === "SELL";
-  const isNeutral = action === "WAIT";
+  const _isNeutral = action === "WAIT";
 
   const Icon = isPositive ? TrendingUp : isNegative ? TrendingDown : Clock;
 

@@ -44,7 +44,7 @@ export async function saveDataSourcesAction(
   );
 
   const indiaOi = formData.get("indiaOptionChain");
-  const cryptoPrimary = formData.get("cryptoPrimary");
+  const _cryptoPrimary = formData.get("cryptoPrimary");
 
   // We rely on `normalizeSelections` to enforce per-field invariants
   // (drop unknown ids, ensure a sensible default when a list is empty,

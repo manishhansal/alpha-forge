@@ -38,7 +38,7 @@ function MetricTile({ label, value, sub, color }: MetricTileProps) {
 }
 
 export function HeadlineMetrics({ report }: { report: SignalQualityReport }) {
-  const best = report.leaderboard[0];
+  const _best = report.leaderboard[0];
   const highQualityCount = report.finalVerdicts.filter((v) => v.verdict === "HIGH_QUALITY").length;
   const totalStrategies = report.finalVerdicts.length;
   const disableCount = report.finalVerdicts.filter(

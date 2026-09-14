@@ -16,7 +16,7 @@ import {
   type OptionLeg,
   type Greeks,
 } from "@/features/india/options-workbench/payoff";
-import type { OptionChain, OptionChainRow } from "@/types/india";
+import type { OptionChain } from "@/types/india";
 
 // ---------------------------------------------------------------------------
 // Strategy definitions
@@ -177,7 +177,7 @@ function makeLegId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-function templateToLegState(t: LegTemplate, atmStrike: number, expiry: string): LegState {
+function _templateToLegState(t: LegTemplate, atmStrike: number, expiry: string): LegState {
   return {
     id: makeLegId(),
     label: t.label,
@@ -208,7 +208,7 @@ function PayoffChart({ data, breakEvens, maxProfit, maxLoss }: PayoffChartProps)
   if (data.length === 0) return null;
 
   const spots = data.map((d) => d.spot);
-  const pnls = data.map((d) => d.pnl);
+  const _pnls = data.map((d) => d.pnl);
 
   const minSpot = Math.min(...spots);
   const maxSpot = Math.max(...spots);

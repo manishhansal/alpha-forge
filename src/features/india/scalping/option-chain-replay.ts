@@ -90,7 +90,7 @@ function toReplaySnapshots(points: OptionChainSeriesPoint[]): ReplaySnapshot[] {
 }
 
 async function computeReplayScores(
-  prisma?: PrismaClient,
+  _prisma?: PrismaClient,
 ): Promise<ReplayScoreMap> {
   const since = Date.now() - LOOKBACK_MS;
 

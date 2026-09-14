@@ -17,7 +17,7 @@
  * Postgres is unavailable — the feature degrades, it never hard-fails.
  */
 
-import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
@@ -33,14 +33,13 @@ import {
 } from "@/lib/india/market-hours";
 // angel is used for broker-analytics only (PCR, OI buildup, portfolio) — no MarketDataProvider equivalent.
 // See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
-// eslint-disable-next-line no-restricted-imports
+ 
 import { resolveQuotes } from "@/services/india/resolve";
 // NOTE: deliberately importing the *shared* defaults (zero auth / server-only
 // deps) rather than `getActiveSelections` — Daily Picks is a background-ish
 // scorer driven by the worker too, and that runtime doesn't have a React /
 // NextAuth context. Bringing `next/navigation` into the worker via
 // `getActiveSelections` → `auth()` crashes worker boot.
-import { DEFAULT_SELECTIONS } from "@/features/settings/data-sources-shared";
 import type { AiMarketContext } from "@/types/ai-signals";
 import type { AiSignal } from "@/types/ai-signals";
 import type { OptionChain } from "@/types/india";
@@ -695,10 +694,10 @@ async function freezeAndTrack(
  * on catastrophic failure returns [] (no picks frozen this tick — the next tick
  * retries). INDICES_SCALP picks are exempt (option-chain-priced, not daily-warm-up).
  */
-const DAILY_PICK_WARMUP_BARS = 20; // basic warm-up floor for a daily-horizon pick.
+const _DAILY_PICK_WARMUP_BARS = 20; // basic warm-up floor for a daily-horizon pick.
 async function gateFreshPicksByData(
   fresh: DailyPick[],
-  db: PrismaClient,
+  _db: PrismaClient,
 ): Promise<DailyPick[]> {
   try {
     // producer-data-gate.service removed — stub with allowed: true

@@ -174,7 +174,7 @@ export function passesQuantPrefilter(
 }
 
 /** A confidence multiplier applied when the quant pre-filter is failed. */
-const QUANT_PENALTY = 0.82;
+const _QUANT_PENALTY = 0.82;
 
 /**
  * Compute an approximate Wilder ADX(14) from daily candles.
@@ -1180,7 +1180,7 @@ async function loadFirstPartyDerivatives(): Promise<FirstPartyDerivatives> {
     ];
     const [pcrRows, ...oiResults] = await Promise.all([
       (async () => [])() ,
-      ...datatypes.map((d) => (async () => [])() ),
+      ...datatypes.map((_d) => (async () => [])() ),
     ]);
     return {
       pcr: pcrMapFromRows(pcrRows),

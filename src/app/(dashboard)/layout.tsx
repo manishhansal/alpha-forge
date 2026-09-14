@@ -6,7 +6,6 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { AuroraBackground } from "@/components/dashboard/aurora-background";
 import { auth } from "@/lib/auth";
-import { getActiveSelections } from "@/features/settings/active-sources";
 import {
   dataSourceLabels,
   

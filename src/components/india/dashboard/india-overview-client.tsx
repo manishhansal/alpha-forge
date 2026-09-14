@@ -214,9 +214,9 @@ export function IndiaOverviewClient() {
 
   // ── Index names sourced from snapshot ────────────────────────────────────
   const indices = snapshot?.indices ?? [];
-  const hasNifty = indices.some((i) => i.name?.toUpperCase() === "NIFTY 50");
-  const hasBank = indices.some((i) => i.name?.toUpperCase() === "NIFTY BANK");
-  const hasFin = indices.some((i) =>
+  const _hasNifty = indices.some((i) => i.name?.toUpperCase() === "NIFTY 50");
+  const _hasBank = indices.some((i) => i.name?.toUpperCase() === "NIFTY BANK");
+  const _hasFin = indices.some((i) =>
     i.name?.toUpperCase().includes("FIN SERVICE") ||
     i.name?.toUpperCase().includes("FINNIFTY"),
   );

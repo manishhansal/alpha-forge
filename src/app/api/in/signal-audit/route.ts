@@ -12,12 +12,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 import {
-  FNOUniverseService,
   buildUnavailableCoverageSnapshot,
   SignalSourceRegistry,
   buildTodaySignalAuditReport,
   computeReplayHash,
-  detectSignalDecay,
 } from "@/lib/signal-intelligence";
 import type { SignalSourceType } from "@/lib/signal-intelligence";
 

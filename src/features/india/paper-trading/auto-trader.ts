@@ -35,7 +35,7 @@
  * including quality tier, net EV, rejection codes, and regime.
  */
 
-import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getQuotes, getHistorical } from "@/lib/data-service/client";
 import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
@@ -67,7 +67,7 @@ import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 // is written to the DB and survives worker restarts.
 import { emitLifecycleEvent } from "@/lib/signal-intelligence/lifecycle-persist";
 // V2.1 DATA GATE: every signal path must check DataQualityGate before trading.
-import { evaluateDataGate, filterByDataGate } from "@/lib/data-service/gate-client";
+import { evaluateDataGate } from "@/lib/data-service/gate-client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -388,7 +388,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
     const liveDrawdownPct = budget.session?.maxDrawdownPct ?? 0;
 
     // Build a minimal portfolio state for the pipeline
-    const drawdownState = classifyDrawdownTier(liveDrawdownPct);
+    const _drawdownState = classifyDrawdownTier(liveDrawdownPct);
     const dailyBudget = computeDailyRiskBudget(
       budget.session ? DAILY_BUDGET : DAILY_BUDGET,
       budget.deployed,
@@ -411,7 +411,7 @@ export async function runAutoTradeTick(): Promise<AutoTradeTickResult> {
       ...await mapWithConcurrency(
         uniqueCandidateSymbols,
         6,
-        (sym) => getHistorical({ symbol: "NIFTY", interval: "1d", exchange: "NSE" })
+        (_sym) => getHistorical({ symbol: "NIFTY", interval: "1d", exchange: "NSE" })
           .catch(() => [] as OHLCVCandle[]),
       ),
     ]);

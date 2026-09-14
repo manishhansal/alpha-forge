@@ -15,7 +15,7 @@ const ACCENT: Record<string, string> = {
   "INDIA VIX":     "#ef4444",
 };
 
-const isVix = (name: string) => name.toUpperCase().includes("VIX");
+const isVix = (name: string | undefined | null) => !!name?.toUpperCase().includes("VIX");
 
 function IndexChip({
   name,
@@ -23,7 +23,7 @@ function IndexChip({
   price,
   changePct,
 }: {
-  name: string;
+  name: string | undefined | null;
   symbol: string;
   price: number | null;
   changePct: number | null;
@@ -31,7 +31,7 @@ function IndexChip({
   const pct     = changePct ?? 0;
   const vix     = isVix(name);
   const positive = vix ? pct < 0 : pct >= 0;
-  const dot     = ACCENT[name] ?? "#64748b";
+  const dot     = (name && ACCENT[name]) ?? "#64748b";
 
   return (
     <div

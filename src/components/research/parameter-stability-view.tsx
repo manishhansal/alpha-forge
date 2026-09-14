@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface StrategyOption { id: string; name: string; status: string }
 
-export function ParameterStabilityView({ strategies }: { strategies: StrategyOption[] }) {
+export function ParameterStabilityView({ strategies: _strategies }: { strategies: StrategyOption[] }) {
   return (
     <Card>
       <CardHeader>

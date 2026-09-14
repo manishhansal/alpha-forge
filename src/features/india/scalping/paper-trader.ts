@@ -1,4 +1,4 @@
-import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getHistorical } from "@/lib/data-service/client";
 import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
@@ -6,7 +6,6 @@ import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import {
-  executeExactlyOnce,
   buildTradeGuardKey,
 } from "@/lib/india/atomic-trade-guard";
 import { redis as redisClient } from "@/lib/redis";

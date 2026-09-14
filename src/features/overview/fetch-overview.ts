@@ -21,7 +21,7 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
     }
 
     const tickerBySymbol = new Map(tickers.value.map((t) => [t.pair, t]));
-    const futures = futuresRes.status === "fulfilled" ? futuresRes.value : [];
+    const _futures = futuresRes.status === "fulfilled" ? futuresRes.value : [];
 
     // Build a simple global data structure from futures
     const globalData = {
