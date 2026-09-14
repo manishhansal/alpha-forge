@@ -23,7 +23,6 @@ import {
 } from "@/components/india/ui/signal-table-row";
 import { useIndiaScannerStore } from "@/store/india/scannerStore";
 import { useScanner } from "@/hooks/india/useScanner";
-import { fmtPct } from "@/lib/india/format";
 import { fmtTime } from "@/lib/utils";
 import type { ScannerHit, ScannerType } from "@/types/india/scanner";
 
@@ -54,7 +53,6 @@ export default function ScannerPage() {
   const error   = useIndiaScannerStore((s) => s.errors[active]);
 
   // Track which row is expanded so clicking another collapses the current one.
-  const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
 
   const interval =
     active === "momentum" || active === "volume-breakout"
@@ -92,8 +90,17 @@ export default function ScannerPage() {
     winrateThreshold: 0.6,
   });
 
-  // Collapse expanded row when scanner type or page changes.
-  React.useEffect(() => { setExpandedSymbol(null); }, [active, page]);
+  // Expanded row is keyed by active+page so it auto-resets on tab/page changes
+  // (no useEffect or ref-during-render needed).
+  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
+  const expandedKeyId = `${active}:${page}`;
+  const expandedSymbol = expandedKey?.startsWith(expandedKeyId)
+    ? expandedKey.slice(expandedKeyId.length + 1)
+    : null;
+  const setExpandedSymbol = React.useCallback(
+    (sym: string | null) => setExpandedKey(sym != null ? `${expandedKeyId}:${sym}` : null),
+    [expandedKeyId],
+  );
 
   return (
     <div className="space-y-6">
@@ -196,8 +203,8 @@ export default function ScannerPage() {
                     index={i}
                     expanded={expandedSymbol === h.symbol}
                     onToggle={() =>
-                      setExpandedSymbol((prev) =>
-                        prev === h.symbol ? null : h.symbol,
+                      setExpandedSymbol(
+                        expandedSymbol === h.symbol ? null : h.symbol,
                       )
                     }
                     extraTrailCells={

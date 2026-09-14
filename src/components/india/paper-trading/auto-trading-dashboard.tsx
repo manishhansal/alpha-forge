@@ -18,7 +18,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fmt, fmtPct } from "@/lib/india/format";
+import { fmt } from "@/lib/india/format";
 import type {
   AnalyticsRange,
   AutoTradingAnalytics,
@@ -186,7 +186,6 @@ export function AutoTradingDashboard() {
   const [error,   setError]   = React.useState<string | null>(null);
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
     try {
       const res = await fetch(`/api/in/paper-trade/analytics?range=${range}`, {
         cache: "no-store", signal,
@@ -202,7 +201,7 @@ export function AutoTradingDashboard() {
 
   React.useEffect(() => {
     const ac = new AbortController();
-    void load(ac.signal);
+    React.startTransition(() => { void load(ac.signal); });
     return () => ac.abort();
   }, [load]);
 

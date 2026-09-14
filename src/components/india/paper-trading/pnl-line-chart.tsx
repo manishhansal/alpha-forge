@@ -95,8 +95,6 @@ export function PnlLineChart({
   // ── Fetch ────────────────────────────────────────────────────────────────
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
     try {
       const res = await fetch("/api/in/paper-trade/strategy-pnl", {
         cache: "no-store",
@@ -105,6 +103,7 @@ export function PnlLineChart({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json() as Record<string, IndiaStrategyPnlPoint[]>;
       setData(json);
+      setError(null);
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
       setError((e as Error).message);
@@ -116,7 +115,7 @@ export function PnlLineChart({
   React.useEffect(() => {
     if (!autoFetch) return;
     const ac = new AbortController();
-    void load(ac.signal);
+    React.startTransition(() => { void load(ac.signal); });
     return () => ac.abort();
   }, [autoFetch, load]);
 
@@ -164,15 +163,14 @@ export function PnlLineChart({
       chartRef.current.applyOptions({ width: w });
     });
     ro.observe(containerRef.current);
-
+    const seriesMap = seriesMapRef.current;
     return () => {
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
-      seriesMapRef.current.clear();
+      seriesMap.clear();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height]);
+  }, [height, resolvedTheme]);
 
   // ── Theme sync ────────────────────────────────────────────────────────────
 
@@ -262,7 +260,7 @@ export function PnlLineChart({
     if (strategyIds.length > 0) {
       chart.timeScale().fitContent();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [data, resolvedTheme]);
 
   // ── Derived legend entries ─────────────────────────────────────────────────

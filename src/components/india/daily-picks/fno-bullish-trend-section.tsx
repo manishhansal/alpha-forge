@@ -77,7 +77,6 @@ export function FnoBullishTrendSection() {
   const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
-    setRefreshing(true);
     try {
       const res = await fetch("/api/in/fno-bullish-trend?limit=50", {
         cache: "no-store",
@@ -99,8 +98,8 @@ export function FnoBullishTrendSection() {
   // Initial fetch + polling — always active regardless of collapsed state.
   React.useEffect(() => {
     const ac = new AbortController();
-    void load(ac.signal);
-    const id = setInterval(() => void load(ac.signal), REFRESH_INTERVAL_MS);
+    React.startTransition(() => { void load(ac.signal); });
+    const id = setInterval(() => React.startTransition(() => { void load(ac.signal); }), REFRESH_INTERVAL_MS);
     return () => {
       ac.abort();
       clearInterval(id);

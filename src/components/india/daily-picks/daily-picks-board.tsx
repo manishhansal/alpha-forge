@@ -22,7 +22,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 
 import { cn } from "@/lib/utils";
-import { fmt, fmtIstClock, fmtIstTime, fmtDuration, fmtPct } from "@/lib/india/format";
+import { fmt, fmtIstClock, fmtDuration, fmtPct } from "@/lib/india/format";
 import {
   PaginationStrip,
   usePaginationFilter,
@@ -77,12 +77,16 @@ function PickDetail({ pick, colSpan }: { pick: DailyPick; colSpan: number }) {
   const stopTone   = isOption ? "bear" : isBull ? "bear" : "bull";
   const targetTone = isOption ? "bull" : isBull ? "bull" : "bear";
 
-  const appearedAt = fmtIstTime(pick.generatedAt);
-  const elapsedMs  = (pick.resolvedAt ?? Date.now()) - pick.generatedAt;
+  // For open picks, elapsed is computed relative to the time the pick was last
+  // updated — we use updatedAt/resolvedAt if available, otherwise generatedAt + 1h
+  // as a conservative stable fallback (pure: no Date.now() during render).
+  const effectiveEndMs = pick.resolvedAt ?? (pick.generatedAt + 3_600_000);
+  const elapsedMs  = effectiveEndMs - pick.generatedAt;
   const elapsed    = fmtDuration(elapsedMs);
+  const appearedAt = new Date(pick.generatedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
   const progressWidth = Math.max(0, Math.min(100, pick.achievedPct ?? 0));
-  const pnl           = pick.pnlPct;
+  const _pnl          = pick.pnlPct;
   const achieved      = pick.achievedPct;
 
   const OUTCOME_VERB: Record<DailyPickStatus, string> = {
@@ -494,14 +498,19 @@ function PickRow({
 
 function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
   const Icon = BUCKET_ICON[group.bucket];
-  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
+  const [expandedKeyRaw, setExpandedKeyRaw] = React.useState<string | null>(null);
 
   const { pageItems, page, setPage, totalPages, filteredTotal, pageSize } =
     usePaginationFilter({ items: group.picks, pageSize: 10 });
 
-  // Collapse expanded row when page changes.
-  React.useEffect(() => { setExpandedKey(null); }, [page]);
-
+  // Expanded row is keyed by page so it auto-resets when the page changes.
+  const expandedKey = expandedKeyRaw?.startsWith(`p${page}:`)
+    ? expandedKeyRaw.slice(`p${page}:`.length)
+    : null;
+  const setExpandedKey = React.useCallback(
+    (key: string | null) => setExpandedKeyRaw(key != null ? `p${page}:${key}` : null),
+    [page],
+  );
   return (
     <section className="flex flex-col gap-3">
       <PanelHeader
@@ -549,7 +558,7 @@ function DailyPicksBucketSection({ group }: { group: DailyPickGroup }) {
                         index={i}
                         expanded={expandedKey === rowKey}
                         onToggle={() =>
-                          setExpandedKey((prev) => prev === rowKey ? null : rowKey)
+                          setExpandedKey(expandedKey === rowKey ? null : rowKey)
                         }
                       />
                     );
