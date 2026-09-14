@@ -36,19 +36,16 @@
  * business logic — all logic is in the pure engine modules.
  */
 
-import { v4 as uuidv4 } from "uuid";
 import type { OHLCVCandle } from "@/lib/market-data/types";
 import type { OptionChain } from "@/types/india";
 
 import {
   createOpportunityId, createCorrelationId,
   type OpportunityV1, type OpportunityDecision, type OpportunityLifecycleState,
-  type QualityTier, type MarketRegimeState, type MTFAlignmentState,
+  type QualityTier, type MTFAlignmentState,
   type OIBuildupClassification, type OptionsFlowBias,
-  type SectorContextClassification, type VolatilityRegimeState,
-  type LiquidityRegimeState,
 } from "./types";
-import { classifyMarketRegime, computeRegimeScore, type RegimeEvaluation } from "./market-regime-engine";
+import { classifyMarketRegime, computeRegimeScore } from "./market-regime-engine";
 import { detectBestOpportunity, type OpportunityDetectorInput } from "./opportunity-detector";
 import { evaluateMTFAlignment, type MTFInput } from "./mtf-confirmation";
 import { computeRelativeStrength, evaluateSectorContext, sectorClassificationToScore, INDIA_SECTOR_MAP, type ReturnSeries } from "./relative-strength-engine";

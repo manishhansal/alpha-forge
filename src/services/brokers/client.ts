@@ -53,7 +53,7 @@ function createDataServiceTickerStream(opts: TickerStreamOptions): BrokerStreamC
   function connect() {
     try {
       ws = new WebSocket(wsUrl);
-    } catch (err) {
+    } catch {
       opts.onStatusChange?.("error");
       return;
     }

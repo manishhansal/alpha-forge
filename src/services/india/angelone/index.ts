@@ -21,13 +21,10 @@
 import { createHmac } from "node:crypto";
 import type {
   Candle,
-  HistoricalRequest,
   Interval,
-  OptionChain,
   OptionChainAnalytics,
   OptionChainRow,
   OptionGreeks,
-  OptionLeg,
   Quote,
 } from "@/types/india";
 import type { BrokerAdapter } from "../broker/types";
@@ -42,16 +39,16 @@ function httpStatusToErrorCode(status: number): import("@/lib/market-data/types"
 }
 import { cache } from "../cache";
 // Stubs for removed derivatives module
-type DerivExpiryType = string;
+type _DerivExpiryType = string;
 type DerivGainerLoser = { symbol: string; changePct: number };
 type DerivOiBuildup = { type: string; data: unknown[] };
 type DerivPcr = { pcr: number; timestamp: string };
-type GainersLosersDataType = string;
-type OiBuildupDataType = "longBuildup" | "shortBuildup" | "shortCovering" | "longUnwinding";
-function parseGainersLosers(_data: unknown): DerivGainerLoser[] { return []; }
+type _GainersLosersDataType = string;
+type _OiBuildupDataType = "longBuildup" | "shortBuildup" | "shortCovering" | "longUnwinding";
+function _parseGainersLosers(_data: unknown): DerivGainerLoser[] { return []; }
 function parseGreekRows(_data: unknown): unknown[] { return []; }
-function parseOiBuildup(_data: unknown): DerivOiBuildup[] { return []; }
-function parsePcr(_data: unknown): DerivPcr | null { return null; }
+function _parseOiBuildup(_data: unknown): DerivOiBuildup[] { return []; }
+function _parsePcr(_data: unknown): DerivPcr | null { return null; }
 // Stubs for removed smartstream module
 const SMART_EXCHANGE_TYPE = { NSE_CM: 1, NSE_FO: 2, BSE_CM: 3, BSE: 4 } as const;
 const SMART_MODE = { LTP: 1, QUOTE: 2, SNAP_QUOTE: 3 } as const;
@@ -172,7 +169,7 @@ function isAngelRateLimitError(msg: string): boolean {
 }
 const QUOTE_BATCH_SIZE = 50; // SmartAPI hard cap
 
-const INDEX_UNDERLYINGS = new Set([
+const _INDEX_UNDERLYINGS = new Set([
   "NIFTY",
   "BANKNIFTY",
   "FINNIFTY",
@@ -570,7 +567,7 @@ export async function getScripSubsets(): Promise<ScripSubsets> {
 }
 
 /** Download + cache the option-contract subset of the Scrip Master. */
-async function getOptionContracts(): Promise<AngelScripRow[]> {
+async function _getOptionContracts(): Promise<AngelScripRow[]> {
   return (await getScripSubsets()).options;
 }
 
@@ -709,7 +706,7 @@ const num = (v: unknown): number | null =>
 
 /** Placeholder quote used when neither Angel One nor Yahoo could resolve a
  *  symbol — keeps the consumer's array length aligned with the request. */
-function emptyAngelQuote(symbol: string): Quote {
+function _emptyAngelQuote(symbol: string): Quote {
   return {
     symbol,
     name: null,
@@ -908,7 +905,7 @@ interface ContractIndex {
   byExpiry: Map<string, AngelScripRow[]>; // DD-MMM-YYYY → option rows for this expiry
 }
 
-function indexContractsForUnderlying(
+function _indexContractsForUnderlying(
   rows: AngelScripRow[],
   upper: string,
 ): ContractIndex {
@@ -947,7 +944,7 @@ interface QuoteFullRow {
  * a map keyed by `symbolToken`. Used by the chain synthesiser so SENSEX/BANKEX
  * (BSE) chains quote correctly alongside the NSE indices.
  */
-async function bulkQuoteOptionLegs(
+async function _bulkQuoteOptionLegs(
   cfg: SmartApiConfig,
   jwt: string,
   legs: AngelScripRow[],
@@ -1019,7 +1016,7 @@ async function bulkQuoteTokens(
 }
 
 /** SmartAPI getCandleData call → raw OHLCV tuples. */
-async function fetchCandleData(
+async function _fetchCandleData(
   cfg: SmartApiConfig,
   jwt: string,
   ins: AngelToken,
@@ -1064,7 +1061,7 @@ async function fetchCandleData(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-async function fetchGreeks(
+async function _fetchGreeks(
   cfg: SmartApiConfig,
   jwt: string,
   underlying: string,
@@ -1094,7 +1091,7 @@ async function fetchGreeks(
 // Duplicated here intentionally to keep the angelone module self-contained;
 // the NSE module's `computeAnalytics` lives behind its own module-local helper.
 
-function computeAnalytics(
+function _computeAnalytics(
   rows: OptionChainRow[],
   spot: number | null,
 ): OptionChainAnalytics {
@@ -1182,7 +1179,7 @@ function computeAnalytics(
 
 // ── Underlying spot (so the page can render even on partial chain) ──────────
 
-async function fetchUnderlyingSpot(
+async function _fetchUnderlyingSpot(
   cfg: SmartApiConfig,
   jwt: string,
   upper: string,

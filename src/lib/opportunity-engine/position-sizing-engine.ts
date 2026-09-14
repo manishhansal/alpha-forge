@@ -324,7 +324,7 @@ export function computeDailyRiskBudget(
   // Stop if no remaining capacity
   const budgetExhausted = remainingINR <= 0;
 
-  let allowNewTrades = !dailyLossLimitHit && !maxTradesHit && !budgetExhausted;
+  const allowNewTrades = !dailyLossLimitHit && !maxTradesHit && !budgetExhausted;
   let reason = "Budget available";
 
   if (dailyLossLimitHit) reason = `Daily loss limit ₹${maxDailyLossINR.toFixed(0)} reached`;

@@ -51,7 +51,7 @@ interface QueuedEvent {
   db: PrismaClient;
 }
 
-let _queue: QueuedEvent[] = [];
+const _queue: QueuedEvent[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function flushQueue(): Promise<void> {
@@ -72,7 +72,6 @@ async function flushQueue(): Promise<void> {
       // we must provide a proper JSON-compatible value when set.
       // We use `db.$queryRawUnsafe` wrapped individual creates to avoid the
       // Prisma createMany union constraint on nullable JSON fields.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const creates = items.map((item) => {
         const data: Record<string, unknown> = {
           signalId:    item.payload.signalId,
