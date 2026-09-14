@@ -1,3 +1,4 @@
+import { getQuotes } from "@/lib/data-service/client";
 /**
  * India EOD Square-Off Job
  *
@@ -124,9 +125,9 @@ export function startIndiaEodSquareOffJob(): JobHandle {
           const symbols = [...new Set(openTrades.map((t) => t.symbol))];
           const priceMap = new Map<string, number>();
           try {
-            const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-            await bootstrapRegistry();
-            const mdQuotes = await registry.getQuotes(symbols);
+            
+            
+            const mdQuotes = await getQuotes(symbols);
             for (const q of mdQuotes) {
               const sym = q?.symbol?.replace(/\.NS$/i, "").toUpperCase();
               if (sym && q?.ltp != null && Number.isFinite(q.ltp)) {

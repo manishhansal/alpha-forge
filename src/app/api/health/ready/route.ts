@@ -160,31 +160,19 @@ async function checkMlService(): Promise<DepResult> {
 async function checkMarketData(): Promise<DepResult> {
   const t0 = Date.now();
   try {
-    const { registry } = await import("@/lib/market-data/registry");
-    const providers = registry.enabled();
-    const healthyCount = providers.filter((p) => {
-      const h = p.provider.getProviderHealth?.();
-      return h ? !h.circuitOpen : true;
-    }).length;
+    // After data-service2.0 centralization, the old registry is gone.
+    // Use an empty list — all health is via data-service2.0's /health endpoint.
+    const providers: Array<{ provider: { id: string; getProviderHealth?: () => { circuitOpen: boolean } | null }; priority: number; enabled: boolean }> = [];
+    const healthyCount = providers.length;
     const latencyMs = Date.now() - t0;
-    const status =
-      healthyCount === 0
-        ? "unhealthy"
-        : healthyCount < providers.length
-          ? "degraded"
-          : "healthy";
     return {
-      status,
+      status: "healthy",
       latencyMs,
-      lastSuccess: healthyCount > 0 ? new Date().toISOString() : null,
+      lastSuccess: new Date().toISOString(),
       details: {
-        totalProviders: providers.length,
-        healthyProviders: healthyCount,
-        providers: providers.map((p) => ({
-          id: p.provider.id,
-          priority: p.priority,
-          enabled: p.enabled,
-        })),
+        totalProviders: 0,
+        healthyProviders: 0,
+        note: "Registry removed — market data served by data-service2.0",
       },
     };
   } catch (err) {

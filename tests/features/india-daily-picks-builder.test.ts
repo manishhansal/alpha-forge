@@ -20,14 +20,15 @@ vi.mock("@/features/india/scalping/strategies/opening-breakout", () => ({
 // so existing tests that don't surface any index symbols behave exactly as
 // before. Tests that exercise the option-projection path stub this to return
 // a controlled chain.
-vi.mock("@/lib/market-data/registry", () => ({
-  registry: {
-    getOptionChain: (...args: unknown[]) => registryGetOptionChainMock(...args),
-    getQuotes: vi.fn().mockResolvedValue([]),
-    getLatestQuote: vi.fn().mockResolvedValue(null),
-  },
-  bootstrapRegistry: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/lib/data-service/client", () => ({
+  getOptionChain: (...args: unknown[]) => registryGetOptionChainMock(...args),
+  getQuotes: vi.fn().mockResolvedValue([]),
+  getQuote: vi.fn().mockResolvedValue(null),
+  getHistorical: vi.fn().mockResolvedValue([]),
+  getInstruments: vi.fn().mockResolvedValue([]),
+  DataServiceUnavailableError: class DataServiceUnavailableError extends Error {},
 }));
+
 
 import {
   getIndiaDailyPicks,
@@ -546,10 +547,14 @@ describe("getIndiaDailyPicks", () => {
     registryGetOptionChainMock.mockImplementation(async (sym: string) => {
       if (sym !== "NIFTY") throw new Error(`no chain for ${sym}`);
       return {
-        symbol: "NIFTY",
-        spot: 24080,
+        underlying: "NIFTY",
         expiry: "26-Jun-2026",
         expiries: ["26-Jun-2026"],
+        spotPrice: 24080,
+        spot: 24080,
+        pcrOi: null,
+        atmIv: 14,
+        maxPain: null,
         rows: [
           { strike: 24050, ce: null, pe: null },
           {
@@ -559,19 +564,21 @@ describe("getIndiaDailyPicks", () => {
           },
           { strike: 24150, ce: null, pe: null },
         ],
+        dataAsOf: new Date().toISOString(),
+        fetchedAt: new Date().toISOString(),
         analytics: {
           pcrOi: null,
           pcrVolume: null,
+          atmIv: 14,
+          maxPain: 24100,
           maxCeOiStrike: null,
           maxPeOiStrike: null,
           totalCeOi: 0,
           totalPeOi: 0,
           totalCeOiChange: 0,
           totalPeOiChange: 0,
-          atmIv: 14,
-          maxPain: null,
         },
-        fetchedAt: new Date().toISOString(),
+        provider: "angel_one",
       };
     });
     const db = fakePrisma();

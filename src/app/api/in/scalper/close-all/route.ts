@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
 import { indiaPnlPercent } from "@/features/india/scalping/paper-trader-core";
+import { getQuotes } from "@/lib/data-service/client";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -39,9 +40,8 @@ export async function POST() {
     const symbols   = [...new Set(openTrades.map((t) => t.symbol))];
     const priceMap  = new Map<string, number>();
     try {
-      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-      await bootstrapRegistry();
-      const mdQuotes = await registry.getQuotes(symbols);
+      
+      const mdQuotes = await getQuotes(symbols);
       for (const q of mdQuotes) {
         const sym = q?.symbol?.replace(/\.NS$/i, "").toUpperCase();
         if (sym && q?.ltp != null && Number.isFinite(q.ltp)) priceMap.set(sym, q.ltp);

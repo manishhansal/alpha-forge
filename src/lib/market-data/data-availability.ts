@@ -16,7 +16,8 @@
  */
 
 import type { ProviderId } from "./types";
-import type { QualityEnvelope } from "./services/reconciliation.service";
+/** QualityEnvelope from removed reconciliation.service — replaced with unknown */
+export type QualityEnvelope = unknown;
 
 // ── Status ─────────────────────────────────────────────────────────────────
 

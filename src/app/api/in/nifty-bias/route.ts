@@ -1,48 +1,35 @@
 import { NextResponse } from "next/server";
-import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
+import { getQuote, DataServiceUnavailableError } from "@/lib/data-service/client";
+
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/in/nifty-bias
  *
- * Returns the NIFTY 50 bias (BULLISH/BEARISH) vs its 50-day SMA.
- *
- * Routes through the canonical market-data registry (Yahoo provider as
- * fallback) rather than calling yahoo-finance2 directly. This ensures
- * the provider health, circuit breaker, and failover logic all apply.
+ * Returns the NIFTY 50 bias (BULLISH/BEARISH) via data-service2.0.
+ * All market data flows exclusively through data-service2.0.
  */
 export async function GET() {
   try {
-    await bootstrapRegistry();
-
-    const quote = await registry.getLatestQuote("^NSEI");
-    const ltp = quote?.ltp ?? 0;
-
-    // For the 50-day SMA we rely on historical data if needed, but for bias
-    // a simple directional check using prevClose vs ltp is sufficient.
-    // Note: a real SMA50 comparison would need historical candles. For now
-    // we use changePct as a proxy (positive = bullish, negative = bearish).
+    const quote = await getQuote("NIFTY", "NSE");
+    const ltp = quote.ltp ?? 0;
     const bias =
-      ltp && quote?.changePct != null
-        ? (quote.changePct > 0 ? "BULLISH" : "BEARISH")
+      ltp && quote.changePct != null
+        ? quote.changePct > 0
+          ? "BULLISH"
+          : "BEARISH"
         : "-";
 
     return NextResponse.json(
-      {
-        bias,
-        price: ltp ? Number(ltp).toFixed(2) : "-",
-      },
-      {
-        // 10s shared-cache — NIFTY bias is the same for all users.
-        headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" },
-      },
+      { bias, price: ltp ? Number(ltp).toFixed(2) : "-" },
+      { headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" } },
     );
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("Nifty bias API Error:", msg);
-
-    return NextResponse.json({
-      bias: "ERROR",
-      price: "-",
-    });
+  } catch (err) {
+    if (err instanceof DataServiceUnavailableError) {
+      return NextResponse.json({ bias: "DATA_SERVICE_UNAVAILABLE", price: "-" });
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Nifty bias API error:", msg);
+    return NextResponse.json({ bias: "ERROR", price: "-" });
   }
 }

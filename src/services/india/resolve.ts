@@ -1,99 +1,87 @@
 /**
- * Selected-source-only resolver.
+ * src/services/india/resolve.ts
  *
- * Given the ordered chain of brokers the user actually selected (see
- * `pickBrokerChain`), fetch quotes/candles using ONLY those sources. Each
- * broker is called with `allowFallback: false` so it never silently reaches
- * for an unselected upstream (e.g. Angel One → Yahoo). Backfill for symbols a
- * higher-priority source can't serve is attempted against the *next selected*
- * source, and anything still missing comes back as an empty placeholder.
+ * Quote and historical resolution.
  *
- * The returned quotes carry their true per-value `source`, and `sources` lists
- * the distinct upstreams that actually produced data, so routes/UI can show
- * genuine provenance instead of just the adapter that was picked.
+ * After the data-service2.0 centralization, this module delegates entirely
+ * to the canonical data-service2.0 client. The old broker-chain resolution
+ * (Angel One → Upstox → Yahoo) has been removed.
  */
+import "server-only";
+import { getQuotes, getHistorical } from "@/lib/data-service/client";
+import type { MarketQuote } from "@/lib/data-service/types";
+import type { Quote, Candle, HistoricalRequest } from "@/types/india";
 
-import type { BrokerAdapter } from "./broker/types";
-import type { DataSourceId } from "@/features/settings/data-sources-shared";
-import type { Candle, HistoricalRequest, Quote } from "@/types/india";
-import { yahoo } from "./yahoo";
+export interface ResolvedQuotes {
+  quotes: Quote[];
+  sources: string[];
+}
 
-function emptyQuote(symbol: string): Quote {
+function mdQuoteToQuote(q: MarketQuote | null, symbol: string): Quote {
+  if (!q) return { symbol, name: null, price: null, change: null, changePct: null, prevClose: null, fetchedAt: new Date().toISOString() };
   return {
-    symbol,
+    symbol: q.symbol ?? symbol,
     name: null,
-    price: null,
-    change: null,
-    changePct: null,
-    prevClose: null,
-    fetchedAt: new Date().toISOString(),
+    price: q.ltp,
+    change: q.change ?? null,
+    changePct: q.changePct ?? null,
+    prevClose: q.prevClose ?? null,
+    open: q.open ?? null,
+    high: q.high ?? null,
+    low: q.low ?? null,
+    volume: q.volume ?? null,
+    oi: q.oi ?? null,
+    fetchedAt: q.dataAsOf,
   };
 }
 
-export interface ResolvedQuotes {
-  /** One quote per requested symbol, in request order. */
-  quotes: Quote[];
-  /** Distinct upstreams that actually produced a value (first-seen order). */
-  sources: DataSourceId[];
-}
-
 /**
- * Fetch quotes across the selected chain, backfilling missing symbols only
- * from later *selected* sources. Symbols no selected source can serve return
- * empty placeholders (price null, undefined source).
+ * Resolve quotes for a list of symbols via data-service2.0.
  */
 export async function resolveQuotes(
-  chain: readonly BrokerAdapter[],
+  _chain: unknown,
   symbols: string[],
 ): Promise<ResolvedQuotes> {
-  if (symbols.length === 0) return { quotes: [], sources: [] };
-  const effectiveChain = chain.length > 0 ? chain : [yahoo];
-
-  const resolved = new Map<string, Quote>();
-  let pending = [...symbols];
-
-  for (const broker of effectiveChain) {
-    if (pending.length === 0) break;
-    const got = await broker.getQuotes(pending, { allowFallback: false });
-    const stillPending: string[] = [];
-    pending.forEach((s, i) => {
-      const q = got[i];
-      if (q && q.price != null) resolved.set(s, q);
-      else stillPending.push(s);
-    });
-    pending = stillPending;
+  try {
+    const mdQuotes = await getQuotes(symbols, "NSE");
+    return {
+      quotes: symbols.map((sym, i) => mdQuoteToQuote(mdQuotes[i] ?? null, sym)),
+      sources: ["data-service2"],
+    };
+  } catch {
+    return {
+      quotes: symbols.map((sym) => ({ symbol: sym, name: null, price: null, change: null, changePct: null, prevClose: null, fetchedAt: new Date().toISOString() })),
+      sources: [],
+    };
   }
-
-  const quotes = symbols.map((s) => resolved.get(s) ?? emptyQuote(s));
-
-  const sources: DataSourceId[] = [];
-  for (const q of quotes) {
-    if (q.source && !sources.includes(q.source)) sources.push(q.source);
-  }
-
-  return { quotes, sources };
-}
-
-export interface ResolvedHistorical {
-  candles: Candle[];
-  /** The selected source that produced the candles, or null if none could. */
-  source: DataSourceId | null;
 }
 
 /**
- * Fetch candles from the first selected source that returns a non-empty
- * series. No fallback to unselected sources.
+ * Resolve historical candles via data-service2.0.
  */
 export async function resolveHistorical(
-  chain: readonly BrokerAdapter[],
+  _chain: unknown,
   req: HistoricalRequest,
-): Promise<ResolvedHistorical> {
-  const effectiveChain = chain.length > 0 ? chain : [yahoo];
-  for (const broker of effectiveChain) {
-    const candles = await broker.getHistorical(req, { allowFallback: false });
-    if (candles.length > 0) {
-      return { candles, source: broker.id as DataSourceId };
-    }
+): Promise<{ candles: Candle[]; source: string }> {
+  try {
+    const candles = await getHistorical({
+      symbol: req.symbol,
+      interval: req.interval as "1m" | "5m" | "10m" | "15m" | "30m" | "1h" | "1d" | "1w" | "1M",
+      exchange: "NSE",
+    });
+    return {
+      candles: candles.map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+        oi: c.oi ?? null,
+      })),
+      source: "data-service2",
+    };
+  } catch {
+    return { candles: [], source: "data-service2" };
   }
-  return { candles: [], source: null };
 }

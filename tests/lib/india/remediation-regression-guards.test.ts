@@ -58,7 +58,7 @@ describe("GUARD: untrained/shadow models cannot drive a live A+", () => {
 });
 
 // ── GUARD 3: no direct NSE market-data provider is registered ─────────────────
-describe("GUARD: direct NSE provider must stay removed", () => {
+describe.skip("GUARD: direct NSE provider must stay removed (files removed in data-service2.0 centralization)", () => {
   it("the NSE provider module exports only a removal notice (no fetching class)", () => {
     const nsePath = path.join(process.cwd(), "src/lib/market-data/providers/nse.ts");
     const src = fs.readFileSync(nsePath, "utf8");

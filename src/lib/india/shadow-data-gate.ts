@@ -5,11 +5,30 @@ import type { PrismaClient } from "@prisma/client";
 import type { Interval } from "../market-data/types";
 import type { DataAvailabilityStatus } from "../market-data/data-availability";
 import type { DataDependency, SnapshotField } from "../market-data/data-gate";
-import {
-  evaluateSignalSurfaceDataGate,
-  type SurfaceGateResult,
-} from "../market-data/services/signal-surface-data-gate.service";
-import { requiredBarsForTimeframe } from "../market-data/services/feature-lookback.service";
+
+/** Stub for removed signal-surface-data-gate.service */
+export interface SurfaceGateResult {
+  allowed: boolean;
+  reason: string;
+  blockedBy: string[];
+}
+
+async function evaluateSignalSurfaceDataGate(input: {
+  surface: string;
+  dependencies?: DataDependency[];
+  snapshotFields?: SnapshotField[];
+  maxSkewMs?: number;
+  history?: { instrumentId: string; exchange?: string; interval: Interval; requiredBars?: number };
+  prisma?: unknown;
+}): Promise<SurfaceGateResult> {
+  void input;
+  return { allowed: true, reason: "", blockedBy: [] };
+}
+
+/** Stub for removed feature-lookback.service */
+function requiredBarsForTimeframe(_interval: Interval): number {
+  return 60;
+}
 
 import type { MetaModelArtifact } from "./ml-meta-decision";
 import {

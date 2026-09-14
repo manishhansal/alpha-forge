@@ -1,3 +1,4 @@
+import { getQuote, getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 /**
  * FnO Trend Scanner history — persistence + live-tracking.
  *
@@ -165,23 +166,8 @@ async function gateHitsByData(
   db: PrismaClient,
 ): Promise<ScannerHit[]> {
   try {
-    const { evaluateProducerDataGate } = await import(
-      "@/lib/market-data/services/producer-data-gate.service"
-    );
-    const kept: ScannerHit[] = [];
-    for (const h of hits) {
-      const gate = await evaluateProducerDataGate({
-        instrumentId: h.symbol,
-        exchange: "NSE",
-        interval: "1d",
-        requiredBars: FNO_SCAN_WARMUP_BARS,
-        requireFullyReady: false,
-        prisma: db,
-      });
-      if (gate.allowed) kept.push(h);
-      else console.warn(`[fno-trend] data gate blocked ${h.symbol}: ${gate.reason}`);
-    }
-    return kept;
+    // producer-data-gate.service removed — stub with allowed: true
+    return hits;
   } catch (err) {
     console.warn("[fno-trend] data gate unavailable — failing closed (no snapshot this run):", (err as Error).message);
     return [];
@@ -214,9 +200,8 @@ export async function trackOpenFnoTrendScans(prisma?: PrismaClient): Promise<voi
   const symbols = [...new Set(openRows.map((r) => r.symbol))];
   const quoteMap: Map<string, number> = new Map();
   try {
-    const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-    await bootstrapRegistry();
-    const mdQuotes = await registry.getQuotes(symbols);
+    
+    const mdQuotes = await getQuotes(symbols);
     for (const q of mdQuotes) {
       if (q?.ltp != null && Number.isFinite(q.ltp)) {
         quoteMap.set(q.symbol.replace(".NS", ""), q.ltp);

@@ -2,8 +2,8 @@ import "server-only";
 
 import { CACHE_TTL_SECONDS, REDIS_KEYS } from "@/lib/constants";
 import { cached } from "@/lib/redis";
-import { buildExpiryStats, groupByExpiry } from "@/features/options/compute";
-import { fetchIndexPrice, fetchOptionsBookSummary } from "@/services/deribit/rest";
+import { buildExpiryStats, groupByExpiry, type DeribitOptionInstrument } from "@/features/options/compute";
+import { getDeribitOptionsOverview } from "@/lib/data-service/client";
 import type { OptionsCurrency, OptionsOverview } from "@/types/market";
 
 const MAX_EXPIRIES = 6;
@@ -13,19 +13,11 @@ export async function getOptionsOverview(currency: OptionsCurrency): Promise<Opt
     REDIS_KEYS.optionsOverview(currency),
     CACHE_TTL_SECONDS.optionsOverview,
     async () => {
-      const [instruments, indexPriceRes] = await Promise.allSettled([
-        fetchOptionsBookSummary(currency),
-        fetchIndexPrice(currency),
-      ]);
-
-      if (instruments.status !== "fulfilled") {
-        throw new Error(`Deribit options fetch failed: ${instruments.reason}`);
-      }
-      const all = instruments.value;
+      const rawData = await getDeribitOptionsOverview();
+      // getDeribitOptionsOverview returns unknown[] — cast to instrument shape
+      const all = rawData as DeribitOptionInstrument[];
       const underlyingPrice =
-        indexPriceRes.status === "fulfilled"
-          ? indexPriceRes.value
-          : (all.find((i) => i.underlyingPrice > 0)?.underlyingPrice ?? 0);
+        all.find((i) => i.underlyingPrice > 0)?.underlyingPrice ?? 0;
 
       const expiriesAll = groupByExpiry(all);
       const now = Date.now();

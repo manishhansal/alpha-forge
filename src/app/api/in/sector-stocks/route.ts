@@ -11,8 +11,8 @@
 
 import { NextResponse } from "next/server";
 
-import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
-import type { MDQuote } from "@/lib/market-data/types";
+import { getQuotes } from "@/lib/data-service/client";
+import type { MarketQuote as MDQuote } from "@/lib/data-service/types";
 import { SECTOR_STOCKS } from "@/lib/india/sectors";
 import {
   classifySignal,
@@ -120,7 +120,7 @@ async function computeRow(
 }
 
 export async function GET(req: Request) {
-  await bootstrapRegistry();
+  
 
   const { searchParams } = new URL(req.url);
   const sector = searchParams.get("sector") ?? "";
@@ -147,7 +147,7 @@ export async function GET(req: Request) {
   // Canonical path: batch quote via registry (Angel One → Upstox → Yahoo failover).
   let mdQuotes: Array<MDQuote | null>;
   try {
-    mdQuotes = await registry.getQuotes(tickers);
+    mdQuotes = await getQuotes(tickers, "NSE");
   } catch {
     mdQuotes = tickers.map(() => null);
   }

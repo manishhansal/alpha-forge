@@ -108,10 +108,7 @@ export default async function ProfilePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <DataSourcesForm
-                initial={dataSources}
-                credentialedIds={credentialedIds}
-              />
+              <DataSourcesForm />
             </CardContent>
           </Card>
         }

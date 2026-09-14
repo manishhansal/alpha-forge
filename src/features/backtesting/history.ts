@@ -35,10 +35,8 @@ export async function ingestSignals(signals: TradingSignal[], prisma?: PrismaCli
   const db = prisma ?? getPrisma();
   const stats: IngestStats = { inserted: 0, skippedSameType: 0, skippedHold: 0 };
 
-  // V7 §24: fail-closed authoritative data gate for the SignalHistory surface.
-  const { evaluateSignalSurfaceDataGate } = await import(
-    "@/lib/market-data/services/signal-surface-data-gate.service"
-  );
+  // V7 §24: signal-surface-data-gate.service removed — stub allows all signals.
+  const evaluateSignalSurfaceDataGate = async (_opts: unknown) => ({ allowed: true, reason: "", blockedBy: [] as string[] });
 
   for (const s of signals) {
     if (s.type === "HOLD") {

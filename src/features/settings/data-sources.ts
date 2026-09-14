@@ -7,6 +7,7 @@ import { getPrisma } from "@/lib/prisma";
 import {
   DEFAULT_SELECTIONS,
   normalizeSelections,
+  type DataSelections,
   type DataSourceSelections,
 } from "./data-sources-shared";
 
@@ -39,7 +40,7 @@ export async function getDataSourceSelections(
     where: { userId },
     select: { dataSourcesJson: true },
   });
-  return normalizeSelections(row?.dataSourcesJson);
+  return normalizeSelections(row?.dataSourcesJson as Partial<DataSelections> | null);
 }
 
 /**
@@ -65,10 +66,10 @@ export function defaultSelections(): DataSourceSelections {
     india: {
       selected: [...DEFAULT_SELECTIONS.india.selected],
       optionChain: DEFAULT_SELECTIONS.india.optionChain,
+      history: DEFAULT_SELECTIONS.india.history,
     },
     crypto: {
       selected: [...DEFAULT_SELECTIONS.crypto.selected],
-      primary: DEFAULT_SELECTIONS.crypto.primary,
     },
   };
 }

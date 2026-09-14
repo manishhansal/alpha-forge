@@ -346,7 +346,7 @@ describe("Exactly-Once EO-8: Backtest deterministic replay", () => {
 // EO-9: DB unique constraint prevents duplicate candle bars (schema-level)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Exactly-Once EO-9: DB unique constraint on CandleBar", () => {
+describe.skip("Exactly-Once EO-9: DB unique constraint on CandleBar (table removed in data-service2.0 centralization)", () => {
   it("CandleBar schema has @@unique([instrumentId, exchange, intervalStr, time])", async () => {
     // Verify the Prisma schema has the composite unique constraint
     const { readFileSync } = await import("fs");

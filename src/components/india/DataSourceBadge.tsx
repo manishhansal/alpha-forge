@@ -40,6 +40,7 @@ const PROVIDER_PRIORITY: readonly ProviderId[] = [
  * NOTE: "nse" is no longer a valid provider — removed 2026-09-03.
  */
 const PROVIDER_BG: Record<ProviderId, string> = {
+  "data-service2": "var(--color-data-positive)",
   scrapling:  "var(--color-data-positive)",
   angel_one:  "var(--color-data-positive)",
   upstox:     "var(--color-data-neutral)",

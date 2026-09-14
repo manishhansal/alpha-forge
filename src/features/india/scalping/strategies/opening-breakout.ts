@@ -1,5 +1,6 @@
 import "server-only";
-
+import { getOptionChain, getHistorical } from "@/lib/data-service/client";
+import type { OHLCVCandle } from "@/lib/data-service/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { cache } from "@/services/india/cache";
 import type { OptionChainAnalytics } from "@/types/india/options";
@@ -114,18 +115,17 @@ export async function getIndiaOpeningBreakoutSignals(
       const analyticsBySymbol = new Map<string, OptionChainAnalytics>();
       // Route through ProviderRegistry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
       // instead of deprecated direct NSE calls.
-      const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-      await bootstrapRegistry();
+      
       const chainResults = await Promise.allSettled(
-        chainEntries.map((u) => registry.getOptionChain(u.optionUnderlying)),
+        chainEntries.map((u) => getOptionChain(u.optionUnderlying)),
       );
       chainResults.forEach((res, idx) => {
         if (res.status === "fulfilled") {
           // registry.getOptionChain returns the canonical OptionChain type
-          // which has an analytics field with the same shape as OptionChainAnalytics
+          // extract analytics from the chain object if present
           analyticsBySymbol.set(
             chainEntries[idx]!.optionUnderlying,
-            res.value.analytics as unknown as OptionChainAnalytics,
+            ((res.value as unknown as { analytics?: OptionChainAnalytics }).analytics) as OptionChainAnalytics,
           );
         }
       });
@@ -134,9 +134,8 @@ export async function getIndiaOpeningBreakoutSignals(
         universe.map(async (u) => {
           // Route through canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO)
           // instead of calling yahoo.getHistorical directly.
-          const { registry, bootstrapRegistry } = await import("@/lib/market-data/registry");
-          await bootstrapRegistry();
-          const ohlcv = await registry.getHistoricalCandles({
+          
+          const ohlcv = await getHistorical({
             symbol: u.yahooSymbol,
             exchange: "NSE",
             interval: "5m",
@@ -144,7 +143,7 @@ export async function getIndiaOpeningBreakoutSignals(
             to: new Date().toISOString(),
           });
           // Map OHLCVCandle (UTC epoch ms) → legacy Candle (epoch seconds)
-          const candles = ohlcv.map((c) => ({
+          const candles = ohlcv.map((c: OHLCVCandle) => ({
             time: Math.floor(c.time / 1000),
             open: c.open,
             high: c.high,

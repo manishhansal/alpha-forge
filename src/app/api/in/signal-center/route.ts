@@ -27,8 +27,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { buildSignalCenterResponse } from "@/lib/india-signal-center/aggregator";
 import type { UnifiedIndiaSignal, MarketRegime } from "@/lib/india-signal-center/types";
-import { registry } from "@/lib/market-data/registry";
-import type { ProviderHealth } from "@/lib/market-data/types";
+import { getProviderHealth } from "@/lib/data-service/client";
+
 
 export const dynamic = "force-dynamic";
 // NOTE: do NOT set `revalidate = 0` here. Next.js rewrites Cache-Control to
@@ -329,13 +329,18 @@ export async function GET(request: NextRequest): Promise<Response> {
       ...dailyPickSignals,
     ];
 
-    // Get provider health for the response
-    const healthSnapshots: ProviderHealth[] = registry.getHealth();
-    const dataProviders = healthSnapshots.map((h) => ({
-      providerId: h.providerId,
-      available:  h.status === "healthy",
-      latencyMs:  h.latencyP50Ms ?? null,
-    }));
+    // Get provider health from data-service2.0
+    let dataProviders: Array<{ providerId: string; available: boolean; latencyMs: number | null }> = [];
+    try {
+      const healthSnapshots = await getProviderHealth();
+      dataProviders = healthSnapshots.map((h) => ({
+        providerId: h.id,
+        available: h.status === "UP",
+        latencyMs: h.latencyMs ?? null,
+      }));
+    } catch {
+      dataProviders = [{ providerId: "data-service2", available: false, latencyMs: null }];
+    }
 
     // Build the unified response
     const response = buildSignalCenterResponse({

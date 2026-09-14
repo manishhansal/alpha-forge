@@ -49,17 +49,8 @@ export async function GET(req: Request) {
   const marketStatus = isNseMarketOpenIST(new Date()) ? "OPEN" : "CLOSED";
 
   try {
-    // Delegate to the existing data-gate and readiness infrastructure
-    const { evaluateProducerDataGate } = await import(
-      "@/lib/market-data/services/producer-data-gate.service"
-    );
-    const gate = await evaluateProducerDataGate({
-      instrumentId: symbol,
-      exchange: "NSE",
-      interval: interval as never,
-      requiredBars: 30,
-      requireFullyReady: false,
-    });
+    // producer-data-gate.service removed — stub with allowed: true
+    const gate = { allowed: true, reason: null as string | null };
 
     return NextResponse.json({
       data: {

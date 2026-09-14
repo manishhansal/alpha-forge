@@ -21,11 +21,11 @@
  * read (or drops it) rather than failing the whole response.
  */
 
+import { getQuotes, getHistorical, getOptionChain, getQuote } from "@/lib/data-service/client";
 import "server-only";
 
 import { getBestTimeStatus } from "@/features/india/best-time/engine";
 import { istDateKey } from "@/features/india/daily-picks/engine";
-import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
 import { cache as indiaCache } from "@/services/india/cache";
 import type { OptionChain } from "@/types/india";
 
@@ -108,12 +108,12 @@ async function buildNiftyBlock(
 ): Promise<ExpiryIndexBlock | null> {
   try {
     // registry.getOptionChain routes: Angel One → Upstox → NSE
-    const mdChain = await registry.getOptionChain("NIFTY");
+    const mdChain = await getOptionChain("NIFTY");
     const chain = mdChain as unknown as OptionChain;
     const isExpiry = isExpiryDayFromChain(chain.expiry, tradeDate);
     if (!isExpiry) return null;
 
-    const spotMd = await registry.getLatestQuote("^NSEI");
+    const spotMd = await await getQuote("^NSEI");
     const spot = chain.spot ?? spotMd?.ltp ?? 0;
     if (!spot) return null;
     const bias = biasFromChange(spotMd?.changePct);
@@ -161,7 +161,7 @@ async function buildSensexBlock(
 ): Promise<ExpiryIndexBlock | null> {
   if (istWeekday(new Date(now)) !== EXPIRY_WEEKDAY.SENSEX) return null;
   try {
-    const mdChain = await registry.getOptionChain("SENSEX");
+    const mdChain = await getOptionChain("SENSEX");
     const chain = mdChain as unknown as OptionChain;
     if (!isExpiryDayFromChain(chain.expiry, tradeDate)) {
       // Chain is available but today is not expiry — fall back to weekday
@@ -169,7 +169,7 @@ async function buildSensexBlock(
       return buildEstimatedBlock("SENSEX", now, tradeDate, vix);
     }
 
-    const spotMd = await registry.getLatestQuote("^BSESN");
+    const spotMd = await await getQuote("^BSESN");
     const spot = chain.spot ?? spotMd?.ltp ?? 0;
     if (!spot) return null;
     const bias = biasFromChange(spotMd?.changePct);
@@ -215,7 +215,7 @@ async function buildEstimatedBlock(
 ): Promise<ExpiryIndexBlock | null> {
   if (istWeekday(new Date(now)) !== EXPIRY_WEEKDAY[index]) return null;
   try {
-    const md = await registry.getLatestQuote(SPOT_SYMBOL[index]);
+    const md = await await getQuote(SPOT_SYMBOL[index]);
     const spot = md?.ltp ?? 0;
     if (!spot) return null;
     const bias = biasFromChange(md?.changePct);
@@ -255,7 +255,7 @@ async function buildEstimatedBlock(
  */
 export async function getIndiaExpiryTrades(): Promise<ExpiryTradesResponse> {
   return indiaCache.memo("expiry-trades:v1", CACHE_TTL_MS, async () => {
-    await bootstrapRegistry();
+    
     const now = Date.now();
     const tradeDate = istDateKey(new Date(now));
 
@@ -265,7 +265,7 @@ export async function getIndiaExpiryTrades(): Promise<ExpiryTradesResponse> {
 
     let vix: number | null = null;
     try {
-      const vixMd = await registry.getLatestQuote("^INDIAVIX");
+      const vixMd = await await getQuote("^INDIAVIX");
       vix = vixMd?.ltp ?? null;
     } catch {
       vix = null;

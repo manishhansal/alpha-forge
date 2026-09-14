@@ -77,36 +77,12 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Fetch universe coverage snapshot for this session
-    const coverageSnap = await prisma.universeCoverageSnapshot.findFirst({
-      where: { sessionDate },
-      orderBy: { capturedAt: "desc" },
-    });
-
-    const universeCoverage = coverageSnap
-      ? {
-          sessionDate: coverageSnap.sessionDate,
-          capturedAtMs: coverageSnap.capturedAt.getTime(),
-          expectedInstruments: coverageSnap.expectedInstruments,
-          availableInstruments: coverageSnap.availableInstruments,
-          scannedInstruments: coverageSnap.scannedInstruments,
-          dataCompleteInstruments: coverageSnap.dataCompleteInstruments,
-          dataPartialInstruments: coverageSnap.dataPartialInstruments,
-          dataMissingInstruments: coverageSnap.dataMissingInstruments,
-          strategyEvaluatedInstruments: coverageSnap.strategyEvaluatedInstruments,
-          paperEligibleInstruments: coverageSnap.paperEligibleInstruments,
-          excludedInstruments: coverageSnap.excludedInstruments,
-          exclusionReasons: coverageSnap.exclusionReasons as Array<{ instrument: string; reason: string }>,
-          coverageScore: coverageSnap.coverageScore,
-          isValid: coverageSnap.isValid,
-          minValidCoverage: 0.8,
-        }
-      : buildUnavailableCoverageSnapshot(
-          sessionDate,
-          "No coverage snapshot found for this session — run the scanner to populate",
-        );
-
-    // Fetch signal lifecycle events for de-duplication and funnel
+    // universeCoverageSnapshot table dropped — return empty snapshot
+    const universeCoverage = buildUnavailableCoverageSnapshot(
+      sessionDate,
+      'No coverage snapshot found — universeCoverageSnapshot table removed',
+    );
+        // Fetch signal lifecycle events for de-duplication and funnel
     const lifecycleEvents = await prisma.signalLifecycleEvent.findMany({
       where: { sessionDate },
       orderBy: { occurredAt: "asc" },

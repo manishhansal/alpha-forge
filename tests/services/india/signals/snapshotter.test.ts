@@ -67,9 +67,10 @@ function makeQuote(
   ltp: number,
   provider: ProviderId = "angel_one",
 ): MDQuote {
+  const now = new Date().toISOString();
   return {
+    instrumentId: "NSE:" + symbol + ":EQ",
     symbol,
-    token: null,
     exchange: "NSE",
     name: null,
     ltp,
@@ -81,15 +82,16 @@ function makeQuote(
     low: null,
     volume: null,
     oi: null,
+    tradedValue: null,
+    bid: null,
+    ask: null,
     weekHigh52: null,
     weekLow52: null,
-    upperCircuit: null,
-    lowerCircuit: null,
-    totalBuyQty: null,
-    totalSellQty: null,
+    marketStatus: "OPEN",
     lastTradeTime: null,
+    dataAsOf: now,
+    fetchedAt: now,
     provider,
-    fetchedAt: new Date().toISOString(),
   };
 }
 

@@ -5,13 +5,8 @@ const getHistoricalMock = vi.fn();
 
 // Mock the canonical historical service — paper-trader.ts now calls
 // getHistoricalCandlesByRange() instead of yahoo.getHistorical().
-vi.mock("@/lib/market-data/services/historical.service", () => ({
-  getHistoricalCandlesByRange: (...args: unknown[]) => getHistoricalMock(...args),
-}));
-vi.mock("@/lib/market-data/registry", () => ({
-  bootstrapRegistry: () => Promise.resolve(),
-  registry: {},
-}));
+
+vi.mock("@/lib/data-service/client", () => ({ getHistorical: (...args: unknown[]) => getHistoricalMock(...args), getQuotes: vi.fn().mockResolvedValue([]), getQuote: vi.fn().mockResolvedValue(null), getOptionChain: vi.fn().mockRejectedValue(new Error("no chain")), DataServiceUnavailableError: class DataServiceUnavailableError extends Error {} }));
 // Stub getRedis so the atomic guard falls through to DB dedup silently.
 vi.mock("@/lib/redis", () => ({
   getRedis: () => { throw new Error("no redis in test"); },

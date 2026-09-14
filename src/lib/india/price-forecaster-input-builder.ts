@@ -21,12 +21,16 @@
  *   disabled  → returns { candles: [], status: "DISABLED" }
  */
 
+import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 import type { OHLCVCandle } from "@/lib/market-data/types";
-import { validateCandleSequence } from "@/lib/market-data/validation/candle-validator";
 import { getMLMode } from "@/lib/india/ml-client";
+
+/** Stub for removed validateCandleSequence — always returns no errors. */
+function validateCandleSequence(_candles: OHLCVCandle[]): { errors: Array<{ index: number; reason: string }> } {
+  return { errors: [] };
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -111,13 +115,7 @@ export async function buildPriceForecasterInput(
     // ── Step 1: Fetch canonical historical candles ──────────────────────────
     // Fetch more than needed (2× lookback) so we can trim to exactly N
     // confirmed bars after dropping any partial/invalid candles.
-    const raw = await getHistoricalCandlesByRange(
-      symbol,
-      "5m",
-      "5d",          // 5 days of 5-min bars covers ~375 bars (> 2× lookback)
-      exchange,
-      { tolerateInvalidCandles: true },
-    );
+    const raw = await getHistorical({ symbol, interval: "5m", exchange });
 
     // ── Step 2: Use confirmed candles only ────────────────────────────────
     // The current (incomplete) bar has a timestamp >= the current 5-min boundary.

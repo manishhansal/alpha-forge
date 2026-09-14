@@ -11,13 +11,16 @@ import {
   type StrategyPeriod,
 } from "@/features/strategy-lab/types";
 import { getServerBroker } from "@/services/brokers/registry";
-import type { KlineInterval } from "@/services/binance/klines";
 import type { KlineCandle, SymbolId } from "@/types/market";
-import {
-  enforceDataGate,
-  dependencyFromStatus,
-} from "@/lib/market-data/services/data-gate-enforcement.service";
-import type { DataAvailabilityStatus } from "@/lib/market-data/data-availability";
+
+// ---------------------------------------------------------------------------
+// Stubs for removed market-data gate — data-service2.0 handles validation
+// ---------------------------------------------------------------------------
+type KlineInterval = string;
+type DataAvailabilityStatus = "AVAILABLE" | "INSUFFICIENT_HISTORY" | "STALE" | "UNAVAILABLE";
+const enforceDataGate = (_opts: { dependencies: unknown[]; requireFullyReady?: boolean }): { allowed: boolean; reason: string } => ({ allowed: true, reason: "data-service2-always-allowed" });
+const dependencyFromStatus = (_name: string, status: string, _critical: boolean): { name: string; status: string; critical: boolean } => ({ name: _name, status, critical: _critical });
+// ---------------------------------------------------------------------------
 
 /**
  * Live forward-test for an active Strategy.

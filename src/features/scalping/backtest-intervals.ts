@@ -5,7 +5,8 @@
  * `"server-only"` module into the browser bundle.
  */
 
-import type { KlineInterval } from "@/services/binance/klines";
+/** Kline interval type — string alias after data-service2.0 centralization. */
+export type KlineInterval = string;
 
 /**
  * The 1m..1d intervals exposed to the UI. `10m` is synthesized from 5m bars

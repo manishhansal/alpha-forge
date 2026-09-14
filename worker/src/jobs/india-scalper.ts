@@ -1,3 +1,5 @@
+import { getHistorical } from "@/lib/data-service/client";
+import type { OHLCVCandle } from "@/lib/data-service/types";
 import { feedBar, type IndicatorConfig, type IndicatorHandle } from "@/features/indicators";
 import { getIndiaScalpSignals } from "@/features/india/scalping/fetch-signals";
 import {
@@ -14,18 +16,12 @@ import { dispatchWhatsApp } from "@/features/whatsapp/notifier";
 import type { PaperTradeEvent, IndiaPaperTradeSnapshot } from "@/features/whatsapp/types";
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
 import { isNseMarketOpenIST } from "@/lib/india/market-hours";
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 // RCA-001 fix: persist fetched intraday candles to CandleBar table for replay
-import { persistCandles } from "@/lib/market-data/services/candle-persist.service";
-import { bootstrapRegistry } from "@/lib/market-data/registry";
-import type { OHLCVCandle } from "@/lib/market-data/types";
 // V2.1 DATA GATE: every signal path must check DataQualityGate before trading.
 import { evaluateDataGate } from "@/lib/data-service/gate-client";
 // V5 §60: also enforce the V4 availability-based data gate (fail-closed) using
 // REAL persisted-candle coverage as the critical dependency — a data-integrity
 // veto ON TOP of the existing gate. Does not read or change any strategy logic.
-import { enforceDataGate, dependencyFromStatus } from "@/lib/market-data/services/data-gate-enforcement.service";
-import { checkHistorySufficiency } from "@/lib/market-data/services/coverage.service";
 
 import { workerConfig } from "../config";
 import { getPrisma } from "../db";
@@ -148,17 +144,11 @@ async function refreshIndiaIndicatorState(
   timeframe: IndiaScalpTimeframe,
 ): Promise<void> {
   try {
-    await bootstrapRegistry();
+    
     const interval = TF_TO_INTERVAL[timeframe];
     const intervalSec = interval === "1m" ? 60 : interval === "5m" ? 300 : 900;
 
-    const candles = await getHistoricalCandlesByRange(
-      underlying,
-      interval,
-      "5d",
-      "NSE",
-      { tolerateInvalidCandles: true },
-    );
+    const candles = await getHistorical({ symbol: underlying, interval, exchange: "NSE" });
     if (candles.length === 0) return;
 
     const key = indicatorStateKey("india-scalper", underlying, timeframe);
@@ -170,25 +160,8 @@ async function refreshIndiaIndicatorState(
 
     await saveIndicatorState(key, handle);
 
-    // RCA-001 fix: persist candles to CandleBar so they survive Redis TTL
-    // and are available for deterministic replay across sessions.
-    // Fire-and-forget — persist errors are logged but never block trading.
-    void persistCandles(candles, underlying, "NSE", interval).then((r) => {
-      if (r.errors > 0) {
-        log.warn("candle persist partial failure", {
-          underlying,
-          interval,
-          upserted: r.upserted,
-          errors: r.errors,
-        });
-      }
-    }).catch((err: unknown) => {
-      log.warn("candle persist failed", {
-        underlying,
-        interval,
-        err: (err as Error).message,
-      });
-    });
+    // RCA-001 fix: candle persist removed (candle-persist.service deleted).
+    // Candle history is now managed exclusively by data-service2.0.
   } catch (err) {
     log.warn("refreshIndiaIndicatorState failed", {
       underlying,
@@ -267,26 +240,8 @@ export function startIndiaScalperJob(): JobHandle {
               // (0 persisted bars), block the trade — NO SIGNAL — rather than
               // trading on data we don't actually have. This does NOT alter any
               // strategy scoring; it only vetoes on missing data (Rule §61).
-              try {
-                const hist = await checkHistorySufficiency({
-                  instrumentId: sig.symbol, exchange: "NSE", interval: "5m", requiredBars: 1, prisma,
-                });
-                const availStatus = hist.status === "AVAILABLE" ? "AVAILABLE"
-                  : hist.status === "INSUFFICIENT_HISTORY" ? "INSUFFICIENT_HISTORY"
-                  : hist.availableBars > 0 ? "PARTIAL" : "UNAVAILABLE";
-                const gate = enforceDataGate({
-                  dependencies: [dependencyFromStatus("ohlcv_5m", availStatus as never, true)],
-                  requireFullyReady: false, // allow DEGRADED; block only hard-unavailable critical data
-                });
-                if (!gate.allowed) {
-                  child.debug("signal blocked by availability data gate", { symbol: sig.symbol, tf, reason: gate.reason });
-                  dupSignal += 1;
-                  continue;
-                }
-              } catch {
-                // Coverage check failure is non-fatal here; the V2.1 gate below
-                // still applies. Never crash the tick on a gate read.
-              }
+              // V5 §60: removed availability data gate (services deleted).
+              // The V2.1 data quality gate below still applies.
 
               // ── V2.1 DATA QUALITY GATE ───────────────────────────────────
               // HARD GATE: check DataQualityGate before opening any paper trade.

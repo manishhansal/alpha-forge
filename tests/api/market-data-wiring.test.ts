@@ -47,7 +47,7 @@ describe("nifty-bias route — provider architecture compliance", () => {
   it("routes through the canonical market-data registry", () => {
     const src = readSrc("src/app/api/in/nifty-bias/route.ts");
     // Must use the registry for data access
-    expect(src).toMatch(/registry|bootstrapRegistry/);
+    expect(src).toMatch(/data-service\/client|getQuote|DataServiceClient/);
   });
 });
 
@@ -71,9 +71,8 @@ describe("signal snapshotter — provider architecture compliance", () => {
     expect(src).not.toMatch(/from.*@\/services\/india\/yahoo/);
     // Must NOT call yahoo.getQuotes directly
     expect(src).not.toMatch(/yahoo\.getQuotes/);
-    // MUST use the canonical registry
-    expect(src).toMatch(/registry|bootstrapRegistry/);
-    expect(src).toMatch(/registry\.getQuotes/);
+    // MUST use data-service2.0 client
+    expect(src).toMatch(/data-service\/client|getQuotes|DataServiceClient/);
   });
 });
 

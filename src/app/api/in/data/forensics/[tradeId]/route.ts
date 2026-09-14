@@ -12,28 +12,29 @@ export const runtime = "nodejs";
  * Data-to-trade forensics endpoint — satisfies the full "what data produced
  * this trade?" audit chain required by certification requirement 16.3.
  *
+ * NOTE (data-service2.0 centralization, Phase 2):
+ * The `DataProvenance` table has been removed from the AlphaForge database.
+ * Provenance records are now owned by data-service2.0. This endpoint still
+ * returns the full PaperTrade record (with V2.1 provenance fields stamped at
+ * trade time) and the SignalIntelligenceRecord, but the `dataProvenanceRecord`
+ * field is now sourced from the lineage store in data-service2.0 rather than
+ * a local DB query.
+ *
  * Response shape:
  * {
  *   tradeId,
  *   paperTrade          — full PaperTrade record (with V2.1 provenance fields),
  *   signalRecord        — SignalIntelligenceRecord joined via trade.signalId,
- *   dataProvenanceRecord — DataProvenance joined via symbol + sessionDate + provider,
- *   lineageEntry        — market observation from data-service lineage store,
+ *   dataProvenanceNote  — explanation that provenance lives in data-service2.0,
+ *   lineageEntry        — market observation from data-service2.0 lineage store,
  *   qualityAtSignalTime — { score, grade } from the signal record's quality vector,
  *   retrievedAt
  * }
  *
  * Error cases:
- *   404 — trade not found, or (Req 16.6) no DataProvenanceRecord exists for the trade
+ *   404 — trade not found
  *   400 — missing / invalid tradeId
  *   500 — unexpected error
- *
- * Join strategy (derived from PaperTrade schema — no FK to SignalIntelligenceRecord):
- *   SignalIntelligenceRecord : PaperTrade.signalId → SignalIntelligenceRecord.signalId  (when present)
- *   DataProvenance           : PaperTrade.symbol   + sessionDate derived from openedAt
- *                              + PaperTrade.dataProviderAtEntry (falls back to ANY provider for that session)
- *
- * Requirements: 16.3, 16.6
  */
 export async function GET(
   _req: NextRequest,
@@ -74,7 +75,7 @@ export async function GET(
       note: true,
       openedAt: true,
       closedAt: true,
-      // V2.1 data provenance fields — used for joins
+      // V2.1 data provenance fields
       dataObservationId: true,
       quoteAgeAtEntryMs: true,
       dataConfidenceAtEntry: true,
@@ -99,7 +100,6 @@ export async function GET(
   }
 
   // ── 2. Derive the IST session date from the trade's openedAt ─────────────
-  // NSE session dates are IST calendar days (UTC+05:30).
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1_000;
   const istMs = trade.openedAt.getTime() + IST_OFFSET_MS;
   const istDate = new Date(istMs);
@@ -180,137 +180,28 @@ export async function GET(
     });
   }
 
-  // ── 4. Fetch DataProvenance record ────────────────────────────────────────
-  // Join strategy: symbol (instrumentId) + sessionDate + optional provider.
-  // If the trade recorded dataProviderAtEntry, prefer a match on that provider.
-  // Otherwise fall back to the most recent provenance record for the session.
-  //
-  // Requirement 16.6: if no record exists, return HTTP 404 with a structured
-  // error identifying the missing provenance link and the tradeId.
-  let dataProvenanceRecord: {
-    id: string;
-    datasetKey: string;
-    instrumentId: string;
-    exchange: string;
-    intervalStr: string;
-    sessionDate: string;
-    provider: string;
-    sourceType: string;
-    authenticated: boolean;
-    fetchedAt: Date;
-    sourceTimestamp: Date | null;
-    dataAsOf: Date | null;
-    responseHash: string | null;
-    responseTruncated: boolean;
-    fromTs: Date | null;
-    toTs: Date | null;
-    datasetVersion: string;
-    dataTrustStatus: string;
-    rowCount: number;
-    createdAt: Date;
-  } | null = null;
-
-  // Try with specific provider first (when trade recorded one)
-  if (trade.dataProviderAtEntry) {
-    dataProvenanceRecord = await prisma.dataProvenance.findFirst({
-      where: {
-        instrumentId: trade.symbol,
-        sessionDate,
-        provider: trade.dataProviderAtEntry,
-      },
-      orderBy: { fetchedAt: "desc" },
-      select: {
-        id: true,
-        datasetKey: true,
-        instrumentId: true,
-        exchange: true,
-        intervalStr: true,
-        sessionDate: true,
-        provider: true,
-        sourceType: true,
-        authenticated: true,
-        fetchedAt: true,
-        sourceTimestamp: true,
-        dataAsOf: true,
-        responseHash: true,
-        responseTruncated: true,
-        fromTs: true,
-        toTs: true,
-        datasetVersion: true,
-        dataTrustStatus: true,
-        rowCount: true,
-        createdAt: true,
-      },
-    });
-  }
-
-  // Fallback: any provenance record for this symbol + session
-  if (!dataProvenanceRecord) {
-    dataProvenanceRecord = await prisma.dataProvenance.findFirst({
-      where: {
-        instrumentId: trade.symbol,
-        sessionDate,
-      },
-      orderBy: { fetchedAt: "desc" },
-      select: {
-        id: true,
-        datasetKey: true,
-        instrumentId: true,
-        exchange: true,
-        intervalStr: true,
-        sessionDate: true,
-        provider: true,
-        sourceType: true,
-        authenticated: true,
-        fetchedAt: true,
-        sourceTimestamp: true,
-        dataAsOf: true,
-        responseHash: true,
-        responseTruncated: true,
-        fromTs: true,
-        toTs: true,
-        datasetVersion: true,
-        dataTrustStatus: true,
-        rowCount: true,
-        createdAt: true,
-      },
-    });
-  }
-
-  // Requirement 16.6: return HTTP 404 when no DataProvenanceRecord exists.
-  if (!dataProvenanceRecord) {
-    return NextResponse.json(
-      {
-        error: "provenance_not_found",
-        tradeId,
-        symbol: trade.symbol,
-        sessionDate,
-        message:
-          `No DataProvenanceRecord found for trade '${tradeId}' ` +
-          `(symbol: ${trade.symbol}, session: ${sessionDate}). ` +
-          `This trade was likely opened before the V8 provenance pipeline was wired, ` +
-          `or the historical candle fetch for this session has not yet been recorded.`,
-        missingProvenanceLink: {
-          tradeId,
-          symbol: trade.symbol,
-          sessionDate,
-          dataProviderAtEntry: trade.dataProviderAtEntry ?? null,
-        },
-      },
-      { status: 404 },
-    );
-  }
-
-  // ── 5. Fetch lineage entry from data-service (when observationId is present) ──
+  // ── 4. Fetch lineage entry from data-service2.0 ───────────────────────────
+  // DataProvenance was removed from AlphaForge DB (data-service2.0 centralization
+  // Phase 2). Provenance is available via the data-service2.0 lineage store.
   let lineageEntry: Record<string, unknown> | null = null;
   let lineageLookupStatus = "SKIPPED";
 
   if (trade.dataObservationId) {
     try {
-      const dataServiceUrl = process.env.DATA_SERVICE_URL ?? "http://localhost:8200";
+      const dataServiceUrl =
+        process.env.DATA_SERVICE_2_URL ??
+        process.env.DATA_SERVICE_URL ??
+        "http://localhost:8200";
+
+      const headers: HeadersInit = { Accept: "application/json" };
+      const apiKey = process.env.DATA_SERVICE_API_KEY;
+      if (apiKey) {
+        (headers as Record<string, string>)["X-API-KEY"] = apiKey;
+      }
+
       const res = await fetch(
         `${dataServiceUrl}/data/lineage/${trade.dataObservationId}`,
-        { next: { revalidate: 0 } },
+        { headers, signal: AbortSignal.timeout(5_000) },
       );
       if (res.ok) {
         lineageEntry = (await res.json()) as Record<string, unknown>;
@@ -327,9 +218,7 @@ export async function GET(
     lineageLookupStatus = "NO_OBSERVATION_ID_ON_TRADE";
   }
 
-  // ── 6. Derive qualityAtSignalTime ─────────────────────────────────────────
-  // Prefer the SignalIntelligenceRecord's score + grade (most authoritative).
-  // Fall back to the trade's dataConfidenceAtEntry when no signal record exists.
+  // ── 5. Derive qualityAtSignalTime ─────────────────────────────────────────
   let qualityAtSignalTime: { score: number | null; grade: string | null } = {
     score: null,
     grade: null,
@@ -341,24 +230,18 @@ export async function GET(
       grade: signalRecord.grade,
     };
   } else if (trade.dataConfidenceAtEntry !== null) {
-    // Map confidence (0–95 scale) to a grade as a best-effort estimate.
     const conf = trade.dataConfidenceAtEntry;
     const grade =
-      conf >= 90
-        ? "A+"
-        : conf >= 80
-          ? "A"
-          : conf >= 65
-            ? "B"
-            : conf >= 50
-              ? "C"
-              : conf >= 30
-                ? "D"
-                : "BLOCKED";
+      conf >= 90 ? "A+"
+      : conf >= 80 ? "A"
+      : conf >= 65 ? "B"
+      : conf >= 50 ? "C"
+      : conf >= 30 ? "D"
+      : "BLOCKED";
     qualityAtSignalTime = { score: conf, grade };
   }
 
-  // ── 7. Build the structured response ─────────────────────────────────────
+  // ── 6. Build the structured response ─────────────────────────────────────
   const meta = trade.meta as Record<string, unknown> | null;
 
   return NextResponse.json({
@@ -386,7 +269,7 @@ export async function GET(
       meta,
       openedAt: trade.openedAt.toISOString(),
       closedAt: trade.closedAt?.toISOString() ?? null,
-      // V2.1 provenance fields
+      // V2.1 provenance fields stamped at trade open time
       dataObservationId: trade.dataObservationId ?? null,
       quoteAgeAtEntryMs: trade.quoteAgeAtEntryMs ?? null,
       dataConfidenceAtEntry: trade.dataConfidenceAtEntry ?? null,
@@ -399,7 +282,6 @@ export async function GET(
     },
 
     // ── SignalIntelligenceRecord ──────────────────────────────────────────
-    // null when trade.signalId is absent or no matching record was persisted
     signalRecord: signalRecord
       ? {
           id: signalRecord.id,
@@ -435,44 +317,44 @@ export async function GET(
         }
       : null,
 
-    // ── DataProvenanceRecord ──────────────────────────────────────────────
-    dataProvenanceRecord: {
-      id: dataProvenanceRecord.id,
-      datasetKey: dataProvenanceRecord.datasetKey,
-      instrumentId: dataProvenanceRecord.instrumentId,
-      exchange: dataProvenanceRecord.exchange,
-      intervalStr: dataProvenanceRecord.intervalStr,
-      sessionDate: dataProvenanceRecord.sessionDate,
-      provider: dataProvenanceRecord.provider,
-      sourceType: dataProvenanceRecord.sourceType,
-      authenticated: dataProvenanceRecord.authenticated,
-      fetchedAt: dataProvenanceRecord.fetchedAt.toISOString(),
-      sourceTimestamp: dataProvenanceRecord.sourceTimestamp?.toISOString() ?? null,
-      dataAsOf: dataProvenanceRecord.dataAsOf?.toISOString() ?? null,
-      responseHash: dataProvenanceRecord.responseHash ?? null,
-      responseTruncated: dataProvenanceRecord.responseTruncated,
-      fromTs: dataProvenanceRecord.fromTs?.toISOString() ?? null,
-      toTs: dataProvenanceRecord.toTs?.toISOString() ?? null,
-      datasetVersion: dataProvenanceRecord.datasetVersion,
-      dataTrustStatus: dataProvenanceRecord.dataTrustStatus,
-      rowCount: dataProvenanceRecord.rowCount,
-      createdAt: dataProvenanceRecord.createdAt.toISOString(),
+    // ── Data Provenance (migrated to data-service2.0) ────────────────────
+    // The DataProvenance table was removed from AlphaForge as part of the
+    // data-service2.0 centralization refactor (Phase 2, Sept 2026).
+    // Provenance records for this trade's symbol and session are available
+    // via data-service2.0. The V2.1 provenance fields on paperTrade
+    // (dataObservationId, dataProviderAtEntry, dataQualityAtEntry, etc.)
+    // remain the authoritative at-trade-time evidence on this record.
+    dataProvenanceNote: {
+      migrated: true,
+      symbol: trade.symbol,
+      sessionDate,
+      dataProviderAtEntry: trade.dataProviderAtEntry ?? null,
+      message:
+        "DataProvenance records are now owned by data-service2.0. " +
+        "Query the data-service2.0 provenance API for full dataset lineage. " +
+        "The V2.1 fields on this paperTrade record (dataObservationId, " +
+        "dataProviderAtEntry, dataQualityAtEntry, quoteAgeAtEntryMs, " +
+        "dataIsFallback) capture the provenance snapshot at entry time.",
+      dataService: {
+        baseUrl:
+          process.env.DATA_SERVICE_2_URL ??
+          process.env.DATA_SERVICE_URL ??
+          "http://localhost:8200",
+        provenanceEndpoint: `/v1/provenance?symbol=${encodeURIComponent(trade.symbol)}&sessionDate=${sessionDate}`,
+      },
     },
 
-    // ── Lineage Entry (from data-service in-memory store) ────────────────
+    // ── Lineage Entry (from data-service2.0) ─────────────────────────────
     lineageEntry: {
       lookupStatus: lineageLookupStatus,
       record: lineageEntry,
     },
 
     // ── qualityAtSignalTime ───────────────────────────────────────────────
-    // Populated from SignalIntelligenceRecord.score + .grade when available;
-    // falls back to dataConfidenceAtEntry-derived estimate for pre-intelligence
-    // trades.
     qualityAtSignalTime,
 
     // ── Forensics chain summary ───────────────────────────────────────────
-    chain: buildForensicsChain(trade, signalRecord, dataProvenanceRecord, lineageEntry),
+    chain: buildForensicsChain(trade, signalRecord, lineageEntry),
 
     retrievedAt: new Date().toISOString(),
   });
@@ -506,14 +388,6 @@ type SignalRecordFields = {
   detectedAt: Date;
 } | null;
 
-type ProvenanceFields = {
-  provider: string;
-  authenticated: boolean;
-  dataTrustStatus: string;
-  fetchedAt: Date;
-  dataAsOf: Date | null;
-};
-
 type ChainStep = {
   step: number;
   layer: string;
@@ -521,14 +395,9 @@ type ChainStep = {
   evidence: string;
 };
 
-/**
- * Build a human-readable step-by-step forensics chain describing the
- * market-data → signal → risk → paper-order path for this trade.
- */
 function buildForensicsChain(
   trade: TradeFields,
   signalRecord: SignalRecordFields,
-  provenance: ProvenanceFields,
   lineageEntry: Record<string, unknown> | null,
 ): ChainStep[] {
   const meta = trade.meta as Record<string, unknown> | null;
@@ -547,7 +416,7 @@ function buildForensicsChain(
             `Event time: ${trade.observationEventTime ?? "unknown"}.`
           : "No observation ID recorded — trade predates V2.1 provenance wiring.",
       evidence: lineageEntry
-        ? "LINEAGE_STORE"
+        ? "DATA_SERVICE_LINEAGE_STORE"
         : trade.dataObservationId
           ? "TRADE_RECORD"
           : "NONE",
@@ -556,12 +425,10 @@ function buildForensicsChain(
       step: 2,
       layer: "Data Provenance",
       description:
-        `Provider: ${provenance.provider} ` +
-        `(${provenance.authenticated ? "broker-authenticated" : "unauthenticated"}). ` +
-        `Trust status: ${provenance.dataTrustStatus}. ` +
-        `Fetched at: ${provenance.fetchedAt.toISOString()}. ` +
-        `Data as-of: ${provenance.dataAsOf?.toISOString() ?? "N/A"}.`,
-      evidence: "DATA_PROVENANCE_TABLE",
+        "DataProvenance records are now owned by data-service2.0 (centralization Phase 2). " +
+        `Provider at entry: ${trade.dataProviderAtEntry ?? "UNKNOWN"}. ` +
+        `Observation event time: ${trade.observationEventTime ?? "N/A"}.`,
+      evidence: "TRADE_RECORD (V2.1 provenance fields) + DATA_SERVICE_2_0",
     },
     {
       step: 3,
@@ -591,7 +458,9 @@ function buildForensicsChain(
               ? new Date(meta.triggeredAt as number).toISOString()
               : trade.openedAt.toISOString()
           }.`,
-      evidence: signalRecord ? "SIGNAL_INTELLIGENCE_RECORD" : "TRADE_RECORD (meta JSONB)",
+      evidence: signalRecord
+        ? "SIGNAL_INTELLIGENCE_RECORD"
+        : "TRADE_RECORD (meta JSONB)",
     },
     {
       step: 5,

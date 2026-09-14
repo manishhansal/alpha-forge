@@ -3,7 +3,7 @@ import "server-only";
 import { CACHE_TTL_SECONDS, REDIS_KEYS, TRACKED_SYMBOLS } from "@/lib/constants";
 import { cached } from "@/lib/redis";
 import { getServerBroker } from "@/services/brokers/registry";
-import { fetchGlobalMarket, fetchTrackedCoinsMarket } from "@/services/coingecko/rest";
+import { getCryptoTicker, getFuturesOverview } from "@/lib/data-service/client";
 import type { MarketOverviewEntry, MarketOverviewResponse, SymbolId } from "@/types/market";
 
 export async function getMarketOverview(): Promise<MarketOverviewResponse> {
@@ -11,10 +11,9 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
     const broker = getServerBroker();
     const spotPairs = TRACKED_SYMBOLS.map((s) => broker.pairs.spot[s.id]);
 
-    const [tickers, global, coins] = await Promise.allSettled([
+    const [tickers, futuresRes] = await Promise.allSettled([
       broker.fetch24hrTickers(spotPairs),
-      fetchGlobalMarket(),
-      fetchTrackedCoinsMarket(),
+      getFuturesOverview(),
     ]);
 
     if (tickers.status !== "fulfilled") {
@@ -22,32 +21,32 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
     }
 
     const tickerBySymbol = new Map(tickers.value.map((t) => [t.pair, t]));
-    const coinsByCoingecko = new Map(
-      coins.status === "fulfilled" ? coins.value.map((c) => [c.coingeckoId, c]) : [],
-    );
-    const globalData =
-      global.status === "fulfilled"
-        ? global.value
-        : { totalMarketCap: 0, totalVolume24h: 0, btcDominance: 0, ethDominance: 0 };
+    const futures = futuresRes.status === "fulfilled" ? futuresRes.value : [];
 
-    const entries: MarketOverviewEntry[] = TRACKED_SYMBOLS.map((meta) => {
+    // Build a simple global data structure from futures
+    const globalData = {
+      totalMarketCap: 0,
+      totalVolume24h: 0,
+      btcDominance: 0,
+      ethDominance: 0,
+    };
+
+    // Fetch individual crypto tickers for market cap data
+    const coinResults = await Promise.allSettled(
+      TRACKED_SYMBOLS.map((meta) => getCryptoTicker(meta.id)),
+    );
+
+    const entries: MarketOverviewEntry[] = TRACKED_SYMBOLS.map((meta, idx) => {
       const t = tickerBySymbol.get(broker.pairs.spot[meta.id]);
-      const c = coinsByCoingecko.get(meta.coingeckoId);
-      const marketCap = c?.marketCap ?? 0;
+      const coinTicker = coinResults[idx]?.status === "fulfilled" ? coinResults[idx].value : null;
+      const marketCap = 0; // getCryptoTicker doesn't return market cap
       const symbol: SymbolId = meta.id;
-      const dominance =
-        meta.id === "BTC"
-          ? globalData.btcDominance
-          : meta.id === "ETH"
-            ? globalData.ethDominance
-            : globalData.totalMarketCap > 0
-              ? (marketCap / globalData.totalMarketCap) * 100
-              : 0;
+      const dominance = 0; // no market cap data available
 
       return {
         symbol,
         name: meta.name,
-        price: t?.price ?? 0,
+        price: t?.price ?? coinTicker?.price ?? 0,
         change24h: t?.change ?? 0,
         changePct24h: t?.changePct ?? 0,
         high24h: t?.high ?? 0,
@@ -59,6 +58,10 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
         dominance,
       };
     });
+
+    // Compute global totals from accumulated data
+    globalData.totalMarketCap = entries.reduce((s, e) => s + (e.marketCap ?? 0), 0);
+    globalData.totalVolume24h = entries.reduce((s, e) => s + (e.quoteVolume24h ?? 0), 0);
 
     return {
       generatedAt: Date.now(),

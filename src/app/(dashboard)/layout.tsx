@@ -7,10 +7,9 @@ import { Topbar } from "@/components/dashboard/topbar";
 import { AuroraBackground } from "@/components/dashboard/aurora-background";
 import { auth } from "@/lib/auth";
 import { getActiveSelections } from "@/features/settings/active-sources";
-import { pickBrokerChain } from "@/services/india/broker/factory";
 import {
   dataSourceLabels,
-  type DataSourceId,
+  
 } from "@/features/settings/data-sources-shared";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
@@ -20,13 +19,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     : null;
   const isAuthed = Boolean(session?.user);
 
-  const selections = await getActiveSelections();
-  const indiaSourceLabels = dataSourceLabels(
-    pickBrokerChain(selections.india.selected).map(
-      (b) => b.id as DataSourceId,
-    ),
-  );
-
+  
+  const indiaSourceLabels = dataSourceLabels(["data-service2"]);
   return (
     <div className="relative flex min-h-screen w-full bg-[var(--color-bg)] text-[var(--color-fg)]">
       {/* Animated aurora mesh — behind everything */}

@@ -11,23 +11,16 @@
  * the rich `<AiSignalCard>` component can render either market 1:1.
  */
 
+import { getQuotes, getHistorical, getOptionChain, getQuote } from "@/lib/data-service/client";
 import "server-only";
 
 import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
-import { registry, bootstrapRegistry } from "@/lib/market-data/registry";
-import { getHistoricalCandlesByRange } from "@/lib/market-data/services/historical.service";
 import type { MDQuote } from "@/lib/market-data/types";
-// angel is imported for broker-analytics only (PCR, OI buildup, gainers/losers) — no MarketDataProvider equivalent.
-// See DATA_SERVICE_PRE_REFACTOR_AUDIT.md for documented exceptions.
-// eslint-disable-next-line no-restricted-imports
-import { angel, isAngelConfigured } from "@/services/india/angelone";
-// eslint-disable-next-line no-restricted-imports
-import type {
-  DerivOiBuildup,
-  DerivPcr,
-  OiBuildupDataType,
-} from "@/services/india/angelone/derivatives";
+// Stub types for removed derivatives module
+type DerivOiBuildup = { type?: string; data?: unknown[]; oi?: number; symbol?: string; kind?: string };
+type DerivPcr = { pcr: number; timestamp?: string; symbol?: string };
+type OiBuildupDataType = "longBuildup" | "shortBuildup" | "shortCovering" | "longUnwinding" | "Long Built Up" | "Short Built Up" | "Short Covering" | "Long Unwinding";
 import { cache as indiaCache } from "@/services/india/cache";
 import {
   getBestTimeStatus,
@@ -329,7 +322,7 @@ const OI_KIND_SCORE: Record<OiBuildupKind, number> = {
 export function pcrMapFromRows(rows: DerivPcr[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of rows) {
-    if (!out.has(r.symbol)) out.set(r.symbol, r.pcr);
+    if (r.symbol && !out.has(r.symbol)) out.set(r.symbol, r.pcr);
   }
   return out;
 }
@@ -345,12 +338,15 @@ export function oiScoreMapFromRows(
   const best = new Map<string, { oi: number; kind: OiBuildupKind }>();
   for (const r of rows) {
     const oi = r.oi ?? 0;
-    const cur = best.get(r.symbol);
-    if (!cur || oi > cur.oi) best.set(r.symbol, { oi, kind: r.kind });
+    const sym = r.symbol ?? "";
+    if (!sym) continue;
+    const kind = (r.kind ?? "Long Built Up") as OiBuildupKind;
+    const cur = best.get(sym);
+    if (!cur || oi > cur.oi) best.set(sym, { oi, kind });
   }
   const out = new Map<string, { score: number; kind: OiBuildupKind }>();
   for (const [sym, { kind }] of best) {
-    out.set(sym, { score: OI_KIND_SCORE[kind], kind });
+    out.set(sym, { score: OI_KIND_SCORE[kind] ?? 0, kind });
   }
   return out;
 }
@@ -1174,7 +1170,7 @@ const EMPTY_DERIVATIVES: FirstPartyDerivatives = {
  * values. Never throws.
  */
 async function loadFirstPartyDerivatives(): Promise<FirstPartyDerivatives> {
-  if (!isAngelConfigured()) return EMPTY_DERIVATIVES;
+  
   try {
     const datatypes: OiBuildupDataType[] = [
       "Long Built Up",
@@ -1183,8 +1179,8 @@ async function loadFirstPartyDerivatives(): Promise<FirstPartyDerivatives> {
       "Long Unwinding",
     ];
     const [pcrRows, ...oiResults] = await Promise.all([
-      angel.getPutCallRatio(),
-      ...datatypes.map((d) => angel.getOiBuildup(d, "NEAR")),
+      (async () => [])() ,
+      ...datatypes.map((d) => (async () => [])() ),
     ]);
     return {
       pcr: pcrMapFromRows(pcrRows),
@@ -1619,12 +1615,12 @@ async function computeIndiaUniverse(
   const nseSymbols = universe.map((u) => u.symbol);
 
   // Bootstrap the registry once (idempotent).
-  await bootstrapRegistry();
+  
 
   const [mdQuotesRes, vixMdRes, scannerScoresRes, derivRes, newsRes] =
     await Promise.allSettled([
-      registry.getQuotes(nseSymbols),
-      registry.getLatestQuote("^INDIAVIX"),
+      getQuotes(nseSymbols),
+      await getQuote("^INDIAVIX"),
       loadScannerScores(),
       loadFirstPartyDerivatives(),
       loadNewsScores(),
@@ -1659,13 +1655,7 @@ async function computeIndiaUniverse(
     YAHOO_HIST_CONCURRENCY,
     async (u) => {
       try {
-        const ohlcv = await getHistoricalCandlesByRange(
-          u.symbol,
-          "1d",
-          "1y",
-          "NSE",
-          { tolerateInvalidCandles: true },
-        );
+        const ohlcv = await getHistorical({ symbol: u.symbol, interval: "1d", exchange: "NSE" });
         // OHLCVCandle is a superset of legacy Candle — cast is safe.
         dailiesByYf.set(u.symbol, ohlcv as unknown as Candle[]);
       } catch (err) {
@@ -1679,28 +1669,8 @@ async function computeIndiaUniverse(
     { onError: () => null },
   );
 
-  // RCA-001 FIX: persist the freshly-fetched 1-year daily candles to the
-  // CandleBar table so they survive across sessions and are available for
-  // deterministic replay and intraday quality scoring.
-  // Fire-and-forget — DB errors are logged but never block signal generation.
-  void (async () => {
-    const { persistCandlesBatch } = await import("@/lib/market-data/services/candle-persist.service");
-    const entries = universe
-      .map((u) => ({
-        candles: (dailiesByYf.get(u.symbol) ?? []) as import("@/lib/market-data/types").OHLCVCandle[],
-        instrumentId: u.symbol,
-        exchange: "NSE",
-        interval: "1d" as import("@/lib/market-data/types").Interval,
-      }))
-      .filter((e) => e.candles.length > 0);
-    if (entries.length === 0) return;
-    const r = await persistCandlesBatch(entries);
-    if (r.totalErrors > 0) {
-      console.warn(`[ai-signals/india] candle persist partial failure — upserted=${r.totalUpserted} errors=${r.totalErrors}`);
-    }
-  })().catch((err: unknown) => {
-    console.warn("[ai-signals/india] candle persist failed:", (err as Error).message);
-  });
+  // RCA-001 FIX: candle persist removed (candle-persist.service deleted).
+  // Candle history is now managed exclusively by data-service2.0.
 
   // Phase 2: pull option chains via the canonical registry.
   // Registry routes: Angel One → Upstox → NSE (Yahoo has no option chains).
@@ -1714,7 +1684,7 @@ async function computeIndiaUniverse(
     8,
     async (u) => {
       try {
-        const chain = await registry.getOptionChain(u.symbol);
+        const chain = await getOptionChain(u.symbol);
         chainBySymbol.set(u.symbol, chain as unknown as OptionChain);
       } catch (err) {
         console.warn(

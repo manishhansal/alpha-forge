@@ -17,7 +17,8 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type { ScannerResult } from "@/types/india/scanner";
-import type { MDQuote, OHLCVCandle } from "@/lib/market-data/types";
+import type { MarketQuote, OHLCVCandle } from "@/lib/market-data/types";
+type MDQuote = MarketQuote;
 
 // ─── 1. Static import guard — no yahoo import in engine.ts ───────────────────
 
@@ -45,70 +46,32 @@ describe("V-02 Static import guard — engine.ts", () => {
 
 // ─── 2. Documented_Exception annotations ─────────────────────────────────────
 
-describe("V-02 Documented_Exception annotations in engine.ts", () => {
-  const ANNOTATION = "DATA_SERVICE_PRE_REFACTOR_AUDIT.md V-02: Documented_Exception";
-
-  it("angel.getTopGainersLosers() calls are preceded by Documented_Exception comment", () => {
-    // Find all occurrences of getTopGainersLosers and check the preceding line
-    const lines = engineSource.split("\n");
-    const callLines = lines
-      .map((l, i) => ({ line: l, idx: i }))
-      .filter(({ line }) => line.includes("angel.getTopGainersLosers("));
-
-    expect(callLines.length).toBeGreaterThan(0);
-    for (const { idx } of callLines) {
-      // The annotation must appear on the line immediately before or on the same line
-      const context = lines.slice(Math.max(0, idx - 1), idx + 1).join("\n");
-      expect(context).toContain(ANNOTATION);
-    }
+describe("V-02 Documented_Exception annotations (post-centralization)", () => {
+  it("engine.ts does NOT call angel.getTopGainersLosers() directly", () => {
+    // After centralization, angel market-data calls are removed
+    expect(engineSource).not.toMatch(/angel\.getTopGainersLosers\(\)/);
   });
-
-  it("angel.getPutCallRatio() call has Documented_Exception comment", () => {
-    const lines = engineSource.split("\n");
-    const callLine = lines.find((l) => l.includes("angel.getPutCallRatio("));
-    expect(callLine).toBeDefined();
-    expect(callLine).toContain(ANNOTATION);
+  it("engine.ts does NOT call angel.getPutCallRatio() directly", () => {
+    expect(engineSource).not.toMatch(/angel\.getPutCallRatio\(\)/);
   });
-
-  it("angel.getOiBuildup() calls are preceded by Documented_Exception comment", () => {
-    const lines = engineSource.split("\n");
-    const callLines = lines
-      .map((l, i) => ({ line: l, idx: i }))
-      .filter(({ line }) => line.includes("angel.getOiBuildup("));
-
-    expect(callLines.length).toBeGreaterThan(0);
-    // At least one of the call-site vicinity lines must have the annotation
-    const oiBuildupBlock = callLines[0].idx;
-    const context = lines.slice(Math.max(0, oiBuildupBlock - 1), oiBuildupBlock + 1).join("\n");
-    expect(context).toContain(ANNOTATION);
+  it("engine.ts does NOT call angel.getOiBuildup() directly", () => {
+    expect(engineSource).not.toMatch(/angel\.getOiBuildup\(/);
+  });
+  it("engine.ts imports from data-service2.0 client", () => {
+    expect(engineSource).toMatch(/from \"@\/lib\/data-service\/client\"/);
   });
 });
 
-// ─── 3. Runtime delegation — registry mock ────────────────────────────────────
-//
-// The engine imports the registry via dynamic `import("@/lib/market-data/registry")`.
-// We mock the module so every internal call goes through our controlled stubs.
-
-const getQuotesMock = vi.fn<(symbols: string[]) => Promise<Array<MDQuote | null>>>();
-const getHistoricalMock = vi.fn<(req: unknown) => Promise<OHLCVCandle[]>>();
+// Data-service2.0 client mock (replaces old ProviderRegistry mock)
+const getQuotesMock = vi.fn();
+const getHistoricalMock = vi.fn();
 const getOptionChainMock = vi.fn();
-
-vi.mock("@/lib/market-data/registry", () => ({
-  bootstrapRegistry: () => Promise.resolve(),
-  registry: {
-    getQuotes: (...args: unknown[]) => getQuotesMock(...(args as [string[]])),
-    getHistoricalCandles: (...args: unknown[]) => getHistoricalMock(...(args as [unknown])),
-    getOptionChain: (...args: unknown[]) => getOptionChainMock(...args),
-  },
+vi.mock("@/lib/data-service/client", () => ({
+  getQuotes: (...args: unknown[]) => getQuotesMock(...args),
+  getHistorical: (...args: unknown[]) => getHistoricalMock(...args),
+  getOptionChain: (...args: unknown[]) => getOptionChainMock(...args),
+  DataServiceUnavailableError: class DataServiceUnavailableError extends Error {},
 }));
-
-// Stub out angel so it doesn't attempt real SmartAPI calls in the test env
-vi.mock("@/services/india/angelone", () => ({
-  isAngelConfigured: () => false, // disables angel-first paths → falls through to registry
-  angel: {},
-}));
-
-// Stub the in-memory cache so memo always executes the factory
 vi.mock("@/services/india/cache", () => ({
   cache: {
     memo: async (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn(),
@@ -116,12 +79,13 @@ vi.mock("@/services/india/cache", () => ({
 }));
 
 // Minimal MDQuote factory
-function makeQuote(symbol: string): MDQuote {
+function makeQuote(symbol: string): MarketQuote {
+  const now = new Date().toISOString();
   return {
+    instrumentId: "NSE:" + symbol + ":EQ",
     symbol,
-    token: null,
-    exchange: "NSE",
     name: null,
+    exchange: "NSE",
     ltp: 100,
     change: 1,
     changePct: 1,
@@ -131,15 +95,16 @@ function makeQuote(symbol: string): MDQuote {
     low: 98,
     volume: 500_000,
     oi: null,
+    tradedValue: null,
+    bid: null,
+    ask: null,
     weekHigh52: null,
     weekLow52: null,
-    upperCircuit: null,
-    lowerCircuit: null,
-    totalBuyQty: null,
-    totalSellQty: null,
+    marketStatus: "OPEN",
     lastTradeTime: null,
-    provider: "scrapling",
-    fetchedAt: new Date().toISOString(),
+    dataAsOf: now,
+    fetchedAt: now,
+    provider: "angel_one",
   };
 }
 
@@ -164,9 +129,9 @@ describe("V-02 scanner engine — delegates to registry (not yahoo)", () => {
     vi.clearAllMocks();
   });
 
-  // ── Req 3.1: fnoQuotes() uses registry.getQuotes ──────────────────────────
+  // ── Req 3.1: fnoQuotes() uses data-service2.0 getQuotes ──────────────────
 
-  it("momentum scanner calls registry.getQuotes() for F&O quotes", async () => {
+  it("momentum scanner calls data-service2.0 getQuotes() for F&O quotes", async () => {
     getQuotesMock.mockResolvedValue([makeQuote("RELIANCE"), makeQuote("TCS")]);
 
     const result = await runScanner("momentum", 5);
@@ -176,7 +141,7 @@ describe("V-02 scanner engine — delegates to registry (not yahoo)", () => {
     // No yahoo interaction — the mock would have thrown if yahoo was called
   });
 
-  it("volume-breakout scanner calls registry.getQuotes() then registry.getHistoricalCandles()", async () => {
+  it("volume-breakout scanner calls data-service2.0 getQuotes() then getHistorical()", async () => {
     // Step 1: fnoQuotes() via registry.getQuotes
     getQuotesMock.mockResolvedValue([
       makeQuote("RELIANCE"),
@@ -189,7 +154,7 @@ describe("V-02 scanner engine — delegates to registry (not yahoo)", () => {
     const result = await runScanner("volume-breakout", 5);
 
     expect(getQuotesMock).toHaveBeenCalled();
-    // getHistoricalCandles is called with interval "1d" for avg volume
+    // getHistorical is called with interval "1d" for avg volume
     const histCalls = getHistoricalMock.mock.calls;
     expect(histCalls.length).toBeGreaterThan(0);
     const firstReq = histCalls[0][0] as { interval: string; exchange: string };
@@ -198,9 +163,9 @@ describe("V-02 scanner engine — delegates to registry (not yahoo)", () => {
     expect(result.type).toBe("volume-breakout");
   });
 
-  // ── Req 3.2: historical candle calls use registry ─────────────────────────
+  // ── Req 3.2: historical candle calls use data-service2.0 getHistorical ────
 
-  it("range-expansion scanner calls registry.getHistoricalCandles() with interval=1d", async () => {
+  it("range-expansion scanner calls data-service2.0 getHistorical() with interval=1d", async () => {
     getQuotesMock.mockResolvedValue([makeQuote("INFY")]);
     getHistoricalMock.mockResolvedValue(makeCandles(250));
 
@@ -212,7 +177,7 @@ describe("V-02 scanner engine — delegates to registry (not yahoo)", () => {
     expect(result.type).toBe("range-expansion");
   });
 
-  it("oi-buildup scanner calls registry.getQuotes() for index quotes", async () => {
+  it("oi-buildup scanner calls data-service2.0 getQuotes() for index quotes", async () => {
     getQuotesMock.mockResolvedValue([makeQuote("NIFTY"), makeQuote("BANKNIFTY")]);
     getOptionChainMock.mockRejectedValue(new Error("no chain in test"));
 

@@ -27,7 +27,7 @@ const SCHEMA = readFileSync(
 // 1. CandleBar — duplicate prevention
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Database schema — CandleBar duplicate prevention", () => {
+describe.skip("Database schema — CandleBar duplicate prevention (table removed in data-service2.0 centralization)", () => {
   it("CandleBar has a unique constraint on (instrumentId, exchange, intervalStr, time)", () => {
     expect(SCHEMA).toMatch(
       /@@unique\(\[instrumentId,\s*exchange,\s*intervalStr,\s*time\]\)/
@@ -172,7 +172,7 @@ describe("Database schema — enum completeness", () => {
 // 9. OptionChainSnapshot — indexed for time-series queries
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Database schema — OptionChainSnapshot indexes", () => {
+describe.skip("Database schema — OptionChainSnapshot indexes (table removed in data-service2.0 centralization)", () => {
   it("OptionChainSnapshot has index on (underlying, capturedAt)", () => {
     expect(SCHEMA).toMatch(/@@index\(\[underlying,\s*capturedAt\]\)/);
   });

@@ -1,4 +1,13 @@
-import type { DeribitOptionInstrument } from "@/services/deribit/rest";
+/** Local stub for Deribit option instrument — replaces deleted @/services/deribit/rest */
+export interface DeribitOptionInstrument {
+  strike: number;
+  optionType: "C" | "P";
+  openInterest: number;
+  volume: number;
+  markIv: number;
+  underlyingPrice: number;
+  expiryTs: number;
+}
 import type { ExpiryStats, StrikeOiBucket } from "@/types/market";
 
 export interface InstrumentsByExpiry {
