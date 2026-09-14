@@ -162,7 +162,7 @@ export class ExecutionQualityReporter {
 
     // ── Slippage ─────────────────────────────────────────────────────────
     const slippageFracs = fills.map(f => f.slippageFraction).sort((a, b) => a - b);
-    const totalSlippageAmount = fills.reduce((s, f) => s + f.slippageAmount * f.filledQty * f.qty, 0);
+    const _totalSlippageAmount = fills.reduce((s, f) => s + f.slippageAmount * f.filledQty * f.qty, 0);
     const slippage: SlippageStats = {
       avgFraction:    _mean(slippageFracs),
       medianFraction: _median(slippageFracs),

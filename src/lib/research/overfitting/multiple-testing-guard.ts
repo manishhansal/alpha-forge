@@ -141,7 +141,7 @@ export function bonferroniThreshold(alpha: number, nTests: number): number {
  * @param alpha     Target FDR level (default 0.05)
  * @returns adjusted p-values in same order as input
  */
-export function bhFdrAdjust(pValues: number[], alpha: number = 0.05): number[] {
+export function bhFdrAdjust(pValues: number[], _alpha: number = 0.05): number[] {
   const n = pValues.length;
   if (n === 0) return [];
 

@@ -24,8 +24,7 @@
  */
 
 import type { OHLCVCandle } from "@/lib/market-data/types";
-import type { MarketContextSnapshot } from "./market-context-engine";
-import type { SignalDirection, MarketRegimeLabel } from "./types";
+import type { SignalDirection } from "./types";
 
 // Re-export from types for convenience
 export type { SignalDirection };
@@ -453,7 +452,7 @@ export function evaluateMomentumQuality(
  * First 30 min (09:15–09:45) is heaviest; lunch hour (12–13) is lightest.
  * These multipliers normalize volume so 09:20 is not naively compared to 13:00.
  */
-const TOD_VOLUME_MULTIPLIERS: Record<string, number> = {
+const _TOD_VOLUME_MULTIPLIERS: Record<string, number> = {
   "09:15": 2.5,
   "09:30": 2.0,
   "10:00": 1.5,

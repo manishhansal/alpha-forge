@@ -17,8 +17,7 @@ import type { Portfolio, EquityCurvePoint } from "../models/portfolio";
 import {
   cagr, sharpeRatio, sortinoRatio, calmarRatio, profitFactor,
   expectancy, payoffRatio, sqn, ulcerIndex, historicalVaR, cvar,
-  winRate, maxConsecutive, calcDrawdown, mean, stddev,
-  TRADING_DAYS_PER_YEAR,
+  winRate, maxConsecutive, calcDrawdown, mean,
 } from "./metrics";
 
 // ── Report shape ──────────────────────────────────────────────────────────────

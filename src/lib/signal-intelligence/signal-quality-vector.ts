@@ -18,10 +18,7 @@ import type {
   SignalRankGrade,
   AbstentionReason,
   SignalDirection,
-  MarketRegimeLabel,
 } from "./types";
-import type { MultiLayerEvaluation } from "./multi-layer-engine";
-import type { MarketContextSnapshot } from "./market-context-engine";
 import type { LiquidityResult } from "./multi-layer-engine";
 
 // ─── Time-of-Day Signal Model ─────────────────────────────────────────────────
@@ -89,7 +86,7 @@ const BASE_SLIPPAGE_PCT = 0.05; // 5 bps baseline slippage for liquid F&O
  */
 function calibrateWinProbability(
   rawConfidence: number,
-  strategyId: string,
+  _strategyId: string,
 ): number {
   // Default calibration offset (logistic shrinkage toward 0.5)
   // Replace with per-strategy calibration curves once OOS data is available
@@ -196,7 +193,7 @@ export function buildSignalQualityVector(input: QualityVectorInput): SignalQuali
   const dir: "BULLISH" | "BEARISH" | "NEUTRAL" =
     isLong ? "BULLISH" : input.direction === "SHORT" ? "BEARISH" : "NEUTRAL";
 
-  const toDirectionalScore = (raw: number, flip = false) =>
+  const _toDirectionalScore = (raw: number, flip = false) =>
     flip ? -raw : raw;
 
   // Market context: directional alignment

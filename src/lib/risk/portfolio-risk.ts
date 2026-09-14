@@ -216,7 +216,7 @@ export class PortfolioRiskEngine {
     prices: Map<string, number>,
     equity: number,
     dailyPnl: number,
-    barIndex: number,
+    _barIndex: number,
   ): void {
     // Update price history for each symbol
     for (const [symbol, price] of prices) {
@@ -310,7 +310,7 @@ export class PortfolioRiskEngine {
     proposal: TradeProposal,
     positions: Position[],
     equity: number,
-    dailyPnl: number,
+    _dailyPnl: number,
   ): RiskEvaluationResult {
     // ── Compute shared state ────────────────────────────────────────────────
     const exposureSnap = calcExposureSnapshot(positions);

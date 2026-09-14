@@ -17,7 +17,6 @@
 import "server-only";
 
 import type { AiMarketRegime } from "@/types/ai-signals";
-import type { Quote } from "@/types/india";
 
 import {
   isMLServiceHealthy,

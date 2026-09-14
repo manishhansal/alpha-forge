@@ -113,7 +113,7 @@ export class NextBarOpenFillModel implements FillModel {
     order: OrderRecord,
     bar: OHLCVBar,
     barIndex: number,
-    timestampMs: number,
+    _timestampMs: number,
   ): FillEvent | null {
     // Anti-lookahead: order not yet valid for this bar
     if (barIndex < order.validFromBarIndex) return null;

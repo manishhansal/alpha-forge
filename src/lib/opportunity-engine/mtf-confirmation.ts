@@ -286,7 +286,7 @@ export function evaluateMTFAlignment(input: MTFInput): MTFConfirmationResult {
   const confirmed = assessments.filter(a => a.confirmed && a.bias !== "UNAVAILABLE");
   const supportsLong = confirmed.filter(a => a.supportsLong).length;
   const supportsShort = confirmed.filter(a => a.supportsShort).length;
-  const neutral = confirmed.filter(a => a.bias === "NEUTRAL").length;
+  const _neutral = confirmed.filter(a => a.bias === "NEUTRAL").length;
   const pullbacks = confirmed.filter(a =>
     a.bias === "PULLBACK_IN_BULL" || a.bias === "PULLBACK_IN_BEAR"
   ).length;

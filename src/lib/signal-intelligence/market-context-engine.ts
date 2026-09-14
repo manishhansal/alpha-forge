@@ -239,7 +239,7 @@ function deriveRegime(
   niftyChangePct: number,
   adRatio: number | null,
   vix: number | null,
-  volumeRatio: number | null,
+  _volumeRatio: number | null,
 ): MarketRegimeLabel {
   // VIX-based regime takes priority
   if (vix !== null) {

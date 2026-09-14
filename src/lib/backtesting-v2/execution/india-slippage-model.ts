@@ -15,10 +15,10 @@
  * with instrument type, strike moneyness, volume, OI, and ATR.
  */
 
-import type { InstrumentId, InstrumentType } from "../events/market-event";
+import type { InstrumentId } from "../events/market-event";
 import type { OHLCVBar } from "../events/market-event";
 import type { MarketDepthSnapshot } from "./market-depth";
-import { MarketDepthSimulator, inferLiquidityTier } from "./market-depth";
+import { MarketDepthSimulator } from "./market-depth";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@
  *   disabled  → returns { candles: [], status: "DISABLED" }
  */
 
-import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getHistorical } from "@/lib/data-service/client";
 import "server-only";
 
 import type { OHLCVCandle } from "@/lib/market-data/types";

@@ -35,7 +35,6 @@ import type { ClockConfig } from "./clock";
 import type { OHLCVBar, InstrumentId, MarketEvent } from "../events/market-event";
 import { makeEventId } from "../events/market-event";
 import type { SignalEvent } from "../events/signal-event";
-import type { OrderEvent } from "../events/order-event";
 import type { FillEvent } from "../events/fill-event";
 import { buildFillEvent } from "../events/fill-event";
 import type { RiskCheckEvent } from "../events/risk-event";

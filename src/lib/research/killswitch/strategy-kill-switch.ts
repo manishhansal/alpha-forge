@@ -10,7 +10,6 @@
 
 import type {
   KillSwitchState,
-  KillSwitchLevel,
   KillSwitchTrigger,
 } from "../types";
 
