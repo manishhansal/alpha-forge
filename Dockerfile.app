@@ -21,7 +21,7 @@ COPY --from=deps /app/node_modules/.prisma ./node_modules/.prisma
 ENV SKIP_ENV_VALIDATION=1
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN npm run build -- --no-lint 2>/dev/null || npm run build
+RUN npx next build
 
 # ─── Runner ───────────────────────────────────────────────────────────────────
 FROM base AS runner

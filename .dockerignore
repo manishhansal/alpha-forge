@@ -1,0 +1,25 @@
+# Dependencies — reinstalled inside the image
+node_modules
+
+# Next.js build output — rebuilt inside the image
+.next
+
+# Test / coverage artifacts
+coverage
+*.lcov
+
+# Local env files — secrets should come from docker-compose env_file or secrets
+.env.local
+.env*.local
+
+# Dev tooling
+.git
+.cursor
+.kiro
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
