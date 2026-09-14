@@ -1,59 +1,118 @@
 import { NextResponse } from "next/server";
-import { getQuotes, DataServiceUnavailableError } from "@/lib/data-service/client";
+import { getQuotes, getHistorical, DataServiceUnavailableError } from "@/lib/data-service/client";
 import { FNO_INDICES, SUPPLEMENTARY_INDICES } from "@/lib/india/fno-symbols";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const SECTORS: { name: string; symbol: string }[] = [
-  { name: "Bank", symbol: "NSEBANK" },
-  { name: "IT", symbol: "CNXIT" },
-  { name: "Auto", symbol: "CNXAUTO" },
-  { name: "Pharma", symbol: "CNXPHARMA" },
-  { name: "FMCG", symbol: "CNXFMCG" },
-  { name: "Metal", symbol: "CNXMETAL" },
-  { name: "Energy", symbol: "CNXENERGY" },
-  { name: "Realty", symbol: "CNXREALTY" },
-  { name: "Fin Services", symbol: "CNXFIN" },
-  { name: "Media", symbol: "CNXMEDIA" },
-  { name: "PSU Bank", symbol: "CNXPSUBANK" },
-  { name: "Infra", symbol: "CNXINFRA" },
+  { name: "Bank",         symbol: "NSEBANK"   },
+  { name: "IT",           symbol: "CNXIT"     },
+  { name: "Auto",         symbol: "CNXAUTO"   },
+  { name: "Pharma",       symbol: "CNXPHARMA" },
+  { name: "FMCG",         symbol: "CNXFMCG"   },
+  { name: "Metal",        symbol: "CNXMETAL"  },
+  { name: "Energy",       symbol: "CNXENERGY" },
+  { name: "Realty",       symbol: "CNXREALTY" },
+  { name: "Fin Services", symbol: "CNXFIN"    },
+  { name: "Media",        symbol: "CNXMEDIA"  },
+  { name: "PSU Bank",     symbol: "CNXPSUBANK"},
+  { name: "Infra",        symbol: "CNXINFRA"  },
 ];
 
 const ALL_INDICES = [...FNO_INDICES, ...SUPPLEMENTARY_INDICES];
 
+/**
+ * Fetch the last known close price from the daily historical series.
+ * Used as a fallback when the live quote returns null (market closed / no provider).
+ *
+ * @param underlying  NSE underlying symbol accepted by data-service2.0 historical
+ *                    endpoint (e.g. "NIFTY", "BANKNIFTY") — NOT the Yahoo-style
+ *                    symbol like "^NSEI". Only FNO_INDICES have this field.
+ */
+async function getLastHistoricalClose(underlying: string): Promise<number | null> {
+  try {
+    const candles = await getHistorical({ symbol: underlying, interval: "1d" });
+    if (!candles.length) return null;
+    const last = candles[candles.length - 1]!;
+    // Return both close (today's session close) and open as a proxy for
+    // prevClose so the caller can compute a change % if needed.
+    return last.close > 0 ? last.close : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
-  const indexSyms = ALL_INDICES.map((i) => i.symbol);
+  const indexSyms  = ALL_INDICES.map((i) => i.symbol);
   const sectorSyms = SECTORS.map((s) => s.symbol);
-  const allSyms = [...new Set([...indexSyms, ...sectorSyms])];
+  const allSyms    = [...new Set([...indexSyms, ...sectorSyms])];
 
   try {
     const allQuotes = await getQuotes(allSyms, "NSE");
-    const quoteMap = new Map(
+    const quoteMap  = new Map(
       allSyms.map((sym, i) => [sym, allQuotes[i] ?? null]),
     );
 
-    const indexQuotes = indexSyms.map((sym) => {
-      const q = quoteMap.get(sym);
+    // Build index entries; kick off historical fallback fetches in parallel for
+    // any FNO index whose live ltp is missing (market closed / provider down).
+    const indexEntries = ALL_INDICES.map((idx) => {
+      const q   = quoteMap.get(idx.symbol);
+      const ltp = q?.ltp;
+      const hasLive = ltp != null && ltp > 0;
+
+      // "underlying" exists only on FNO_INDICES entries, not SUPPLEMENTARY_INDICES.
+      const underlying = (idx as { underlying?: string }).underlying ?? null;
+
       return {
-        symbol: sym,
-        ltp: q?.ltp ?? null,
+        name:      idx.name,
+        symbol:    idx.symbol,
+        underlying,
+        hasLive,
+        price:     hasLive ? ltp : null,
         changePct: q?.changePct ?? null,
-        change: q?.change ?? null,
-        open: q?.open ?? null,
-        high: q?.high ?? null,
-        low: q?.low ?? null,
-        volume: q?.volume ?? null,
-        oi: q?.oi ?? null,
+        change:    q?.change    ?? null,
+        open:      q?.open      ?? null,
+        high:      q?.high      ?? null,
+        low:       q?.low       ?? null,
+        volume:    q?.volume    ?? null,
+        oi:        q?.oi        ?? null,
+        prevClose: q?.prevClose ?? null,
       };
     });
 
+    // For indices with no live price, attempt historical close as fallback.
+    // Run all fallback fetches concurrently to keep latency low.
+    const fallbackSymbols = indexEntries
+      .filter((e) => !e.hasLive && e.underlying)
+      .map((e) => e.underlying!);
+
+    const fallbackMap = new Map<string, number | null>();
+    if (fallbackSymbols.length > 0) {
+      const results = await Promise.all(
+        fallbackSymbols.map(async (sym) => ({
+          sym,
+          close: await getLastHistoricalClose(sym),
+        })),
+      );
+      for (const { sym, close } of results) fallbackMap.set(sym, close);
+    }
+
+    const indexQuotes = indexEntries.map(({ underlying, hasLive, ...entry }) => {
+      const price = hasLive
+        ? entry.price
+        : (underlying ? (fallbackMap.get(underlying) ?? null) : null);
+      return { ...entry, price };
+    });
+
     const sectorQuotes = SECTORS.map((s) => {
-      const q = quoteMap.get(s.symbol);
+      const q   = quoteMap.get(s.symbol);
+      const ltp = q?.ltp;
+      // Sectors have no historical data in data-service2.0 — show null when closed.
       return {
-        name: s.name,
-        symbol: s.symbol,
-        ltp: q?.ltp ?? null,
+        name:      s.name,
+        symbol:    s.symbol,
+        price:     ltp != null && ltp > 0 ? ltp : null,
         changePct: q?.changePct ?? null,
       };
     });
@@ -62,7 +121,7 @@ export async function GET() {
       {
         indices: indexQuotes,
         sectors: sectorQuotes,
-        source: "data-service2",
+        source:    "data-service2",
         fetchedAt: new Date().toISOString(),
       },
       { headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" } },
