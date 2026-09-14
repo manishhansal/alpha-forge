@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
+import type { Logger } from "@worker/log";
 
 function readSrc(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf-8");
@@ -186,7 +187,7 @@ describe("scheduleJob unit tests", () => {
   it("tick does not run before interval when runOnStart is false", async () => {
     const { scheduleJob } = await import("@worker/scheduler");
     const tick = vi.fn().mockResolvedValue(undefined);
-    const log: any = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => log };
+    const log: Logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => log };
     const handle = scheduleJob({ name: "test", intervalMs: 1000, tick }, log);
     expect(tick).not.toHaveBeenCalled();
     await handle.stop();
@@ -195,7 +196,7 @@ describe("scheduleJob unit tests", () => {
   it("tick runs immediately when runOnStart is true", async () => {
     const { scheduleJob } = await import("@worker/scheduler");
     const tick = vi.fn().mockResolvedValue(undefined);
-    const log: any = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => log };
+    const log: Logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => log };
     const handle = scheduleJob({ name: "test", intervalMs: 1000, runOnStart: true, tick }, log);
     await Promise.resolve(); await Promise.resolve();
     expect(tick).toHaveBeenCalledTimes(1);

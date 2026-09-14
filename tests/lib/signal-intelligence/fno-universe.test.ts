@@ -16,7 +16,7 @@ import {
   formatCoverageSummary,
   MIN_VALID_COVERAGE,
 } from "@/lib/signal-intelligence/fno-universe";
-import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
+import { FNO_STOCKS } from "@/lib/india/fno-symbols";
 
 describe("FNOUniverseService", () => {
   describe("universe composition", () => {

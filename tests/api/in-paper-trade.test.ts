@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     paperTrade: {
       findFirst: vi.fn(async () => findFirstReturn),
-      create:    vi.fn(async (args: { data: unknown; select: { id: boolean } }) => {
+      create:    vi.fn(async (_args: { data: unknown; select: { id: boolean } }) => {
         createdTrade = { id: "test-trade-id" };
         return createdTrade;
       }),

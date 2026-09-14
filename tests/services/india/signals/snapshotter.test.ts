@@ -15,7 +15,7 @@
 // @vitest-environment node
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MDQuote, ProviderId } from "@/lib/market-data/types";
+import type { MDQuote } from "@/lib/market-data/types";
 import { MarketDataError } from "@/lib/market-data/types";
 
 // ── Mocks (hoisted before imports) ───────────────────────────────────────────
@@ -57,43 +57,10 @@ import {
   recordSignalObservation,
   getSignalRecords,
   isMarketOpenIST,
-  type SignalRecord,
 } from "@/services/india/signals/snapshotter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeQuote(
-  symbol: string,
-  ltp: number,
-  provider: ProviderId = "angel_one",
-): MDQuote {
-  const now = new Date().toISOString();
-  return {
-    instrumentId: "NSE:" + symbol + ":EQ",
-    symbol,
-    exchange: "NSE",
-    name: null,
-    ltp,
-    change: null,
-    changePct: null,
-    prevClose: null,
-    open: null,
-    high: null,
-    low: null,
-    volume: null,
-    oi: null,
-    tradedValue: null,
-    bid: null,
-    ask: null,
-    weekHigh52: null,
-    weekLow52: null,
-    marketStatus: "OPEN",
-    lastTradeTime: null,
-    dataAsOf: now,
-    fetchedAt: now,
-    provider,
-  };
-}
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 

@@ -7,8 +7,6 @@
  * Requirements covered: 3.4, 3.5, 9.6, 9.7
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MockInstance } from "vitest";
-import { NextResponse } from "next/server";
 
 vi.mock("server-only", () => ({}));
 

@@ -5,7 +5,6 @@
 import { describe, it, expect } from "vitest";
 import {
   buildAttributionReport,
-  extractFillTimings,
 } from "@/lib/backtesting-v2/analytics/attribution";
 import type { Trade } from "@/lib/backtesting-v2/models/trade";
 import { niftyInstrument } from "./helpers";

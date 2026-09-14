@@ -7,7 +7,6 @@
  */
 
 import type { OHLCVBar, InstrumentId } from "@/lib/backtesting-v2/events/market-event";
-import type { SignalEvent } from "@/lib/backtesting-v2/events/signal-event";
 import type { StrategyContext } from "@/lib/backtesting-v2/engine/event-engine";
 import type { StrategyHandler } from "@/lib/backtesting-v2/adapter/strategy-adapter";
 import { buildSignalEvent } from "@/lib/backtesting-v2/events/signal-event";

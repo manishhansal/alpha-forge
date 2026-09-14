@@ -13,7 +13,7 @@
  * Validates: PHASE 13 requirements — execution mode isolation
  */
 
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 

@@ -16,11 +16,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   makeSessionBars,
-  makeTwoSessionBars,
   makeBarWithHit,
   makeBar,
   niftyInstrument,
-  equityInstrument,
   alwaysLongStrategy,
   singleSignalStrategy,
   makeTestEngine,
@@ -34,6 +32,7 @@ import { EventEngine } from "@/lib/backtesting-v2/engine/event-engine";
 import { DefaultRiskManager } from "@/lib/backtesting-v2/engine/risk-manager";
 import { ExecutionModel } from "@/lib/backtesting-v2/execution/execution-model";
 import type { OHLCVBar } from "@/lib/backtesting-v2/events/market-event";
+import { buildSignalEvent } from "@/lib/backtesting-v2/events/signal-event";
 
 beforeEach(() => {
   resetCounters();
@@ -139,7 +138,6 @@ describe("Anti-lookahead", () => {
       onBar(ctx) {
         if (ctx.barIndex === 0) {
           // Deliberately set signalBarIndex to a future bar
-          const { buildSignalEvent } = require("@/lib/backtesting-v2/events/signal-event");
           const sig = buildSignalEvent({
             sourceEventId: "x",
             timestampMs: ctx.currentBar.closeMs,
@@ -158,7 +156,7 @@ describe("Anti-lookahead", () => {
     };
 
     const engine = makeTestEngine({ strategies: [badStrategy] });
-    const result = engine.run(bars, instrument);
+    const _result = engine.run(bars, instrument);
 
     // Engine should catch the throw and record it as an error — or continue
     // gracefully since strategy errors are caught. What must NOT happen is
@@ -458,7 +456,7 @@ describe("Session close", () => {
     // All positions must be closed after run
     expect(engine.portfolio.openPositionCount).toBe(0);
     // At least one trade closed — the fill+close may happen in the same session-close bar
-    const trades = engine.portfolio.closedTrades();
+    const _trades = engine.portfolio.closedTrades();
     // Either trades were completed (position opened then immediately forced-closed)
     // or no position was opened (order expired before fill). Either way, no open positions.
     // The key invariant: no positions remain open after the run ends.

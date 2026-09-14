@@ -14,13 +14,11 @@
  *  10.  Correlation matrix — rolling correlation, cluster detection
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import {
-  PortfolioRiskEngine,
   createRiskEngine,
   type TradeProposal,
-  type PortfolioRiskConfig,
 } from "@/lib/risk/portfolio-risk";
 
 import {
@@ -74,7 +72,6 @@ import {
   createKillSwitch,
   activateSoftKill,
   activateHardKill,
-  resetKillSwitch,
   openRisk,
   DEFAULT_RISK_BUDGET_CONFIG,
 } from "@/lib/risk/risk-limits";

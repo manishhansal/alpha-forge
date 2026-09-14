@@ -10,11 +10,10 @@
  *   • broadcastTickToAll fan-out
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   ExperimentManager,
   type MarketTick,
-  type ExperimentArm,
   type ExperimentSignal,
 } from "@/lib/experiments/experiment-manager";
 

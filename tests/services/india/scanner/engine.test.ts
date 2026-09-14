@@ -16,9 +16,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import type { ScannerResult } from "@/types/india/scanner";
 import type { MarketQuote, OHLCVCandle } from "@/lib/market-data/types";
-type MDQuote = MarketQuote;
 
 // ─── 1. Static import guard — no yahoo import in engine.ts ───────────────────
 

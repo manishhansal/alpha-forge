@@ -14,7 +14,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { resetEventIdCounter } from "@/lib/backtesting-v2/events/market-event";
 import { resetPositionCounter } from "@/lib/backtesting-v2/models/position";
-import { IndiaFillModel } from "@/lib/backtesting-v2/execution/india-fill-model";
 import { IndiaExecutionEngine } from "@/lib/backtesting-v2/execution/india-execution-engine";
 import { MarketDepthSimulator } from "@/lib/backtesting-v2/execution/market-depth";
 import { ExecutionQualityReporter } from "@/lib/backtesting-v2/execution/execution-quality-report";

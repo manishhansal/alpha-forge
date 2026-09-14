@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import * as ReactNS from "react";
 
 import type { BestTimeStatus } from "@/features/best-time/types";
 
@@ -49,9 +50,8 @@ vi.mock("framer-motion", () => ({
     {},
     {
       get: () => (props: Record<string, unknown>) => {
-        const React = require("react") as typeof import("react");
-        const { children, ...rest } = props as { children?: React.ReactNode };
-        return React.createElement("span", rest, children);
+        const { children, ...rest } = props as { children?: ReactNS.ReactNode };
+        return ReactNS.createElement("span", rest, children);
       },
     },
   ),

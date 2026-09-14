@@ -13,14 +13,14 @@
  * Validates: PHASE 12 requirements — risk checks before any order
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-  PortfolioRiskEngine,
   createRiskEngine,
   DEFAULT_RISK_CONFIG,
 } from "@/lib/risk/portfolio-risk";
 import type { TradeProposal } from "@/lib/risk/portfolio-risk";
-import type { Position } from "@/lib/backtesting-v2/models/position";
+import type { Position, PositionStatus } from "@/lib/backtesting-v2/models/position";
+import type { SignalDirection } from "@/lib/backtesting-v2/events/signal-event";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -57,8 +57,8 @@ function makePosition(symbol: string, notional: number, direction: "LONG" | "SHO
       strike: null,
       optionType: null,
     },
-    direction: direction as any,
-    status: "OPEN" as any,
+    direction: direction as SignalDirection,
+    status: "OPEN" as PositionStatus,
     avgEntryPrice: notional,
     qty: 1,
     stopLoss: notional * 0.95,

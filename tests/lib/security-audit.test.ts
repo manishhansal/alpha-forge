@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 function readSrc(rel: string): string {
@@ -201,8 +201,6 @@ describe("Authentication", () => {
 
   it("Auth route directory exists under (auth) group", () => {
     // Just check the directory structure exists — readFileSync on a file inside it
-    const { existsSync } = require("fs");
-    const { join } = require("path");
     const authPath = join(process.cwd(), "src/app/(auth)");
     expect(existsSync(authPath)).toBe(true);
   });

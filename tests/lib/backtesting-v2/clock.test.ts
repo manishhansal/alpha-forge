@@ -14,7 +14,6 @@ import {
   istDateStr,
   toIst,
   NSE_OPEN_MINUTES,
-  NSE_CLOSE_MINUTES,
 } from "@/lib/backtesting-v2/engine/clock";
 import { makeBar, niftyInstrument, istToUtcMs } from "./helpers";
 import type { OHLCVBar } from "@/lib/backtesting-v2/events/market-event";

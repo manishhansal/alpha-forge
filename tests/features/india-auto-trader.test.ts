@@ -90,9 +90,9 @@ describe("features/india/paper-trading — auto-trader signal scoring", () => {
 
     it("budget is exhausted after MAX_CONCURRENT trades — no 6th slot", () => {
       let remaining = DAILY_BUDGET;
-      let opened    = 0;
+      let _opened    = 0;
       // Simulate 5 trades
-      for (let i = 0; i < MAX_CONCURRENT; i++) { remaining -= TRADE_NOTIONAL; opened++; }
+      for (let i = 0; i < MAX_CONCURRENT; i++) { remaining -= TRADE_NOTIONAL; ;_opened++; }
       const canOpen = remaining >= TRADE_NOTIONAL;
       expect(canOpen).toBe(false);
     });

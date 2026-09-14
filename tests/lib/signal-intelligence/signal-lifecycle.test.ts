@@ -206,7 +206,7 @@ describe("REGRESSION: Signal Decay does not demote on tiny samples (Phase 36)", 
   });
 
   it("provides recommendation for every state", () => {
-    const trades = Array.from({ length: 5 }, (_, i) => ({
+    const trades = Array.from({ length: 5 }, (_, _i) => ({
       status: "WIN",
       pnlPct: 1.5,
       openedAt: new Date(),

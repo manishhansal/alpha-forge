@@ -11,7 +11,6 @@ import {
   releaseClaim,
   executeExactlyOnce,
   buildTradeGuardKey,
-  buildEodGuardKey,
   claimEodSquareOff,
 } from "@/lib/india/atomic-trade-guard";
 import type { RedisLike } from "@/lib/redis";
