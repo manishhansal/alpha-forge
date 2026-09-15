@@ -14,7 +14,6 @@ import {
   RefreshCw,
   ShieldAlert,
   Sparkles,
-  Target,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -472,7 +471,7 @@ export function AiSignalsBoard({
         if (b.winProbability !== a.winProbability) return b.winProbability - a.winProbability;
         return b.riskRewardBlended - a.riskRewardBlended;
       });
-  }, [data.signals, directionFilter]);
+  }, [data.signals, data.context.inActiveWindow, directionFilter]);
 
   const generatedLabel = fmtTime(data.generatedAt);
   const nextSessionLabel   = data.context.nextSessionLabel   ?? null;

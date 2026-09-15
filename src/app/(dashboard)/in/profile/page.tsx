@@ -34,7 +34,7 @@ export default async function IndiaProfilePage() {
   const user = await getCurrentUser();
   const encOk = encryptionAvailable();
   const prisma = getPrisma();
-  const [storedKeys, dataSources, meta] = await Promise.all([
+  const [storedKeys, _dataSources, meta] = await Promise.all([
     listStoredKeys(user.id),
     getDataSourceSelections(user.id),
     prisma.user.findUnique({
@@ -42,7 +42,7 @@ export default async function IndiaProfilePage() {
       select: { createdAt: true },
     }),
   ]);
-  const credentialedIds = storedKeys.map((k) => k.exchange);
+  const _credentialedIds = storedKeys.map((k) => k.exchange);
   const createdAtIso = (meta?.createdAt ?? new Date()).toISOString();
 
   // WhatsApp integration data — loaded independently so a DB failure doesn't

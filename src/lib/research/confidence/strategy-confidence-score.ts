@@ -35,7 +35,6 @@ import type {
   ParameterStabilityScore,
   CostAttributionReport,
   RegimeAttribution,
-  PaperPerformanceComparison,
 } from "../types";
 
 // ─── Component Weights ────────────────────────────────────────────────────────

@@ -2,7 +2,6 @@ import { getQuotes, getOptionChain } from "@/lib/data-service/client";
 import "server-only";
 
 import { FNO_INDICES } from "@/lib/india/fno-symbols";
-import type { OptionChain } from "@/types/india";
 import type { OptionChainAnalytics } from "@/types/india/options";
 
 /**

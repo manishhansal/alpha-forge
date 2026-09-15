@@ -13,7 +13,7 @@
  *   4. The cluster's representative signal is the highest-scoring APPROVED signal.
  */
 
-import type { SignalDirection } from "./types";
+import type { SignalDirection, SignalSourceType } from "./types";
 import type { OpportunityCluster } from "./types";
 
 // ─── Conflict Resolution ──────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ export function resolveSignalConflict(
 
   // Range regime reduces conviction threshold
   const confirmThreshold = marketRegime === "TREND" ? 0.60 : 0.70;
-  const conflictThreshold = 1 - confirmThreshold;
+  const _conflictThreshold = 1 - confirmThreshold;
 
   // Direction conflict detection
   const directionConflict = Math.min(buyPct, sellPct) > 0.25;
@@ -228,7 +228,7 @@ const CORRELATED_STRATEGY_GROUPS: Array<{
   },
 ];
 
-function getStrategiesOnSameInstrument(
+function _getStrategiesOnSameInstrument(
   signals: Array<{ signalId: string; strategyId: string; sourceType: string; instrument: string; timestamp: number; direction: SignalDirection; confidence: number; score: number }>,
   targetInstrument: string,
   windowMs: number,
@@ -329,7 +329,7 @@ export function clusterSignals(
           {
             signalId: signal.signalId,
             strategyId: signal.strategyId,
-            sourceType: signal.sourceType as any,
+            sourceType: signal.sourceType as SignalSourceType,
             confidence: signal.confidence,
             score: signal.score,
           },
@@ -388,7 +388,7 @@ export function clusterSignals(
       signals: allInCluster.map((s) => ({
         signalId: s.signalId,
         strategyId: s.strategyId,
-        sourceType: s.sourceType as any,
+        sourceType: s.sourceType as SignalSourceType,
         confidence: s.confidence,
         score: s.score,
       })),

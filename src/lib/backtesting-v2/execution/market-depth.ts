@@ -22,7 +22,7 @@
  *   Far OTM / illiquid options:       1.0–5.0%+   of price (can be wider than tick)
  */
 
-import type { InstrumentId, InstrumentType } from "../events/market-event";
+import type { InstrumentId } from "../events/market-event";
 import type { OHLCVBar } from "../events/market-event";
 
 // ── Instrument liquidity profile ──────────────────────────────────────────────
@@ -177,7 +177,7 @@ function inferOptionTier(
   // spread estimation purposes in backtesting.
   // Moneyness ratio: strike / spot.
   // ATM: ratio ≈ 1.0 (within 1.5% of spot for index options)
-  const spotProxy = isCall
+  const _spotProxy = isCall
     ? ltp / 0.5   // rough: if CE at 100, spot ≈ strike +/- something
     : ltp / 0.5;
 

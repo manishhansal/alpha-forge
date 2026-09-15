@@ -123,7 +123,7 @@ describe("Portfolio P&L accounting", () => {
     const entry = 1_000;
     const exit = 1_100;
     const qty = 1;
-    const lotSize = 50;
+    const _lotSize = 50; // used in gross P&L calc comment
 
     const openFill = makeOpenFill({ price: entry, qty });
     const pos = portfolio.openPositionFromFill(openFill, { stopLoss: 950, target: exit, attribution });

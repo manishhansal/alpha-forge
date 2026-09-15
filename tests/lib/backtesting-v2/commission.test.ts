@@ -15,7 +15,7 @@ describe("calcCommission — FO_OPTIONS buy leg", () => {
   const price = 100;
   const qty = 1;
   const lotSize = 50;
-  const turnover = price * qty * lotSize; // 5000
+  const _turnover = price * qty * lotSize; // 5000
 
   it("brokerage is flat ₹20 for standard turnover", () => {
     const { brokerage } = calcCommission(price, qty, lotSize, "FO_OPTIONS", true);

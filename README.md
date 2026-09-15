@@ -1,8 +1,6 @@
 # AlphaForge
 
-A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js 16, a Python ML microservice, and an institutional-grade research platform.
-
-**Current state (2026-09-08, branch `refactor/data-service`):** 0 TypeScript errors · LEVEL 2 ARCHITECTURE CERTIFIED (NSE-free, provider-independent) · data-service **RELIABILITY & FAILOVER CERTIFIED** + **API CONFORMANCE VALIDATED** (Angel One / Upstox v2+v3). TS market-data: 553 tests · Python data-service: 671 tests.
+A professional, multi-market trading desk for **Crypto** and **Indian NSE F&O** — built with Next.js, a Python ML microservice, and an institutional-grade research platform.
 
 ---
 
@@ -13,7 +11,7 @@ AlphaForge runs two fully independent trading surfaces in one shell, toggled by 
 - **Crypto** — BTC · ETH · SOL via Delta Exchange India (default) or Binance. Futures analytics, options chain, AI signals, 10 scalping strategies, strategy backtest, conversational strategy lab, and paper trading.
 - **Indian F&O (NSE)** — Full sidebar parity with the crypto surface. NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY + 200+ F&O stocks. Live option chain, 9 F&O strategies, AI signals with real-time derivatives context, Daily Picks, FnO trend scanners, intelligent auto paper-trading engine, trade history, Signal Center, WhatsApp notifications, an evidence-driven quant research platform, and per-user Upstox Analytics API credential configuration.
 
-The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep links, browser back/forward, and shared links always land in the right mode.
+The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market.
 
 ---
 
@@ -21,8 +19,8 @@ The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep
 
 | Layer | Choice |
 |---|---|
-| Framework | **Next.js 16.3.1** (App Router, Turbopack) + **React 19.2.4** + TypeScript |
-| Styling | **TailwindCSS v4** — OKLCH design token system, `@theme inline` block |
+| Framework | **Next.js** (App Router, Turbopack) + **React 19** + TypeScript |
+| Styling | **TailwindCSS v4** — OKLCH design token system |
 | Client State | **Zustand v5** (UIStore + market-scoped stores, localStorage persist) |
 | Server State | **TanStack Query v5** |
 | Tables | **TanStack Table v9** (Options Chain, AI Radar, Journal, Daily Picks History) |
@@ -31,59 +29,275 @@ The URL is the source of truth — `/` is Crypto, `/in/*` is Indian Market. Deep
 | Validation | **Zod v4** on every external input and env var |
 | Cache | **Redis** via ioredis (in-memory fallback for dev) |
 | Database | **PostgreSQL 17** + **Prisma 7** (driver-adapter pattern) |
-| Realtime | Active broker WebSocket (Delta Exchange India or Binance) |
+| Realtime | data-service2.0 WebSocket `/v1/stream/ticks` (authenticated via `X-API-KEY` / `?api_key=`) |
 | ML Engine | **Python 3.11** + FastAPI + XGBoost + LightGBM + CatBoost + PPO (SB3) + SHAP + Riskfolio-Lib + TA-Lib + mibian |
-| Data Service | **Python 3.11** + FastAPI + Scrapling 0.4.x (Playwright / Chromium) + httpx — credential-free NSE market data, port 8200; V3.1 typed reliability core (backoff + `Retry-After` + pooled clients), capability-aware provider health, cache-first gap repair, tick dedup, wired Upstox fallback |
+| Market Data | **data-service2.0** — dedicated Python FastAPI service (port 8200), runs as a separate Docker Compose stack |
 
 ---
 
-## Quick Start
+## Services Overview
 
-You need **Node.js ≥ 20.9** and **Docker Desktop**.
+AlphaForge is composed of two Docker Compose stacks:
+
+### Stack 1 — data-service2.0 (external, always running)
+
+The canonical market data platform. All live quotes, tick streams, option chains, historical OHLCV, and crypto liquidation feeds flow through here.
+
+| Container | Image | Port |
+|---|---|---|
+| `data-service-api` | `data-service:2.0.0` | `8200` |
+| `data-service-postgres` | `timescale/timescaledb:latest-pg15` | `5444` |
+| `data-service-redis` | `redis:7-alpine` | — (internal) |
+
+### Stack 2 — AlphaForge (this repo)
+
+| Container | Image | Port |
+|---|---|---|
+| `alpha-forge-postgres` | `postgres:17` | `5433` |
+| `alpha-forge-redis` | `redis:7` | `6379` |
+| `alpha-forge-ml` | `alpha-forge-ml-service` | `8100` |
+| `alpha-forge-app` | `alpha-forge-app` | `3000` |
+| `alpha-forge-worker` | `alpha-forge-worker` | — |
+
+`app` and `worker` are under the `integration` profile — they require a Docker build and are not started by default with `docker compose up`.
+
+---
+
+## Quick Start (Local Dev)
+
+You need **Node.js ≥ 20.9**, **Docker Desktop**, and the **data-service2.0** stack already running on port 8200.
 
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Start Postgres + Redis
+# 2. Start Postgres + Redis + ML service
 npm run docker:up
 
-# 3. Copy env template
+# 3. Copy env template and fill in secrets
 cp .env.example .env.local
 
-# 4. Generate secrets and paste into .env.local
-npx auth secret                              # → AUTH_SECRET
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # → ENCRYPTION_KEY
+# 4. Generate required secrets
+npx auth secret                                                             # → AUTH_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # → ENCRYPTION_KEY
 
-# 5. Run the first DB migration
+# 5. Set data-service2.0 connection in .env.local
+# DATA_SERVICE_URL=http://localhost:8200
+# DATA_SERVICE_API_KEY=<your-key>                # must match CONSUMER_API_KEYS in data-service2.0
+# NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200
+# NEXT_PUBLIC_DATA_SERVICE_API_KEY=<your-key>    # same key — needed for browser WebSocket auth
+
+# 6. Run the first DB migration
 npm run db:migrate -- --name init
 
-# 6. Start the dev server
+# 7. Start the dev server
 npm run dev
 
-# 7. Start the background worker (separate terminal)
+# 8. Start the background worker (separate terminal)
 npm run worker:dev
 
-# 8. (Optional) Start the ML service — regime classifier, stock ranker, price forecaster
+# 9. (Optional) Start the ML service if not already running
 docker compose up ml-service -d
-# Or run locally:
-#   cd ml-service && pip install -r requirements.txt
-#   uvicorn src.server:app --host 0.0.0.0 --port 8100 --reload
-# Train models (requires data from Angel One / Upstox or the yfinance fallback):
-#   cd ml-service
-#   python -m src.training.data_pipeline --start 2023-01-01 --end 2026-07-31
-#   python -m src.training.train_all
 ```
 
-Or use the one-shot setup:
+Or use the one-shot setup (installs deps + starts infra + migrates DB):
 
 ```bash
-npm run setup   # npm install + docker compose up + prisma migrate dev
+npm run setup
 ```
 
-# 7. (Optional) Start the data service — credential-free NSE data + tick publisher
-docker compose up data-service -d
 Open [http://localhost:3000](http://localhost:3000) and create an account at `/signup`.
+
+---
+
+## Docker Commands
+
+### Infrastructure (Postgres · Redis · ML)
+
+```bash
+# Start Postgres, Redis, and ML service
+npm run docker:up
+# equivalent to: docker compose up -d
+
+# Stop all infra containers
+npm run docker:down
+# equivalent to: docker compose down
+
+# Stop and wipe all volumes (full reset — destroys DB data)
+npm run docker:reset
+# equivalent to: docker compose down -v
+
+# Check status of all containers
+docker compose ps
+
+# Live logs — all containers
+docker compose logs -f
+
+# Live logs — specific services
+docker compose logs -f app worker
+docker compose logs -f ml-service
+
+# Live logs with timestamps
+docker compose logs -f -t
+
+# Last 100 lines then follow
+docker compose logs -f --tail=100
+```
+
+### App + Worker (integration profile)
+
+`app` and `worker` are built images — they must be rebuilt whenever code changes.
+
+```bash
+# Build both images
+docker compose build app worker
+
+# Build and start everything (infra + app + worker)
+docker compose --profile integration up -d
+
+# Start only app + worker (infra already running)
+docker compose --profile integration up -d app worker
+
+# Rebuild then restart (after code changes)
+docker compose build app worker && docker compose --profile integration up -d app worker
+
+# Force recreate containers (picks up env changes without rebuild)
+docker compose --profile integration up -d --force-recreate app worker
+
+# Stop app + worker only
+docker compose stop app worker
+
+# Remove app + worker containers
+docker compose rm -f app worker
+```
+
+### Useful one-liners
+
+```bash
+# Full teardown and restart from scratch
+docker compose down && docker compose --profile integration up -d --build
+
+# Tail errors only across all containers
+docker compose logs -f 2>&1 | grep -iE "error|warn|403|failed"
+
+# Check which containers are unhealthy
+docker compose ps | grep -v "healthy\|running"
+
+# Shell into a running container
+docker compose exec app sh
+docker compose exec worker sh
+
+# View resource usage
+docker stats
+```
+
+### data-service2.0 (separate stack)
+
+```bash
+# Health check
+curl http://localhost:8200/health
+
+# Test WebSocket auth (requires wscat: npm i -g wscat)
+wscat -c "ws://localhost:8200/v1/stream/ticks?api_key=dev-key-local-1"
+
+# Or with header
+wscat -c ws://localhost:8200/v1/stream/ticks -H "X-API-KEY: dev-key-local-1"
+
+# Live logs
+docker logs data-service-api -f
+
+# Check WebSocket 403s are gone
+docker logs data-service-api --since 5m 2>&1 | grep -E "stream/ticks|403|accepted"
+```
+
+---
+
+## Database Access
+
+AlphaForge has two Postgres instances and two Redis instances — one set for AlphaForge itself, one owned by data-service2.0.
+
+### AlphaForge Postgres (port 5433)
+
+```bash
+# Prisma Studio — visual DB browser (recommended)
+npm run db:studio
+
+# psql CLI
+psql postgresql://crypto:crypto@localhost:5433/crypto_dashboard
+
+# Or via docker exec
+docker compose exec postgres psql -U crypto -d crypto_dashboard
+
+# Run a quick query
+docker compose exec postgres psql -U crypto -d crypto_dashboard \
+  -c "SELECT COUNT(*) FROM \"SignalHistory\";"
+
+# List all tables
+docker compose exec postgres psql -U crypto -d crypto_dashboard \
+  -c "\dt"
+```
+
+### data-service2.0 Postgres / TimescaleDB (port 5444)
+
+```bash
+# psql CLI (credentials from data-service2.0 .env)
+psql postgresql://<user>:<pass>@localhost:5444/<dbname>
+
+# Or via docker exec
+docker exec -it data-service-postgres psql -U <user> -d <dbname>
+```
+
+Replace `<user>`, `<pass>`, `<dbname>` with the values from your data-service2.0 `.env`.
+
+### AlphaForge Redis (port 6379)
+
+```bash
+# Redis CLI
+redis-cli
+
+# Or via docker exec
+docker compose exec redis redis-cli
+
+# Useful commands
+redis-cli PING                        # should return PONG
+redis-cli KEYS "*"                    # list all keys (careful in prod)
+redis-cli KEYS "fno-pulse:*"          # India market keys
+redis-cli GET "fno-pulse:<key>"
+redis-cli MONITOR                     # live stream of all commands
+redis-cli INFO stats                  # throughput stats
+redis-cli DBSIZE                      # total key count
+redis-cli FLUSHDB                     # ⚠️ wipe all keys (dev only)
+```
+
+### data-service2.0 Redis (internal, no host port)
+
+Accessible only from inside the data-service2.0 Docker network. To inspect:
+
+```bash
+docker exec -it data-service-redis redis-cli
+
+# Check tick pub/sub channels
+docker exec -it data-service-redis redis-cli PUBSUB CHANNELS "*"
+
+# Monitor live tick publications
+docker exec -it data-service-redis redis-cli SUBSCRIBE "af:ticks:NIFTY"
+```
+
+### Prisma Migrations
+
+```bash
+# Create and apply a new migration
+npm run db:migrate -- --name <migration-name>
+
+# Apply existing migrations to a fresh DB (CI / production)
+npm run db:deploy
+
+# Reset DB and re-run all migrations (destroys all data)
+npm run db:reset
+
+# Generate Prisma client after schema changes
+npm run db:generate
+```
 
 ---
 
@@ -102,9 +316,9 @@ Open [http://localhost:3000](http://localhost:3000) and create an account at `/s
 | `npm run test:coverage` | v8 coverage → `coverage/` |
 | `npm run db:migrate` | Create and apply a DB migration in dev |
 | `npm run db:studio` | Open Prisma Studio |
-| `npm run docker:up/down/reset` | Manage Postgres + Redis containers |
+| `npm run docker:up/down/reset` | Manage Postgres + Redis + ML containers |
 
-> **TDD is mandatory.** Write the failing test first, then the implementation. The `prebuild` hook enforces a green suite before every build.
+> **TDD is mandatory.** Write the failing test first, then the implementation. The `prebuild` hook enforces a green suite before every build. When building Docker images, `npx next build` is used directly to skip this hook (tests belong in CI, not image builds).
 
 ---
 
@@ -130,20 +344,19 @@ src/app/(dashboard)/
     options-workbench/  Multi-leg options payoff builder
     portfolio/          Quant portfolio optimizer (HRP / CVaR)
     history/            Unified trade history (Picks + Scalper + FnO Trend)
-    ...
 ```
 
 ### Backend
 
-All Indian market data flows through a **provider-agnostic data layer** (`src/lib/market-data/`) with automatic failover:
+All market data — Indian and Crypto — flows exclusively through **data-service2.0** (`src/lib/data-service/client.ts`). There are no direct broker or exchange connections in the TypeScript layer.
 
 ```
-Data Service / Scrapling (0)  →  Angel One SmartAPI (1)  →  Upstox Analytics v2 (2)  →  Yahoo Finance (3)
+data-service2.0 (port 8200)
+  ├── REST  → getQuote / getCandles / getOptionChain / getInstruments / ...
+  └── WS    → /v1/stream/ticks  (authenticated: X-API-KEY header or ?api_key= param)
 ```
 
-**NSE direct scraping was removed from the TypeScript layer in V3.0.0.** The `data-service` Python microservice is now the tier-0 provider for all NSE data — it runs the Scrapling browser sessions, circuit breakers, lineage recording, and DataQualityGate that the TypeScript layer consumes via `ScraplingProvider`.
-
-The `ProviderRegistry` routes each capability request to the highest-priority available provider. `withFailover()` retries 3× with exponential backoff, then switches provider. A 0–100 health score and circuit breaker prevent routing to persistently failing providers.
+The `DataServiceClient` in `src/lib/data-service/client.ts` is the single entry point. It is `server-only` — never imported by browser code. Browser WebSocket connections go through `src/services/brokers/client.ts` which appends `?api_key=NEXT_PUBLIC_DATA_SERVICE_API_KEY` to the WS URL.
 
 ### Worker
 
@@ -162,61 +375,17 @@ A separate Node process (`worker/src/`) runs 14 background jobs:
 | `scalper` | Crypto 10-strategy scalping loop |
 | `signal-ingest/outcome` | Record and resolve signal history |
 | `alerts` | Evaluate user-configured alerts |
-| `liquidations` | Crypto liquidation WebSocket feed |
+| `liquidations` | Crypto liquidation WebSocket feed — connects to data-service2.0 `/v1/stream/ticks` with `X-API-KEY` header |
 | `strategy-lab` | Background runner for user-saved strategy lab rules |
 
-### Data Service
-
-A standalone Python / FastAPI microservice (`data-service/`, port 8200) — the **tier-0 provider** for all NSE market data. All NSE scraping was moved here from the TypeScript layer in V3.0.0. **Current version: 3.1.0** — LEVEL 2 INTEGRATION CERTIFIED · RELIABILITY & FAILOVER CERTIFIED (2026-09-07) · API CONFORMANCE VALIDATED (2026-09-08). Python: 671 tests passing.
-
-- **Live quotes** — `httpx` against the NSE `NextApi` endpoints (no browser required; NSE migrated to Next.js in 2026).
-- **Tick publisher** — 5s poll → Redis pub/sub `af:ticks:{SYMBOL}` + Redis Streams (AT_LEAST_ONCE delivery). The Next.js `useLiveQuotes` hook subscribes to these channels. **V3.1:** duplicate-tick suppression + continuity-gap detection wired into the publish loop.
-- **Option chain** — Headless Chromium via Scrapling `AsyncDynamicSession`; captures `api/option-chain` XHR; computes PCR, max pain, ATM IV, OI walls.
-- **Historical OHLCV** — Daily candles from NSE Bhavcopy CDN; intraday from NSE charting API. Accepts both `YYYY-MM-DD` and full ISO 8601 datetime strings. **V3.1:** cache-first with data fingerprinting + validated gap repair (`scrapers/historical_repair.py`).
-- **DataQualityGate** (`POST /data/gate`) — evaluates freshness, completeness, provider health before allowing signal generation.
-- **Lineage API** (`GET /data/lineage/*`) — records and retrieves observation provenance for every fetch.
-- **Instrument master** — Full NSE/BSE instrument list.
-- **Reliability core (V3.1)** — `core/provider_http.py`: typed `ProviderError` hierarchy, HTTP-status classification, exponential backoff honouring `Retry-After`, and pooled keep-alive clients. Never retries 403/401/404; backs off 429/503/timeout/network.
-- **Provider health (V3.1)** — `GET /health/providers`: capability-aware per-provider × per-capability status from circuit-breaker state; a single degraded capability never marks the whole service DOWN.
-- **Upstox fallback (V3.1)** — `GET /brokers/upstox/{status,quotes,historical}`: the authorized Upstox client (previously dead code) wired via `brokers/router.py`, surfacing 403/429/503 as clean classified errors rather than crashing.
-
-The consuming TypeScript layer (`src/lib/market-data/`) gained matching hardening: capability-aware circuit breakers, cross-provider reconciliation, a signal-engine data gate, never-silent `PROVIDER_SWITCH` records, the Upstox **v3** Protobuf WebSocket feed, and an Angel SmartStream `resolveAngelWsSession()` fix. See [`DATA_SERVICE_RELIABILITY_CERTIFICATION.md`](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md) and [`DATA_SERVICE_API_CONFORMANCE.md`](./DATA_SERVICE_API_CONFORMANCE.md).
-
-```bash
-# Start
-docker compose up data-service --build
-
-# Health check
-curl http://localhost:8200/health
-
-# Live quotes
-curl "http://localhost:8200/scraping/quotes?symbols=NIFTY,BANKNIFTY,RELIANCE"
-
-# Historical (ISO 8601 datetime strings accepted)
-curl "http://localhost:8200/scraping/historical?symbol=RELIANCE&exchange=NSE&interval=1d&from=2026-08-01T00:00:00Z&to=2026-09-03T00:00:00Z"
-
-# DataQualityGate
-curl -X POST http://localhost:8200/data/gate \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"NIFTY","quoteAgeMs":5000,"strategyId":"RANGE_EXPANSION"}'
-
-# Capability-aware provider health (V3.1)
-curl http://localhost:8200/health/providers
-
-# Upstox fallback source (V3.1)
-curl http://localhost:8200/brokers/upstox/status
-```
-
-> The service requires `dns: [8.8.8.8, 8.8.4.4]` in `docker-compose.yml` because Chromium's built-in DNS resolver rejects Docker's loopback nameserver `127.0.0.11`.
-
-> Full reference: [`DATA_SERVICE.md`](./DATA_SERVICE.md)
+The worker connects to data-service2.0 using `DATA_SERVICE_URL` (resolved to `http://host.docker.internal:8200` in Docker, `http://localhost:8200` in local dev) with `DATA_SERVICE_API_KEY` sent as an `X-API-KEY` header.
 
 ### ML Microservice
 
 A FastAPI Python service (`ml-service/`, port 8100) implements a multi-model decision engine:
 
 ```
-NSE Data → Feature Engineering (150+ features)
+NSE Data (via data-service2.0) → Feature Engineering (150+ features)
     ├── Market Regime Classifier (XGBoost) → 6 regimes
     ├── Stock Ranker (LightGBM) → outperformance scores for 200+ stocks
     ├── Strategy Selector (CatBoost) → 9 strategies
@@ -231,11 +400,6 @@ NSE Data → Feature Engineering (150+ features)
 ```
 
 All models have rule-based heuristic fallbacks. When the ML service is down, signals continue without degradation.
-
-**Runtime fixes applied (2026-09-04):**
-- `POST /predict/regime` — all `RegimePredictionRequest` fields are now `Optional[float]`; partial feature bodies return HTTP 200 instead of 422 (BUG-ML-01)
-- `POST /predict/price-regime` — `PriceForecaster` singleton initialised at startup (not lazily per-request); restart `ml-service` if still on old process (BUG-ML-02)
-- `src/services/india/yahoo/index.ts` — `TATAMOTORS` added to `KNOWN_DELISTED` denylist; `console.error` no longer fires for this permanently-renamed symbol (BUG-ML-03)
 
 ---
 
@@ -271,8 +435,6 @@ Distils the full F&O signal pool into the **top 3 per bucket**, frozen at 09:15 
 - **Highly Scalping** — expected range + sharp R:R + scanner agreement
 - **Highly Potential** — highest-conviction setups by confidence + win-probability + blended R:R
 - **Gamma Blast / Hero Zero** — expiry-day only; ATM option or far-OTM lottery play
-
-Every pick ships entry / stop / target / "can move upto" / "can expect" / logic. Outcomes (TARGET_HIT / STOP_HIT / CLOSED) are tracked live. Full queryable history with per-day win rates.
 
 ### Intelligent Auto Paper-Trading Engine
 
@@ -311,8 +473,6 @@ A 24-phase research infrastructure that governs how strategies move from idea to
 - **LIVE promotion always requires a human `approvalToken` + `approvedBy`** — never automatic
 - Research dashboard at `/research` with 10 pages: Leaderboard, Regime Matrix, Monte Carlo, Parameter Stability, Signal Calibration, Correlation, Promotion Pipeline, Alpha Decay Monitor, Experiment History, Strategy Inventory
 
-All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE` — that is the correct state. Nothing has been fabricated.
-
 ### Signal Center (V3.0)
 
 `/in/signal-center` — a unified view of all signal families with `OpportunityCluster` deduplication:
@@ -320,7 +480,6 @@ All 9 official India F&O strategies are currently `INSUFFICIENT_EVIDENCE` — th
 - **9 signal families** aggregated: AI_SIGNAL, SCANNER, DAILY_PICK, FNO_TREND, PAPER_TRADE, MANUAL, OPPORTUNITY, SCALP, RESEARCH
 - Same instrument + direction within a 30-min window → one cluster (not N duplicated cards)
 - `independentConfirmations` = unique-family count (geometric mean confidence, never inflated)
-- Expandable cluster cards with per-contributing-signal breakdown
 
 ### WhatsApp Notifications (V3.0)
 
@@ -329,23 +488,22 @@ Real-time trading alerts delivered to WhatsApp via the Evolution-Go API:
 - **6 event types:** `AI_SIGNAL_NEW`, `SIGNALS_BOARD_NEW`, `DAILY_PICKS_NEW`, `PAPER_TRADE_OPENED`, `PAPER_TRADE_CLOSED`, `SCANNER_HIT_NEW`
 - Per-user opt-in per event type (managed from `/in/profile`)
 - Per-user Redis cooldown (default 5 min) prevents duplicate alerts
-- Scanner delta detection — only genuinely new scan hits fire `SCANNER_HIT_NEW`
 - Phone numbers stored AES-256-GCM encrypted; E.164 validated
 
 ---
 
-## Indian Market Data (Provider Chain)
+## Indian Market Data Provider Chain
 
-All Indian market data flows through a **provider-agnostic data layer** (`src/lib/market-data/`) with automatic failover. **Direct NSE scraping was removed from the TypeScript layer in V3.0.0** — it now lives exclusively in the `data-service` Python microservice (tier 0).
+All Indian market data flows through **data-service2.0** as the single source of truth. The TypeScript layer has no direct broker or exchange connections.
 
 | Priority | Provider | Capabilities | Activation |
 |---|---|---|---|
-| 0 | **Data Service** (`data-service/`) | Live quotes, tick stream, option chain, historical, instrument master — **no credentials required**. All NSE scraping runs here. | `docker compose up data-service` |
+| 0 | **data-service2.0** (`localhost:8200`) | Live quotes, tick stream, option chain, historical OHLCV, crypto liquidations, instrument master | Always running (separate stack) |
 | 1 | **Angel One SmartAPI** | Quotes, historical, option chain, live stream, greeks, GEX, instrument master | `SMARTAPI_API_KEY` + `SMARTAPI_CLIENT_CODE` + `SMARTAPI_PIN` + `SMARTAPI_TOTP_SECRET` |
-| 2 | **Upstox Analytics** | REST quotes/historical/option chain (v2) + **live WebSocket (v3 Protobuf feed, V3.1)**. Full OAuth BFF at `/api/in/providers/upstox/*` | `UPSTOX_ANALYTICS_TOKEN` (data-only) or `UPSTOX_CLIENT_ID` + `UPSTOX_CLIENT_SECRET` (full OAuth) |
+| 2 | **Upstox Analytics** | REST quotes/historical/option chain (v2) + live WebSocket (v3 Protobuf feed) | `UPSTOX_ANALYTICS_TOKEN` or full OAuth credentials |
 | 3 | **Yahoo Finance** | Historical OHLCV, quotes | Always available (last resort) |
 
-`INDIA_BROKER=nse` is no longer valid — it falls back to yahoo. The `"nse"` `ProviderId` has been removed from the TypeScript type system entirely. The `"nse"` `DataSourceId` has also been removed from the settings UI, type system, and broker factory — `DataSourceId` no longer includes `"nse"` anywhere. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
+`INDIA_BROKER=nse` is no longer valid. The `"nse"` `ProviderId` has been removed from the TypeScript type system. 12 automated guard tests in `tests/lib/market-data/nse-elimination.test.ts` prevent any regression.
 
 ---
 
@@ -359,47 +517,49 @@ AUTH_SECRET=...          # from: npx auth secret
 ENCRYPTION_KEY=...       # 32-byte hex string
 ```
 
+### data-service2.0 (required for any market data)
+
+```bash
+# Server-side (REST + worker WebSocket)
+DATA_SERVICE_URL=http://localhost:8200
+DATA_SERVICE_API_KEY=<key>           # must match CONSUMER_API_KEYS in data-service2.0
+
+# Browser-side (client WebSocket to /v1/stream/ticks)
+NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200
+NEXT_PUBLIC_DATA_SERVICE_API_KEY=<key>   # same key as above
+```
+
+In Docker (`--profile integration`), the server-side URL resolves to `http://host.docker.internal:8200` since data-service2.0 runs as a separate stack. The `NEXT_PUBLIC_*` vars always use `localhost:8200` (browser connects from the host machine).
+
 ### Optional — Indian Market
 
 ```bash
-# Angel One SmartAPI (primary data source)
+# Angel One SmartAPI (primary data source after data-service2.0)
 SMARTAPI_API_KEY=
 SMARTAPI_CLIENT_CODE=
 SMARTAPI_PIN=
 SMARTAPI_TOTP_SECRET=
+SMARTAPI_PUBLIC_IP=      # your real egress IP — prevents WAF 403s
 
 # Upstox (secondary data source)
-# Data-only: set UPSTOX_ANALYTICS_TOKEN only (max 2048 chars — JWT bearer token).
-# Full OAuth BFF: set all four.
 UPSTOX_CLIENT_ID=
-UPSTOX_CLIENT_SECRET=    # server-side only — never in NEXT_PUBLIC_*
+UPSTOX_CLIENT_SECRET=
 UPSTOX_REDIRECT_URI=
-UPSTOX_ANALYTICS_TOKEN=  # configure via Profile → API Keys in the UI, or set here
-
-# Data provider (V3.0)
-INDIA_DATA_PROVIDER=auto  # "auto" is the only valid value; "nse" is no longer accepted
-
-# OpenAlgo broker adapter (covers 33+ Indian brokers)
-OPENALGO_BASE_URL=
-OPENALGO_API_KEY=
-LIVE_TRADING_ENABLED=   # Must be exactly "true" to allow order placement
+UPSTOX_ANALYTICS_TOKEN=  # configure via Profile → API Keys in the UI
 
 # WhatsApp notifications (V3.0)
-WHATSAPP_EVOLUTION_URL=
-WHATSAPP_EVOLUTION_API_KEY=
-WHATSAPP_INSTANCE_NAME=
-WHATSAPP_COOLDOWN_MS=300000  # Per-user cooldown in ms (default 5 min)
+WHATSAPP_EVOLUTION_API_URL=
+WHATSAPP_INSTANCE=
+WHATSAPP_API_KEY=
 
 # Worker and ML
 ML_SERVICE_URL=http://localhost:8100
 REDIS_URL=redis://localhost:6379
-INDIA_REDIS_PREFIX=fno-pulse:
 ```
 
 ### Broker Switching (Crypto)
 
 ```bash
-# Flip between Delta Exchange India (default) and Binance
 ACTIVE_BROKER=delta          # or: binance
 NEXT_PUBLIC_ACTIVE_BROKER=delta
 ```
@@ -432,7 +592,7 @@ NEXT_PUBLIC_ACTIVE_BROKER=delta
 AlphaForge is TDD-first. Tests must be written before implementation — no exceptions.
 
 ```bash
-npm test                    # full suite (3090 tests, 0 failures)
+npm test                    # full suite
 npm run test:features       # feature engines only
 npm run test:api            # API route handlers only
 npm run test:coverage       # v8 coverage → coverage/
@@ -457,18 +617,6 @@ tests/
   runtime/       Certification harnesses (phase tests)
 ```
 
-Key test counts:
-- Shadow Trading / Experiment Framework: 1,643
-- Financial ML Validation: 1,480
-- Meta Decision Engine: 1,058
-- Market Microstructure Engine: 974
-- Model Monitoring: 930
-- Signal Intelligence Engine: 196
-- Portfolio Risk Engine v2: 64
-- Research Platform (V6): 92
-- NSE Elimination Guards (V3.0): 12
-- **Total: 3,059 passing**
-
 ---
 
 ## Project Structure
@@ -480,40 +628,29 @@ src/
     (dashboard)/             Authenticated shell — sidebar + topbar
       page.tsx               Crypto Overview
       in/                    India route group
-        signal-center/       NEW (V3.0) — unified signal center page
+        signal-center/       Unified signal center page
       api/                   All API routes
-        in/
-          providers/upstox/  NEW (V3.0) — OAuth BFF (connect/callback/disconnect/status)
-          signal-center/     NEW (V3.0) — aggregated signal endpoint
-          data/forensics/    V2.1 — trade forensics endpoint
   components/
     ai-signals/              AiSignalCard, AiSignalsBoard, AiMarketContextBanner
-    dashboard/               Sidebar (logo at top, icon rail when collapsed), Topbar, MarketTickerBar
-    india/                   All India UI (msb-dashboard, option-chain, ticker, ...)
-      signal-center/         NEW (V3.0) — india-signal-center.tsx
-      DataSourceBadge.tsx    NEW (V3.0) — shows which provider served data
-    trading/                 SignalBadge, ConfidenceBar, RegimeBadge, NumberMorph, AiRadar
-    layout/                  BentoGrid, PageHeader, EmptyState, ErrorState, PageTransition
-    3d/                      MarketIntelligenceCore, RiskSphere, PortfolioGalaxy
+    dashboard/               Sidebar, Topbar, MarketTickerBar
+    india/                   All India UI (option-chain, ticker, signal-center, ...)
+    trading/                 SignalBadge, ConfidenceBar, RegimeBadge, AiRadar
+    layout/                  BentoGrid, PageHeader, EmptyState, ErrorState
   features/
     ai-signals/              Cross-market AI engine + crypto/india builders
     best-time/               IST window engine (crypto + NSE versions)
     scalping/                10 crypto scalping strategies + journal + backtest
-    whatsapp/                NEW (V3.0) — phone.ts, types.ts, preferences.ts,
-                             formatters.ts, notifier.ts, index.ts
-    settings/                api-keys-shared.ts, api-keys.ts,
-                             upstox-credentials.ts (NEW — per-user Upstox token resolver)
+    whatsapp/                Phone, types, preferences, formatters, notifier
     india/
       best-time/             NSE-anchored session engine (7 windows)
       daily-picks/           Top-3-per-bucket engine + freeze/track/history
       scalping/              9 F&O strategies + journal + option-chain replay
       expiry-trades/         Gamma Blast / Hero Zero expiry-day playbooks
-      news/                  RSS feed + bull/bear lexicon + sentiment engine
+      news/                  RSS feed + sentiment engine
       options-workbench/     Multi-leg payoff engine
   lib/
-    market-data/             Provider-agnostic data layer
-                             providers/nse.ts = TOMBSTONE — do not use
-    india-signal-center/     NEW (V3.0) — types.ts, aggregator.ts
+    data-service/            client.ts — single entry point for all market data
+                             (server-only; calls data-service2.0 REST + WebSocket)
     signal-intelligence/     45-phase signal intelligence engine (12 modules)
     opportunity-engine/      12-stage opportunity validation pipeline
     research/                24-phase V6 quant research platform
@@ -523,15 +660,15 @@ src/
     backtesting-v2/          Event-driven NSE F&O backtesting engine
     india/                   NSE calendar, atomic trade guard, feature validators
   services/
-    brokers/                 BrokerAdapter contract + Delta/Binance adapters
+    brokers/
+      client.ts              Browser-side WebSocket factory (ticker + liquidation streams)
+                             Appends ?api_key= to WS URL for data-service2.0 auth
     india/                   Angel One, Upstox, Yahoo broker adapters
-                             nse/ — throwing stubs only (V3.0)
   store/                     Zustand stores (UIStore + market-scoped stores)
-  hooks/india/               useFetchPoll, useOptionChain, useScanner, ...
-public/
-  logo.png                   NEW — master logo asset (favicon, auth header, sidebar)
+  hooks/                     useBinanceTickers, useLiveQuotes, useOptionChain, ...
 worker/
-  src/jobs/                  14 background jobs (+ india-whatsapp-scanner)
+  src/jobs/                  14 background jobs
+  src/config.ts              Reads DATA_SERVICE_URL + DATA_SERVICE_API_KEY
   src/index.ts               Graceful shutdown + job registry
 ml-service/
   src/
@@ -540,21 +677,9 @@ ml-service/
     meta/                    Calibration, ensemble, abstention, decision policy
     monitoring/              Drift detection (PSI/KS/JS), performance tracking
     validation/              Walk-forward, embargo, Purged K-Fold, CPCV
-    greeks.py                Black-76/BS greeks + Newton-Raphson IV solver
-    gex.py                   Dealer GEX engine
-    vol_surface.py           SVI IV surface + term structure
-data-service/
-  src/
-    scrapers/                NSE NextApi quotes, Bhavcopy/charting historical,
-                             option chain, instrument master, historical_repair.py (V3.1)
-    brokers/                 upstox_client.py + router.py (V3.1 — wired Upstox fallback)
-                             + upstox_instruments.py (symbol→ISIN resolver)
-    core/                    provider_http.py (V3.1 — typed errors + backoff + pooling)
-    monitoring/              health_router.py — /health/{live,ready,data,providers}
 prisma/schema.prisma         18 models
-docker-compose.yml           Postgres 17 + Redis 7 + ML service + data-service
-tests/                       Vitest suite — 3090 tests
-  lib/market-data/nse-elimination.test.ts  NEW (V3.0) — 12 guard tests
+docker-compose.yml           Postgres 17 + Redis 7 + ML service (+ app/worker under integration profile)
+.dockerignore                Excludes node_modules, .next, coverage, .git from build context
 ```
 
 ---
@@ -567,7 +692,7 @@ ACTIVE_BROKER=binance
 NEXT_PUBLIC_ACTIVE_BROKER=binance
 ```
 
-This flips the entire stack — WS endpoint, REST adapters, pair names, and worker liquidation subscriber — without touching any call sites. The broker adapter `capabilities` flags handle feature gaps cleanly (e.g. Delta India has no liquidation feed; the signal engine drops that factor automatically).
+This flips the entire stack — WS endpoint, REST adapters, pair names, and worker liquidation subscriber — without touching any call sites.
 
 ---
 
@@ -583,10 +708,19 @@ Three-segment toggle (Light · System · Dark) in the topbar, shared across both
 Copy `.env.example` to `.env.local`. Defaults match the docker-compose services.
 
 **`REDIS_URL not set — using in-memory fallback`**
-Run `npm run docker:up` or accept the in-memory cache for dev. The fallback is process-local.
+Run `npm run docker:up` or accept the in-memory cache for dev.
+
+**`WebSocket /v1/stream/ticks` → 403**
+The API key is not being sent. Ensure both `DATA_SERVICE_API_KEY` (server-side) and `NEXT_PUBLIC_DATA_SERVICE_API_KEY` (browser-side) are set in `.env.local` and match `CONSUMER_API_KEYS` in data-service2.0. The worker sends `X-API-KEY` header; the browser appends `?api_key=` to the WS URL.
 
 **`Connection refused (5432 / 6379)`**
 Docker Desktop isn't running or `docker compose up -d` was never run. Check: `docker compose ps`.
+
+**`getaddrinfo ENOTFOUND data-service`**
+The worker or app is trying to resolve the old `data-service` hostname. Ensure `.env.docker` has `DATA_SERVICE_URL=http://host.docker.internal:8200` (not `http://data-service:8200`).
+
+**App or worker `unhealthy` after `docker compose --profile integration up`**
+The app health check hits `/api/health/ready` — give it up to 60s to start. Check logs: `docker compose logs -f app`.
 
 **Module not found / corrupted `node_modules`**
 
@@ -596,24 +730,23 @@ npm install
 npm run dev
 ```
 
+**Docker build slow (first time)**
+The `.dockerignore` file excludes `node_modules`, `.next`, and `coverage` — build context should be ~7MB. If it's uploading gigabytes, verify `.dockerignore` exists at the repo root.
+
 **Windows fork exhaustion** (`STATUS_COMMITMENT_LIMIT` / code `127`)
-Close extra Electron apps and Cursor windows. Avoid running dev server + worker + `vitest --watch` simultaneously. Use `npm run worker:dev` (no watcher) rather than `worker:watch`. Restart Docker before the dev server if the fork pool is depleted.
+Close extra Electron apps. Avoid running dev server + worker + `vitest --watch` simultaneously. Use `npm run worker:dev` (no watcher) rather than `worker:watch`.
 
 ### Upstox Analytics API Credential Configuration
 
-Users can configure their Upstox Analytics Token directly in the UI without requiring server-side environment variable access:
+Users can configure their Upstox Analytics Token directly in the UI:
 
 - Navigate to **Profile → API Keys → Upstox Analytics API**
 - Paste the Analytics Token from the Upstox Developer Console
-- Token is encrypted with AES-256-GCM at rest and used for all subsequent Upstox data requests
-- Token-only exchanges (Upstox) skip the `apiSecret` field — the form adapts automatically
+- Token is encrypted with AES-256-GCM at rest
 - Tokens can be up to 2048 characters (JWT bearer token length)
 
 ---
 
-> Full product spec and architecture deep-dive: [ALPHAFORGE.md](./ALPHAFORGE.md)  
+> Full product spec: [ALPHAFORGE.md](./ALPHAFORGE.md)  
 > Chronological changelog: [CHANGES.md](./CHANGES.md)  
-> Data service reference: [DATA_SERVICE.md](./DATA_SERVICE.md)  
-> Data service reliability & failover: [DATA_SERVICE_RELIABILITY_CERTIFICATION.md](./DATA_SERVICE_RELIABILITY_CERTIFICATION.md)  
-> Angel One / Upstox API conformance: [DATA_SERVICE_API_CONFORMANCE.md](./DATA_SERVICE_API_CONFORMANCE.md)  
-> Phase 2 expert quant design: [PHASE2.md](./PHASE2.md)
+> Architecture deep-dive: [ARCHITECTURE.md](./ARCHITECTURE.md)

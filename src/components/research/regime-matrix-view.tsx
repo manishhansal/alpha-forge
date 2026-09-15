@@ -8,7 +8,7 @@ const ALL_REGIMES = [
   "EXPIRY_DAY", "NORMAL_DAY",
 ] as const;
 
-function sharpeColor(sharpe: number | null): string {
+function _sharpeColor(sharpe: number | null): string {
   if (sharpe === null) return "var(--color-surface-subtle)";
   if (sharpe > 1.5) return "#15803d";
   if (sharpe > 0.8) return "#22c55e";

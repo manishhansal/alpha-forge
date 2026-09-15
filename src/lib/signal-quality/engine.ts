@@ -76,7 +76,6 @@ import type {
   SignalQualityScore,
   SignalQualityScoreBreakdown,
   StrategyVerdict,
-  StatisticalSignificance,
   MissedOpportunity,
 } from "./types";
 
@@ -492,7 +491,7 @@ export async function computeSignalQualityReport(
   const mfeMaeRecords: MfeMaeRecord[] = allTrades
     .filter((t) => t.pnlPct !== null && t.exitPrice !== null)
     .map((t) => {
-      const isLong = t.direction === "LONG";
+      const _isLong = t.direction === "LONG";
       const riskPct = Math.abs(t.entry - t.stopLoss) / t.entry * 100;
       const rewardPct = Math.abs(t.entry - t.target) / t.entry * 100;
       const exitPnlPct = t.pnlPct!;
@@ -673,7 +672,7 @@ export async function computeSignalQualityReport(
       const realized = safeDiv(wins, inBucket.length);
       const predicted = (b.lo + Math.min(b.hi, 1)) / 2;
       const err = Math.abs(predicted - realized);
-      let verdict: WinProbabilityBucket["verdict"] =
+      const verdict: WinProbabilityBucket["verdict"] =
         inBucket.length < 10
           ? "INSUFFICIENT_SAMPLE"
           : err < 0.05
@@ -1063,7 +1062,7 @@ export async function computeSignalQualityReport(
   const costRobustness: CostRobustness[] = allStrategyIds.map((sid) => {
     const trades = byStrategy.get(sid) ?? [];
     const pnls = trades.filter((t) => t.pnlPct !== null).map((t) => t.pnlPct!);
-    const riskPcts = trades.map((t) => Math.abs(t.entry - t.stopLoss) / t.entry * 100);
+    const _riskPcts = trades.map((t) => Math.abs(t.entry - t.stopLoss) / t.entry * 100);
 
     const scenarios: Array<{ scenario: CostScenario; multiplier: number }> = [
       { scenario: "BASE", multiplier: 1 },
@@ -1267,7 +1266,7 @@ export async function computeSignalQualityReport(
     const cc = confidenceCalibration.find((c) => c.strategyId === sid);
     const cr = costRobustness.find((c) => c.strategyId === sid);
     const rq = regimeQuality.find((r) => r.strategyId === sid);
-    const mm = mfeMaeSummaries.find((m) => m.strategyId === sid);
+    const _mm = mfeMaeSummaries.find((m) => m.strategyId === sid);
     const pf = paperSignalFunnel.find((p) => p.strategyId === sid);
     const ss = statisticalSignificance.find((s) => s.strategyId === sid);
     const trades = byStrategy.get(sid) ?? [];

@@ -11,7 +11,6 @@
  *           + execution evidence.
  */
 
-import { OFFICIAL_INDIA_STRATEGY_IDS } from "./types";
 import type { OfficialIndiaStrategyId } from "./types";
 
 // ─── Strategy Status ──────────────────────────────────────────────────────────

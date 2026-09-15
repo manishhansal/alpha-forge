@@ -308,7 +308,7 @@ function strengthToGrade(score: number): "S" | "A" | "B" | "C" | "D" | "F" {
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
-export async function GET(request: NextRequest): Promise<Response> {
+export async function GET(_request: NextRequest): Promise<Response> {
   // Optional: auth gate (can be opened to public for read-only use)
   const session = await auth();
   if (!session?.user) {

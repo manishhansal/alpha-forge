@@ -81,14 +81,14 @@ function buildEquityCurve(tradeReturns: number[]): number[] {
 function maxDrawdownFromCurve(curve: number[]): { maxDrawdown: number; duration: number } {
   let peak = curve[0];
   let maxDd = 0;
-  let ddStart = 0;
+  let _ddStart = 0;
   let maxDuration = 0;
   let currentDuration = 0;
 
   for (let i = 1; i < curve.length; i++) {
     if (curve[i] > peak) {
       peak = curve[i];
-      ddStart = i;
+      _ddStart = i;
       currentDuration = 0;
     } else {
       currentDuration++;

@@ -82,6 +82,18 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "no-restricted-imports": dataServiceBoundaryRule,
+      // Ignore intentionally-unused parameters/variables prefixed with _
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          vars: "all",
+          varsIgnorePattern: "^_",
+          args: "after-used",
+          argsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
     },
   },
   // Override default ignores of eslint-config-next.

@@ -495,7 +495,6 @@ function ScalperSection({ daysFilter, dirFilter }: { daysFilter: DaysFilter; dir
   const PAGE_SIZE = 20;
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
     try {
       const cutoff = new Date(Date.now() - daysFilter * 86_400_000).toISOString();
       const dirParam = dirFilter === "long" ? "&status=WIN,LOSS,EXPIRED,OPEN" : "";
@@ -523,7 +522,7 @@ function ScalperSection({ daysFilter, dirFilter }: { daysFilter: DaysFilter; dir
 
   React.useEffect(() => {
     const ac = new AbortController();
-    void load(ac.signal);
+    React.startTransition(() => { void load(ac.signal); });
     return () => ac.abort();
   }, [load]);
 
@@ -819,7 +818,6 @@ function FnoTrendSection({ daysFilter, dirFilter }: { daysFilter: DaysFilter; di
   const [scanFilter, setScanFilter] = React.useState<"ALL" | "BULLISH" | "BEARISH">("ALL");
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
     try {
       const res = await fetch(`/api/in/fno-trend-history?days=${daysFilter}`, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -833,7 +831,7 @@ function FnoTrendSection({ daysFilter, dirFilter }: { daysFilter: DaysFilter; di
 
   React.useEffect(() => {
     const ac = new AbortController();
-    void load(ac.signal);
+    React.startTransition(() => { void load(ac.signal); });
     return () => ac.abort();
   }, [load]);
 
@@ -912,7 +910,6 @@ export default function TradeHistoryPage() {
   const [dirFilter,     setDirFilter]     = React.useState<DirFilter>("all");
 
   const loadPicks = React.useCallback(async (signal?: AbortSignal) => {
-    setRefreshing(true);
     try {
       const res = await fetch(`/api/in/daily-picks/history?days=${daysFilter}`, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -927,7 +924,7 @@ export default function TradeHistoryPage() {
 
   React.useEffect(() => {
     const ac = new AbortController();
-    void loadPicks(ac.signal);
+    React.startTransition(() => { void loadPicks(ac.signal); });
     return () => ac.abort();
   }, [loadPicks]);
 

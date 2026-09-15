@@ -9,7 +9,7 @@
  * A hypothesis version change resets the validation clock.
  */
 
-import type { StrategyHypothesis, MarketRegime } from "../types";
+import type { StrategyHypothesis } from "../types";
 
 // ─── Hypothesis Catalog ───────────────────────────────────────────────────────
 

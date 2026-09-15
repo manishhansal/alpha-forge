@@ -28,7 +28,6 @@
 import type { OHLCVBar, InstrumentId, MarketEvent } from "../events/market-event";
 import {
   buildMarketEvent,
-  makeEventId,
   resetEventIdCounter,
 } from "../events/market-event";
 
@@ -162,7 +161,7 @@ export function isMonthlyExpiryDay(
   utcMs: number,
   holidays: ReadonlySet<string> = NSE_HOLIDAYS_2020_2027,
 ): boolean {
-  const { weekday, year, month } = toIst(utcMs);
+  const { year, month } = toIst(utcMs);
 
   // Find all Thursdays in this IST month
   const thursdays: number[] = [];
@@ -195,11 +194,11 @@ export function isMonthlyExpiryDay(
 export function isExpiryDay(
   utcMs: number,
   instrument: InstrumentId,
-  holidays: ReadonlySet<string> = NSE_HOLIDAYS_2020_2027,
+  _holidays: ReadonlySet<string> = NSE_HOLIDAYS_2020_2027,
 ): boolean {
   if (instrument.expiry === null) return false;
 
-  const underlying = instrument.symbol.replace(/\d.*$/, ""); // strip strike/date suffix
+  const _underlying = instrument.symbol.replace(/\d.*$/, ""); // strip strike/date suffix
 
   if (
     instrument.instrumentType === "OPTIDX" ||

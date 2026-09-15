@@ -1,4 +1,4 @@
-import { getQuote, getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getQuotes } from "@/lib/data-service/client";
 /**
  * FnO Trend Scanner history — persistence + live-tracking.
  *
@@ -160,10 +160,10 @@ export async function snapshotFnoTrendScan(
  * those whose symbol has sufficient persisted daily history (the scan's warm-up
  * window). Fails CLOSED: a gate-read error drops the hit. Never throws.
  */
-const FNO_SCAN_WARMUP_BARS = 30; // MA/ADX/MACD/ATR/RSI(14) daily warm-up floor.
+const _FNO_SCAN_WARMUP_BARS = 30; // MA/ADX/MACD/ATR/RSI(14) daily warm-up floor.
 async function gateHitsByData(
   hits: ScannerHit[],
-  db: PrismaClient,
+  _db: PrismaClient,
 ): Promise<ScannerHit[]> {
   try {
     // producer-data-gate.service removed — stub with allowed: true

@@ -82,7 +82,7 @@ export class DefaultRiskManager implements RiskManager {
   check(
     signal: SignalEvent,
     portfolio: Portfolio,
-    orderBook: OrderBook,
+    _orderBook: OrderBook,
   ): RiskCheckEvent {
     const snapshot = portfolio.riskSnapshot();
 

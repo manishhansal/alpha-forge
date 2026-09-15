@@ -182,7 +182,7 @@ function calibrateProbability(
   return Math.max(0.30, Math.min(0.82, calibrated));
 }
 
-function computeTotalCostPct(
+function _computeTotalCostPct(
   model: IndiaFnOCostModel,
   notionalINR: number,
 ): number {

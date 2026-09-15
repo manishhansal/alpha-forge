@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type {
   AiConfluenceFactor,
   AiDirection,
-  AiHorizon,
   AiSignal,
 } from "@/types/ai-signals";
 import {

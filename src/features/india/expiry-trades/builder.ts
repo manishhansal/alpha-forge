@@ -21,7 +21,7 @@
  * read (or drops it) rather than failing the whole response.
  */
 
-import { getQuotes, getHistorical, getOptionChain, getQuote } from "@/lib/data-service/client";
+import { getOptionChain, getQuote } from "@/lib/data-service/client";
 import "server-only";
 
 import { getBestTimeStatus } from "@/features/india/best-time/engine";

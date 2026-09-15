@@ -7,11 +7,11 @@ import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { useMarketStore } from "@/store/marketStore";
 
 const COPY: Record<string, { label: string; tone: "bull" | "bear" | "warning" | "muted" }> = {
-  open: { label: "Live", tone: "bull" },
-  connecting: { label: "Connecting", tone: "warning" },
-  closed: { label: "Reconnecting", tone: "warning" },
-  error: { label: "Error", tone: "bear" },
-  idle: { label: "Idle", tone: "muted" },
+  open:       { label: "Live",         tone: "bull"    },
+  connecting: { label: "Reconnecting", tone: "warning" }, // initial connect + every retry attempt
+  closed:     { label: "Disconnected", tone: "muted"   }, // only after explicit disconnect()
+  error:      { label: "Error",        tone: "bear"    },
+  idle:       { label: "Idle",         tone: "muted"   },
 };
 
 const TONE_CLASSES: Record<string, string> = {

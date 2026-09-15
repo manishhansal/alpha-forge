@@ -172,7 +172,7 @@ export function computeCalibrationReport(
   const scoreBucketDefs = [
     [0, 20], [20, 40], [40, 60], [60, 70], [70, 80], [80, 90], [90, 100],
   ];
-  const scoreBuckets: ScoreBucketStats[] = scoreBucketDefs.map(([min, max], idx) => {
+  const scoreBuckets: ScoreBucketStats[] = scoreBucketDefs.map(([min, max], _idx) => {
     const inBucket = outcomes.filter(o => o.score >= min && o.score < max);
     const wins = inBucket.filter(o => o.won).length;
     const losses = inBucket.length - wins;

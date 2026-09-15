@@ -20,7 +20,7 @@
  *   - ML mode handling
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   isNseMarketOpenIST,
   nseOpenMsForDateIST,

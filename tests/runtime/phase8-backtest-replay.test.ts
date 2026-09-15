@@ -19,6 +19,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import crypto from "node:crypto";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
+import type { StrategyContext } from "@/lib/backtesting-v2/engine/event-engine";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic fixture
@@ -48,7 +49,7 @@ const INSTRUMENT = {
   tickSize: 0.05,
   expiry: null,
   strike: null,
-  optionType: null as any,
+  optionType: null,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,8 +81,8 @@ function serializeResult(r: RunResult): string {
     trades: r.trades.map((t) => ({
       symbol: t.symbol,
       direction: t.direction,
-      openPrice: (t as any).entryPrice ?? (t as any).openPrice,
-      closePrice: (t as any).exitPrice ?? (t as any).closePrice,
+      openPrice: t.openPrice,
+      closePrice: t.closePrice,
       closeReason: t.closeReason,
     })),
   });
@@ -94,8 +95,8 @@ function hashResult(r: RunResult): string {
 // In run helper, use .cash property
 async function runBacktest(
   slippage: "ideal" | "nse_realistic" | "custom",
-  slippageBps = 0,
-  commissionPct = 0,
+  _slippageBps = 0,
+  _commissionPct = 0,
 ): Promise<RunResult> {
   const { EventEngine } = await import("@/lib/backtesting-v2/engine/event-engine");
   const { DefaultRiskManager } = await import("@/lib/backtesting-v2/engine/risk-manager");
@@ -106,7 +107,7 @@ async function runBacktest(
   const strategy = {
     id: "replay-cert",
     name: "replay-cert",
-    onBar(ctx: any) {
+    onBar(ctx: StrategyContext) {
       if (ctx.barIndex === 0 && !emitted) {
         emitted = true;
         ctx.emit(buildSignalEvent({
@@ -146,7 +147,7 @@ async function runBacktest(
   const result = engine.run(FIXTURE_BARS, INSTRUMENT);
   const trades = result.portfolio.closedTrades();
   // Use cash (portfolio.cash) as the capital proxy
-  const portfolioCapital = (result.portfolio as any).cash ?? (result.portfolio as any).capital ?? 1_000_000;
+  const portfolioCapital = result.portfolio.cash;
 
   return {
     haltReason: result.haltReason,
@@ -157,8 +158,8 @@ async function runBacktest(
     trades: trades.map((t) => ({
       symbol: t.instrument?.symbol ?? "NIFTY",
       direction: t.direction,
-      openPrice: (t as any).entryPrice ?? (t as any).openPrice,
-      closePrice: (t as any).exitPrice ?? (t as any).closePrice,
+      openPrice: t.entryPrice,
+      closePrice: t.exitPrice,
       closeReason: t.closeReason ?? "UNKNOWN",
     })),
   };

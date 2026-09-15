@@ -163,7 +163,7 @@ async function checkMarketData(): Promise<DepResult> {
     // After data-service2.0 centralization, the old registry is gone.
     // Use an empty list — all health is via data-service2.0's /health endpoint.
     const providers: Array<{ provider: { id: string; getProviderHealth?: () => { circuitOpen: boolean } | null }; priority: number; enabled: boolean }> = [];
-    const healthyCount = providers.length;
+    const _healthyCount = providers.length;
     const latencyMs = Date.now() - t0;
     return {
       status: "healthy",

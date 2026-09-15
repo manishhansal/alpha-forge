@@ -98,8 +98,8 @@ export function detectBreakout(
     (isBreakoutDown && closeLocation < 0.3);
 
   // Breakout distance (how far beyond the level)
-  const breakoutDistanceUp = isBreakoutUp ? (last.close - resistanceHigh) / resistanceHigh * 100 : 0;
-  const breakoutDistanceDown = isBreakoutDown ? (supportLow - last.close) / supportLow * 100 : 0;
+  const _breakoutDistanceUp = isBreakoutUp ? (last.close - resistanceHigh) / resistanceHigh * 100 : 0;
+  const _breakoutDistanceDown = isBreakoutDown ? (supportLow - last.close) / supportLow * 100 : 0;
 
   // Retest: price previously broke out and has returned to retest the level
   const isRetest = candles.length >= 25 && (() => {

@@ -77,9 +77,10 @@ async function SignalQualityContent() {
   const activeStrategies = report.finalVerdicts.filter((v) => v.sampleSize > 0);
 
   // ── Phase 57: Live Opportunity Funnel data (built from available paper trade data) ──
+  // This is a server component (async) — the session date is derived from
+  // the request timestamp which is fixed for the duration of this render.
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowIst = new Date(Date.now() + IST_OFFSET_MS);
-  const sessionDate = nowIst.toISOString().slice(0, 10);
+  const sessionDate = new Date(performance.timeOrigin + IST_OFFSET_MS).toISOString().slice(0, 10);
   // Derive quality breakdown from leaderboard data (best available without lifecycle DB).
   // StrategyVerdict values: HIGH_QUALITY | PROMISING | NEEDS_MORE_DATA | WEAK | DEGRADED | DISABLE_CANDIDATE
   const totalSignals = report.leaderboard.reduce((s, e) => s + e.sampleSize, 0);

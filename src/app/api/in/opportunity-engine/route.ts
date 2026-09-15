@@ -39,7 +39,7 @@ import {
   type OpportunityPipelineInput,
   type ReturnSeries,
 } from "@/lib/opportunity-engine";
-import type { OpportunityV1, OpportunityFunnel, QualityTier } from "@/lib/opportunity-engine";
+import type { OpportunityV1, OpportunityFunnel } from "@/lib/opportunity-engine";
 import { getHistorical } from "@/lib/data-service/client";
 
 import type { OHLCVCandle } from "@/lib/data-service/types";

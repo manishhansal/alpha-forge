@@ -134,7 +134,7 @@ describe("evaluateVolatilityRegime", () => {
 
   it("regimeSupportedByStrategy is false when regime not in declared list", () => {
     // With null currentAtr and VIX 28 → extreme regime; declared supports only NORMAL/LOW
-    const result = evaluateVolatilityRegime(makeCandles(30), null, 28, ["NORMAL", "LOW"]);
+    const _result = evaluateVolatilityRegime(makeCandles(30), null, 28, ["NORMAL", "LOW"]);
     // VIX 28 → vixRegime=EXTREME; the overall regime is computed from atrPercentile
     // With null ATR, regime defaults to NORMAL — which IS in the supported list
     // So use a list that doesn't include NORMAL

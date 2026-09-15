@@ -58,7 +58,7 @@ interface Props {
   data: LiveOpportunityFunnelData;
 }
 
-const STAGE_ORDER: OpportunityFunnelStage["stage"][] = [
+const _STAGE_ORDER: OpportunityFunnelStage["stage"][] = [
   "DETECTED", "QUALIFIED", "RISK_APPROVED", "PAPER_CAPTURED", "FILLED", "CLOSED_WIN",
 ];
 
@@ -78,7 +78,7 @@ function passRateColor(rate: number | null) {
 
 export function LiveOpportunityFunnel({ data }: Props) {
   const { stages, qualityBreakdown, highValueCaptureRate, highValueTotal, highValueCaptured, sessionDate, dataSource } = data;
-  const maxCount = Math.max(...stages.map(s => s.count), 1);
+  const _maxCount = Math.max(...stages.map(s => s.count), 1);
   const total = stages.find(s => s.stage === "DETECTED")?.count ?? 0;
 
   return (
@@ -133,7 +133,7 @@ export function LiveOpportunityFunnel({ data }: Props) {
       <CardContent className="space-y-4">
         {/* Funnel bars */}
         <div className="space-y-2">
-          {stages.filter(s => s.count > 0 || s.stage === "DETECTED").map((stage, i) => {
+          {stages.filter(s => s.count > 0 || s.stage === "DETECTED").map((stage, _i) => {
             const widthPct = total > 0 ? Math.round((stage.count / total) * 100) : 0;
             const color = stageColor(stage.stage);
             return (

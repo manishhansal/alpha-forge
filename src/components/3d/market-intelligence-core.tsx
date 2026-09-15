@@ -135,8 +135,8 @@ function CoreSphere({
           color={coreCol}
           emissive={emitCol}
           emissiveIntensity={0.45}
-          distort={targetDistort.current}
-          speed={targetSpeed.current}
+          distort={volatility * 0.55 + 0.05}
+          speed={volatility * 0.6 + 0.2}
           roughness={0.15}
           metalness={0.6}
           transparent

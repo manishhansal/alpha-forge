@@ -8,9 +8,8 @@ import {
   act,
   render,
   screen,
-  waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DataSourceBadge } from "@/components/india/DataSourceBadge";
 
@@ -34,15 +33,13 @@ function mockFetchResolves(body: unknown): typeof fetch {
   return vi.fn().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve(body),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  }) as any;
+  }) as unknown as typeof fetch;
 }
 
 /** Create a mock fetch that never resolves (simulates in-flight request). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mockFetchPending(): typeof fetch {
-  return vi.fn().mockReturnValue(new Promise(() => { /* intentionally never resolves */ // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  })) as any;
+  return vi.fn().mockReturnValue(new Promise(() => { /* intentionally never resolves */
+  })) as unknown as typeof fetch;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

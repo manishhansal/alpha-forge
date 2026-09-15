@@ -21,11 +21,17 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import type { RedisLike } from "@/lib/redis";
+import type { Logger } from "@worker/log";
 
 afterEach(() => vi.restoreAllMocks());
 
 // In-memory Redis with NX tracking for concurrency testing
-function makeAtomicRedis() {
+function makeAtomicRedis(): RedisLike & {
+  store: Map<string, { value: string; expiresAt: number | null }>;
+  readonly setNxCallCount: number;
+  readonly setNxSuccessCount: number;
+} {
   const store = new Map<string, { value: string; expiresAt: number | null }>();
   let setNxCallCount = 0;
   let setNxSuccessCount = 0;
@@ -54,13 +60,13 @@ function makeAtomicRedis() {
       return "OK";
     },
     async del(key: string) { return store.delete(key) ? 1 : 0; },
-    async expire(key: string, seconds: number) { return 1; },
+    async expire(_key: string, _seconds: number) { return 1; },
     async ping() { return "PONG"; },
-    async quit() {},
-    async zadd() { return 0; },
-    async zrangeByScore() { return []; },
-    async zremRangeByScore() { return 0; },
-    async zcard() { return 0; },
+    async quit() { return "OK" as unknown; },
+    async zadd(_k: string, _s: number, _m: string) { return 0; },
+    async zrangeByScore(_k: string, _min: number | "-inf", _max: number | "+inf") { return [] as string[]; },
+    async zremRangeByScore(_k: string, _min: number | "-inf", _max: number | "+inf") { return 0; },
+    async zcard(_k: string) { return 0; },
   };
 }
 
@@ -73,7 +79,7 @@ describe("Exactly-Once EO-1: 1 signal → exactly 1 trade", () => {
     const redis = makeAtomicRedis();
     const { checkAndSetTradeGuard } = await import("@/lib/chaos/worker-resilience");
 
-    const result = await checkAndSetTradeGuard(redis as any, "auto-trader", "NIFTY", Date.now(), "trade-1");
+    const result = await checkAndSetTradeGuard(redis, "auto-trader", "NIFTY", Date.now(), "trade-1");
     expect(result.isDuplicate).toBe(false);
   });
 });
@@ -88,8 +94,8 @@ describe("Exactly-Once EO-2: 2 identical signals → exactly 1 trade", () => {
     const { checkAndSetTradeGuard } = await import("@/lib/chaos/worker-resilience");
     const ts = Date.now();
 
-    const r1 = await checkAndSetTradeGuard(redis as any, "auto-trader", "NIFTY", ts, "trade-1");
-    const r2 = await checkAndSetTradeGuard(redis as any, "auto-trader", "NIFTY", ts, "trade-2");
+    const r1 = await checkAndSetTradeGuard(redis, "auto-trader", "NIFTY", ts, "trade-1");
+    const r2 = await checkAndSetTradeGuard(redis, "auto-trader", "NIFTY", ts, "trade-2");
 
     expect(r1.isDuplicate).toBe(false);
     expect(r2.isDuplicate).toBe(true);
@@ -112,7 +118,7 @@ describe("Exactly-Once EO-3: 10 identical signals → exactly 1 trade", () => {
     let passed = 0;
 
     for (let i = 0; i < 10; i++) {
-      const r = await checkAndSetTradeGuard(redis as any, "auto-trader", "NIFTY", ts, `trade-${i}`);
+      const r = await checkAndSetTradeGuard(redis, "auto-trader", "NIFTY", ts, `trade-${i}`);
       if (!r.isDuplicate) passed++;
     }
 
@@ -126,7 +132,7 @@ describe("Exactly-Once EO-3: 10 identical signals → exactly 1 trade", () => {
     let passed = 0;
 
     for (let i = 0; i < 10; i++) {
-      const isDup = await checkAndSetSignalGuard(redis as any, "NIFTY", "LONG", ts);
+      const isDup = await checkAndSetSignalGuard(redis, "NIFTY", "LONG", ts);
       if (!isDup) passed++;
     }
 
@@ -151,7 +157,7 @@ describe("Exactly-Once EO-4: 100 concurrent identical signals → exactly 1 trad
     let passed = 0;
     let blocked = 0;
     for (let i = 0; i < 100; i++) {
-      const r = await checkAndSetTradeGuard(redis as any, "auto-trader", "NIFTY", ts, `trade-${i}`);
+      const r = await checkAndSetTradeGuard(redis, "auto-trader", "NIFTY", ts, `trade-${i}`);
       if (!r.isDuplicate) passed++; else blocked++;
     }
 
@@ -166,7 +172,7 @@ describe("Exactly-Once EO-4: 100 concurrent identical signals → exactly 1 trad
 
     const results = await Promise.all(
       Array.from({ length: 100 }, () =>
-        checkAndSetSignalGuard(redis as any, "BANKNIFTY", "SHORT", ts),
+        checkAndSetSignalGuard(redis, "BANKNIFTY", "SHORT", ts),
       ),
     );
 
@@ -186,7 +192,7 @@ describe("Exactly-Once EO-5: EOD square-off exactly-once lock", () => {
     const tradeDate = "2026-09-01";
 
     const results = await Promise.all(
-      Array.from({ length: 100 }, () => acquireEodLock(redis as any, tradeDate)),
+      Array.from({ length: 100 }, () => acquireEodLock(redis, tradeDate)),
     );
 
     const acquired = results.filter((r) => r.acquired).length;
@@ -202,14 +208,14 @@ describe("Exactly-Once EO-5: EOD square-off exactly-once lock", () => {
     const { acquireEodLock } = await import("@/lib/chaos/worker-resilience");
     const tradeDate = "2026-09-01";
 
-    const r1 = await acquireEodLock(redis as any, tradeDate);
+    const r1 = await acquireEodLock(redis, tradeDate);
     expect(r1.acquired).toBe(true);
 
     // Release
     await r1.release?.();
 
     // Clear the key manually (simulate next day by using different tradeDate)
-    const r2 = await acquireEodLock(redis as any, "2026-09-02");
+    const r2 = await acquireEodLock(redis, "2026-09-02");
     expect(r2.acquired).toBe(true);
     await r2.release?.();
   });
@@ -222,15 +228,15 @@ describe("Exactly-Once EO-5: EOD square-off exactly-once lock", () => {
 describe("Exactly-Once EO-6: Worker scheduler non-overlap", () => {
   it("scheduler never runs two ticks concurrently for same job", async () => {
     const { scheduleJob } = await import("@worker/scheduler");
-    const log = {
+    const log: Logger = {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
       child: () => log,
-    } as any;
+    };
 
     let concurrentExecutions = 0;
     let maxConcurrent = 0;
 
-    let inflightResolver: (() => void) | null = null;
+    let _inflightResolver: (() => void) | null = null;
 
     const job = scheduleJob(
       {
@@ -241,7 +247,7 @@ describe("Exactly-Once EO-6: Worker scheduler non-overlap", () => {
           concurrentExecutions++;
           maxConcurrent = Math.max(maxConcurrent, concurrentExecutions);
           // Hold the tick for 20ms to ensure overlap would occur if not prevented
-          await new Promise<void>((r) => { inflightResolver = r; setTimeout(r, 20); });
+          await new Promise<void>((r) => { _inflightResolver = r; setTimeout(r, 20); });
           concurrentExecutions--;
         },
       },
@@ -268,8 +274,8 @@ describe("Exactly-Once EO-7: Signal ingest deduplication", () => {
     const hour9 = new Date("2026-09-01T09:00:00Z").getTime();
     const hour10 = new Date("2026-09-01T10:00:00Z").getTime();
 
-    const r1 = await checkAndSetSignalGuard(redis as any, "NIFTY", "LONG", hour9);
-    const r2 = await checkAndSetSignalGuard(redis as any, "NIFTY", "LONG", hour10);
+    const r1 = await checkAndSetSignalGuard(redis, "NIFTY", "LONG", hour9);
+    const r2 = await checkAndSetSignalGuard(redis, "NIFTY", "LONG", hour10);
 
     expect(r1).toBe(false); // new signal for hour 9
     expect(r2).toBe(false); // new signal for hour 10 (different hour — not dup)
@@ -280,9 +286,9 @@ describe("Exactly-Once EO-7: Signal ingest deduplication", () => {
     const { checkAndSetSignalGuard } = await import("@/lib/chaos/worker-resilience");
     const ts = Date.now();
 
-    const long  = await checkAndSetSignalGuard(redis as any, "NIFTY", "LONG",  ts);
-    const short = await checkAndSetSignalGuard(redis as any, "NIFTY", "SHORT", ts);
-    const buy   = await checkAndSetSignalGuard(redis as any, "NIFTY", "BUY",   ts);
+    const long  = await checkAndSetSignalGuard(redis, "NIFTY", "LONG",  ts);
+    const short = await checkAndSetSignalGuard(redis, "NIFTY", "SHORT", ts);
+    const buy   = await checkAndSetSignalGuard(redis, "NIFTY", "BUY",   ts);
 
     expect(long).toBe(false);
     expect(short).toBe(false); // different type
@@ -315,7 +321,7 @@ describe("Exactly-Once EO-8: Backtest deterministic replay", () => {
 
     const instrument = {
       symbol: "NIFTY", exchange: "NSE" as const, instrumentType: "FUTIDX" as const,
-      lotSize: 25, tickSize: 0.05, expiry: null, strike: null, optionType: null as any,
+      lotSize: 25, tickSize: 0.05, expiry: null, strike: null, optionType: null,
     };
 
     const runEngine = () => {

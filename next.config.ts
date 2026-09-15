@@ -38,6 +38,8 @@ if (leakedVars.length > 0) {
 }
 
 const nextConfig: NextConfig = {
+  // Produce a self-contained bundle for Docker/production deployments.
+  output: "standalone",
   experimental: {
     // Don't eagerly load every route's module graph at dev-server startup.
     preloadEntriesOnStart: false,

@@ -111,12 +111,13 @@ async function runSoak(durationMs: number): Promise<SoakMetrics> {
     },
     async del(key: string) { return store.delete(key) ? 1 : 0; },
     async ping() { return "PONG"; },
+    async quit() { return "OK"; },
     async expire() { return 1; },
     async zadd() { return 0; },
-    async zrangeByScore() { return []; },
+    async zrangeByScore() { return [] as string[]; },
     async zremRangeByScore() { return 0; },
     async zcard() { return 0; },
-  } as any;
+  };
 
   const { createRiskEngine } = await import("@/lib/risk/portfolio-risk");
   const riskEngine = createRiskEngine(1_000_000);

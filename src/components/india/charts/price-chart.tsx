@@ -321,7 +321,7 @@ export function PriceChart({
     if (scActive && scPluginRef.current) {
       scPluginRef.current.updateData(candles);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [candles, vwapActive, profileActive, scActive, symbol, resolvedTheme]);
 
   // ── VWAP toggle handler ──────────────────────────────────────────────────

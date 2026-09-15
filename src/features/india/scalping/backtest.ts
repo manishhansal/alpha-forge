@@ -1,4 +1,4 @@
-import { getQuote, getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getHistorical } from "@/lib/data-service/client";
 import "server-only";
 
 import {

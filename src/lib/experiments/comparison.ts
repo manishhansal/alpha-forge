@@ -668,7 +668,7 @@ function incompleteBeta(a: number, b: number, x: number): number {
 function lgamma(a: number): number {
   if (a < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * a)) - lgamma(1 - a);
   a -= 1;
-  let x =
+  const x =
     0.99999999999980993 +
     676.5203681218851 / (a + 1) -
     1259.1392167224028 / (a + 2) +

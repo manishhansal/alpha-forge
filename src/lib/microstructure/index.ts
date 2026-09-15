@@ -66,7 +66,6 @@ import {
 import {
   computeVpin,
   computeToxicityScore,
-  adjustConfidenceForToxicity,
   toxicitySizingMultiplier,
   type VpinConfig,
   type ToxicityScore,

@@ -15,7 +15,7 @@
  *   4. Instruments must be trackable across their lifecycle.
  */
 
-import { FNO_INDICES, FNO_STOCKS, FNO_INDEX_UNDERLYINGS } from "@/lib/india/fno-symbols";
+import { FNO_INDICES, FNO_STOCKS } from "@/lib/india/fno-symbols";
 import { SECTOR_STOCKS } from "@/lib/india/sectors";
 import type { UniverseCoverageSnapshot } from "./types";
 
@@ -72,7 +72,7 @@ export interface FNOUniverseInstrument {
  * Minimum requirements for a stock to be included in the active F&O universe.
  * These are conservative defaults; actual NSE eligibility criteria apply.
  */
-const MIN_LIQUID_STOCK_REQUIREMENTS = {
+const _MIN_LIQUID_STOCK_REQUIREMENTS = {
   /** Minimum average daily traded value in INR crores */
   minAdtvCr: 100,
 } as const;

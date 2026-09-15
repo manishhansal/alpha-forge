@@ -94,7 +94,7 @@ const DEFAULT_PALETTE: ChartPalette = {
 };
 
 // IST offset from UTC: +5:30
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const _IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // Session start: 09:15 IST → 03:45 UTC
 const SESSION_OPEN_MINUTES_UTC = 3 * 60 + 45;
@@ -105,7 +105,7 @@ function minutesSinceUtcMidnight(unixSec: number): number {
 }
 
 /** Returns the ISO day-of-week (0=Sun…6=Sat) for a Unix timestamp (seconds). */
-function dayOfWeek(unixSec: number): number {
+function _dayOfWeek(unixSec: number): number {
   return new Date(unixSec * 1000).getUTCDay();
 }
 

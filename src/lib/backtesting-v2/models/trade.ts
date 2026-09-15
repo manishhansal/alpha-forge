@@ -94,7 +94,7 @@ export function buildTrade(
   const riskDist = Math.abs(pos.stopLoss - pos.avgEntryPrice);
   const rewardDist = Math.abs(pos.target - pos.avgEntryPrice);
   const plannedRR = riskDist > 0 ? rewardDist / riskDist : 0;
-  const exitDist = Math.abs(exitPrice - pos.avgEntryPrice);
+  const _exitDist = Math.abs(exitPrice - pos.avgEntryPrice);
   const actualRR = riskDist > 0 ? (dir * (exitPrice - pos.avgEntryPrice)) / riskDist : 0;
 
   return {

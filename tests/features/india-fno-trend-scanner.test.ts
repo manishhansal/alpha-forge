@@ -167,12 +167,6 @@ describe("FnO Trend Scanner — EMA seeding convention (TradingView/Chartink mat
 // ─── MACD seeding convention ──────────────────────────────────────────────────
 
 describe("FnO Trend Scanner — MACD seeding (single-pass streaming)", () => {
-  function ema(vals: number[], period: number): number {
-    const alpha = 2 / (period + 1);
-    let v = vals.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    for (let i = period; i < vals.length; i++) v = vals[i] * alpha + v * (1 - alpha);
-    return v;
-  }
 
   function macd(closes: number[], fast = 12, slow = 26, signal = 9) {
     if (closes.length < slow + signal) return null;

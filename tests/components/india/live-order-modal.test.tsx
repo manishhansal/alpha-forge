@@ -186,7 +186,7 @@ describe("LiveOrderModal", () => {
   it("does NOT show a warning badge when win rate is >= 50%", () => {
     render(<LiveOrderModal {...HIGH_WIN_RATE_PROPS} />);
 
-    const warning =
+    const _warning =
       screen.queryByText(/warning/i) ??
       screen.queryByTestId("win-rate-warning") ??
       screen.queryByRole("alert");

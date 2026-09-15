@@ -24,6 +24,7 @@
 import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
+import type { StrategyContext } from "@/lib/backtesting-v2/engine/event-engine";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -60,14 +61,14 @@ describe("Execution Safety ES-1: BACKTEST mode blocks broker", () => {
       { openMs: IST_OPEN, closeMs: IST_OPEN + 59999, open: 24550, high: 24580, low: 24540, close: 24565, volume: 10000 },
       { openMs: IST_OPEN + 60000, closeMs: IST_OPEN + 119999, open: 24565, high: 24600, low: 24560, close: 24595, volume: 12000 },
     ];
-    const instrument = { symbol: "NIFTY", exchange: "NSE" as const, instrumentType: "FUTIDX" as const, lotSize: 25, tickSize: 0.05, expiry: null, strike: null, optionType: null as any };
+    const instrument = { symbol: "NIFTY", exchange: "NSE" as const, instrumentType: "FUTIDX" as const, lotSize: 25, tickSize: 0.05, expiry: null, strike: null, optionType: null };
 
     // Spy on fetch to detect any live broker calls
     const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({}) } as Response);
 
     const strategy = {
       id: "backtest-safety", name: "backtest-safety",
-      onBar(ctx: any) {
+      onBar(ctx: StrategyContext) {
         if (ctx.barIndex === 0) {
           ctx.emit(buildSignalEvent({
             sourceEventId: "bs-0", timestampMs: ctx.currentBar.closeMs,
@@ -200,7 +201,7 @@ describe("Execution Safety ES-6: Stale market data blocks order", () => {
   it("isTickStale correctly identifies stale data", async () => {
     const { isTickStale } = await import("@/lib/chaos/market-data-resilience");
     const now = Date.now();
-    const staleTick = { ts: now - 30_000, symbol: "NIFTY" } as any; // 30s old — stale for 5s threshold
+    const staleTick = { ts: now - 30_000, symbol: "NIFTY" }; // 30s old — stale for 5s threshold
     expect(isTickStale(staleTick, { maxAgeMs: 5_000 })).toBe(true);
     record("ES-6", "Stale market data blocks order", "PASS", "isTickStale() correctly flags 30s-old data as stale");
   });
@@ -296,13 +297,20 @@ describe("Execution Safety ES-9: Duplicate order blocked safely", () => {
       async get(key: string) { const e = store.get(key); return e ? e.value : null; },
       async setNX(key: string, value: string, ttlSeconds: number) {
         if (store.has(key)) return null;
-        store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 }); return "OK";
+        store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 }); return "OK" as const;
       },
       async set(key: string, value: string, _m?: string, ttl?: number) {
-        store.set(key, { value, expiresAt: Date.now() + (ttl ?? 60) * 1000 }); return "OK";
+        store.set(key, { value, expiresAt: Date.now() + (ttl ?? 60) * 1000 }); return "OK" as const;
       },
       async del(key: string) { return store.delete(key) ? 1 : 0; },
-    } as any;
+      async expire(_key: string, _s: number) { return 1; },
+      async ping() { return "PONG"; },
+      async quit() { return "OK"; },
+      async zadd(_k: string, _s: number, _m: string) { return 0; },
+      async zrangeByScore(_k: string, _min: number | "-inf", _max: number | "+inf") { return [] as string[]; },
+      async zremRangeByScore(_k: string, _min: number | "-inf", _max: number | "+inf") { return 0; },
+      async zcard(_k: string) { return 0; },
+    };
 
     const { checkAndSetTradeGuard } = await import("@/lib/chaos/worker-resilience");
     const ts = Date.now();

@@ -48,11 +48,15 @@ export function DataSourcesForm() {
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const dataServiceUrl =
-    typeof window !== "undefined"
-      ? // The URL is server-only; show a placeholder in the browser.
-        "(configured via DATA_SERVICE_2_URL env var)"
-      : "";
+  // Start with the same value on both server and client to avoid hydration
+  // mismatch. The env-var placeholder is only meaningful in the browser
+  // context anyway, so we reveal it after the first paint via useEffect.
+  const [dataServiceUrl, setDataServiceUrl] = useState("");
+  useEffect(() => {
+    React.startTransition(() => {
+      setDataServiceUrl("(configured via DATA_SERVICE_2_URL env var)");
+    });
+  }, []);
 
   const checkConnection = useCallback(async function checkConnectionFn() {
     setConnectionState("loading");

@@ -12,7 +12,7 @@
  *   • Audit log captures all events
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { ShadowTrader } from "@/lib/experiments/shadow-trader";
 import type { ExperimentSignal } from "@/lib/experiments/experiment-manager";
 

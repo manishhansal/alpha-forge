@@ -11,7 +11,7 @@
  *
  * Requirements covered: 10.7, 13.1, 13.4
  */
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------

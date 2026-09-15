@@ -117,17 +117,10 @@ const serverSchema = z.object({
 
 const clientSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
-  NEXT_PUBLIC_BINANCE_WS: z.string().default("wss://stream.binance.com:9443/stream"),
-  NEXT_PUBLIC_BINANCE_FUTURES_WS: z.string().default("wss://fstream.binance.com/stream"),
-  NEXT_PUBLIC_BYBIT_WS: z.string().default("wss://stream.bybit.com/v5/public/linear"),
-  // Delta Exchange India public WS endpoint. The new public endpoint hosts
-  // `ticker`, `funding_rate`, `mark_price`, `candlesticks`, etc.
-  NEXT_PUBLIC_DELTA_WS: z
-    .string()
-    .default("wss://public-socket.india.delta.exchange"),
   /**
    * Active broker visible to the client (browser hooks read this to decide
    * which WS endpoint to open). Default: delta.
+   * Note: All market data WebSocket connections go through data-service2.0.
    */
   NEXT_PUBLIC_ACTIVE_BROKER: z.enum(["binance", "delta"]).default("delta"),
 });
@@ -180,10 +173,6 @@ const processEnv = {
   ML_MODE: process.env.ML_MODE,
   LIVE_TRADING_ENABLED: process.env.LIVE_TRADING_ENABLED,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-  NEXT_PUBLIC_BINANCE_WS: process.env.NEXT_PUBLIC_BINANCE_WS,
-  NEXT_PUBLIC_BINANCE_FUTURES_WS: process.env.NEXT_PUBLIC_BINANCE_FUTURES_WS,
-  NEXT_PUBLIC_BYBIT_WS: process.env.NEXT_PUBLIC_BYBIT_WS,
-  NEXT_PUBLIC_DELTA_WS: process.env.NEXT_PUBLIC_DELTA_WS,
   NEXT_PUBLIC_ACTIVE_BROKER: process.env.NEXT_PUBLIC_ACTIVE_BROKER,
 };
 

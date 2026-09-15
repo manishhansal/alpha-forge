@@ -330,7 +330,7 @@ export function classifyMarketRegime(input: RegimeInput): RegimeEvaluation {
   }
 
   // SMA slope (trend direction)
-  const sma20Slope = sma20 !== null && candles.length >= 25
+  const _sma20Slope = sma20 !== null && candles.length >= 25
     ? (lastClose - candles[candles.length - 6].close) / candles[candles.length - 6].close
     : null;
 

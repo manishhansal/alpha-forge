@@ -26,7 +26,7 @@ vi.mock("framer-motion", async () => {
           {children}
         </div>
       ),
-      span: ({ children, className, style, ...rest }: React.HTMLAttributes<HTMLSpanElement> & { children?: React.ReactNode }) => (
+      span: ({ children, className, style, ..._rest }: React.HTMLAttributes<HTMLSpanElement> & { children?: React.ReactNode }) => (
         <span className={className} style={style}>
           {children}
         </span>

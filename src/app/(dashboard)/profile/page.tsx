@@ -37,7 +37,7 @@ export default async function ProfilePage() {
   const user = await getCurrentUser();
   const encOk = encryptionAvailable();
   const prisma = getPrisma();
-  const [storedKeys, dataSources, meta] = await Promise.all([
+  const [storedKeys, _dataSources, meta] = await Promise.all([
     listStoredKeys(user.id),
     getDataSourceSelections(user.id),
     prisma.user.findUnique({
@@ -45,7 +45,7 @@ export default async function ProfilePage() {
       select: { createdAt: true },
     }),
   ]);
-  const credentialedIds = storedKeys.map((k) => k.exchange);
+  const _credentialedIds = storedKeys.map((k) => k.exchange);
   const createdAtIso = (meta?.createdAt ?? new Date()).toISOString();
 
   const [rawPhone, whatsAppPrefs] = await Promise.all([

@@ -36,10 +36,8 @@ import { IndiaFillModel } from "./india-fill-model";
 import type { IndiaFillModelConfig } from "./india-fill-model";
 import { ExecutionQualityReporter } from "./execution-quality-report";
 import type { ExecutionQualityReport } from "./execution-quality-report";
-import type { LiquidityTier } from "./market-depth";
 import type { LatencyProfileName } from "./latency-model";
-import type { IndiaSlippageConfig } from "./india-slippage-model";
-import { ZERODHA_CONFIG, FULL_SERVICE_CONFIG, DISCOUNT_CONFIG } from "./india-brokerage-model";
+import { ZERODHA_CONFIG, FULL_SERVICE_CONFIG } from "./india-brokerage-model";
 
 // ── Engine config ─────────────────────────────────────────────────────────────
 

@@ -17,12 +17,10 @@
  */
 
 import type { FillEvent } from "../events/fill-event";
-import type { InstrumentId } from "../events/market-event";
 import type { Position, PositionAttribution, CloseReason } from "./position";
-import { openPosition, markPosition, closePosition, checkIntraBar } from "./position";
+import { openPosition, markPosition, closePosition } from "./position";
 import { buildTrade } from "./trade";
 import type { Trade } from "./trade";
-import { makePositionId } from "./position";
 import type { RiskSnapshot } from "../events/risk-event";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -183,7 +181,7 @@ export class Portfolio {
 
   // ── Session hooks ─────────────────────────────────────────────────────────
 
-  onSessionOpen(timestampMs: number): void {
+  onSessionOpen(_timestampMs: number): void {
     this.sessionStartEquity = this.equity;
     this.dailyPnl = 0;
   }

@@ -21,7 +21,7 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
     }
 
     const tickerBySymbol = new Map(tickers.value.map((t) => [t.pair, t]));
-    const futures = futuresRes.status === "fulfilled" ? futuresRes.value : [];
+    const _futures = futuresRes.status === "fulfilled" ? futuresRes.value : [];
 
     // Build a simple global data structure from futures
     const globalData = {
@@ -43,16 +43,23 @@ export async function getMarketOverview(): Promise<MarketOverviewResponse> {
       const symbol: SymbolId = meta.id;
       const dominance = 0; // no market cap data available
 
+      // data-service2.0 returns price fields as strings (e.g. "78428.85000000").
+      // Coerce to numbers so formatPrice() and Number.isFinite() work correctly.
+      const toNum = (v: unknown): number => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+
       return {
         symbol,
         name: meta.name,
-        price: t?.price ?? coinTicker?.price ?? 0,
-        change24h: t?.change ?? 0,
-        changePct24h: t?.changePct ?? 0,
-        high24h: t?.high ?? 0,
-        low24h: t?.low ?? 0,
-        volume24h: t?.volume ?? 0,
-        quoteVolume24h: t?.quoteVolume ?? 0,
+        price: toNum(t?.price ?? coinTicker?.price),
+        change24h: toNum(t?.change),
+        changePct24h: toNum(t?.changePct),
+        high24h: toNum(t?.high ?? coinTicker?.price),
+        low24h: toNum(t?.low ?? coinTicker?.price),
+        volume24h: toNum(t?.volume),
+        quoteVolume24h: toNum(t?.quoteVolume),
         updatedAt: t?.ts ?? Date.now(),
         marketCap,
         dominance,

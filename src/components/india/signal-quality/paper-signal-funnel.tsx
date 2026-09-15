@@ -15,7 +15,7 @@ function pct(n: number) {
 }
 
 export function PaperSignalFunnelCard({ funnel }: { funnel: PaperSignalFunnel }) {
-  const stagesWithData = funnel.stages.filter((s) => s.count > 0);
+  const _stagesWithData = funnel.stages.filter((s) => s.count > 0);
   const maxCount = Math.max(...funnel.stages.map((s) => s.count), 1);
 
   return (

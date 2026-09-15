@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import type { StrategyContext } from "@/lib/backtesting-v2/engine/event-engine";
+import type { RiskCheckEvent } from "@/lib/backtesting-v2/events/risk-event";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -63,7 +65,7 @@ describe("E2E: Market data → strategy → signal → risk → fill → portfol
       tickSize: 0.05,
       expiry: null,
       strike: null,
-      optionType: null as any,
+      optionType: null,
     };
 
     const ENTRY = 24555;
@@ -74,7 +76,7 @@ describe("E2E: Market data → strategy → signal → risk → fill → portfol
     const strategy = {
       id: "deterministic-buy",
       name: "deterministic-buy",
-      onBar(ctx: any) {
+      onBar(ctx: StrategyContext) {
         if (ctx.barIndex === 0) {
           const signal = buildSignalEvent({
             sourceEventId: ctx.currentBar.openMs?.toString() ?? "0",
@@ -113,7 +115,7 @@ describe("E2E: Market data → strategy → signal → risk → fill → portfol
     expect(signals.length).toBeGreaterThanOrEqual(1);
 
     // Risk check should have been evaluated (approved or rejected)
-    const riskEvents = result.eventLog.filter((e) => e.type === "RISK_CHECK") as any[];
+    const riskEvents = result.eventLog.filter((e): e is RiskCheckEvent => e.type === "RISK_CHECK");
     expect(riskEvents.length).toBeGreaterThanOrEqual(1);
 
     // At least one evaluation was made
@@ -141,12 +143,12 @@ describe("E2E: Market data → strategy → signal → risk → fill → portfol
       { openMs: IST_OPEN + 120_000, closeMs: IST_OPEN + 179_999, open: 24496, high: 24520, low: 24480, close: 24510, volume: 8_000 },
     ];
 
-    const instrument = { symbol: "NIFTY", exchange: "NSE" as const, instrumentType: "FUTIDX" as const, lotSize: 1, tickSize: 0.05, expiry: null, strike: null, optionType: null as any };
+    const instrument = { symbol: "NIFTY", exchange: "NSE" as const, instrumentType: "FUTIDX" as const, lotSize: 1, tickSize: 0.05, expiry: null, strike: null, optionType: null };
 
     const strategy = {
       id: "stop-test",
       name: "stop-test",
-      onBar(ctx: any) {
+      onBar(ctx: StrategyContext) {
         if (ctx.barIndex === 0) {
           ctx.emit(buildSignalEvent({
             sourceEventId: "stop-test-0",
