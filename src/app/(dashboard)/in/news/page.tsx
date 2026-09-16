@@ -8,7 +8,7 @@ export const revalidate = 0;
 export const metadata = {
   title: "News · NSE F&O",
   description:
-    "Top Moneycontrol + global market news that moves F&O stocks and sectors, with an overall market-sentiment read and a risk-on / risk-off ratio.",
+    "Real-time India and global market news powered by SentinelPulse — enriched with ML sentiment, event classification, and F&O impact scoring, folded into a live market breadth and regime read.",
 };
 
 /**
@@ -26,9 +26,9 @@ export default function IndiaNewsPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">News · NSE F&amp;O</h1>
         <p className="text-sm text-[var(--color-fg-muted)]">
-          Top Moneycontrol and global headlines filtered to what moves F&amp;O
-          stocks and sectors — each scored for sentiment and folded into an
-          overall market read with a risk-on / risk-off ratio.
+          Real-time India and global headlines processed by SentinelPulse — ML
+          sentiment, event classification, and F&O impact scoring, folded into
+          a live market breadth and risk-on / risk-off regime read.
         </p>
       </header>
 

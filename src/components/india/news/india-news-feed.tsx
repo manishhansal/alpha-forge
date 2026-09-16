@@ -2,7 +2,14 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { ExternalLink, Globe, Newspaper, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  AlertCircle,
+  ExternalLink,
+  Globe,
+  Newspaper,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -20,9 +27,17 @@ import type {
   NewsSentimentLabel,
 } from "@/types/india/news";
 
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
 type CategoryFilter = "all" | NewsCategory;
 
-const FILTERS: { id: CategoryFilter; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const CATEGORY_FILTERS: {
+  id: CategoryFilter;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
   { id: "all", label: "All", icon: Newspaper },
   { id: "india", label: "India F&O", icon: TrendingUp },
   { id: "global", label: "Global", icon: Globe },
@@ -40,6 +55,16 @@ function loadCategory(): CategoryFilter {
   }
   return "all";
 }
+
+const NEWS_FILTER_TABS: FilterTab[] = [
+  { id: "all", label: "All" },
+  { id: "high-confidence", label: "High Impact" },
+  { id: "high-winrate", label: "Bullish" },
+];
+
+// ---------------------------------------------------------------------------
+// Style helpers
+// ---------------------------------------------------------------------------
 
 function impactChip(impact: NewsImpact): string {
   switch (impact) {
@@ -70,6 +95,18 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(diffH / 24)}d ago`;
 }
 
+/** Convert a SCREAMING_SNAKE event type to a readable label. */
+function formatEventType(et: string): string {
+  return et
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ---------------------------------------------------------------------------
+// NewsCard
+// ---------------------------------------------------------------------------
+
 function NewsCard({ item, index }: { item: NewsItem; index: number }) {
   const SentimentIcon =
     item.sentiment.label === "bullish"
@@ -77,6 +114,7 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
       : item.sentiment.label === "bearish"
         ? TrendingDown
         : Newspaper;
+
   return (
     <motion.a
       href={item.link}
@@ -87,6 +125,7 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
       transition={{ delay: Math.min(index * 0.02, 0.3) }}
       className="group flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:border-[var(--color-border-strong)]"
     >
+      {/* Title row */}
       <div className="flex items-start justify-between gap-3">
         <h3 className="text-sm font-medium leading-snug text-[var(--color-fg)] group-hover:text-[var(--color-brand)]">
           {item.title}
@@ -94,24 +133,38 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
         <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-fg-subtle)]" />
       </div>
 
+      {/* Summary */}
       {item.summary && (
         <p className="line-clamp-2 text-xs text-[var(--color-fg-muted)]">
           {item.summary}
         </p>
       )}
 
+      {/* Tag strip */}
       <div className="flex flex-wrap items-center gap-1.5">
+        {/* Impact chip */}
         <span
           className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${impactChip(item.impact)}`}
         >
           {item.impact} impact
         </span>
+
+        {/* Sentiment chip */}
         <span
           className={`inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] font-semibold ${sentimentTone(item.sentiment.label)}`}
         >
           <SentimentIcon className="h-3 w-3" />
           {item.sentiment.label}
         </span>
+
+        {/* Event type — shown when present */}
+        {item.eventType && (
+          <span className="rounded-full bg-[color-mix(in_oklch,var(--color-info)_10%,transparent)] px-2 py-0.5 text-[10px] text-[var(--color-info)]">
+            {formatEventType(item.eventType)}
+          </span>
+        )}
+
+        {/* Symbol tags */}
         {item.symbols.slice(0, 4).map((s) => (
           <span
             key={s}
@@ -120,6 +173,8 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
             {s}
           </span>
         ))}
+
+        {/* Sector tags */}
         {item.sectors.slice(0, 2).map((s) => (
           <span
             key={s}
@@ -130,6 +185,7 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
         ))}
       </div>
 
+      {/* Footer */}
       <div className="flex items-center justify-between text-[10px] text-[var(--color-fg-subtle)]">
         <span>{item.source}</span>
         <span>{relativeTime(item.publishedAt)}</span>
@@ -138,14 +194,14 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
   );
 }
 
-const NEWS_FILTER_TABS: FilterTab[] = [
-  { id: "all", label: "All" },
-  { id: "high-confidence", label: "High Impact" },
-  { id: "high-winrate", label: "Bullish" },
-];
+// ---------------------------------------------------------------------------
+// Main feed component
+// ---------------------------------------------------------------------------
 
 export function IndiaNewsFeed() {
-  const [category, setCategory] = React.useState<CategoryFilter>(() => loadCategory());
+  const [category, setCategory] = React.useState<CategoryFilter>(() =>
+    loadCategory(),
+  );
 
   React.useEffect(() => {
     try {
@@ -155,29 +211,21 @@ export function IndiaNewsFeed() {
     }
   }, [category]);
 
-  const { data, loading, error } = useNews(category);
+  const { data, loading, error } = useNews({ category, limit: 40 });
 
   const items = data?.items ?? [];
 
-  const getConfidence = React.useCallback(
-    (item: NewsItem) => {
-      // High impact = high confidence
-      if (item.impact === "high") return 1;
-      if (item.impact === "medium") return 0.6;
-      return 0.3;
-    },
-    [],
-  );
+  // Confidence proxy for the pagination filter (importance_score → confidence)
+  const getConfidence = React.useCallback((item: NewsItem) => {
+    return item.importanceScore;
+  }, []);
 
-  const getWinrate = React.useCallback(
-    (item: NewsItem) => {
-      // Bullish sentiment = high winrate proxy
-      if (item.sentiment.label === "bullish") return 0.9;
-      if (item.sentiment.label === "neutral") return 0.5;
-      return 0.2;
-    },
-    [],
-  );
+  // Win-rate proxy (bullish label → high win-rate)
+  const getWinrate = React.useCallback((item: NewsItem) => {
+    if (item.sentiment.label === "bullish") return 0.9;
+    if (item.sentiment.label === "neutral") return 0.5;
+    return 0.2;
+  }, []);
 
   const {
     pageItems,
@@ -194,7 +242,7 @@ export function IndiaNewsFeed() {
     pageSize: 5,
     getConfidence,
     getWinrate,
-    confidenceThreshold: 0.7,
+    confidenceThreshold: 0.5,
     winrateThreshold: 0.6,
     tabs: NEWS_FILTER_TABS,
   });
@@ -210,9 +258,14 @@ export function IndiaNewsFeed() {
               Top market news
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+              <FilterTabs
+                tabs={tabs}
+                active={activeTab}
+                onChange={setActiveTab}
+              />
+              {/* Category filter pills */}
               <div className="flex flex-wrap gap-1.5">
-                {FILTERS.map((f) => {
+                {CATEGORY_FILTERS.map((f) => {
                   const Icon = f.icon;
                   const on = category === f.id;
                   return (
@@ -235,15 +288,20 @@ export function IndiaNewsFeed() {
             </div>
           </div>
         </CardHeader>
+
         <CardContent>
           {error && (
-            <p className="py-2 text-sm text-[var(--color-bear)]">
+            <p className="flex items-center gap-1.5 py-2 text-sm text-[var(--color-bear)]">
+              <AlertCircle className="h-4 w-4 shrink-0" />
               Couldn&apos;t load news: {error}
             </p>
           )}
+
           {items.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--color-fg-muted)]">
-              {loading ? "Loading headlines…" : "No market-moving headlines right now."}
+              {loading
+                ? "Loading headlines…"
+                : "No market-moving headlines right now."}
             </p>
           ) : pageItems.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--color-fg-muted)]">
