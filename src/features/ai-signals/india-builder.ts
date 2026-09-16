@@ -1620,7 +1620,7 @@ async function computeIndiaUniverse(
   const [mdQuotesRes, vixMdRes, scannerScoresRes, derivRes, newsRes] =
     await Promise.allSettled([
       getQuotes(nseSymbols),
-      await getQuote("^INDIAVIX"),
+      getQuote("^INDIAVIX"),
       loadScannerScores(),
       loadFirstPartyDerivatives(),
       loadNewsScores(),
