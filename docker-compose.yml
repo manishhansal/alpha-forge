@@ -104,6 +104,8 @@ services:
       REDIS_URL: redis://redis:6379
       ML_SERVICE_URL: http://ml-service:8100
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      SENTINEL_PULSE_URL: http://host.docker.internal:3001
+      SENTINEL_PULSE_API_KEY: ${SENTINEL_PULSE_API_KEY}
     ports:
       - "3000:3000"
     healthcheck:
@@ -139,6 +141,8 @@ services:
       REDIS_URL: redis://redis:6379
       ML_SERVICE_URL: http://ml-service:8100
       WORKER_APP_BASE_URL: http://app:3000
+      SENTINEL_PULSE_URL: http://host.docker.internal:3001
+      SENTINEL_PULSE_API_KEY: ${SENTINEL_PULSE_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
