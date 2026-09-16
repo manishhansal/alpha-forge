@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOptionChain, DataServiceUnavailableError } from "@/lib/data-service/client";
 import { fetchOptionChainGreeks, predictIVRegime } from "@/lib/india/ml-client";
+import { getSimulatedSnapshot } from "@/lib/data-service/simulated-india";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,6 +20,10 @@ export async function GET(req: Request) {
 
   try {
     const chain = await getOptionChain(underlying, expiry);
+
+    // If spot price is null, the data service returned a degraded response.
+    // Fall through to the simulated skeleton below.
+    if (chain.spotPrice == null) throw new DataServiceUnavailableError("No spot price in option chain response");
 
     // Enrich with ML greeks when available (best-effort)
     let enrichedRows = chain.rows;
@@ -72,9 +77,32 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
+      // Return a minimal but valid option-chain skeleton with simulated spot price
+      // so the Options page renders rather than showing a hard error.
+      const snap = getSimulatedSnapshot();
+      const indexEntry = snap.indices.find(
+        (i) =>
+          i.name.toUpperCase().includes(underlying) ||
+          i.symbol.toUpperCase().includes(underlying),
+      );
+      const spotPrice = indexEntry?.price ?? 25000;
       return NextResponse.json(
-        { error: "DATA_SERVICE_UNAVAILABLE", message: err.message },
-        { status: 503, headers: { "Cache-Control": "no-store" } },
+        {
+          underlying,
+          expiry: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10),
+          spotPrice,
+          underlyingPrice: spotPrice,
+          pcrOi: 1.1,
+          atmIv: 14.5,
+          maxPain: Math.round(spotPrice / 100) * 100,
+          rows: [],
+          strikes: [],
+          dataAsOf: new Date().toISOString(),
+          iv_regime: "STABLE",
+          source: "SIMULATED",
+          simulated: true,
+        },
+        { headers: { "Cache-Control": "public, s-maxage=20, stale-while-revalidate=30" } },
       );
     }
     const message = err instanceof Error ? err.message : String(err);

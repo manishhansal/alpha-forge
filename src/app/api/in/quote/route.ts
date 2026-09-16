@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getQuotes, DataServiceUnavailableError } from "@/lib/data-service/client";
+import { getSimulatedQuotes } from "@/lib/data-service/simulated-india";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,6 +20,15 @@ export async function GET(req: Request) {
 
   try {
     const quotes = await getQuotes(symbols, "NSE");
+    // If all quotes came back with zero/null ltp, fall back to simulated
+    const validQuotes = quotes.filter((q): q is NonNullable<typeof q> => q != null && (q.ltp ?? 0) > 0);
+    if (validQuotes.length === 0) {
+      const simulated = getSimulatedQuotes(symbols);
+      return NextResponse.json(
+        { quotes: simulated, source: "SIMULATED", sources: ["SIMULATED"], fetchedAt: new Date().toISOString(), simulated: true },
+        { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
+      );
+    }
     return NextResponse.json(
       {
         quotes,
@@ -30,9 +40,10 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
+      const quotes = getSimulatedQuotes(symbols);
       return NextResponse.json(
-        { error: "DATA_SERVICE_UNAVAILABLE", quotes: [] },
-        { status: 503 },
+        { quotes, source: "SIMULATED", sources: ["SIMULATED"], fetchedAt: new Date().toISOString(), simulated: true },
+        { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
       );
     }
     return NextResponse.json(

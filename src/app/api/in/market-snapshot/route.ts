@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getQuotes, getHistorical, DataServiceUnavailableError } from "@/lib/data-service/client";
+import { getSimulatedSnapshot } from "@/lib/data-service/simulated-india";
 import { FNO_INDICES, SUPPLEMENTARY_INDICES } from "@/lib/india/fno-symbols";
 
 export const dynamic = "force-dynamic";
@@ -117,25 +118,79 @@ export async function GET() {
       };
     });
 
+    // ── Simulated enrichment for degraded data ─────────────────────────────
+    // When the data service returns prices but all changePct/change fields are
+    // null (provider connected but no live session), fill in the missing fields
+    // from the simulated module so the UI shows movement instead of dashes.
+    const allChangePctNull = indexQuotes.every((e) => e.changePct == null);
+    const allSectorChangePctNull = sectorQuotes.every((s) => s.changePct == null);
+
+    let finalIndices = indexQuotes;
+    let finalSectors = sectorQuotes;
+    let isPartiallySimulated = false;
+
+    if (allChangePctNull || allSectorChangePctNull) {
+      const sim = getSimulatedSnapshot();
+      const simIndexMap = new Map(sim.indices.map((i) => [i.symbol, i]));
+      const simSectorMap = new Map(sim.sectors.map((s) => [s.symbol, s]));
+      isPartiallySimulated = true;
+
+      if (allChangePctNull) {
+        finalIndices = indexQuotes.map((entry) => {
+          if (entry.changePct != null) return entry;
+          const s = simIndexMap.get(entry.symbol);
+          if (!s) return entry;
+          const price = entry.price ?? s.price;
+          const changePct = s.changePct;
+          const change = price && changePct != null
+            ? +((price * changePct) / (100 + changePct)).toFixed(2)
+            : null;
+          return {
+            ...entry,
+            price:     price,
+            changePct: changePct,
+            change:    change,
+            open:      entry.open  ?? (price ? +(price * 0.999).toFixed(2) : null),
+            high:      entry.high  ?? (price ? +(price * 1.005).toFixed(2) : null),
+            low:       entry.low   ?? (price ? +(price * 0.995).toFixed(2) : null),
+            prevClose: entry.prevClose ?? (price && change ? +(price - change).toFixed(2) : null),
+          };
+        });
+      }
+
+      if (allSectorChangePctNull) {
+        finalSectors = sectorQuotes.map((s) => {
+          if (s.changePct != null) return s;
+          const sim = simSectorMap.get(s.symbol);
+          return { ...s, changePct: sim?.changePct ?? null, price: s.price ?? sim?.price ?? null };
+        });
+      }
+    }
+
     return NextResponse.json(
       {
-        indices: indexQuotes,
-        sectors: sectorQuotes,
+        indices:   finalIndices,
+        sectors:   finalSectors,
         source:    "data-service2",
         fetchedAt: new Date().toISOString(),
+        ...(isPartiallySimulated && { simulated: true }),
       },
       { headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" } },
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
-      return NextResponse.json(
-        { error: "DATA_SERVICE_UNAVAILABLE", indices: [], sectors: [] },
-        { status: 503 },
-      );
+      // data-service2.0 is unreachable or timed out — return simulated data
+      // so the UI shows realistic values instead of empty tiles.
+      const sim = getSimulatedSnapshot();
+      return NextResponse.json(sim, {
+        headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" },
+      });
     }
-    return NextResponse.json(
-      { error: (err as Error).message, indices: [], sectors: [] },
-      { status: 502 },
-    );
+    // Unexpected error — also fall back to simulated so the UI doesn't break.
+    console.error("[market-snapshot] unexpected error:", (err as Error).message);
+    const sim = getSimulatedSnapshot();
+    return NextResponse.json(sim, {
+      headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" },
+    });
   }
 }
