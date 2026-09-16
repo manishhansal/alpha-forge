@@ -50,10 +50,12 @@ export type Snapshot = {
   indices: IndexQuote[];
   sectors: IndexQuote[];
   /** Primary selected source for the snapshot (highest-priority pick). */
-  source?: DataSourceId;
+  source?: DataSourceId | "SIMULATED";
   /** Distinct upstreams that actually produced the snapshot's quotes. */
-  sources?: DataSourceId[];
+  sources?: (DataSourceId | "SIMULATED")[];
   fetchedAt: string;
+  /** True when data-service was unavailable and simulated values were returned. */
+  simulated?: boolean;
 };
 
 export type Candle = {

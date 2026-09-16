@@ -357,7 +357,7 @@
 - Intraday demand (0.14)
 - S/R breakout with volume (0.13)
 - Market tape / regime (0.12)
-- News flow (0.08)
+- News flow — SentinelPulse importanceScore-weighted sentiment (0.08)
 - Daily SMA trend (0.08)
 - RSI (0.05)
 - 5-day momentum (0.08)
@@ -377,7 +377,7 @@ Minimum composite magnitude threshold: 0.22. Grade S/A only for auto-trading.
 
 **Expected Regimes:** BULL_TRENDING, BEAR_TRENDING, NORMAL_DAY, EXPIRY_DAY
 
-**Hypothesis:** A 14-factor weighted confluence model aggregating intraday demand, breakout quality, market regime, derivatives data (PCR, ATM IV, OI build-up, max-pain), news flow, and ML model outputs produces F&O trading signals with meaningful predictive value that exceeds any individual factor alone.
+**Hypothesis:** A 14-factor weighted confluence model aggregating intraday demand, breakout quality, market regime, derivatives data (PCR, ATM IV, OI build-up, max-pain), news flow (SentinelPulse ML sentiment), and ML model outputs produces F&O trading signals with meaningful predictive value that exceeds any individual factor alone.
 
 **What Would Invalidate:** ECE (Expected Calibration Error) > 0.10 on OOS sample. OOS Sharpe < 0.5. Paper performance materially worse than shadow. Grade D signals consistently outperforming Grade S signals.
 

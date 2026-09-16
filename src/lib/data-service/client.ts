@@ -80,8 +80,11 @@ function buildHeaders(): HeadersInit {
   return headers;
 }
 
-/** Default HTTP timeout for all requests (10 seconds). */
-const REQUEST_TIMEOUT_MS = 10_000;
+/** Default HTTP timeout for all requests (4 seconds).
+ *  Kept short so UI never hangs — endpoints that hang waiting for an
+ *  unconfigured upstream provider time out quickly and fall through to
+ *  the simulated-data fallback in each Next.js API route. */
+const REQUEST_TIMEOUT_MS = 4_000;
 
 // ---------------------------------------------------------------------------
 // Internal HTTP helpers

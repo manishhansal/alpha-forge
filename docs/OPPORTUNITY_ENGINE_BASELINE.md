@@ -94,7 +94,7 @@
 | Scanner | Cross-scanner agreement score | ✅ WIRED |
 | Session | NSE active-window gate | ✅ WIRED |
 | Market regime | NIFTY/BANKNIFTY/FINNIFTY composite (blended 65% heuristic + 35% ML) | ✅ WIRED |
-| News | Lexicon score (ET + WSJ RSS) | ✅ WIRED |
+| News | SentinelPulse ML sentiment + importance score + event classification | ✅ WIRED |
 | Super Confluence | UT Bot + AI Neural (HMA) + SMC BOS/CHoCH + EMA 9/15/21 | ✅ WIRED |
 | Quant pre-filter | ADX ≥18, relVol ≥1.1×, ATR% ≥0.4% | ✅ WIRED |
 | ML rank boost | LightGBM stock ranker → ±0.06 confidence delta | ✅ WIRED |
@@ -366,7 +366,9 @@ No slippage at all. Entry is assumed at exactly `signal.entry`. No spread model.
 regimeScore ∈ [-1, 1]
 = avg(NIFTY%change/1.5, BANKNIFTY%change/1.5)
 + VIX adjustment (VIX>18 → -0.3, VIX>25 → -0.6)
-+ news sentiment contribution
++ news sentiment contribution (SentinelPulse MarketSentiment.score / 100 × 0.15)
+// Source: SentinelPulse /api/v1/news/market/india → breadth + regime
+// Fallback: article-level importanceScore-weighted average when market endpoint unavailable
 
 Classification:
 > 0.3 → risk-on / bull

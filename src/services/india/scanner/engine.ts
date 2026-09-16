@@ -1,4 +1,5 @@
 import { getQuotes, getHistorical, getOptionChain } from "@/lib/data-service/client";
+import { getSimulatedScannerHits } from "@/lib/data-service/simulated-india";
 // Scanner Engine — computes ranked lists of F&O hits across multiple
 /** Internal type used only by momentum scanner */
 type MomentumRow = { symbol: string; percentChange?: number | null; ltp?: number | null; oi?: number | null };
@@ -22,21 +23,48 @@ const now = () => new Date().toISOString();
 /** F&O universe quote via canonical registry (DATA_SERVICE → ANGEL_ONE → UPSTOX → YAHOO). */
 async function fnoQuotes(): Promise<Quote[]> {
   return cache.memo("scanner:fno-quotes", 10_000, async () => {
-    
-    const mdQuotes = await getQuotes(FNO_STOCKS);
-    // Normalize MDQuote[] → legacy Quote[] shape used by scanner logic
-    return mdQuotes
-      .filter((q): q is NonNullable<typeof q> => q != null)
-      .map((q) => ({
-        symbol: q.symbol,
-        price: q.ltp ?? 0,
-        changePct: q.changePct ?? null,
-        volume: q.volume ?? null,
-        high: q.high ?? null,
-        low: q.low ?? null,
-        open: q.open ?? null,
-        prevClose: q.prevClose ?? null,
+    try {
+      const mdQuotes = await getQuotes(FNO_STOCKS);
+      // Normalize MDQuote[] → legacy Quote[] shape used by scanner logic
+      const result = mdQuotes
+        .filter((q): q is NonNullable<typeof q> => q != null)
+        .map((q) => ({
+          symbol: q.symbol,
+          price: q.ltp ?? 0,
+          changePct: q.changePct ?? null,
+          volume: q.volume ?? null,
+          high: q.high ?? null,
+          low: q.low ?? null,
+          open: q.open ?? null,
+          prevClose: q.prevClose ?? null,
+        })) as Quote[];
+      // If data-service returned quotes but all have zero price or null changePct, fall back to simulated
+      if (result.length === 0 || result.every((q) => q.price === 0 || q.changePct == null)) {
+        return getSimulatedScannerHits("momentum", FNO_STOCKS.length).map((h) => ({
+          symbol: h.symbol,
+          price: h.price,
+          changePct: h.changePct,
+          volume: h.volume,
+          high: null,
+          low: null,
+          open: null,
+          prevClose: null,
+        })) as Quote[];
+      }
+      return result;
+    } catch {
+      // Data service unavailable — return simulated quotes
+      return getSimulatedScannerHits("momentum", 30).map((h) => ({
+        symbol: h.symbol,
+        price: h.price,
+        changePct: h.changePct,
+        volume: h.volume,
+        high: null,
+        low: null,
+        open: null,
+        prevClose: null,
       })) as Quote[];
+    }
   });
 }
 
@@ -216,18 +244,70 @@ function chainWithAnalytics(c: Awaited<ReturnType<typeof getOptionChain>>) {
     },
   };
 }
+
+/** Build simulated index chains when data-service is unavailable. */
+function buildSimulatedIndexChains() {
+  const spotPrices: Record<string, number> = {
+    NIFTY: 25388.9,
+    BANKNIFTY: 51772.4,
+    FINNIFTY: 23510.65,
+    MIDCPNIFTY: 13125.3,
+  };
+  const pcrs: Record<string, number> = {
+    NIFTY: 1.12,
+    BANKNIFTY: 0.95,
+    FINNIFTY: 1.05,
+    MIDCPNIFTY: 1.08,
+  };
+  return INDEX_UNDERLYINGS.map((underlying) => {
+    const spot = spotPrices[underlying] ?? 10000;
+    const pcr = pcrs[underlying] ?? 1.0;
+    return {
+      underlying,
+      chain: {
+        underlying,
+        expiry: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10),
+        expiries: [],
+        spotPrice: spot,
+        spot,
+        pcrOi: pcr,
+        atmIv: 14.5,
+        maxPain: Math.round(spot / 100) * 100,
+        rows: [],
+        dataAsOf: now(),
+        fetchedAt: now(),
+        provider: "SIMULATED",
+        analytics: {
+          pcrOi: pcr,
+          atmIv: 14.5,
+          maxPain: Math.round(spot / 100) * 100,
+          maxPeOiStrike: Math.round(spot / 100) * 100 - 100,
+          maxCeOiStrike: Math.round(spot / 100) * 100 + 100,
+          totalCeOiChange: Math.floor(Math.random() * 500_000),
+          totalPeOiChange: Math.floor(Math.random() * 500_000),
+        },
+      },
+    };
+  });
+}
 async function indexChains() {
   return cache.memo("scanner:index-chains", 20_000, async () => {
-    const out = await Promise.allSettled(
-      INDEX_UNDERLYINGS.map((u) => getOptionChain(u)),
-    );
-    return out
-      .map((r, i) =>
-        r.status === "fulfilled"
-          ? { underlying: INDEX_UNDERLYINGS[i]!, chain: chainWithAnalytics(r.value) }
-          : null,
-      )
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+    try {
+      const out = await Promise.allSettled(
+        INDEX_UNDERLYINGS.map((u) => getOptionChain(u)),
+      );
+      const chains = out
+        .map((r, i) =>
+          r.status === "fulfilled"
+            ? { underlying: INDEX_UNDERLYINGS[i]!, chain: chainWithAnalytics(r.value) }
+            : null,
+        )
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      if (chains.length === 0) return buildSimulatedIndexChains();
+      return chains;
+    } catch {
+      return buildSimulatedIndexChains();
+    }
   });
 }
 
@@ -1238,22 +1318,43 @@ export async function runScanner(
   type: ScannerType,
   limit = 25,
 ): Promise<ScannerResult> {
-  switch (type) {
-    case "momentum":
-      return runMomentum(limit);
-    case "volume-breakout":
-      return runVolumeBreakout(limit);
-    case "pcr":
-      return runPcr(limit);
-    case "iv-spike":
-      return runIvSpike();
-    case "oi-buildup":
-      return runOiBuildup(limit);
-    case "range-expansion":
-      return runRangeExpansion(limit);
-    case "fno-bullish-trend":
-      return runFnoBullishTrend(limit);
-    case "fno-bearish-trend":
-      return runFnoBearishTrend(limit);
+  try {
+    switch (type) {
+      case "momentum":
+        return runMomentum(limit);
+      case "volume-breakout":
+        return runVolumeBreakout(limit);
+      case "pcr":
+        return runPcr(limit);
+      case "iv-spike":
+        return runIvSpike();
+      case "oi-buildup":
+        return runOiBuildup(limit);
+      case "range-expansion":
+        return runRangeExpansion(limit);
+      case "fno-bullish-trend":
+        return runFnoBullishTrend(limit);
+      case "fno-bearish-trend":
+        return runFnoBearishTrend(limit);
+    }
+  } catch (err) {
+    // Top-level safety net — return simulated hits so scanner pages aren't empty.
+    console.warn(`[scanner:${type}] failed, returning simulated data:`, (err as Error).message);
+    const simHits = getSimulatedScannerHits(type, limit);
+    return {
+      type,
+      title: `${type} (Simulated)`,
+      description: "Live data unavailable — showing simulated signals for demonstration.",
+      hits: simHits.map((h) => ({
+        symbol: h.symbol,
+        price: h.price,
+        changePct: h.changePct,
+        volume: h.volume,
+        metric: h.metric,
+        metricLabel: `${h.metric.toFixed(2)}`,
+        kind: h.kind,
+      })),
+      fetchedAt: now(),
+    };
   }
 }

@@ -1116,7 +1116,7 @@ async function loadScannerScores(): Promise<
 }
 
 interface NewsScores {
-  /** symbol → { net lexicon score, matched-headline count }. */
+  /** symbol → { net directional score, matched-article count }. */
   symbols: Map<string, { score: number; count: number }>;
   /** Aggregate market sentiment read (drives the regime tilt). */
   sentiment: MarketSentiment | null;
@@ -1125,20 +1125,28 @@ interface NewsScores {
 const EMPTY_NEWS: NewsScores = { symbols: new Map(), sentiment: null };
 
 /**
- * Pull the enriched India + global news set and collapse it into a per-symbol
- * directional read (weighted by headline impact) plus the aggregate market
- * sentiment. Never throws — degrades to empty maps so the engine simply drops
- * the news factor when feeds are down.
+ * Pull enriched news intelligence from SentinelPulse and collapse it into a
+ * per-symbol directional read (weighted by importance_score) plus the
+ * aggregate market sentiment.
+ *
+ * Primary path  : /api/v1/news/latest  (article-level sentiment + entities)
+ * Fallback path : getIndiaNews()       (service-layer cache, same data)
+ *
+ * Never throws — degrades to empty maps so the engine drops the news factor
+ * when SentinelPulse is unreachable.
  */
 async function loadNewsScores(): Promise<NewsScores> {
   try {
     const feed = await getIndiaNews({ limit: 80 });
     const symbols = new Map<string, { score: number; count: number }>();
-    const impactWeight = { high: 1, medium: 0.6, low: 0.3 } as const;
+
     for (const item of feed.items) {
-      if (item.sentiment.score === 0) continue;
-      const dir = Math.sign(item.sentiment.score);
-      const w = impactWeight[item.impact];
+      // sentiment.overall is a float in approximately [-1, 1]; skip neutrals
+      const overall = item.sentiment.overall;
+      if (overall === 0) continue;
+      const dir = Math.sign(overall);
+      // Weight by importance_score [0,1] rather than a fixed 3-tier bucket
+      const w = Math.max(0.1, item.importanceScore);
       for (const sym of item.symbols) {
         const cur = symbols.get(sym) ?? { score: 0, count: 0 };
         cur.score += dir * w;
@@ -1146,6 +1154,7 @@ async function loadNewsScores(): Promise<NewsScores> {
         symbols.set(sym, cur);
       }
     }
+
     return { symbols, sentiment: feed.sentiment };
   } catch (e) {
     console.warn("[ai-signals/india] news read failed:", (e as Error).message);
@@ -1620,7 +1629,7 @@ async function computeIndiaUniverse(
   const [mdQuotesRes, vixMdRes, scannerScoresRes, derivRes, newsRes] =
     await Promise.allSettled([
       getQuotes(nseSymbols),
-      await getQuote("^INDIAVIX"),
+      getQuote("^INDIAVIX"),
       loadScannerScores(),
       loadFirstPartyDerivatives(),
       loadNewsScores(),

@@ -2,10 +2,11 @@
  * GET /api/in/historical?symbol=RELIANCE&interval=1d&from=...&to=...
  *
  * Returns historical OHLCV candles from data-service2.0.
- * All market data flows exclusively through data-service2.0.
+ * Falls back to simulated candles when data service is unavailable.
  */
 import { NextResponse } from "next/server";
 import { getHistorical, DataServiceUnavailableError } from "@/lib/data-service/client";
+import { getSimulatedCandles } from "@/lib/data-service/simulated-india";
 import { isSupportedInterval } from "@/lib/market-data/types";
 import type { Interval } from "@/types/india";
 
@@ -39,9 +40,10 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
+      const candles = getSimulatedCandles(symbol);
       return NextResponse.json(
-        { error: "DATA_SERVICE_UNAVAILABLE", message: err.message },
-        { status: 503, headers: { "Cache-Control": "no-store" } },
+        { symbol, interval, exchange, from, to, candles, source: "SIMULATED", simulated: true },
+        { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" } },
       );
     }
     const message = err instanceof Error ? err.message : String(err);

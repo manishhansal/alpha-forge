@@ -646,7 +646,7 @@ src/
       daily-picks/           Top-3-per-bucket engine + freeze/track/history
       scalping/              9 F&O strategies + journal + option-chain replay
       expiry-trades/         Gamma Blast / Hero Zero expiry-day playbooks
-      news/                  RSS feed + sentiment engine
+      news/                  SentinelPulse integration (client, service, API routes)
       options-workbench/     Multi-leg payoff engine
   lib/
     data-service/            client.ts — single entry point for all market data
