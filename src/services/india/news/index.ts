@@ -1,20 +1,16 @@
 // India News service — powered by SentinelPulse.
 //
-// This module is the single server-side entrypoint for all news data. It
-// translates SentinelPulse wire shapes into the AlphaForge domain types and
-// memos results through the shared India cache so the dashboard never hammers
-// the news service with concurrent requests.
-//
 // Data flow:
-//   SentinelPulse /api/v1/news/latest  →  articles
-//   SentinelPulse /api/v1/news/market/india  →  breadth + regime + hot events
+//   SentinelPulse /api/v1/news/market/india  →  articles + breadth + regime
+//   → text-based sentiment scoring (SP enrichment lives on events, not articles)
 //   → map to NewsItem / MarketSentiment
 //   → cache.memo → NewsFeedResponse
 //
-// Resilient by design: if the market/india endpoint is unavailable the
-// service still returns articles with a synthetic sentiment derived from the
-// article-level scores. Never throws to the caller — returns an empty
-// sentinel response instead.
+// Note on enrichment: /news/latest and /news/market/india return normalised
+// articles. The ML sentiment/importance/entity fields live on event records
+// (joined via the pipeline workers). Since those fields are absent from the
+// article-level responses, we derive sentiment from title+summary text and
+// importance from a simple heuristic so the UI always shows real headlines.
 
 import type {
   ArticleSentiment,
@@ -29,7 +25,6 @@ import type {
   NewsEventType,
 } from "@/types/india/news";
 import {
-  fetchLatestArticles,
   fetchMarketIndia,
   SentinelPulseError,
   type SpArticle,
@@ -41,25 +36,55 @@ import { cache } from "../cache";
 // Cache TTLs
 // ---------------------------------------------------------------------------
 
-/** Main article feed — short TTL to stay near real-time. */
 const ARTICLES_TTL_MS = 90_000; // 90 s
-
-/** Market breadth / regime — updated by SentinelPulse cron every 15 min. */
-const MARKET_TTL_MS = 60_000; // 60 s
+const MARKET_TTL_MS = 60_000;   // 60 s
 
 // ---------------------------------------------------------------------------
-// Helpers: SentinelPulse → AlphaForge type mapping
+// Text-based sentiment scoring
+// (SP enrichment lives on events, not on article-level responses)
 // ---------------------------------------------------------------------------
 
-/** Map an importance_score [0,1] to our 3-tier impact label. */
-function importanceToImpact(score: number | undefined): NewsImpact {
-  if (score === undefined || score === null) return "low";
-  if (score >= 0.7) return "high";
-  if (score >= 0.4) return "medium";
-  return "low";
+const BULL_TOKENS = [
+  "surge", "surges", "surged", "rally", "rallies", "rallied",
+  "jump", "jumps", "jumped", "gain", "gains", "gained",
+  "rise", "rises", "rose", "soar", "soars", "soared",
+  "record", "high", "highs", "beat", "beats", "upgrade", "upgrades", "upgraded",
+  "optimism", "bullish", "outperform", "inflow", "inflows", "buying",
+  "profit", "growth", "strong", "boost", "boosts", "recovery", "rebound", "rebounds",
+];
+
+const BEAR_TOKENS = [
+  "crash", "crashes", "crashed", "slump", "slumps", "slumped",
+  "plunge", "plunges", "plunged", "fall", "falls", "fell",
+  "drop", "drops", "dropped", "slide", "slides", "tumble", "tumbles", "tumbled",
+  "loss", "losses", "downgrade", "downgrades", "downgraded",
+  "bearish", "selloff", "sell-off", "outflow", "outflows",
+  "weak", "weakness", "fear", "fears", "recession", "crisis",
+  "default", "fraud", "war", "slowdown", "cut", "cuts",
+  "warning", "miss", "misses", "underperform",
+];
+
+function countWord(text: string, word: string): number {
+  const re = new RegExp(`\\b${word}\\b`, "gi");
+  return (text.match(re) ?? []).length;
 }
 
-/** Map a numeric overall sentiment score to a label. */
+function scoreText(text: string): { label: NewsSentimentLabel; overall: number } {
+  let bull = 0;
+  let bear = 0;
+  for (const t of BULL_TOKENS) bull += countWord(text, t);
+  for (const t of BEAR_TOKENS) bear += countWord(text, t);
+  const raw = bull - bear;
+  const overall = Math.max(-1, Math.min(1, raw * 0.15)); // normalise to [-1, 1]
+  const label: NewsSentimentLabel =
+    raw > 0 ? "bullish" : raw < 0 ? "bearish" : "neutral";
+  return { label, overall };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function sentimentLabel(overall: number | null | undefined): NewsSentimentLabel {
   if (overall === null || overall === undefined) return "neutral";
   if (overall > 0.05) return "bullish";
@@ -67,83 +92,125 @@ function sentimentLabel(overall: number | null | undefined): NewsSentimentLabel 
   return "neutral";
 }
 
-/**
- * Derive a NewsCategory from the article's category tag.
- * SentinelPulse uses varied strings (e.g. "NIFTY50", "RBI", "SEBI"); we
- * treat anything not explicitly global as "india".
- */
+const GLOBAL_KEYWORDS = ["GLOBAL", "WORLD", "USD", "FED", "FOREX", "FII_DII"];
+
 function deriveCategory(raw: string | undefined): NewsCategory {
   if (!raw) return "india";
   const upper = raw.toUpperCase();
-  const globalKeywords = ["GLOBAL", "WORLD", "USD", "FED", "FII_DII", "FOREX"];
-  return globalKeywords.some((k) => upper.includes(k)) ? "global" : "india";
+  return GLOBAL_KEYWORDS.some((k) => upper.includes(k)) ? "global" : "india";
 }
 
-/**
- * Extract F&O symbol tags from primary_entities returned by SentinelPulse.
- * We treat all uppercase identifiers that look like NSE symbols as symbols
- * and separate known sector-ish strings as sectors.
- */
+const HIGH_IMPACT_KEYWORDS = [
+  "nifty", "sensex", "banknifty", "reliance", "tcs", "hdfc", "infosys",
+  "rbi", "sebi", "fed", "rate", "repo", "policy", "result", "earning",
+  "quarterly", "ipo", "merger", "acquisition",
+];
+
+function deriveImportance(article: SpArticle): number {
+  const text = `${article.title} ${article.summary ?? ""}`.toLowerCase();
+  const tier = article.source?.tier ?? 2;
+  const tierScore = tier === 1 ? 0.55 : 0.35;
+  const keywordHits = HIGH_IMPACT_KEYWORDS.filter((k) => text.includes(k)).length;
+  return Math.min(0.95, tierScore + Math.min(0.4, keywordHits * 0.08));
+}
+
+function importanceToImpact(score: number): NewsImpact {
+  if (score >= 0.7) return "high";
+  if (score >= 0.4) return "medium";
+  return "low";
+}
+
 const SECTOR_TAGS = new Set([
-  "BANKING",
-  "IT",
-  "PHARMA",
-  "FMCG",
-  "AUTO",
-  "ENERGY",
-  "METALS",
-  "REALTY",
-  "INFRA",
-  "MEDIA",
-  "TELECOM",
-  "FINTECH",
+  "BANKING", "IT", "PHARMA", "FMCG", "AUTO", "ENERGY",
+  "METALS", "REALTY", "INFRA", "MEDIA", "TELECOM", "FINTECH",
 ]);
 
-function extractSymbolsAndSectors(entities: string[] | undefined): {
-  symbols: string[];
-  sectors: string[];
-} {
-  if (!entities || entities.length === 0) return { symbols: [], sectors: [] };
-  const symbols: string[] = [];
-  const sectors: string[] = [];
-  for (const e of entities) {
-    if (SECTOR_TAGS.has(e.toUpperCase())) {
-      sectors.push(e);
-    } else {
-      symbols.push(e);
+const KNOWN_SYMBOLS = [
+  "NIFTY50", "NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
+  "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "WIPRO", "HDFC",
+  "AXISBANK", "KOTAKBANK", "BHARTIARTL", "ITC", "LT", "SBIN", "ONGC",
+  "TATAMOTORS", "TATASTEEL", "ADANIENT", "ADANIPORTS", "SUNPHARMA",
+  "DRREDDY", "CIPLA", "DIVISLAB", "HINDUNILVR", "BAJFINANCE", "BAJAJFINSV",
+];
+
+function extractSymbolsAndSectors(
+  entities: string[] | undefined,
+  text: string,
+): { symbols: string[]; sectors: string[] } {
+  const symbols = new Set<string>();
+  const sectors = new Set<string>();
+
+  if (entities?.length) {
+    for (const e of entities) {
+      if (SECTOR_TAGS.has(e.toUpperCase())) sectors.add(e);
+      else symbols.add(e);
     }
+    return { symbols: [...symbols], sectors: [...sectors] };
   }
-  return { symbols, sectors };
+
+  const upper = text.toUpperCase();
+  for (const sym of KNOWN_SYMBOLS) {
+    const re = new RegExp(`(?:^|[^A-Z0-9])${sym}(?:[^A-Z0-9]|$)`);
+    if (re.test(upper)) symbols.add(sym);
+  }
+
+  return { symbols: [...symbols], sectors: [] };
 }
 
+/** Strip HTML tags, truncate long summaries. */
+function cleanSummary(raw: string): string {
+  return raw
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+// ---------------------------------------------------------------------------
+// Article → NewsItem mapping
+// ---------------------------------------------------------------------------
+
 function mapArticleToNewsItem(article: SpArticle): NewsItem {
-  const overall = article.sentiment?.overall ?? null;
-  const label = sentimentLabel(overall);
+  const text = `${article.title} ${article.summary ?? ""}`;
+
+  // Use SP sentiment if present, otherwise score from text
+  const spOverall = article.sentiment?.overall;
+  const scored =
+    spOverall !== null && spOverall !== undefined
+      ? { label: sentimentLabel(spOverall), overall: spOverall }
+      : scoreText(text);
 
   const sentiment: ArticleSentiment = {
-    label,
-    overall: overall ?? 0,
+    label: scored.label,
+    overall: scored.overall,
     market: article.sentiment?.market ?? null,
     company: article.sentiment?.company ?? null,
     macro: article.sentiment?.macro ?? null,
     risk: article.sentiment?.risk ?? null,
   };
 
-  const impact = importanceToImpact(article.importance_score);
-  const { symbols, sectors } = extractSymbolsAndSectors(article.primary_entities);
+  const importanceScore =
+    typeof article.importance_score === "number"
+      ? article.importance_score
+      : deriveImportance(article);
+
+  const { symbols, sectors } = extractSymbolsAndSectors(
+    article.primary_entities,
+    text,
+  );
 
   return {
     id: article.id,
     title: article.title,
-    summary: article.summary ?? "",
+    summary: cleanSummary(article.summary ?? ""),
     link: article.canonicalUrl,
     source: article.source?.name ?? article.sourceId ?? "Unknown",
     publishedAt: article.publishedAt ?? null,
     category: deriveCategory(article.category),
     eventType: (article.event_type as NewsEventType | undefined) ?? null,
     sentiment,
-    impact,
-    importanceScore: article.importance_score ?? 0,
+    impact: importanceToImpact(importanceScore),
+    importanceScore,
     symbols,
     sectors,
   };
@@ -153,20 +220,13 @@ function mapArticleToNewsItem(article: SpArticle): NewsItem {
 // Market sentiment computation
 // ---------------------------------------------------------------------------
 
-/** Build a synthetic MarketSentiment from article-level scores when the
- *  /market/india endpoint has no regime data. */
 function synthesiseSentiment(items: NewsItem[]): MarketSentiment {
   if (items.length === 0) {
     return {
-      label: "neutral",
-      score: 0,
-      riskRatio: 50,
-      regime: "mixed",
-      bullCount: 0,
-      bearCount: 0,
+      label: "neutral", score: 0, riskRatio: 50, regime: "mixed",
+      bullCount: 0, bearCount: 0,
       headline: "No market-moving headlines right now.",
-      breadth: null,
-      confidence: null,
+      breadth: null, confidence: null,
     };
   }
 
@@ -174,7 +234,6 @@ function synthesiseSentiment(items: NewsItem[]): MarketSentiment {
   let totalWeight = 0;
   let bull = 0;
   let bear = 0;
-
   const impactWeight: Record<NewsImpact, number> = { high: 3, medium: 2, low: 1 };
 
   for (const item of items) {
@@ -192,53 +251,32 @@ function synthesiseSentiment(items: NewsItem[]): MarketSentiment {
 
   const regime: NewsRegime =
     label === "bullish"
-      ? riskRatio >= 45
-        ? "risk-on"
-        : "mixed"
+      ? riskRatio >= 45 ? "risk-on" : "mixed"
       : label === "bearish"
-        ? riskRatio <= 55
-          ? "risk-off"
-          : "mixed"
-        : riskRatio >= 60
-          ? "risk-on"
-          : riskRatio <= 40
-            ? "risk-off"
-            : "mixed";
+        ? riskRatio <= 55 ? "risk-off" : "mixed"
+        : riskRatio >= 60 ? "risk-on" : riskRatio <= 40 ? "risk-off" : "mixed";
 
   const tone =
-    label === "bullish"
-      ? "Headlines skew bullish"
-      : label === "bearish"
-        ? "Headlines skew bearish"
-        : "Headlines are mixed";
-
+    label === "bullish" ? "Headlines skew bullish"
+    : label === "bearish" ? "Headlines skew bearish"
+    : "Headlines are mixed";
   const riskText =
-    regime === "risk-on"
-      ? "risk-on tape"
-      : regime === "risk-off"
-        ? "risk-off tape"
-        : "balanced risk";
+    regime === "risk-on" ? "risk-on tape"
+    : regime === "risk-off" ? "risk-off tape"
+    : "balanced risk";
 
   return {
-    label,
-    score,
-    riskRatio,
-    regime,
-    bullCount: bull,
-    bearCount: bear,
+    label, score, riskRatio, regime,
+    bullCount: bull, bearCount: bear,
     headline: `${tone} — ${riskText} (${bull} bullish / ${bear} bearish).`,
-    breadth: null,
-    confidence: null,
+    breadth: null, confidence: null,
   };
 }
 
-/** Map SentinelPulse market/india response to MarketSentiment. */
 function mapMarketIndia(
   sp: SpMarketIndiaResponse,
   items: NewsItem[],
 ): MarketSentiment {
-  // Use breadth/regime data from SentinelPulse when available, otherwise fall
-  // back to synthesising from article scores.
   const breadth: NewsBreadth | null = sp.breadth
     ? {
         advancingPct: sp.breadth.advancing_articles_pct,
@@ -250,26 +288,24 @@ function mapMarketIndia(
       }
     : null;
 
+  const base = synthesiseSentiment(items);
   const regime = sp.regime;
-  if (!regime) return { ...synthesiseSentiment(items), breadth };
+  if (!regime) return { ...base, breadth };
 
-  // Map SentinelPulse RISK_ON/RISK_OFF/NEUTRAL/CRISIS → our regime
+  type RegimeEntry = { regime?: string; confidence?: number };
   const spRegimeStr =
-    regime.nifty50?.regime ??
-    regime.broad_market?.regime ??
-    (regime as { nifty50?: string }).nifty50;
+    (regime as Record<string, RegimeEntry | undefined>).nifty50?.regime ??
+    (regime as Record<string, RegimeEntry | undefined>).broad_market?.regime;
 
   const regimeMapped: NewsRegime =
-    spRegimeStr === "RISK_ON"
-      ? "risk-on"
-      : spRegimeStr === "RISK_OFF" || spRegimeStr === "CRISIS"
-        ? "risk-off"
-        : "mixed";
+    spRegimeStr === "RISK_ON" ? "risk-on"
+    : spRegimeStr === "RISK_OFF" || spRegimeStr === "CRISIS" ? "risk-off"
+    : base.regime;
 
   const confidence =
-    regime.nifty50?.confidence ?? regime.broad_market?.confidence ?? null;
-
-  const base = synthesiseSentiment(items);
+    (regime as Record<string, RegimeEntry | undefined>).nifty50?.confidence ??
+    (regime as Record<string, RegimeEntry | undefined>).broad_market?.confidence ??
+    null;
 
   return {
     ...base,
@@ -284,45 +320,20 @@ function mapMarketIndia(
 // ---------------------------------------------------------------------------
 
 export type GetIndiaNewsOptions = {
-  /** Filter to a specific category, or "all" (default). */
   category?: NewsCategory | "all";
-  /** Max items returned. Default 40. */
   limit?: number;
-  /** Pagination cursor from a previous response. */
   cursor?: string;
-  /** Filter to articles linked to a specific NSE instrument. */
   asset_id?: string;
-  /** Minimum importance score [0, 1]. Default 0. */
   min_importance?: number;
-  /** Filter by SentinelPulse event type. */
   event_type?: string;
 };
 
-async function loadArticles(opts: GetIndiaNewsOptions) {
-  const params: Parameters<typeof fetchLatestArticles>[0] = {
-    limit: Math.min(100, Math.max(1, opts.limit ?? 40)),
-  };
-  if (opts.cursor) params.cursor = opts.cursor;
-  if (opts.asset_id) params.asset_id = opts.asset_id;
-  if (opts.min_importance !== undefined) params.min_importance = opts.min_importance;
-  if (opts.event_type) params.event_type = opts.event_type;
-  // Don't pass category to SP; we filter client-side so the sentiment is
-  // always computed across the full tape regardless of the selected category.
-
-  return fetchLatestArticles(params);
-}
-
 const EMPTY_RESPONSE: NewsFeedResponse = {
   sentiment: {
-    label: "neutral",
-    score: 0,
-    riskRatio: 50,
-    regime: "mixed",
-    bullCount: 0,
-    bearCount: 0,
+    label: "neutral", score: 0, riskRatio: 50, regime: "mixed",
+    bullCount: 0, bearCount: 0,
     headline: "News service temporarily unavailable.",
-    breadth: null,
-    confidence: null,
+    breadth: null, confidence: null,
   },
   items: [],
   fetchedAt: new Date().toISOString(),
@@ -330,19 +341,13 @@ const EMPTY_RESPONSE: NewsFeedResponse = {
   total: null,
 };
 
-/**
- * Build the full news response for the given options.
- * Sentiment is always computed across the full impactful set so the market
- * read is stable regardless of which category is active in the UI.
- */
 export async function getIndiaNews(
   opts: GetIndiaNewsOptions = {},
 ): Promise<NewsFeedResponse> {
   const { category = "all", limit = 40 } = opts;
 
-  // Cache key encodes the filterable dimensions that affect the payload.
   const cacheKey = [
-    "sp:news",
+    "sp:news2",
     category,
     opts.asset_id ?? "",
     opts.min_importance ?? "",
@@ -352,41 +357,56 @@ export async function getIndiaNews(
 
   try {
     return await cache.memo(cacheKey, ARTICLES_TTL_MS, async () => {
-      // Fetch articles and market data in parallel.
-      const [articlesResult, marketData] = await Promise.allSettled([
-        loadArticles({ ...opts, limit }),
-        cache.memo("sp:market:india", MARKET_TTL_MS, fetchMarketIndia),
-      ]);
+      // /news/market/india returns the richest article set (recent + curated)
+      const marketData = await cache.memo(
+        "sp:market:india",
+        MARKET_TTL_MS,
+        fetchMarketIndia,
+      );
 
-      const { articles, nextCursor, total } =
-        articlesResult.status === "fulfilled"
-          ? articlesResult.value
-          : { articles: [], nextCursor: null, total: null };
+      // The /news/market/india response includes an `articles` array in practice
+      type MarketWithArticles = SpMarketIndiaResponse & { articles?: SpArticle[] };
+      const rawArticles: SpArticle[] =
+        (marketData as MarketWithArticles | null)?.articles ?? [];
 
-      const spMarket =
-        marketData.status === "fulfilled" ? marketData.value : null;
+      // Map all articles — scoring sentiment from text when SP fields absent
+      let allItems: NewsItem[] = rawArticles.map(mapArticleToNewsItem);
 
-      // Map all articles to NewsItem
-      let items: NewsItem[] = articles.map(mapArticleToNewsItem);
-
-      // Apply category filter after mapping (so sentiment uses the full set)
-      const allItems = items;
-      if (category !== "all") {
-        items = items.filter((i) => i.category === category);
+      // Apply optional filters
+      if (opts.min_importance !== undefined) {
+        allItems = allItems.filter((i) => i.importanceScore >= opts.min_importance!);
+      }
+      if (opts.event_type) {
+        allItems = allItems.filter((i) => i.eventType === opts.event_type);
       }
 
-      // Compute sentiment from the full set (before category filter)
+      // Sentiment computed across the full set for a stable market read
       const sentiment =
-        spMarket !== null
-          ? mapMarketIndia(spMarket, allItems)
+        marketData !== null
+          ? mapMarketIndia(marketData as SpMarketIndiaResponse, allItems)
           : synthesiseSentiment(allItems);
+
+      // Category filter applied after sentiment
+      const filtered =
+        category === "all"
+          ? allItems
+          : allItems.filter((i) => i.category === category);
+
+      // Sort by importance then recency
+      filtered.sort((a, b) => {
+        const id = b.importanceScore - a.importanceScore;
+        if (Math.abs(id) > 0.05) return id;
+        const at = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+        const bt = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+        return bt - at;
+      });
 
       return {
         sentiment,
-        items,
+        items: filtered.slice(0, Math.max(1, limit)),
         fetchedAt: new Date().toISOString(),
-        nextCursor,
-        total,
+        nextCursor: null,
+        total: filtered.length,
       };
     });
   } catch (err: unknown) {

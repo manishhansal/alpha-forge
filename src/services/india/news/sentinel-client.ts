@@ -129,6 +129,8 @@ export type SpHotEvent = {
 
 export type SpMarketIndiaResponse = {
   as_of: string;
+  /** Articles included in the market/india response (not in API.md but present in practice). */
+  articles?: SpArticle[];
   breadth: SpMarketBreadth | null;
   regime: {
     nifty50?: SpRegimeEntry;

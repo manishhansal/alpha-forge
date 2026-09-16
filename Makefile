@@ -50,6 +50,7 @@ rebuild-app:
 	$(DOCKER_RUN_BASE) \
 		--name $(APP_CONTAINER) \
 		-p 3000:3000 \
+		-e SENTINEL_PULSE_URL=http://host.docker.internal:3001 \
 		$(APP_IMAGE)
 	@echo "✓  App live at http://localhost:3000"
 
