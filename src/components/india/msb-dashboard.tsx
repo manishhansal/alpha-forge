@@ -8,11 +8,7 @@ import {
   ChevronUp,
   Flame,
   Layers,
-  PlusCircle,
   RefreshCw,
-  Sparkles,
-  TrendingDown,
-  TrendingUp,
   X,
 } from "lucide-react";
 import {
@@ -31,14 +27,9 @@ import {
   PaginationStrip,
   usePaginationFilter,
 } from "@/components/india/ui/pagination-filter";
-import {
-  SignalTableHead,
-  SignalTableRow,
-} from "@/components/india/ui/signal-table-row";
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { dataSourceLabels } from "@/features/settings/data-sources-shared";
 import { MarketCoreWidget } from "@/components/3d/market-core-widget";
-import { notify } from "@/lib/toast";
 import { SectorStocksTable } from "@/components/india/options/sector-stocks-table";
 import type { StockRow as SectorStockRow } from "@/components/india/options/sector-stocks-table";
 import { fmtTime } from "@/lib/utils";
@@ -92,16 +83,13 @@ type SortDir = "asc" | "desc";
 type SignalState = { signal: string; since: number };
 type SignalAgeMap = Record<string, SignalState>;
 
-type MsbSignalRow = {
-  Symbol: string;
-  Side: string;
-  Entry: number | string;
-  SL_ATR: number | string;
-  TGT_ATR: number | string;
-  Strike: number | string;
-  Type: string;
-  Strength: number | string;
-};
+/** Sanitise the bias string returned by /api/in/nifty-bias.
+ *  Guards against stale cached error strings ("DATA_SERVICE_UNAVAILABLE", "ERROR", etc.)
+ *  slipping through to the UI. Only "BULLISH" and "BEARISH" are display-safe. */
+function sanitizeBias(raw: string | undefined | null): string {
+  if (raw === "BULLISH" || raw === "BEARISH") return raw;
+  return "-";
+}
 
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
   symbol: "asc",
@@ -153,16 +141,6 @@ function saveSignalAges(map: SignalAgeMap): void {
   }
 }
 
-function _formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0;
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m`;
-  if (m > 0) return `${m}m ${sec % 60}s`;
-  return `${sec}s`;
-}
-
 const SIGNAL_RANK: Record<Exclude<StockRow["signal"], "N/A">, number> = {
   "STRONG SELL": 0,
   SELL: 1,
@@ -193,7 +171,6 @@ const fmt = (n: number | null | undefined, d = 2) =>
 const isVix = (name: string | undefined | null) => !!name?.toUpperCase().includes("VIX");
 
 export default function MsbDashboard() {
-  const [data, setData] = useState<MsbSignalRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [nifty, setNifty] = useState<{ bias: string; price: string }>({
     bias: "-",
@@ -206,8 +183,12 @@ export default function MsbDashboard() {
   };
   const setSnapshot = useIndiaMarketStore((s) => s.setSnapshot);
   const snapshotSources = useIndiaMarketStore((s) => s.snapshot?.sources) ?? [];
-  const sourceBadge =
-    snapshotSources.length > 0 ? dataSourceLabels(snapshotSources).join(" + ") : null;
+  const isSimulated = useIndiaMarketStore((s) => s.snapshot?.simulated) ?? false;
+  const sourceBadge = isSimulated
+    ? "SIMULATED DATA"
+    : snapshotSources.length > 0
+      ? dataSourceLabels(snapshotSources.filter((s): s is import("@/features/settings/data-sources-shared").DataSourceId => s !== "SIMULATED")).join(" + ")
+      : null;
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   // In-flight tracking + a stable AbortController per mount keep us under
@@ -225,33 +206,19 @@ export default function MsbDashboard() {
     try {
       setLoading(true);
       const init = { cache: "no-store" as const, signal: ctrl.signal };
-      const [signalsRes, biasRes, snapRes] = await Promise.all([
-        fetch("/api/in/msb-signals", init),
+      const [biasRes, snapRes] = await Promise.all([
         fetch("/api/in/nifty-bias", init),
         fetch("/api/in/market-snapshot", init),
       ]);
-      const [signalsJson, biasJson, snapJson] = await Promise.all([
-        signalsRes.json(),
+      const [biasJson, snapJson] = await Promise.all([
         biasRes.json(),
         snapRes.json(),
       ]);
       if (ctrl.signal.aborted) return;
-      const incoming: MsbSignalRow[] = Array.isArray(signalsJson) ? signalsJson : [];
-      setData(incoming);
-      // Toast when new strong signals appear (compare against previous data)
-      setData((prev) => {
-        const prevSymbols = new Set(prev.map((r) => r.Symbol));
-        const fresh = incoming.filter((r) => !prevSymbols.has(r.Symbol));
-        for (const row of fresh.slice(0, 3)) {
-          notify.signal(
-            String(row.Symbol),
-            row.Side?.toUpperCase() === "BUY" ? "BUY" : "SELL",
-            Number(row.Strength) || undefined,
-          );
-        }
-        return incoming;
+      setNifty({
+        bias:  sanitizeBias(biasJson?.bias),
+        price: biasJson?.price ?? "-",
       });
-      setNifty(biasJson);
       setSnapshot(snapJson);
     } catch (err: unknown) {
       const e = err as { name?: string };
@@ -274,18 +241,6 @@ export default function MsbDashboard() {
       ctrlRef.current?.abort();
     };
   }, [fetchData]);
-
-  const addJournal = (row: MsbSignalRow) => {
-    try {
-      const existing = JSON.parse(
-        localStorage.getItem("india-journal") || "[]",
-      );
-      existing.push({ ...row, time: new Date().toISOString() });
-      localStorage.setItem("india-journal", JSON.stringify(existing));
-    } catch {
-      /* ignore quota / private-mode failures */
-    }
-  };
 
   const sortedSectors = useMemo(() => {
     return [...snapshot.sectors].sort((a, b) => {
@@ -313,8 +268,12 @@ export default function MsbDashboard() {
               </h1>
               {sourceBadge && (
                 <span
-                  className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
-                  title="Live data source(s) actually serving this snapshot"
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${
+                    isSimulated
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg-muted)]"
+                  }`}
+                  title={isSimulated ? "Data service unavailable — showing simulated market data" : "Live data source(s) actually serving this snapshot"}
                 >
                   {sourceBadge}
                 </span>
@@ -420,9 +379,6 @@ export default function MsbDashboard() {
           </div>
         </motion.div>
       </section>
-
-      {/* Signals Table */}
-      <MsbSignalsSection data={data} loading={loading} addJournal={addJournal} />
 
       <SectorStocksModal
         sector={selectedSector}
@@ -592,27 +548,6 @@ function SectorTile({
   );
 }
 
-function SideBadge({ side }: { side?: string }) {
-  if (!side) return null;
-  const buy = side.toUpperCase() === "BUY";
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-        buy
-          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-          : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
-      }`}
-    >
-      {buy ? (
-        <TrendingUp className="h-3 w-3" />
-      ) : (
-        <TrendingDown className="h-3 w-3" />
-      )}
-      {side}
-    </span>
-  );
-}
-
 // Hoisted out of `SectorStocksModal` so React 19 doesn't re-create the
 // component identity on every render (which would also blow away child
 // state). Receives the active sort state as plain props.
@@ -657,188 +592,6 @@ function _SortHeader({
         )}
       </button>
     </th>
-  );
-}
-
-function MsbSignalsSection({
-  data,
-  loading,
-  addJournal,
-}: {
-  data: MsbSignalRow[];
-  loading: boolean;
-  addJournal: (row: MsbSignalRow) => void;
-}) {
-  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-
-  const getConfidence = useCallback(
-    (row: MsbSignalRow) => Number(row.Strength) || 0,
-    [],
-  );
-  const getWinrate = useCallback(
-    (row: MsbSignalRow) => {
-      const s = Number(row.Strength) || 0;
-      return Math.min(s / 1.5, 1);
-    },
-    [],
-  );
-
-  const {
-    pageItems,
-    activeTab,
-    setActiveTab,
-    page,
-    setPage,
-    totalPages,
-    filteredTotal,
-    pageSize,
-    tabs,
-  } = usePaginationFilter({
-    items: data,
-    pageSize: 5,
-    getConfidence,
-    getWinrate,
-    confidenceThreshold: 0.7,
-    winrateThreshold: 0.6,
-  });
-
-  // Convert MsbSignalRow to the generic SignalRow shape for SignalTableRow.
-  // We surface Entry/SL/Target/Strike/Strength in the detail panel via `note`.
-  const toSignalRow = useCallback(
-    (row: MsbSignalRow) => ({
-      symbol: String(row.Symbol),
-      price: typeof row.Entry === "number" ? row.Entry : null,
-      changePct: null,
-      metric: Number(row.Strength) || 0,
-      metricLabel: `Str ${Number(row.Strength).toFixed(2)}`,
-      kind: row.Side?.toUpperCase() === "BUY" ? "BULLISH" : "BEARISH",
-      note:
-        `Entry ${row.Entry} · SL ${row.SL_ATR} · Tgt ${row.TGT_ATR} · ` +
-        `Strike ${row.Strike} · ${row.Type}`,
-    }),
-    [],
-  );
-
-  // col count: chevron + Symbol + Price(Entry) + Chg% + Side + Strength + Journal = 7
-  const COL_SPAN = 7;
-
-  return (
-    <section>
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut", delay: 0.2 }}
-        className="glass rounded-2xl p-4 sm:p-5 shadow-sm"
-      >
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-400/25 to-violet-500/20 ring-1 ring-blue-400/20">
-              <Sparkles className="h-4 w-4 text-blue-400" />
-            </div>
-            <h2 className="text-base sm:text-lg font-semibold tracking-tight">
-              MSB–OB Intraday Signals
-            </h2>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <FilterTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
-            <span className="text-[10px] sm:text-xs text-muted-foreground">
-              {filteredTotal} of {data.length} setup{data.length === 1 ? "" : "s"}
-            </span>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto -mx-1 px-1">
-          <table className="w-full text-sm">
-            <thead>
-              <SignalTableHead
-                extraTrailHeaders={
-                  <>
-                    <th className="p-2.5 font-medium">Side</th>
-                    <th className="p-2.5 text-right font-medium">Strength</th>
-                    <th className="p-2.5" />
-                  </>
-                }
-              />
-            </thead>
-            <tbody>
-              <AnimatePresence>
-                {pageItems.map((row, i) => (
-                  <SignalTableRow
-                    key={`${row.Symbol}-${(page - 1) * pageSize + i}`}
-                    hit={toSignalRow(row)}
-                    colSpan={COL_SPAN}
-                    index={i}
-                    expanded={expandedSymbol === row.Symbol}
-                    onToggle={() =>
-                      setExpandedSymbol((prev) =>
-                        prev === row.Symbol ? null : row.Symbol,
-                      )
-                    }
-                    extraTrailCells={
-                      <>
-                        <td className="p-2.5">
-                          <SideBadge side={row.Side} />
-                        </td>
-                        <td className="p-2.5 text-right tabular font-semibold">
-                          {Number(row.Strength).toFixed(2)}
-                        </td>
-                        <td className="p-2.5">
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addJournal(row);
-                            }}
-                            title="Add to journal"
-                          >
-                            <PlusCircle className="h-3 w-3 mr-1" />
-                            Journal
-                          </Button>
-                        </td>
-                      </>
-                    }
-                  />
-                ))}
-              </AnimatePresence>
-
-              {data.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
-                    No setups available — run the Python scanner during market hours.
-                  </td>
-                </tr>
-              )}
-              {data.length > 0 && pageItems.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
-                    No setups match the current filter.
-                  </td>
-                </tr>
-              )}
-              {loading && data.length === 0 && (
-                <tr>
-                  <td colSpan={COL_SPAN} className="p-8 text-center text-muted-foreground text-sm">
-                    Loading signals…
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <PaginationStrip
-          page={page}
-          totalPages={totalPages}
-          filteredTotal={filteredTotal}
-          pageSize={pageSize}
-          disabled={loading}
-          onPrev={() => setPage(page - 1)}
-          onNext={() => setPage(page + 1)}
-          onJump={setPage}
-        />
-      </motion.div>
-    </section>
   );
 }
 
