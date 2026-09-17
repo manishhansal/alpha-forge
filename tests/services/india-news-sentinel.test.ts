@@ -3,13 +3,17 @@ import type { NewsFeedResponse } from "@/types/india/news";
 
 // ---------------------------------------------------------------------------
 // Stub SentinelPulse client methods so tests never hit the network.
+//
+// NOTE: The service reads articles from fetchMarketIndia().articles (not
+// fetchLatestArticles). All article fixtures are delivered via marketIndia.
 // ---------------------------------------------------------------------------
 
-const fetchLatestMock = vi.fn();
 const fetchMarketIndiaMock = vi.fn();
 
 vi.mock("@/services/india/news/sentinel-client", () => ({
-  fetchLatestArticles: (...args: unknown[]) => fetchLatestMock(...args),
+  // fetchLatestArticles is no longer called by the service — stub it as a
+  // no-op to satisfy any lingering imports without breaking tests.
+  fetchLatestArticles: vi.fn().mockResolvedValue({ articles: [], nextCursor: null, total: 0 }),
   fetchMarketIndia: (...args: unknown[]) => fetchMarketIndiaMock(...args),
   SentinelPulseError: class SentinelPulseError extends Error {
     statusCode: number | null;
@@ -33,7 +37,7 @@ vi.mock("@/services/india/cache", () => ({
 import { getIndiaNews } from "@/services/india/news";
 
 // ---------------------------------------------------------------------------
-// Sample data fixtures
+// Helpers — build a market/india response with embedded articles
 // ---------------------------------------------------------------------------
 
 function spArticle(overrides: Record<string, unknown> = {}) {
@@ -57,8 +61,19 @@ function spArticle(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function latestResult(articles: ReturnType<typeof spArticle>[]) {
-  return { articles, nextCursor: null, total: articles.length };
+/** Wrap articles in a /news/market/india-style response. */
+function marketIndia(
+  articles: ReturnType<typeof spArticle>[],
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    as_of: "2026-09-16T09:00:00.000Z",
+    articles,
+    breadth: null,
+    regime: null,
+    hot_events: [],
+    ...extra,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -67,10 +82,9 @@ function latestResult(articles: ReturnType<typeof spArticle>[]) {
 
 describe("services/india/news — getIndiaNews", () => {
   beforeEach(() => {
-    fetchLatestMock.mockReset();
     fetchMarketIndiaMock.mockReset();
-    // Default: market endpoint unavailable (no breadth/regime)
-    fetchMarketIndiaMock.mockResolvedValue(null);
+    // Default: returns an empty article list with no breadth/regime
+    fetchMarketIndiaMock.mockResolvedValue(marketIndia([]));
   });
 
   afterEach(() => {
@@ -78,7 +92,7 @@ describe("services/india/news — getIndiaNews", () => {
   });
 
   it("maps SentinelPulse articles to NewsItem shape", async () => {
-    fetchLatestMock.mockResolvedValue(latestResult([spArticle()]));
+    fetchMarketIndiaMock.mockResolvedValue(marketIndia([spArticle()]));
     const result: NewsFeedResponse = await getIndiaNews({ limit: 10 });
 
     expect(result.items).toHaveLength(1);
@@ -89,17 +103,17 @@ describe("services/india/news — getIndiaNews", () => {
     expect(item.source).toBe("Reuters");
     expect(item.eventType).toBe("CENTRAL_BANK_DECISION");
     expect(item.importanceScore).toBe(0.87);
-    expect(item.impact).toBe("high"); // importance >= 0.7
+    expect(item.impact).toBe("high"); // importance_score >= 0.7
     expect(item.symbols).toContain("NIFTY50");
     expect(item.symbols).toContain("BANKNIFTY");
   });
 
   it("derives sentiment label from overall score", async () => {
-    fetchLatestMock.mockResolvedValue(
-      latestResult([
-        spArticle({ sentiment: { overall: 0.6, market: null, company: null, macro: null, risk: null } }),
-        spArticle({ id: "art_002", sentiment: { overall: -0.3, market: null, company: null, macro: null, risk: null } }),
-        spArticle({ id: "art_003", sentiment: { overall: 0.01, market: null, company: null, macro: null, risk: null } }),
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
+        spArticle({ id: "bull", sentiment: { overall: 0.6, market: null, company: null, macro: null, risk: null } }),
+        spArticle({ id: "bear", sentiment: { overall: -0.3, market: null, company: null, macro: null, risk: null } }),
+        spArticle({ id: "neut", sentiment: { overall: 0.01, market: null, company: null, macro: null, risk: null } }),
       ]),
     );
     const result = await getIndiaNews();
@@ -110,8 +124,8 @@ describe("services/india/news — getIndiaNews", () => {
   });
 
   it("maps importance_score to correct impact tiers", async () => {
-    fetchLatestMock.mockResolvedValue(
-      latestResult([
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
         spArticle({ id: "a1", importance_score: 0.75 }),
         spArticle({ id: "a2", importance_score: 0.5 }),
         spArticle({ id: "a3", importance_score: 0.2 }),
@@ -125,8 +139,8 @@ describe("services/india/news — getIndiaNews", () => {
   });
 
   it("filters items to the requested category", async () => {
-    fetchLatestMock.mockResolvedValue(
-      latestResult([
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
         spArticle({ id: "india_art", category: "RBI" }),
         spArticle({ id: "global_art", category: "GLOBAL" }),
       ]),
@@ -137,8 +151,8 @@ describe("services/india/news — getIndiaNews", () => {
   });
 
   it("returns all items when category is 'all'", async () => {
-    fetchLatestMock.mockResolvedValue(
-      latestResult([
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
         spArticle({ id: "a", category: "RBI" }),
         spArticle({ id: "b", category: "GLOBAL" }),
       ]),
@@ -147,37 +161,34 @@ describe("services/india/news — getIndiaNews", () => {
     expect(result.items).toHaveLength(2);
   });
 
-  it("synthesises sentiment from article scores when market/india is unavailable", async () => {
-    fetchLatestMock.mockResolvedValue(
-      latestResult([
+  it("synthesises sentiment from article scores when market/india has no regime", async () => {
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
         spArticle({ id: "bull", importance_score: 0.8, sentiment: { overall: 0.7, market: null, company: null, macro: null, risk: null } }),
         spArticle({ id: "bear", importance_score: 0.3, sentiment: { overall: -0.2, market: null, company: null, macro: null, risk: null } }),
       ]),
     );
-    fetchMarketIndiaMock.mockResolvedValue(null);
     const result = await getIndiaNews();
-    // Bullish article has higher importance weight, net should be bullish
+    // Bullish article has higher importance weight → net should be bullish
     expect(result.sentiment.label).toBe("bullish");
     expect(result.sentiment.score).toBeGreaterThan(0);
     expect(result.sentiment.breadth).toBeNull();
     expect(result.sentiment.confidence).toBeNull();
   });
 
-  it("includes breadth data when market/india is available", async () => {
-    fetchLatestMock.mockResolvedValue(latestResult([spArticle()]));
-    fetchMarketIndiaMock.mockResolvedValue({
-      as_of: "2026-09-16T09:00:00.000Z",
-      breadth: {
-        advancing_articles_pct: 54.2,
-        declining_articles_pct: 31.8,
-        neutral_articles_pct: 14.0,
-        net_breadth: 0.224,
-        high_importance_count: 5,
-        window_minutes: 60,
-      },
-      regime: null,
-      hot_events: [],
-    });
+  it("includes breadth data when market/india returns breadth", async () => {
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([spArticle()], {
+        breadth: {
+          advancing_articles_pct: 54.2,
+          declining_articles_pct: 31.8,
+          neutral_articles_pct: 14.0,
+          net_breadth: 0.224,
+          high_importance_count: 5,
+          window_minutes: 60,
+        },
+      }),
+    );
     const result = await getIndiaNews();
     expect(result.sentiment.breadth).not.toBeNull();
     expect(result.sentiment.breadth?.netBreadth).toBe(0.224);
@@ -185,23 +196,35 @@ describe("services/india/news — getIndiaNews", () => {
   });
 
   it("returns an empty sentinel response when SentinelPulse is unreachable", async () => {
-    fetchLatestMock.mockRejectedValue(new Error("ECONNREFUSED"));
+    fetchMarketIndiaMock.mockRejectedValue(new Error("ECONNREFUSED"));
     const result = await getIndiaNews();
     expect(result.items).toHaveLength(0);
     expect(result.sentiment.label).toBe("neutral");
     expect(result.sentiment.score).toBe(0);
-    // Either the "no headlines" or "unavailable" message is acceptable
     expect(result.sentiment.headline).toBeTruthy();
   });
 
-  it("includes nextCursor and total from the SentinelPulse response", async () => {
-    fetchLatestMock.mockResolvedValue({
-      articles: [spArticle()],
-      nextCursor: "cursor_xyz",
-      total: 150,
-    });
+  it("filters out test.sentinelpulse.internal articles", async () => {
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
+        spArticle({ id: "real", canonicalUrl: "https://economictimes.indiatimes.com/real-article" }),
+        spArticle({ id: "test", canonicalUrl: "https://test.sentinelpulse.internal/articles/pipeline-123" }),
+      ]),
+    );
     const result = await getIndiaNews();
-    expect(result.nextCursor).toBe("cursor_xyz");
-    expect(result.total).toBe(150);
+    expect(result.items.map((i) => i.id)).toContain("real");
+    expect(result.items.map((i) => i.id)).not.toContain("test");
+  });
+
+  it("total reflects the count of real articles after filtering", async () => {
+    fetchMarketIndiaMock.mockResolvedValue(
+      marketIndia([
+        spArticle({ id: "a" }),
+        spArticle({ id: "b" }),
+        spArticle({ id: "c" }),
+      ]),
+    );
+    const result = await getIndiaNews({ limit: 100 });
+    expect(result.total).toBe(3);
   });
 });

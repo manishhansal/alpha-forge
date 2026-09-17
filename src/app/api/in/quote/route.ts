@@ -26,7 +26,7 @@ export async function GET(req: Request) {
       const simulated = getSimulatedQuotes(symbols);
       return NextResponse.json(
         { quotes: simulated, source: "SIMULATED", sources: ["SIMULATED"], fetchedAt: new Date().toISOString(), simulated: true },
-        { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
+        { headers: { "Cache-Control": "no-store" } },
       );
     }
     return NextResponse.json(
@@ -36,14 +36,14 @@ export async function GET(req: Request) {
         sources: ["data-service2"],
         fetchedAt: new Date().toISOString(),
       },
-      { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
       const quotes = getSimulatedQuotes(symbols);
       return NextResponse.json(
         { quotes, source: "SIMULATED", sources: ["SIMULATED"], fetchedAt: new Date().toISOString(), simulated: true },
-        { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } },
+        { headers: { "Cache-Control": "no-store" } },
       );
     }
     return NextResponse.json(

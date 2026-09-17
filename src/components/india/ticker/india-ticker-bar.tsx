@@ -2,9 +2,17 @@
 
 import { useIndiaMarketStore } from "@/store/india/marketStore";
 import { useFetchPoll, getJson } from "@/hooks/india/useFetchPoll";
+import { useFeedStream } from "@/hooks/india/useFeedStream";
 import { fmt, fmtPct } from "@/lib/india/format";
 import { cn } from "@/lib/utils";
+import { FNO_INDICES, SUPPLEMENTARY_INDICES } from "@/lib/india/fno-symbols";
 import type { Snapshot } from "@/types/india";
+
+// Symbols subscribed to via SSE — all FNO + supplementary indices.
+const TICKER_SYMBOLS = [
+  ...FNO_INDICES.map((i) => i.symbol),
+  ...SUPPLEMENTARY_INDICES.map((i) => i.symbol),
+];
 
 const ACCENT: Record<string, string> = {
   "NIFTY 50":      "#10b981",
@@ -28,10 +36,10 @@ function IndexChip({
   price: number | null;
   changePct: number | null;
 }) {
-  const pct     = changePct ?? 0;
-  const vix     = isVix(name);
+  const pct      = changePct ?? 0;
+  const vix      = isVix(name);
   const positive = vix ? pct < 0 : pct >= 0;
-  const dot     = (name && ACCENT[name]) ?? "#64748b";
+  const dot      = (name && ACCENT[name]) ?? "#64748b";
 
   return (
     <div
@@ -73,14 +81,24 @@ function IndexChip({
 
 export function IndiaTickerBar() {
   const snapshot    = useIndiaMarketStore((s) => s.snapshot);
+  const ticks       = useIndiaMarketStore((s) => s.ticks);
   const setSnapshot = useIndiaMarketStore((s) => s.setSnapshot);
 
+  // ── Snapshot poll (5s) ───────────────────────────────────────────────────
+  // Provides open/high/low/prevClose/change and seeds the initial price.
+  // Tightened from 15s to 5s — cache headers are now no-store so every
+  // request hits the origin and returns fresh data.
   useFetchPoll<Snapshot>(
     (signal) => getJson<Snapshot>("/api/in/market-snapshot", signal),
     (data)   => setSnapshot(data),
-    { intervalMs: 15_000 },
+    { intervalMs: 5_000 },
     [],
   );
+
+  // ── SSE live tick stream (5s poll interval on the server) ────────────────
+  // Overlays real-time ltp + changePct from the SSE gateway onto the store.
+  // This means prices update every ~5s without waiting for the next snapshot.
+  useFeedStream(TICKER_SYMBOLS, 5_000);
 
   const indices = snapshot?.indices ?? [];
 
@@ -95,7 +113,20 @@ export function IndiaTickerBar() {
     );
   }
 
-  const chips = [...indices, ...indices]; // duplicate for seamless loop
+  // Merge snapshot baseline with live ticks so the display is always as
+  // fresh as the latest SSE event, falling back to snapshot when no tick
+  // has arrived yet for that symbol.
+  const mergedIndices = indices.map((idx) => {
+    const tick = ticks[idx.symbol];
+    if (!tick) return idx;
+    return {
+      ...idx,
+      price:     tick.ltp     ?? idx.price,
+      changePct: tick.changePct ?? idx.changePct,
+    };
+  });
+
+  const chips = [...mergedIndices, ...mergedIndices]; // duplicate for seamless loop
 
   return (
     <div className="relative flex items-center overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]/50 px-4 py-2 backdrop-blur-sm">

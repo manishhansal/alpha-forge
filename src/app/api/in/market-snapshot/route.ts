@@ -175,7 +175,9 @@ export async function GET() {
         fetchedAt: new Date().toISOString(),
         ...(isPartiallySimulated && { simulated: true }),
       },
-      { headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" } },
+      // no-store: every request goes to the origin — this route is already
+      // force-dynamic and callers poll on their own interval.
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
@@ -183,14 +185,14 @@ export async function GET() {
       // so the UI shows realistic values instead of empty tiles.
       const sim = getSimulatedSnapshot();
       return NextResponse.json(sim, {
-        headers: { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=30" },
+        headers: { "Cache-Control": "no-store" },
       });
     }
     // Unexpected error — also fall back to simulated so the UI doesn't break.
     console.error("[market-snapshot] unexpected error:", (err as Error).message);
     const sim = getSimulatedSnapshot();
     return NextResponse.json(sim, {
-      headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" },
+      headers: { "Cache-Control": "no-store" },
     });
   }
 }
