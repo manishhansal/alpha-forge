@@ -6,69 +6,102 @@ import { FNO_INDICES, SUPPLEMENTARY_INDICES } from "@/lib/india/fno-symbols";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const SECTORS: { name: string; symbol: string }[] = [
-  { name: "Bank",         symbol: "NSEBANK"   },
-  { name: "IT",           symbol: "CNXIT"     },
-  { name: "Auto",         symbol: "CNXAUTO"   },
-  { name: "Pharma",       symbol: "CNXPHARMA" },
-  { name: "FMCG",         symbol: "CNXFMCG"   },
-  { name: "Metal",        symbol: "CNXMETAL"  },
-  { name: "Energy",       symbol: "CNXENERGY" },
-  { name: "Realty",       symbol: "CNXREALTY" },
-  { name: "Fin Services", symbol: "CNXFIN"    },
-  { name: "Media",        symbol: "CNXMEDIA"  },
-  { name: "PSU Bank",     symbol: "CNXPSUBANK"},
-  { name: "Infra",        symbol: "CNXINFRA"  },
+// ---------------------------------------------------------------------------
+// Symbol mappings
+// ---------------------------------------------------------------------------
+// data-service2.0 uses NSE trading / F&O underlying symbols (NIFTY, BANKNIFTY).
+// The UI and the store key on the Yahoo-style symbol (^NSEI, ^NSEBANK) for
+// chart/option-chain compatibility. We translate at this boundary.
+// ---------------------------------------------------------------------------
+
+const SECTORS: { name: string; symbol: string; dsSymbol: string }[] = [
+  { name: "Bank",         symbol: "NSEBANK",    dsSymbol: "NSEBANK"    },
+  { name: "IT",           symbol: "CNXIT",      dsSymbol: "CNXIT"      },
+  { name: "Auto",         symbol: "CNXAUTO",    dsSymbol: "CNXAUTO"    },
+  { name: "Pharma",       symbol: "CNXPHARMA",  dsSymbol: "CNXPHARMA"  },
+  { name: "FMCG",         symbol: "CNXFMCG",    dsSymbol: "CNXFMCG"    },
+  { name: "Metal",        symbol: "CNXMETAL",   dsSymbol: "CNXMETAL"   },
+  { name: "Energy",       symbol: "CNXENERGY",  dsSymbol: "CNXENERGY"  },
+  { name: "Realty",       symbol: "CNXREALTY",  dsSymbol: "CNXREALTY"  },
+  { name: "Fin Services", symbol: "CNXFIN",     dsSymbol: "CNXFIN"     },
+  { name: "Media",        symbol: "CNXMEDIA",   dsSymbol: "CNXMEDIA"   },
+  { name: "PSU Bank",     symbol: "CNXPSUBANK", dsSymbol: "CNXPSUBANK" },
+  { name: "Infra",        symbol: "CNXINFRA",   dsSymbol: "CNXINFRA"   },
 ];
 
-const ALL_INDICES = [...FNO_INDICES, ...SUPPLEMENTARY_INDICES];
+// For FNO indices: send `underlying` (e.g. "NIFTY") to data-service2.0.
+// For supplementary (SENSEX, VIX): try well-known NSE symbols.
+const SUPPLEMENTARY_DS: Record<string, string> = {
+  "^BSESN":    "SENSEX",
+  "^INDIAVIX": "INDIAVIX",
+};
 
-/**
- * Fetch the last known close price from the daily historical series.
- * Used as a fallback when the live quote returns null (market closed / no provider).
- *
- * @param underlying  NSE underlying symbol accepted by data-service2.0 historical
- *                    endpoint (e.g. "NIFTY", "BANKNIFTY") — NOT the Yahoo-style
- *                    symbol like "^NSEI". Only FNO_INDICES have this field.
- */
+type IndexDef = {
+  name: string;
+  /** Yahoo-style symbol used as the UI/store key */
+  symbol: string;
+  /** NSE symbol sent to data-service2.0 */
+  dsSymbol: string;
+  underlying: string | null;
+};
+
+const ALL_INDEX_DEFS: IndexDef[] = [
+  ...FNO_INDICES.map((idx) => ({
+    name:      idx.name,
+    symbol:    idx.symbol,
+    dsSymbol:  idx.underlying,          // NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY
+    underlying: idx.underlying,
+  })),
+  ...SUPPLEMENTARY_INDICES.map((idx) => ({
+    name:      idx.name,
+    symbol:    idx.symbol,
+    dsSymbol:  SUPPLEMENTARY_DS[idx.symbol] ?? idx.symbol,
+    underlying: null,
+  })),
+];
+
+// ---------------------------------------------------------------------------
+// Historical close fallback (market closed / provider down)
+// ---------------------------------------------------------------------------
+
 async function getLastHistoricalClose(underlying: string): Promise<number | null> {
   try {
     const candles = await getHistorical({ symbol: underlying, interval: "1d" });
     if (!candles.length) return null;
     const last = candles[candles.length - 1]!;
-    // Return both close (today's session close) and open as a proxy for
-    // prevClose so the caller can compute a change % if needed.
     return last.close > 0 ? last.close : null;
   } catch {
     return null;
   }
 }
 
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
+
 export async function GET() {
-  const indexSyms  = ALL_INDICES.map((i) => i.symbol);
-  const sectorSyms = SECTORS.map((s) => s.symbol);
-  const allSyms    = [...new Set([...indexSyms, ...sectorSyms])];
+  // Build the de-duplicated list of DS symbols to request
+  const indexDsSyms  = ALL_INDEX_DEFS.map((d) => d.dsSymbol);
+  const sectorDsSyms = SECTORS.map((s) => s.dsSymbol);
+  const allDsSyms    = [...new Set([...indexDsSyms, ...sectorDsSyms])];
 
   try {
-    const allQuotes = await getQuotes(allSyms, "NSE");
+    // Single batch call to data-service2.0 — up to 200 symbols, one request
+    const allQuotes = await getQuotes(allDsSyms, "NSE");
     const quoteMap  = new Map(
-      allSyms.map((sym, i) => [sym, allQuotes[i] ?? null]),
+      allDsSyms.map((sym, i) => [sym, allQuotes[i] ?? null]),
     );
 
-    // Build index entries; kick off historical fallback fetches in parallel for
-    // any FNO index whose live ltp is missing (market closed / provider down).
-    const indexEntries = ALL_INDICES.map((idx) => {
-      const q   = quoteMap.get(idx.symbol);
-      const ltp = q?.ltp;
+    // ── Index entries ──────────────────────────────────────────────────────
+    const indexEntries = ALL_INDEX_DEFS.map((def) => {
+      const q      = quoteMap.get(def.dsSymbol);
+      const ltp    = q?.ltp;
       const hasLive = ltp != null && ltp > 0;
-
-      // "underlying" exists only on FNO_INDICES entries, not SUPPLEMENTARY_INDICES.
-      const underlying = (idx as { underlying?: string }).underlying ?? null;
-
       return {
-        name:      idx.name,
-        symbol:    idx.symbol,
-        underlying,
+        name:       def.name,
+        symbol:     def.symbol,        // Yahoo key retained for UI
+        dsSymbol:   def.dsSymbol,
+        underlying: def.underlying,
         hasLive,
         price:     hasLive ? ltp : null,
         changePct: q?.changePct ?? null,
@@ -82,34 +115,30 @@ export async function GET() {
       };
     });
 
-    // For indices with no live price, attempt historical close as fallback.
-    // Run all fallback fetches concurrently to keep latency low.
-    const fallbackSymbols = indexEntries
-      .filter((e) => !e.hasLive && e.underlying)
-      .map((e) => e.underlying!);
-
-    const fallbackMap = new Map<string, number | null>();
-    if (fallbackSymbols.length > 0) {
+    // ── Historical close fallback for missing index prices ─────────────────
+    const fallbackDefs = indexEntries.filter((e) => !e.hasLive && e.underlying);
+    const fallbackMap  = new Map<string, number | null>();
+    if (fallbackDefs.length > 0) {
       const results = await Promise.all(
-        fallbackSymbols.map(async (sym) => ({
-          sym,
-          close: await getLastHistoricalClose(sym),
+        fallbackDefs.map(async (d) => ({
+          sym:   d.underlying!,
+          close: await getLastHistoricalClose(d.underlying!),
         })),
       );
       for (const { sym, close } of results) fallbackMap.set(sym, close);
     }
 
-    const indexQuotes = indexEntries.map(({ underlying, hasLive, ...entry }) => {
+    const indexQuotes = indexEntries.map(({ dsSymbol: _ds, underlying, hasLive, ...entry }) => {
       const price = hasLive
         ? entry.price
         : (underlying ? (fallbackMap.get(underlying) ?? null) : null);
       return { ...entry, price };
     });
 
+    // ── Sector quotes ──────────────────────────────────────────────────────
     const sectorQuotes = SECTORS.map((s) => {
-      const q   = quoteMap.get(s.symbol);
+      const q   = quoteMap.get(s.dsSymbol);
       const ltp = q?.ltp;
-      // Sectors have no historical data in data-service2.0 — show null when closed.
       return {
         name:      s.name,
         symbol:    s.symbol,
@@ -119,10 +148,10 @@ export async function GET() {
     });
 
     // ── Simulated enrichment for degraded data ─────────────────────────────
-    // When the data service returns prices but all changePct/change fields are
-    // null (provider connected but no live session), fill in the missing fields
-    // from the simulated module so the UI shows movement instead of dashes.
-    const allChangePctNull = indexQuotes.every((e) => e.changePct == null);
+    // When data-service2.0 is connected but the provider has no live session
+    // (e.g. pre-market, post-close), all changePct fields come back null.
+    // Fill them in from the simulated module so the UI shows movement.
+    const allChangePctNull      = indexQuotes.every((e) => e.changePct == null);
     const allSectorChangePctNull = sectorQuotes.every((s) => s.changePct == null);
 
     let finalIndices = indexQuotes;
@@ -130,8 +159,8 @@ export async function GET() {
     let isPartiallySimulated = false;
 
     if (allChangePctNull || allSectorChangePctNull) {
-      const sim = getSimulatedSnapshot();
-      const simIndexMap = new Map(sim.indices.map((i) => [i.symbol, i]));
+      const sim          = getSimulatedSnapshot();
+      const simIndexMap  = new Map(sim.indices.map((i) => [i.symbol, i]));
       const simSectorMap = new Map(sim.sectors.map((s) => [s.symbol, s]));
       isPartiallySimulated = true;
 
@@ -140,19 +169,19 @@ export async function GET() {
           if (entry.changePct != null) return entry;
           const s = simIndexMap.get(entry.symbol);
           if (!s) return entry;
-          const price = entry.price ?? s.price;
+          const price     = entry.price ?? s.price;
           const changePct = s.changePct;
-          const change = price && changePct != null
+          const change    = price && changePct != null
             ? +((price * changePct) / (100 + changePct)).toFixed(2)
             : null;
           return {
             ...entry,
-            price:     price,
-            changePct: changePct,
-            change:    change,
-            open:      entry.open  ?? (price ? +(price * 0.999).toFixed(2) : null),
-            high:      entry.high  ?? (price ? +(price * 1.005).toFixed(2) : null),
-            low:       entry.low   ?? (price ? +(price * 0.995).toFixed(2) : null),
+            price,
+            changePct,
+            change,
+            open:      entry.open      ?? (price ? +(price * 0.999).toFixed(2) : null),
+            high:      entry.high      ?? (price ? +(price * 1.005).toFixed(2) : null),
+            low:       entry.low       ?? (price ? +(price * 0.995).toFixed(2) : null),
             prevClose: entry.prevClose ?? (price && change ? +(price - change).toFixed(2) : null),
           };
         });
@@ -162,7 +191,11 @@ export async function GET() {
         finalSectors = sectorQuotes.map((s) => {
           if (s.changePct != null) return s;
           const sim = simSectorMap.get(s.symbol);
-          return { ...s, changePct: sim?.changePct ?? null, price: s.price ?? sim?.price ?? null };
+          return {
+            ...s,
+            changePct: sim?.changePct ?? null,
+            price:     s.price ?? sim?.price ?? null,
+          };
         });
       }
     }
@@ -175,24 +208,15 @@ export async function GET() {
         fetchedAt: new Date().toISOString(),
         ...(isPartiallySimulated && { simulated: true }),
       },
-      // no-store: every request goes to the origin — this route is already
-      // force-dynamic and callers poll on their own interval.
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
-      // data-service2.0 is unreachable or timed out — return simulated data
-      // so the UI shows realistic values instead of empty tiles.
       const sim = getSimulatedSnapshot();
-      return NextResponse.json(sim, {
-        headers: { "Cache-Control": "no-store" },
-      });
+      return NextResponse.json(sim, { headers: { "Cache-Control": "no-store" } });
     }
-    // Unexpected error — also fall back to simulated so the UI doesn't break.
     console.error("[market-snapshot] unexpected error:", (err as Error).message);
     const sim = getSimulatedSnapshot();
-    return NextResponse.json(sim, {
-      headers: { "Cache-Control": "no-store" },
-    });
+    return NextResponse.json(sim, { headers: { "Cache-Control": "no-store" } });
   }
 }

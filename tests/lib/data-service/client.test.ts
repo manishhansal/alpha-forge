@@ -153,15 +153,19 @@ describe("DataServiceClient SDK", () => {
 
   // ── market.quotes ─────────────────────────────────────────────────────────
 
-  it("market.quotes calls data-service2.0 for each symbol concurrently", async () => {
-    fetchSpy
-      .mockResolvedValueOnce(makeSuccessResponse(makeQuote("RELIANCE")))
-      .mockResolvedValueOnce(makeSuccessResponse(makeQuote("INFY")));
+  it("market.quotes calls data-service2.0 batch endpoint for multiple symbols", async () => {
+    // New implementation uses /v1/india/quotes/batch (single request)
+    fetchSpy.mockResolvedValueOnce(
+      makeSuccessResponse({ quotes: [makeQuote("RELIANCE"), makeQuote("INFY")] }),
+    );
     const { DataServiceClient } = await import("@/lib/data-service/client");
 
     const result = await DataServiceClient.market.quotes(["RELIANCE", "INFY"]);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // One batch call, not two individual calls
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url: string = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/v1/india/quotes/batch");
     expect(result).toHaveLength(2);
     expect(result[0]?.symbol).toBe("RELIANCE");
     expect(result[1]?.symbol).toBe("INFY");
