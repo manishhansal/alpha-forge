@@ -36,27 +36,45 @@ const SUPPLEMENTARY_DS: Record<string, string> = {
   "^INDIAVIX": "INDIAVIX",
 };
 
+// Historical fallback symbol override — used when the live-quote dsSymbol
+// differs from what data-service2.0's historical endpoint accepts.
+const HISTORICAL_OVERRIDE: Record<string, string> = {
+  "^INDIAVIX": "^INDIAVIX",  // Yahoo-format works for historical but not quotes
+};
+
 type IndexDef = {
   name: string;
   /** Yahoo-style symbol used as the UI/store key */
   symbol: string;
   /** NSE symbol sent to data-service2.0 */
   dsSymbol: string;
+  /** F&O underlying for option-chain lookups (null for supplementary) */
   underlying: string | null;
+  /**
+   * Symbol to use for historical close fallback.
+   * When live quote is null, we fetch the last daily close from this symbol.
+   * Uses the dsSymbol by default; can be overridden for indices where the
+   * live-quote symbol differs from the historical lookup symbol.
+   */
+  historicalSymbol: string;
 };
 
 const ALL_INDEX_DEFS: IndexDef[] = [
   ...FNO_INDICES.map((idx) => ({
-    name:      idx.name,
-    symbol:    idx.symbol,
-    dsSymbol:  idx.underlying,          // NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY
-    underlying: idx.underlying,
+    name:            idx.name,
+    symbol:          idx.symbol,
+    dsSymbol:        idx.underlying,          // NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY
+    underlying:      idx.underlying,
+    historicalSymbol: idx.underlying,
   })),
   ...SUPPLEMENTARY_INDICES.map((idx) => ({
-    name:      idx.name,
-    symbol:    idx.symbol,
-    dsSymbol:  SUPPLEMENTARY_DS[idx.symbol] ?? idx.symbol,
-    underlying: null,
+    name:            idx.name,
+    symbol:          idx.symbol,
+    dsSymbol:        SUPPLEMENTARY_DS[idx.symbol] ?? idx.symbol,
+    underlying:      null,
+    historicalSymbol: HISTORICAL_OVERRIDE[idx.symbol]
+      ?? SUPPLEMENTARY_DS[idx.symbol]
+      ?? "",
   })),
 ];
 
@@ -98,10 +116,11 @@ export async function GET() {
       const ltp    = q?.ltp;
       const hasLive = ltp != null && ltp > 0;
       return {
-        name:       def.name,
-        symbol:     def.symbol,        // Yahoo key retained for UI
-        dsSymbol:   def.dsSymbol,
-        underlying: def.underlying,
+        name:             def.name,
+        symbol:           def.symbol,        // Yahoo key retained for UI
+        dsSymbol:         def.dsSymbol,
+        underlying:       def.underlying,
+        historicalSymbol: def.historicalSymbol,
         hasLive,
         price:     hasLive ? ltp : null,
         changePct: q?.changePct ?? null,
@@ -116,22 +135,27 @@ export async function GET() {
     });
 
     // ── Historical close fallback for missing index prices ─────────────────
-    const fallbackDefs = indexEntries.filter((e) => !e.hasLive && e.underlying);
+    // Runs for any index whose live quote returned null — whether an FNO index
+    // (FINNIFTY, MIDCPNIFTY) or a supplementary index (SENSEX).
+    // Uses the last daily candle close from Yahoo Finance via data-service2.0.
+    const fallbackDefs = indexEntries.filter(
+      (e) => !e.hasLive && e.historicalSymbol,
+    );
     const fallbackMap  = new Map<string, number | null>();
     if (fallbackDefs.length > 0) {
       const results = await Promise.all(
         fallbackDefs.map(async (d) => ({
-          sym:   d.underlying!,
-          close: await getLastHistoricalClose(d.underlying!),
+          sym:   d.historicalSymbol,
+          close: await getLastHistoricalClose(d.historicalSymbol),
         })),
       );
       for (const { sym, close } of results) fallbackMap.set(sym, close);
     }
 
-    const indexQuotes = indexEntries.map(({ dsSymbol: _ds, underlying, hasLive, ...entry }) => {
+    const indexQuotes = indexEntries.map(({ dsSymbol: _ds, underlying, hasLive, historicalSymbol, ...entry }) => {
       const price = hasLive
         ? entry.price
-        : (underlying ? (fallbackMap.get(underlying) ?? null) : null);
+        : (fallbackMap.get(historicalSymbol) ?? null);
       return { ...entry, price };
     });
 
