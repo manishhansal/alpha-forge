@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Auto-redeploy Docker on git commit",
+      "trigger": "PostToolUse",
+      "description": "After a git commit via execute_bash, surfaces the deploy.log tail so you can see rebuild progress without leaving Kiro.",
+      "matcher": "execute_bash",
+      "action": {
+        "type": "command",
+        "command": "#!/usr/bin/env bash\n# Fires after any execute_bash tool call.\n# Reads stdin for the command that was just run; if it was a git commit,\n# the git post-commit hook (scripts/git-hooks/post-commit) will have already\n# triggered deploy.sh. This hook just surfaces that deploy.log tail in Kiro.\n\nINPUT=$(cat)\nCMD=$(echo \"$INPUT\" | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get('command',''))\" 2>/dev/null || true)\n\n# Only act on git commit commands\nif echo \"$CMD\" | grep -qE '^git commit'; then\n  LOG=\"/Users/manishkumar/Desktop/alpha-forge/scripts/deploy.log\"\n  if [[ -f \"$LOG\" ]]; then\n    echo \"--- Deploy log (last 20 lines) ---\"\n    tail -20 \"$LOG\"\n  fi\nfi\n"
+      }
+    }
+  ]
+}

@@ -1,6 +1,16 @@
 ## AlphaForge — local Docker workflow
 ##
-## Usage:
+## ── Auto-deploy (git-push workflow) ──────────────────────────────────────────
+##   make install-hooks   wire up git hooks so every commit auto-redeploys
+##   make deploy          rebuild + redeploy app & worker right now
+##   make deploy-app      rebuild + redeploy app only
+##   make deploy-worker   rebuild + redeploy worker only
+##   make deploy-ml       rebuild + redeploy ml-service only
+##   make deploy-all      rebuild + redeploy every service
+##   make deploy-log      tail the live deploy log
+##   make watch-deploy    watch src/ and redeploy on any file change (fswatch)
+##
+## ── Manual build targets ──────────────────────────────────────────────────────
 ##   make rebuild-app     build + restart the Next.js app container
 ##   make rebuild-worker  build + restart the background worker
 ##   make rebuild-all     rebuild both
@@ -38,6 +48,54 @@ DOCKER_RUN_BASE := docker run -d \
 	--network $(NETWORK) \
 	--add-host=host.docker.internal:host-gateway \
 	$(ENV_FLAGS)
+
+# ── Auto-deploy ─────────────────────────────────────────────────────────────
+
+## Install git hooks so every `git commit` triggers auto-redeploy
+.PHONY: install-hooks
+install-hooks:
+	@bash scripts/install-hooks.sh
+
+## Rebuild + redeploy app + worker immediately
+.PHONY: deploy
+deploy:
+	@bash scripts/deploy.sh
+
+## Rebuild + redeploy app only
+.PHONY: deploy-app
+deploy-app:
+	@bash scripts/deploy.sh app
+
+## Rebuild + redeploy worker only
+.PHONY: deploy-worker
+deploy-worker:
+	@bash scripts/deploy.sh worker
+
+## Rebuild + redeploy ml-service only
+.PHONY: deploy-ml
+deploy-ml:
+	@bash scripts/deploy.sh ml
+
+## Rebuild + redeploy all services (app + worker + ml-service)
+.PHONY: deploy-all
+deploy-all:
+	@bash scripts/deploy.sh all
+
+## Tail the deploy log in real time
+.PHONY: deploy-log
+deploy-log:
+	@tail -f scripts/deploy.log
+
+## Watch src/ for changes and auto-redeploy (requires fswatch: brew install fswatch)
+.PHONY: watch-deploy
+watch-deploy:
+	@command -v fswatch >/dev/null 2>&1 || { \
+	  echo "fswatch not found — install it with: brew install fswatch"; exit 1; }
+	@echo "Watching src/, public/, worker/ — will redeploy on changes…"
+	@echo "Press Ctrl+C to stop."
+	@fswatch -o src/ public/ Dockerfile.app Dockerfile.worker \
+	  worker/src/ 2>/dev/null | \
+	  xargs -n1 -I{} bash scripts/deploy.sh
 
 # ── App ─────────────────────────────────────────────────────────────────────
 .PHONY: rebuild-app
