@@ -110,6 +110,7 @@ export function DataSourceBadge(): React.ReactElement | null {
 
       try {
         const res = await fetch("/api/in/provider-health", {
+          cache: "no-store",
           signal: abortRef.controller.signal,
         });
 

@@ -99,7 +99,10 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream {
         // Re-key with the ORIGINAL (Yahoo-style) symbol so the store
         // entries are keyed consistently with the snapshot.
         symbol:    toYahooSym(syms[i] ?? ""),
-        price:     q?.ltp ?? 0,
+        // Preserve null ltp — do NOT coerce to 0. A null price means the
+        // upstream has no live quote; coercing to 0 would overwrite a valid
+        // snapshot price in the ticker bar merge and show "0.00".
+        price:     q?.ltp != null && q.ltp > 0 ? q.ltp : null,
         change:    q?.change ?? null,
         changePct: q?.changePct ?? null,
         prevClose: q?.prevClose ?? null,
@@ -124,7 +127,10 @@ export function buildFeedStream(opts: GatewayOptions): ReadableStream {
 
   /** Map a Quote from the fetch result to a FeedTick. */
   function toTick(q: Quote, sym: string): FeedTick {
-    const price = (q as Quote & { ltp?: number }).ltp ?? q.price ?? 0;
+    // Use ltp/price only when genuinely positive — 0 is not a valid price
+    // for any NSE index and would overwrite real snapshot prices in the UI.
+    const rawPrice = (q as Quote & { ltp?: number }).ltp ?? q.price;
+    const price = rawPrice != null && rawPrice > 0 ? rawPrice : 0;
     return {
       symbol: sym,
       ltp: price,

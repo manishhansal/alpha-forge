@@ -112,8 +112,8 @@ export function DataStatusDashboard() {
     const fetchAll = async () => {
       try {
         const [statusRes, provRes] = await Promise.all([
-          fetch("/api/in/historical-data/status"),
-          fetch("/api/in/historical-data/providers"),
+          fetch("/api/in/historical-data/status", { cache: "no-store" }),
+          fetch("/api/in/historical-data/providers", { cache: "no-store" }),
         ]);
         const statusData = await statusRes.json();
         const provData = await provRes.json();

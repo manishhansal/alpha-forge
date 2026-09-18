@@ -20,28 +20,28 @@ export async function GET() {
     if (!ltp || quote.changePct == null) {
       const sim = getSimulatedNiftyBias();
       return NextResponse.json(sim, {
-        headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" },
+        headers: { "Cache-Control": "no-store" },
       });
     }
 
     const bias = quote.changePct > 0 ? "BULLISH" : "BEARISH";
     return NextResponse.json(
       { bias, price: Number(ltp).toFixed(2) },
-      { headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" } },
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     if (err instanceof DataServiceUnavailableError) {
       // Return simulated bias so the UI shows something useful.
       const sim = getSimulatedNiftyBias();
       return NextResponse.json(sim, {
-        headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" },
+        headers: { "Cache-Control": "no-store" },
       });
     }
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Nifty bias API error:", msg);
     const sim = getSimulatedNiftyBias();
     return NextResponse.json(sim, {
-      headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" },
+      headers: { "Cache-Control": "no-store" },
     });
   }
 }

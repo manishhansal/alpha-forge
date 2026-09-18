@@ -173,23 +173,29 @@ export async function GET() {
 
     // ── Simulated enrichment for degraded data ─────────────────────────────
     // When data-service2.0 is connected but the provider has no live session
-    // (e.g. pre-market, post-close), all changePct fields come back null.
-    // Fill them in from the simulated module so the UI shows movement.
-    const allChangePctNull      = indexQuotes.every((e) => e.changePct == null);
-    const allSectorChangePctNull = sectorQuotes.every((s) => s.changePct == null);
+    // (e.g. pre-market, post-close, or only some indices are live), individual
+    // changePct fields can come back null for specific indices.
+    //
+    // BUG FIX: Previously used `.every()` which meant if even ONE index had
+    // a live changePct, ALL the null-changePct indices were left as-is.
+    // Now we use `.some()` and apply enrichment per-index individually so
+    // every null entry gets backfilled from the simulated baseline.
+    const anyIndexChangePctNull  = indexQuotes.some((e) => e.changePct == null);
+    const anySectorChangePctNull = sectorQuotes.some((s) => s.changePct == null);
 
     let finalIndices = indexQuotes;
     let finalSectors = sectorQuotes;
     let isPartiallySimulated = false;
 
-    if (allChangePctNull || allSectorChangePctNull) {
+    if (anyIndexChangePctNull || anySectorChangePctNull) {
       const sim          = getSimulatedSnapshot();
       const simIndexMap  = new Map(sim.indices.map((i) => [i.symbol, i]));
       const simSectorMap = new Map(sim.sectors.map((s) => [s.symbol, s]));
       isPartiallySimulated = true;
 
-      if (allChangePctNull) {
+      if (anyIndexChangePctNull) {
         finalIndices = indexQuotes.map((entry) => {
+          // Only enrich indices that are missing changePct — leave live data untouched.
           if (entry.changePct != null) return entry;
           const s = simIndexMap.get(entry.symbol);
           if (!s) return entry;
@@ -211,8 +217,9 @@ export async function GET() {
         });
       }
 
-      if (allSectorChangePctNull) {
+      if (anySectorChangePctNull) {
         finalSectors = sectorQuotes.map((s) => {
+          // Only enrich sectors that are missing changePct — leave live data untouched.
           if (s.changePct != null) return s;
           const sim = simSectorMap.get(s.symbol);
           return {
@@ -229,6 +236,7 @@ export async function GET() {
         indices:   finalIndices,
         sectors:   finalSectors,
         source:    "data-service2",
+        sources:   ["data-service2"],
         fetchedAt: new Date().toISOString(),
         ...(isPartiallySimulated && { simulated: true }),
       },

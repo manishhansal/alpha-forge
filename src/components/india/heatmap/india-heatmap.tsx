@@ -140,17 +140,35 @@ export function IndiaHeatmap({ sectors }: IndiaHeatmapProps) {
     }
   }, []);
 
-  // Stagger initial loads so we don't hammer Yahoo with 11 parallel sectors.
+  // Stagger initial loads so we don't hammer data-service with 11 parallel sectors.
+  // Then auto-refresh every 30s to keep data live during market hours.
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
-      for (const s of sectors) {
-        if (cancelled) return;
-        await fetchSector(s.name);
+    let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+    const loadAll = async (parallel = false) => {
+      if (cancelled) return;
+      if (parallel) {
+        // Subsequent refreshes: fetch all in parallel (faster re-sync)
+        sectors.forEach((s) => { void fetchSector(s.name); });
+      } else {
+        // Initial load: staggered serial to avoid socket exhaustion
+        for (const s of sectors) {
+          if (cancelled) return;
+          await fetchSector(s.name);
+        }
       }
-    })();
+    };
+
+    void loadAll(false).then(() => {
+      if (!cancelled) {
+        refreshTimer = setInterval(() => void loadAll(true), 30_000);
+      }
+    });
+
     return () => {
       cancelled = true;
+      if (refreshTimer !== null) clearInterval(refreshTimer);
     };
   }, [sectors, fetchSector]);
 
