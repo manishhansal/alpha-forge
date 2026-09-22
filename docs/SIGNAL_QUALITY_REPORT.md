@@ -1,8 +1,8 @@
 # AlphaForge — Signal Quality Report
 
-**Generated:** 2026-09-02  
+**Generated:** 2026-09-22 | Updated from HEAD `3fe6281`  
 **Engine Version:** opportunity-engine-v1  
-**Status:** Post-implementation assessment
+**Status:** Post-implementation assessment — SentinelPulse news integration included
 
 ---
 
@@ -113,6 +113,35 @@ This is the primary test of whether the quality score is useful. Currently unver
 
 ---
 
+---
+
+## 7. News Intelligence Integration (SentinelPulse)
+
+The news factor in the `INDIA_AI_SIGNALS` strategy (weight **0.08** in the 14-factor composite) is sourced exclusively from **SentinelPulse**. The legacy RSS/XML pipeline has been removed.
+
+### News score derivation
+
+| Step | Description |
+|------|-------------|
+| 1 | `getIndiaNews()` calls `/news/latest` + `/news/market/india` in parallel (60–90 s Redis TTL) |
+| 2 | Each `NewsItem` carries `importanceScore ∈ [0, 1]` and `sentimentScore ∈ [-1, 1]` |
+| 3 | `loadNewsScores()` maps articles to instrument symbols; weighted by `importanceScore` |
+| 4 | Composite sentiment = `Σ(importanceScore × sentimentScore) / Σ(importanceScore)` |
+| 5 | Contribution to signal confidence = `sentiment × 0.08` (capped at ±8 pp) |
+
+### Degradation policy
+
+| Condition | Behaviour |
+|-----------|-----------|
+| SentinelPulse unreachable | News factor defaults to 0 (neutral); signal continues |
+| SentinelPulse returns empty articles | Same as unreachable |
+| Internal test-pipeline articles present | Filtered out (`source: "SentinelPulse Internal"`) |
+| All articles below `importanceScore < 0.1` | Treated as low-signal; factor → 0 |
+
+The news factor is intentionally small (0.08) so that SentinelPulse degradation never causes a signal to flip direction — it only modulates confidence magnitude.
+
+---
+
 ## 6. API Endpoints
 
 | Endpoint | Purpose |
@@ -121,5 +150,10 @@ This is the primary test of whether the quality score is useful. Currently unver
 | `GET /api/in/opportunity-engine/regime` | Current regime + strategy compatibility matrix |
 | `GET /api/in/opportunity-engine/calibration` | Probability calibration per strategy |
 | `GET /api/in/opportunity-engine/attribution` | Performance attribution breakdown |
-| `GET /api/in/signal-quality` | Existing signal quality report (legacy) |
+| `GET /api/in/signal-quality` | Signal quality report |
 | `GET /api/in/signal-audit` | Today's signal audit |
+| `GET /api/in/news` | Latest news (SentinelPulse) |
+| `GET /api/in/news/market-india` | India market news (SentinelPulse) |
+| `GET /api/in/news/regime` | Market regime narrative (SentinelPulse) |
+| `GET /api/in/news/context` | Pre-processed AlphaForge signal context (SentinelPulse) |
+| `GET /api/in/news/high-impact` | High-impact scheduled events (SentinelPulse) |

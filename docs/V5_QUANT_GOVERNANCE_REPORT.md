@@ -2,7 +2,8 @@
 
 > Milestone: Governance & Hardening + Remaining Build  
 > Completed: 2026-09-01  
-> Test result: **2550 tests — 170 files — 0 failures**
+> **Last updated: 2026-09-22** — data-service2.0 centralization complete; all legacy bypass limitations resolved  
+> Test result (latest): **2434 tests — 182 files — 0 failures** (HEAD `3fe6281`)
 
 ---
 
