@@ -1,5 +1,7 @@
 # AlphaForge — Auto-Rebuild & Redeploy System
 
+> Added: 2026-09-18 (commit `d5c40b9`) | Part of PR #38
+
 Every `git commit` automatically rebuilds and restarts the affected Docker
 services. No manual `make rebuild-*` needed during normal development.
 
@@ -31,7 +33,7 @@ git commit
 | `worker/src/**`, `Dockerfile.worker` | worker |
 | `ml-service/**` | ml-service (via docker compose) |
 | `docker-compose.yml`, `.env.docker` | app + worker |
-| `docs/**`, `*.md`, `coverage/**` | *(nothing — skipped)* |
+| `docs/**`, `*.md`, `coverage/**`, `scripts/**` | *(nothing — skipped)* |
 
 ---
 
@@ -135,3 +137,22 @@ scripts/
 | Git | Hook fires on `git commit` |
 | `fswatch` | Only needed for `make watch-deploy` (`brew install fswatch`) |
 | bash ≥ 3 | Ships with macOS |
+
+---
+
+## Makefile Quick Reference
+
+All deploy targets are also available via the `Makefile` at the repo root:
+
+```bash
+make install-hooks    # wire up git post-commit hook (run once per clone)
+make deploy           # rebuild + redeploy app & worker
+make deploy-app       # app only
+make deploy-worker    # worker only
+make deploy-ml        # ML service only
+make deploy-all       # all three services
+make deploy-log       # tail scripts/deploy.log live
+make watch-deploy     # fswatch mode — redeploy on any src/ change
+```
+
+The `Makefile` also exposes manual build targets (`make rebuild-app`, `make rebuild-worker`, `make rebuild-all`, `make logs-app`, `make logs-worker`, `make logs-all`, `make status`, `make stop`, `make start`) for workflows that don't use the auto-deploy hook.

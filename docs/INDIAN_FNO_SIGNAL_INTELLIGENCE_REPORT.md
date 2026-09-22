@@ -438,7 +438,7 @@ All 9 official strategies are currently `INSUFFICIENT_EVIDENCE` or `RESEARCH` �
 
 3. **True OI freshness** — OI timestamps from Yahoo are approximate. Angel One provides real-time OI when configured.
 
-4. **Scanner still uses legacy providers** — `src/services/india/scanner/engine.ts` imports from `yahoo`, `nse`, `angel` singletons directly (not through ProviderRegistry). Failover/circuit-breaker not applied to scanner signals. (Documented in SYSTEM_VERIFICATION_REPORT.md §9 Limitation 2.)
+4. **~~Scanner still uses legacy providers~~** ✅ **RESOLVED (PR #36, 2026-09-15)** — `src/services/india/scanner/engine.ts` was migrated to consume data-service2.0 exclusively. `yahoo`, `nse`, and `angel` singleton imports have been removed. The `ProviderRegistry` itself has been deleted from the TypeScript layer. Failover is now handled inside data-service2.0.
 
 5. **Calibration curves** — Per-strategy Platt calibration requires ≥ 50 OOS trades each. Current implementation uses a global 35% shrinkage constant.
 

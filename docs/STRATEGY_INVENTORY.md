@@ -1,6 +1,6 @@
 # AlphaForge V6 — Canonical Strategy Inventory
 
-> **Generated:** September 1, 2026  
+> **Generated:** September 22, 2026  
 > **Registry source:** `src/lib/research/registry/strategy-registry.ts`  
 > **Hypothesis source:** `src/lib/research/hypothesis/strategy-hypothesis.ts`  
 > **Total strategies:** 18  
@@ -296,7 +296,7 @@
 | **status** | RESEARCH |
 | **hypothesisStatus** | DEFINED |
 
-**Entry Logic:** Top F&O gainers/losers by absolute % change (near-month futures). Angel One SmartAPI first-party; Yahoo fallback.
+**Entry Logic:** Top F&O gainers/losers by absolute % change (near-month futures). Data via data-service2.0 (Angel One / Upstox internally).
 
 **Expected Regimes:** BULL_TRENDING, BEAR_TRENDING, HIGH_VOLATILITY
 
@@ -334,7 +334,7 @@
 | **status** | RESEARCH |
 | **hypothesisStatus** | DEFINED |
 
-**Entry Logic:** Open-interest direction × price action (Long/Short Built Up, Short Covering, Long Unwinding). Uses ΔPE OI − ΔCE OI. Angel One SmartAPI first-party; NSE chain fallback.
+**Entry Logic:** Open-interest direction × price action (Long/Short Built Up, Short Covering, Long Unwinding). Uses ΔPE OI − ΔCE OI. Data via data-service2.0 (Angel One / Upstox option chain internally).
 
 **Expected Regimes:** BULL_TRENDING, BEAR_TRENDING, EXPIRY_DAY, NORMAL_DAY
 
@@ -357,7 +357,7 @@
 - Intraday demand (0.14)
 - S/R breakout with volume (0.13)
 - Market tape / regime (0.12)
-- News flow — SentinelPulse importanceScore-weighted sentiment (0.08)
+- News flow — **SentinelPulse** `importanceScore`-weighted sentiment (0.08) — *replaces RSS headlines*
 - Daily SMA trend (0.08)
 - RSI (0.05)
 - 5-day momentum (0.08)
@@ -372,6 +372,8 @@
 - Institutional futures screen (0.14, Daily Picks only)
 
 Minimum composite magnitude threshold: 0.22. Grade S/A only for auto-trading.
+
+**News factor note:** The news factor uses `importanceScore` and `sentimentScore` from the SentinelPulse `/news/latest` and `/news/market/india` endpoints. Internal SentinelPulse test-pipeline articles are filtered before scoring. When SentinelPulse is unavailable the news factor defaults to neutral (0) and the signal continues without degradation.
 
 **ML Dependencies:** MarketRegimeClassifier, StockRanker, MetaDecisionEngine
 

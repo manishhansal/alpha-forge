@@ -87,6 +87,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # →
 # NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200
 # NEXT_PUBLIC_DATA_SERVICE_API_KEY=<your-key>    # same key — needed for browser WebSocket auth
 
+# 5a. (Optional) SentinelPulse news service
+# SENTINEL_PULSE_URL=http://localhost:3001
+# SENTINEL_PULSE_API_KEY=<your-key>
+
 # 6. Run the first DB migration
 npm run db:migrate -- --name init
 
@@ -424,6 +428,7 @@ India AI engine v2 (`alphaforge-ai-v2`) adds:
 - Quant pre-filter gate — ADX ≥ 18, relative volume ≥ 1.1×, ATR% ≥ 0.4%; failures penalised −18% confidence
 - ML regime blending — 65% heuristic + 35% ML service
 - ML stock rank boost — ±0.06 confidence delta based on LightGBM rank
+- **SentinelPulse news factor** — `importanceScore`-weighted sentiment replaces RSS headlines (weight 0.08 in 14-factor composite)
 
 ### Daily Picks (India F&O)
 
@@ -492,6 +497,96 @@ Real-time trading alerts delivered to WhatsApp via the Evolution-Go API:
 
 ---
 
+## News Intelligence — SentinelPulse
+
+India AI signals and the news feed are powered by **SentinelPulse**, an external NLP/financial-news microservice. The legacy RSS stack (ET, Moneycontrol, WSJ feeds with a hand-rolled XML parser) has been completely removed and replaced.
+
+### What SentinelPulse provides
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /news/latest` | Latest articles with ML sentiment scores |
+| `GET /news/market/india` | India-specific market news |
+| `GET /regime` | Current market regime narrative |
+| `GET /alphaforge-context` | Pre-processed signal context for AI engine |
+| `GET /high-impact-events` | High-impact scheduled events |
+
+### Integration points
+
+- **`src/features/india/news/`** — `sentinel-client.ts` (typed HTTP client), `index.ts` (service layer), Redis cache keys `sp:news:*` (90 s TTL) and `sp:market:india` (60 s TTL)
+- **`src/app/api/in/news/`** — expanded route set: `/route` (latest), `/market-india`, `/regime`, `/context`, `/high-impact`
+- **`src/hooks/useIndiaNews`** — updated to consume SentinelPulse `NewsItem` shape
+- **`src/features/ai-signals/`** — `loadNewsScores()` updated to read `importanceScore` and `sentimentScore` from the SentinelPulse wire format
+- **`INDIA_AI_SIGNALS` strategy** — news factor (weight 0.08) now uses `importanceScore`-weighted SentinelPulse sentiment instead of RSS headlines
+
+### Configuration
+
+```bash
+# .env.local
+SENTINEL_PULSE_URL=http://localhost:3001      # SentinelPulse service URL
+SENTINEL_PULSE_API_KEY=<your-key>             # API key for SentinelPulse
+```
+
+In Docker, inject via `docker-compose.yml` (already configured) — both `app` and `worker` services receive these env vars.
+
+Internal test-pipeline articles are filtered out automatically (the service detects `source: "SentinelPulse Internal"` and excludes them).
+
+---
+
+## Simulated Market Data (Dev / Staging Fallback)
+
+When `data-service2.0` is running but has no live upstream provider configured (e.g. dev or staging environments without broker credentials), the India API layer falls back to `src/lib/data-service/simulated-india.ts`.
+
+This module produces realistic synthetic data for all India API surfaces:
+- Market snapshot (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, India VIX)
+- Sector stocks with coherent price action
+- Scanner hits with realistic OI and volume figures
+- Top picks and daily picks
+- Nifty bias signal
+
+The fallback is automatic — no configuration required. When live data arrives from data-service2.0, it takes priority. The `DataSourceBadge` component in the UI reflects the current data source (`LIVE` / `SIMULATED`).
+
+---
+
+## Auto-Rebuild & Redeploy
+
+Every `git commit` can automatically rebuild and restart affected Docker services. One-time setup:
+
+```bash
+make install-hooks
+```
+
+After that, every commit triggers a smart diff that decides which services to rebuild:
+
+| Changed path | Services rebuilt |
+|---|---|
+| `src/**`, `public/**`, `Dockerfile.app`, `package*.json` | app + worker |
+| `worker/src/**`, `Dockerfile.worker` | worker |
+| `ml-service/**` | ml-service |
+| `docs/**`, `*.md` | *(nothing — skipped)* |
+
+Manual deploy commands:
+
+```bash
+make deploy           # rebuild + redeploy app & worker
+make deploy-app       # app only
+make deploy-worker    # worker only
+make deploy-ml        # ML service only
+make deploy-all       # all three
+make deploy-log       # tail the live deploy log
+make watch-deploy     # file-watcher mode (requires fswatch)
+```
+
+Skip a rebuild on a specific commit:
+
+```bash
+SKIP_DEPLOY=1 git commit -m "docs: update readme"
+```
+
+Full reference: [docs/AUTO_DEPLOY.md](./docs/AUTO_DEPLOY.md)
+
+---
+
 ## Indian Market Data Provider Chain
 
 All Indian market data flows through **data-service2.0** as the single source of truth. The TypeScript layer has no direct broker or exchange connections.
@@ -546,6 +641,10 @@ UPSTOX_CLIENT_ID=
 UPSTOX_CLIENT_SECRET=
 UPSTOX_REDIRECT_URI=
 UPSTOX_ANALYTICS_TOKEN=  # configure via Profile → API Keys in the UI
+
+# SentinelPulse (India news intelligence)
+SENTINEL_PULSE_URL=http://localhost:3001
+SENTINEL_PULSE_API_KEY=
 
 # WhatsApp notifications (V3.0)
 WHATSAPP_EVOLUTION_API_URL=
@@ -647,10 +746,12 @@ src/
       scalping/              9 F&O strategies + journal + option-chain replay
       expiry-trades/         Gamma Blast / Hero Zero expiry-day playbooks
       news/                  SentinelPulse integration (client, service, API routes)
+                             Replaces: RSS feed stack (feeds.ts, rss.ts) — removed
       options-workbench/     Multi-leg payoff engine
   lib/
     data-service/            client.ts — single entry point for all market data
                              (server-only; calls data-service2.0 REST + WebSocket)
+                             simulated-india.ts — realistic synthetic fallback for dev/staging
     signal-intelligence/     45-phase signal intelligence engine (12 modules)
     opportunity-engine/      12-stage opportunity validation pipeline
     research/                24-phase V6 quant research platform
@@ -716,6 +817,12 @@ The API key is not being sent. Ensure both `DATA_SERVICE_API_KEY` (server-side) 
 **`Connection refused (5432 / 6379)`**
 Docker Desktop isn't running or `docker compose up -d` was never run. Check: `docker compose ps`.
 
+**Market Pulse shows 0.00 prices or changePct for some indices**
+The ticker bar SSE merge was guarding `ltp === 0` correctly. If you see this, ensure data-service2.0 is healthy: `curl http://localhost:8200/health`. The heatmap auto-refreshes every 30 s; the market snapshot enriches each index individually (not all-or-nothing).
+
+**MSB-OB Intraday Signals section missing**
+This section was intentionally removed. It relied on an external Python scanner CSV not included in the standard deployment.
+
 **`getaddrinfo ENOTFOUND data-service`**
 The worker or app is trying to resolve the old `data-service` hostname. Ensure `.env.docker` has `DATA_SERVICE_URL=http://host.docker.internal:8200` (not `http://data-service:8200`).
 
@@ -747,6 +854,6 @@ Users can configure their Upstox Analytics Token directly in the UI:
 
 ---
 
-> Full product spec: [ALPHAFORGE.md](./ALPHAFORGE.md)  
-> Chronological changelog: [CHANGES.md](./CHANGES.md)  
-> Architecture deep-dive: [ARCHITECTURE.md](./ARCHITECTURE.md)
+> Architecture deep-dive: [ARCHITECTURE.md](./ARCHITECTURE.md)  
+> Auto-deploy reference: [docs/AUTO_DEPLOY.md](./docs/AUTO_DEPLOY.md)  
+> Codebase inventory: [ALPHAFORGE_FINAL_CODEBASE_INVENTORY.md](./ALPHAFORGE_FINAL_CODEBASE_INVENTORY.md)

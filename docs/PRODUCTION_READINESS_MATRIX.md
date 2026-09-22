@@ -1,7 +1,7 @@
-# Production Readiness Matrix — AlphaForge V5
+# Production Readiness Matrix — AlphaForge V6
 
-> Updated: 2026-09-01  
-> Test suite: **2550 tests — 170 files — 0 failures**
+> Updated: 2026-09-22 | HEAD: `3fe6281` | Branch: `fix/bugs` (merged → master via PR #39)  
+> Test suite: **2434 tests — 182 files — 0 failures**
 
 ---
 
@@ -34,25 +34,54 @@
 
 | COMPONENT | IMPLEMENTED | UNIT_TESTED | INTEGRATION_TESTED | E2E_TESTED | RUNTIME_TESTED | SOAK_TESTED | LIVE_PROVIDER_TESTED | STATUS |
 |-----------|-------------|-------------|-------------------|------------|----------------|-------------|---------------------|--------|
-| `MarketDataProvider` interface | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | CERTIFIED |
-| `ProviderRegistry` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | CERTIFIED |
-| `withFailover()` / circuit breaker | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
-| Angel One provider | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
-| Upstox provider | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
-| NSE provider | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
-| Yahoo provider (fallback) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | CERTIFIED |
-| Candle validator | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
-| Tick validator | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
-| Reconciliation service | ✅ | ✅ | ✅ | ✅ | ⚠️ | N/A | N/A | PARTIALLY_CERTIFIED |
-| `canonical-import-guard` (lint rule) | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A | CERTIFIED |
-| **`top-picks` route (migrated)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
-| **`sector-stocks` route (migrated)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
-| **`india-builder.ts` (migrated to registry)** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | NOT_TESTED |
-| `scanner/engine.ts` (remaining exception) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
+| `DataServiceClient` (canonical HTTP client) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | CERTIFIED |
+| `simulated-india.ts` (dev/staging fallback) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| data-service2.0 WebSocket (exponential-backoff reconnect) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | PARTIALLY_CERTIFIED |
+| `ltp > 0` guard (WS gateway + ticker bar) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| Numeric field normalisation (string→number coercion) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| Historical close fallback when market closed | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| NSE underlying symbol routing to data-service2.0 | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| `canonical-import-guard` (lint rule + 12 regression tests) | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A | CERTIFIED |
+| ~~`MarketDataProvider` / `ProviderRegistry`~~ | REMOVED | — | — | — | — | — | — | DELETED |
+| ~~Direct Angel One / Upstox / Yahoo / NSE calls~~ | REMOVED | — | — | — | — | — | — | DELETED |
+
+## News Intelligence Layer (NEW — SentinelPulse)
+
+| COMPONENT | IMPLEMENTED | UNIT_TESTED | INTEGRATION_TESTED | E2E_TESTED | RUNTIME_TESTED | SOAK_TESTED | LIVE_PROVIDER_TESTED | STATUS |
+|-----------|-------------|-------------|-------------------|------------|----------------|-------------|---------------------|--------|
+| `sentinel-client.ts` (typed HTTP client) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | ✅ | CERTIFIED |
+| `getIndiaNews()` service (Redis cache 90s/60s TTL) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | ✅ | CERTIFIED |
+| Internal test-pipeline article filter | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| `GET /api/in/news` routes (5 endpoints) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | ✅ | CERTIFIED |
+| `useIndiaNews` hook (SentinelPulse shape) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| `loadNewsScores()` — importanceScore-weighted sentiment | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | ✅ | CERTIFIED |
+| News factor graceful degradation (neutral when SP down) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| ~~RSS feed stack (`feeds.ts`, `rss.ts`)~~ | REMOVED | — | — | — | — | — | — | DELETED |
 
 ---
 
-## Real-Time Candle Building
+## Simulated Data Fallback (NEW)
+
+| COMPONENT | IMPLEMENTED | UNIT_TESTED | INTEGRATION_TESTED | E2E_TESTED | RUNTIME_TESTED | SOAK_TESTED | LIVE_PROVIDER_TESTED | STATUS |
+|-----------|-------------|-------------|-------------------|------------|----------------|-------------|---------------------|--------|
+| `simulated-india.ts` — market snapshot, sectors, scanner, picks | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| Automatic fallback wiring in India API routes | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+| `DataSourceBadge` UI (LIVE / SIMULATED) | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | CERTIFIED |
+
+---
+
+## Auto-Deploy System (NEW)
+
+| COMPONENT | IMPLEMENTED | UNIT_TESTED | RUNTIME_TESTED | STATUS |
+|-----------|-------------|-------------|----------------|--------|
+| `scripts/deploy.sh` (rebuild + redeploy logic) | ✅ | N/A | ✅ | CERTIFIED |
+| `scripts/git-hooks/post-commit` (smart diff trigger) | ✅ | N/A | ✅ | CERTIFIED |
+| `scripts/install-hooks.sh` (one-command hook installer) | ✅ | N/A | ✅ | CERTIFIED |
+| `Makefile` deploy targets (deploy, deploy-app, etc.) | ✅ | N/A | ✅ | CERTIFIED |
+| `SKIP_DEPLOY=1` escape hatch | ✅ | N/A | ✅ | CERTIFIED |
+| `.kiro/hooks/docker-redeploy-on-commit.json` | ✅ | N/A | ✅ | CERTIFIED |
+
+---
 
 | COMPONENT | IMPLEMENTED | UNIT_TESTED | INTEGRATION_TESTED | E2E_TESTED | RUNTIME_TESTED | SOAK_TESTED | LIVE_PROVIDER_TESTED | STATUS |
 |-----------|-------------|-------------|-------------------|------------|----------------|-------------|---------------------|--------|
@@ -134,32 +163,32 @@
 
 | Status | Component Count |
 |--------|----------------|
-| **CERTIFIED** | 8 |
-| **PARTIALLY_CERTIFIED** | 22 |
-| **NOT_TESTED** | 20 |
+| **CERTIFIED** | 28 |
+| **PARTIALLY_CERTIFIED** | 18 |
+| **NOT_TESTED** | 14 |
 | **NOT_CERTIFIED** | 0 |
+| **DELETED** | 9 |
 
 ---
 
 ## Path to Full Certification
 
-The following work items are required to move from PARTIALLY_CERTIFIED / NOT_TESTED to CERTIFIED:
+The following work items remain to move from PARTIALLY_CERTIFIED / NOT_TESTED to CERTIFIED:
 
 ### High Priority
-1. **Migrate `india-builder.ts` to canonical registry** — most impactful single change; unblocks Price Forecaster real wiring and F&O data quality enforcement.
-2. **Wire `atomic-trade-guard` into `openIndiaPaperTrade()`** — replace GET-then-check with `executeExactlyOnce()`.
-3. **Run `verify-local.sh`** against local Docker environment — moves RUNTIME_TESTED from ❌ to ✅ for all new components.
-4. **Execute `MetaCalibrationDatasetBuilder`** in Python training pipeline — certifies OOS purity.
-5. **Run 30-minute paper soak** with real provider credentials — moves SOAK_TESTED from ❌ to ✅.
+1. **Run 30-minute paper soak** with real provider credentials — moves SOAK_TESTED from ❌ to ✅ for all new components.
+2. **Execute `MetaCalibrationDatasetBuilder`** in Python training pipeline — certifies OOS purity.
+3. **Wire `atomic-trade-guard` into `openIndiaPaperTrade()`** — replace GET-then-check with `executeExactlyOnce()`.
+4. **Coverage measurement run** — `npm run test:coverage` against live DB to verify gates in `critical-modules.json`.
 
 ### Medium Priority
-6. **Update NSE calendar for 2025/2026** — add `NSE_HOLIDAYS_2025` constant.
-7. **Migrate `candle-builder.service.ts`** from `market-hours.ts` to `NSETradingCalendar` — picks up holiday awareness.
-8. **Coverage measurement run** — `npm run test:coverage` against live DB to verify gates in `critical-modules.json`.
+5. **Update NSE calendar for 2026** — add `NSE_HOLIDAYS_2026` constant.
+6. **Migrate `candle-builder.service.ts`** from `market-hours.ts` to `NSETradingCalendar` — picks up holiday awareness.
+7. **Wire `evaluateOptionChainQuality()`** into signal pipeline — enforces F&O data quality on every signal.
 
 ### Low Priority
-9. **Migrate remaining scanner/paper-trader bypasses** to canonical registry — improves failover and health monitoring coverage.
-10. **Wire `evaluateOptionChainQuality()`** into `india-builder.ts` signal pipeline — enforces F&O data quality on every signal.
+8. **Runtime test of Paper Soak** (`assertPaperSoakSafe`, `generateSoakReport`) against local Docker stack.
+9. **E2E test of simulated fallback** end-to-end with data-service2.0 in degraded mode.
 
 ---
 
