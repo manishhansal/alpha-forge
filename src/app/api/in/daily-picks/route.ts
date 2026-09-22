@@ -16,11 +16,11 @@ export async function GET() {
   try {
     const data = await getIndiaDailyPicks();
     return NextResponse.json(data, {
-      // 10s shared-cache: concurrent browser tabs / CDN nodes reuse one
-      // server-side execution per 10s window. stale-while-revalidate lets
-      // the client show the previous result instantly while a fresh one
-      // is fetched in the background.
-      headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=20" },
+      // 10s shared-cache — no stale-while-revalidate to prevent serving
+      // yesterday's picks after IST midnight crossing (date key changes
+      // at 00:00 IST; SWR would serve the stale day-N response for up to
+      // TTL+SWR seconds into day N+1).
+      headers: { "Cache-Control": "public, s-maxage=10" },
     });
   } catch (err) {
     console.error("[/api/in/daily-picks] error:", err);

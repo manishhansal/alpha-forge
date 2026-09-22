@@ -167,5 +167,5 @@ export async function GET(req: Request) {
     sector,
     rows,
     fetchedAt: new Date().toISOString(),
-  });
+  }, { headers: { "Cache-Control": "no-store" } });
 }

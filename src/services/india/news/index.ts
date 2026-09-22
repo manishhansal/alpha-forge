@@ -166,6 +166,21 @@ function cleanSummary(raw: string): string {
     .slice(0, 300);
 }
 
+/**
+ * Returns true for articles that are internal SentinelPulse test/pipeline
+ * fixtures — they have fake URLs and should never reach the UI.
+ */
+function isTestArticle(article: SpArticle): boolean {
+  const url = article.canonicalUrl ?? "";
+  const sourceId = article.sourceId ?? "";
+  return (
+    url.includes("test.sentinelpulse.internal") ||
+    url.includes("sentinelpulse.internal") ||
+    sourceId === "test" ||
+    sourceId.startsWith("test-")
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Article → NewsItem mapping
 // ---------------------------------------------------------------------------
@@ -347,7 +362,7 @@ export async function getIndiaNews(
   const { category = "all", limit = 40 } = opts;
 
   const cacheKey = [
-    "sp:news2",
+    "sp:news3",
     category,
     opts.asset_id ?? "",
     opts.min_importance ?? "",
@@ -369,8 +384,10 @@ export async function getIndiaNews(
       const rawArticles: SpArticle[] =
         (marketData as MarketWithArticles | null)?.articles ?? [];
 
-      // Map all articles — scoring sentiment from text when SP fields absent
-      let allItems: NewsItem[] = rawArticles.map(mapArticleToNewsItem);
+      // Map all articles — filter test fixtures, score sentiment from text when SP fields absent
+      let allItems: NewsItem[] = rawArticles
+        .filter((a) => !isTestArticle(a))
+        .map(mapArticleToNewsItem);
 
       // Apply optional filters
       if (opts.min_importance !== undefined) {

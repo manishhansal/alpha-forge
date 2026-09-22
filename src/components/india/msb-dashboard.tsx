@@ -483,7 +483,9 @@ function IndexCard({
             ? <ArrowUpRight   className="h-3.5 w-3.5 shrink-0" />
             : <ArrowDownRight className="h-3.5 w-3.5 shrink-0" />}
           <span className="num">
-            {positive ? "+" : ""}{fmt(idx.change)} ({positive ? "+" : ""}{fmt(idx.changePct)}%)
+            {idx.changePct == null
+              ? "—"
+              : `${positive ? "+" : ""}${fmt(idx.change)} (${positive ? "+" : ""}${fmt(idx.changePct)}%)`}
           </span>
         </div>
       </Link>

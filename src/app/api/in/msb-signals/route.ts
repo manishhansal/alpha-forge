@@ -25,7 +25,7 @@ export async function GET() {
   ].filter((p): p is string => Boolean(p));
 
   const file = candidates.find((c) => fs.existsSync(c));
-  if (!file) return NextResponse.json([]);
+  if (!file) return NextResponse.json([], { headers: { "Cache-Control": "no-store" } });
 
   try {
     const text = fs.readFileSync(file, "utf-8");
@@ -40,7 +40,7 @@ export async function GET() {
       );
     });
 
-    return NextResponse.json(data);
+    return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[india.msb-signals] read failed:", msg);

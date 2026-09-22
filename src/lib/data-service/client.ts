@@ -237,18 +237,48 @@ export async function getQuote(
 }
 
 /**
- * Fetch live quotes for multiple symbols concurrently.
- * Symbols that fail individually return null in the corresponding slot rather
- * than rejecting the whole batch.
+ * Fetch live quotes for multiple symbols via the batch endpoint.
+ * Uses /v1/india/quotes/batch (up to 200 symbols in one request) to avoid
+ * N parallel HTTP calls. Falls back to individual getQuote calls if the
+ * batch endpoint is unavailable.
+ *
+ * Symbols that fail return null in the corresponding slot rather than
+ * rejecting the whole batch.
  */
 export async function getQuotes(
   symbols: string[],
   exchange?: string,
 ): Promise<Array<MarketQuote | null>> {
-  const results = await Promise.allSettled(
-    symbols.map((s) => getQuote(s, exchange)),
-  );
-  return results.map((r) => (r.status === "fulfilled" ? r.value : null));
+  if (symbols.length === 0) return [];
+
+  const params = qs({
+    symbols: symbols.join(","),
+    exchange: exchange ?? "NSE",
+  });
+
+  try {
+    const raw = await dsGet<{ quotes: MarketQuote[] } | MarketQuote[]>(
+      `/v1/india/quotes/batch${params}`,
+    );
+    // Handle both { quotes: [...] } envelope and bare array
+    const list: MarketQuote[] = Array.isArray(raw)
+      ? raw
+      : (raw as { quotes: MarketQuote[] }).quotes ?? [];
+
+    // Build a symbol → quote map so we can return results in input order
+    const bySymbol = new Map<string, MarketQuote>();
+    for (const q of list) {
+      if (q?.symbol) bySymbol.set(q.symbol, normalizeMarketQuote(q));
+    }
+
+    return symbols.map((s) => bySymbol.get(s) ?? null);
+  } catch {
+    // Batch endpoint unavailable — fall back to parallel individual calls
+    const results = await Promise.allSettled(
+      symbols.map((s) => getQuote(s, exchange)),
+    );
+    return results.map((r) => (r.status === "fulfilled" ? r.value : null));
+  }
 }
 
 // ---------------------------------------------------------------------------

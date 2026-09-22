@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# =============================================================================
+# git hook: post-commit
+# Fires after every `git commit`. Detects which parts of the codebase changed
+# and rebuilds only the affected Docker services.
+#
+# Install: run `make install-hooks` (or scripts/install-hooks.sh)
+# =============================================================================
+
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+DEPLOY="${PROJECT_ROOT}/scripts/deploy.sh"
+
+# ── Colour helpers ───────────────────────────────────────────────────────────
+CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RESET='\033[0m'
+log()  { echo -e "${CYAN}[git-hook]${RESET} $*"; }
+warn() { echo -e "${YELLOW}[git-hook]${RESET} $*"; }
+
+# ── Guard: skip if SKIP_DEPLOY env var is set ────────────────────────────────
+if [[ "${SKIP_DEPLOY:-}" == "1" ]]; then
+  warn "SKIP_DEPLOY=1 — skipping auto-redeploy"
+  exit 0
+fi
+
+# ── Guard: Docker must be running ────────────────────────────────────────────
+if ! docker info &>/dev/null; then
+  warn "Docker not running — skipping auto-redeploy"
+  exit 0
+fi
+
+# ── Detect changed files in the last commit ──────────────────────────────────
+CHANGED=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null || true)
+
+if [[ -z "$CHANGED" ]]; then
+  warn "No changed files detected — skipping redeploy"
+  exit 0
+fi
+
+log "Changed files:"
+echo "$CHANGED" | sed 's/^/  • /'
+
+# ── Classify changes ─────────────────────────────────────────────────────────
+NEEDS_APP=false
+NEEDS_WORKER=false
+NEEDS_ML=false
+
+while IFS= read -r file; do
+  case "$file" in
+    # ml-service changes
+    ml-service/*|ml_service/*)
+      NEEDS_ML=true ;;
+    # Worker-specific paths
+    worker/src/*|src/worker/*|Dockerfile.worker)
+      NEEDS_WORKER=true ;;
+    # Shared source + app-level paths trigger both app & worker
+    src/*|public/*|Dockerfile.app|\
+    package.json|package-lock.json|yarn.lock|pnpm-lock.yaml|\
+    next.config.*|tsconfig*|tailwind.config*|postcss.config*)
+      NEEDS_APP=true
+      NEEDS_WORKER=true ;;
+    # Infrastructure / env changes → rebuild everything
+    docker-compose.yml|.env.docker|Makefile)
+      NEEDS_APP=true
+      NEEDS_WORKER=true ;;
+    # Docs, markdown, coverage — no rebuild needed
+    *.md|docs/*|coverage/*)
+      : ;;
+  esac
+done <<< "$CHANGED"
+
+# ── Trigger rebuild ──────────────────────────────────────────────────────────
+if $NEEDS_ML && $NEEDS_APP; then
+  log "Rebuilding all services…"
+  bash "$DEPLOY" all
+elif $NEEDS_ML; then
+  log "Rebuilding ml-service…"
+  bash "$DEPLOY" ml
+elif $NEEDS_APP && $NEEDS_WORKER; then
+  log "Rebuilding app + worker…"
+  bash "$DEPLOY"
+elif $NEEDS_APP; then
+  log "Rebuilding app…"
+  bash "$DEPLOY" app
+elif $NEEDS_WORKER; then
+  log "Rebuilding worker…"
+  bash "$DEPLOY" worker
+else
+  log "No deployable files changed — skipping redeploy"
+fi

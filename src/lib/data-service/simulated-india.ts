@@ -21,7 +21,11 @@ function jitter(base: number, pct = 0.003): number {
   return +(base * (1 + (Math.random() - 0.5) * 2 * pct)).toFixed(2);
 }
 
-const NOW = new Date().toISOString();
+// NOTE: intentionally not a module-level constant — every call gets the
+// current timestamp so simulated quotes are never falsely flagged as stale.
+function now(): string {
+  return new Date().toISOString();
+}
 
 // ---------------------------------------------------------------------------
 // Index baselines (realistic NSE/BSE levels)
@@ -126,9 +130,9 @@ function makeSimulatedQuote(symbol: string): MarketQuote {
     weekHigh52: jitter(price * 1.18),
     weekLow52: jitter(price * 0.82),
     marketStatus: "REGULAR",
-    lastTradeTime: NOW,
-    dataAsOf: NOW,
-    fetchedAt: NOW,
+    lastTradeTime: now(),
+    dataAsOf: now(),
+    fetchedAt: now(),
     provider: "SIMULATED",
   };
 }

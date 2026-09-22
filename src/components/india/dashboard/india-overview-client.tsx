@@ -201,10 +201,9 @@ export function IndiaOverviewClient() {
 
   React.useEffect(() => {
     const t = setTimeout(() => void fetchAll(), 0);
-    // 30s poll — the underlying endpoints (market-snapshot, msb-signals,
-    // nifty-bias) have their own s-maxage caching, so polling faster than
-    // 30s just hits the shared cache without getting fresher data.
-    const interval = setInterval(fetchAll, 30_000);
+    // 10s poll — market-snapshot returns Cache-Control: no-store so every
+    // request hits the origin fresh. 30s was too slow for live index prices.
+    const interval = setInterval(fetchAll, 10_000);
     return () => {
       clearTimeout(t);
       clearInterval(interval);
