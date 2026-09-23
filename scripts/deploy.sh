@@ -41,6 +41,7 @@ ENV_FLAGS=(
   --env-file .env.docker
   --env-file .env.local
   -e DATA_SERVICE_URL=http://host.docker.internal:8200
+  -e DATA_SERVICE_2_URL=http://host.docker.internal:8200
   -e NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200
   -e DATABASE_URL=postgresql://crypto:crypto@postgres:5432/crypto_dashboard
   -e REDIS_URL=redis://redis:6379
