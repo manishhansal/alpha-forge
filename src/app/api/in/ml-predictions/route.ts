@@ -41,10 +41,12 @@ export async function GET() {
 
   // Return status and model info
   try {
-    const statusRes = await fetch(
-      `${process.env.ML_SERVICE_URL || "http://localhost:8100"}/models/status`,
-      { cache: "no-store" },
-    );
+    const mlUrl = process.env.ML_SERVICE_URL ?? "http://localhost:8100";
+    const mlKey = process.env.ML_SERVICE_API_KEY ?? "";
+    const statusRes = await fetch(`${mlUrl}/v2/models/status`, {
+      cache: "no-store",
+      headers: mlKey ? { "X-API-KEY": mlKey } : {},
+    });
     const modelsStatus = statusRes.ok ? await statusRes.json() : null;
 
     return NextResponse.json({
