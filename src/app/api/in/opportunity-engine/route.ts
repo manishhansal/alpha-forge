@@ -41,9 +41,16 @@ import {
 } from "@/lib/opportunity-engine";
 import type { OpportunityV1, OpportunityFunnel } from "@/lib/opportunity-engine";
 import { getHistorical } from "@/lib/data-service/client";
-
 import type { OHLCVCandle } from "@/lib/data-service/types";
 import { mapWithConcurrency } from "@/lib/map-with-concurrency";
+import { buildMLContext, getMLRisk } from "@/lib/india/ml-enhanced-context";
+import {
+  buildModelOutputs,
+  applyMetaDecision,
+  sentinelToNewsContext,
+} from "@/lib/india/ml-service2-integration";
+import { predictMetaDecision, metaDecisionToMlScore } from "@/lib/india/ml-client";
+import { fetchAlphaForgeContext } from "@/services/india/news/sentinel-client";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -185,12 +192,32 @@ export async function GET(req: NextRequest) {
 
     const tradeDate = new Date(istMs).toISOString().slice(0, 10);
 
+    // ── Stage 0: Build ML-enhanced context (regime + rankings) ───────────────
+    // Runs in parallel with candle pre-fetch below. Uses circuit breaker +
+    // schema validation via ml-enhanced-context.ts. Graceful fallback when
+    // ml-service2.0 is unavailable (ML_MODE=fallback).
+    const mlContextPromise = buildMLContext({
+      niftyChangePct: (aiResp.context as { niftyChangePct?: number | null })?.niftyChangePct ?? 0,
+      bankniftyChangePct: (aiResp.context as { bankniftyChangePct?: number | null })?.bankniftyChangePct ?? 0,
+      indiaVix: aiResp.context?.indiaVix ?? 18,
+      niftyAtrPct: 1.2,
+      niftyAdx: 22,
+      advanceDeclineRatio: 0,
+      marketBreadth: 0.5,
+      sectorStrength: 0,
+      volumeRatio: 1,
+      gapPct: 0,
+    }).catch(() => null);
+
     // Run pipeline on each signal
     const opportunities: OpportunityV1[] = [];
     let candidateCount = 0;
     let rejectedCount = 0;
     let approvedCount = 0;
     let watchCount = 0;
+
+    // Resolve ML context (was kicked off in parallel with candle fetch)
+    const mlContext = await mlContextPromise;
 
     for (const sig of candidateSignals) {
       candidateCount++;
@@ -268,7 +295,68 @@ export async function GET(req: NextRequest) {
 
       try {
         const result = runOpportunityPipeline(pipelineInput);
-        const opp = result.opportunity;
+        let opp = result.opportunity;
+
+        // ── Stage 12: MetaDecisionEngine gate (ml-service2.0 Phase 4) ────────
+        // Fetches SentinelPulse news context for this instrument, assembles
+        // 7-model output array, calls POST /v2/meta/decide, then applies the
+        // Go/No-Go verdict to the OpportunityV1. When the engine abstains
+        // (agreement_ratio < 0.5 or all models UNAVAILABLE), the decision is
+        // overridden to ABSTAIN before any capital allocation can happen.
+        try {
+          // 1. Per-instrument news context from SentinelPulse
+          const sentinelRaw = await fetchAlphaForgeContext(instrument).catch(() => null);
+          const newsCtx = sentinelToNewsContext(sentinelRaw as Record<string, unknown> | null);
+
+          // 2. ML risk prediction for this specific trade
+          const mlRisk = mlContext
+            ? await getMLRisk(mlContext, {
+                symbol: instrument,
+                direction: pipelineInput.direction === "SHORT" ? "SHORT" : "LONG",
+                entry: sig.entry,
+                stop_loss: sig.stopLoss,
+                target: sig.takeProfits?.[1]?.price ?? sig.entry * 1.02,
+                atr: realAtr,
+                rsi: realRsi ?? 50,
+                adx: 22,
+                volume_ratio: realCurVol && realAvgVol ? realCurVol / realAvgVol : 1,
+                vix: aiResp.context?.indiaVix ?? 18,
+              }).catch(() => null)
+            : null;
+
+          // 3. Assemble 7-model output array
+          const modelOutputs = buildModelOutputs(
+            mlContext?.regime ?? null,
+            mlContext?.rankings ?? null,
+            mlContext ? await mlContext.strategies.get(instrument) ?? null : null,
+            mlRisk ?? null,
+            mlContext?.priceForecast ?? null,
+            null, // ivResult — not yet fetched per-instrument in this route
+            null, // execResult — not yet fetched per-instrument in this route
+            pipelineInput.direction === "SHORT" ? "SHORT" : "LONG",
+          );
+
+          // 4. Call POST /v2/meta/decide — the final Go/No-Go gatekeeper
+          const meta = await predictMetaDecision({
+            symbol: instrument,
+            regime: mlContext?.regime?.regime ?? "sideways",
+            model_outputs: modelOutputs,
+            news_context: newsCtx,
+            risk_context: mlRisk ? { prob_stop_hit: mlRisk.prob_stop_hit } : undefined,
+          }).catch(() => null);
+
+          // 5. Apply verdict: may override APPROVED → ABSTAIN, injects rationale
+          opp = applyMetaDecision(opp, meta);
+
+          // 6. Feed calibrated ML score back into pipeline scoring
+          if (meta && !meta.abstention) {
+            const mlScore = metaDecisionToMlScore(meta);
+            pipelineInput.mlProbability = mlScore;
+            pipelineInput.mlRegimeScore = mlContext?.regimeScore ?? null;
+          }
+        } catch {
+          // MetaDecision gate failed — pass through without ML enhancement
+        }
 
         if (opp.decision === "REJECT" || opp.decision === "ABSTAIN") rejectedCount++;
         else if (opp.decision === "WATCH" || opp.decision === "WAIT") watchCount++;
