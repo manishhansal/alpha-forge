@@ -42,34 +42,56 @@ services:
     networks:
       - alphaforge
 
-  # ─── ML Service (Python multi-model AI decision engine) ─────────────────────
+  # ─── ML Service (ml-service2.0 — external standalone repo) ─────────────────
+  # Source: /Users/manishkumar/Desktop/ml-service2.0
+  # The old ./ml-service has been retired. ml-service2.0 is the canonical
+  # multi-model AI decision engine for AlphaForge Phase 3/4.
   ml-service:
     build:
-      context: ./ml-service
+      context: ../ml-service2.0
       dockerfile: Dockerfile
     container_name: alpha-forge-ml
     restart: unless-stopped
     environment:
-      ML_SERVICE_PORT: "8100"
-      ML_LOG_LEVEL: "INFO"
+      # ── Service identity ────────────────────────────────────────────────────
+      PORT: "8100"
+      LOG_LEVEL: "INFO"
+      DEPLOYMENT_MODE: "paper"
+      # ── Auth ────────────────────────────────────────────────────────────────
+      # Must match ML_SERVICE_API_KEY in alpha-forge .env.local
+      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-key-change-before-prod}
+      # ── Upstream data sources ───────────────────────────────────────────────
+      # data-service2.0 runs as a separate stack — reach via host gateway
+      DATA_SERVICE_2_URL: "http://host.docker.internal:8200"
+      DATA_SERVICE_API_KEY: ${DATA_SERVICE_API_KEY:-}
+      # SentinelPulse news intelligence service (port 3001)
+      SENTINEL_PULSE_URL: "http://host.docker.internal:3001"
+      SENTINEL_PULSE_API_KEY: ${SENTINEL_PULSE_API_KEY:-}
+      # ── Storage ─────────────────────────────────────────────────────────────
       MODEL_ARTIFACTS_PATH: "/app/artifacts"
       FEATURE_CACHE_TTL: "60"
-      # The ML service can call the Next.js app for data if needed
-      NEXTJS_API_BASE_URL: "http://host.docker.internal:3000/api/in"
-      # data-service2.0 runs as a separate stack — reach it via the host
-      DATA_SERVICE_URL: "http://host.docker.internal:8200"
+      NEWS_CONTEXT_CACHE_TTL: "90"
+      # ── Redis (shared with AlphaForge) ──────────────────────────────────────
+      REDIS_URL: "redis://redis:6379"
+      # ── MLflow experiment tracking ──────────────────────────────────────────
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      # ── Model acceptance gates ──────────────────────────────────────────────
+      MODEL_ACCEPTANCE_MIN_IC: "0.02"
+      MODEL_ACCEPTANCE_MAX_PBO: "0.5"
+      EMBARGO_PERIOD_DAYS: "10"
+      OPTUNA_N_TRIALS: "50"
     ports:
       - "8100:8100"
     volumes:
       # Persist trained model artifacts across container restarts
       - ml_artifacts:/app/artifacts
-      # Training data (optional — mount local data for training runs)
-      - ./ml-service/data:/app/data
+      # Audit log persisted to host
+      - ./audit.jsonl:/app/audit.jsonl
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8100/health'); r.raise_for_status()"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8100/health | grep -q healthy || exit 1"]
       interval: 30s
       timeout: 10s
-      start_period: 40s
+      start_period: 60s
       retries: 3
     # Resource limits — ML models are memory-hungry
     deploy:
@@ -78,11 +100,11 @@ services:
           memory: 4G
         reservations:
           memory: 1G
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - alphaforge
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -103,6 +125,8 @@ services:
       DATABASE_URL: postgresql://crypto:crypto@postgres:5432/crypto_dashboard
       REDIS_URL: redis://redis:6379
       ML_SERVICE_URL: http://ml-service:8100
+      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-key-change-before-prod}
+      ML_MODE: ${ML_MODE:-fallback}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       SENTINEL_PULSE_URL: http://host.docker.internal:3001
       SENTINEL_PULSE_API_KEY: ${SENTINEL_PULSE_API_KEY}
@@ -140,6 +164,8 @@ services:
       DATABASE_URL: postgresql://crypto:crypto@postgres:5432/crypto_dashboard
       REDIS_URL: redis://redis:6379
       ML_SERVICE_URL: http://ml-service:8100
+      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-key-change-before-prod}
+      ML_MODE: ${ML_MODE:-fallback}
       WORKER_APP_BASE_URL: http://app:3000
       SENTINEL_PULSE_URL: http://host.docker.internal:3001
       SENTINEL_PULSE_API_KEY: ${SENTINEL_PULSE_API_KEY}
@@ -151,10 +177,28 @@ services:
     networks:
       - alphaforge
 
+  # ─── MLflow tracking server ──────────────────────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    container_name: alpha-forge-mlflow
+    restart: unless-stopped
+    command: >
+      sh -c "pip install --quiet mlflow==2.19.0 &&
+             mlflow server --host 0.0.0.0 --port 5000
+             --backend-store-uri sqlite:///mlruns/mlflow.db
+             --default-artifact-root /mlruns/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlruns:/mlruns
+    networks:
+      - alphaforge
+
 volumes:
   postgres_data:
   redis_data:
   ml_artifacts:
+  mlruns:
 
 networks:
   alphaforge:
