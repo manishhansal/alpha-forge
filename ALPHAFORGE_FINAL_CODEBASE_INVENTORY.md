@@ -40,7 +40,7 @@
 | `e2e/` | **KEEP** | E2E test specs |
 | `docs/` | **KEEP** | Architecture docs, ML docs |
 | `scripts/` | **KEEP** | Utility scripts (deploy.sh, install-hooks.sh, git-hooks/post-commit) |
-| `ml-service/` | **KEEP** | ML service (ta-lib built from source in Dockerfile) |
+| `ml-service/` | **REMOVED** | ML service extracted into standalone `ml-service2.0` repo. AlphaForge connects via `ML_SERVICE_URL=http://localhost:8100`. Managed by `cd ../ml-service2.0 && make up/down/rebuild`. |
 | `public/` | **KEEP** | Static assets |
 | `.kiro/hooks/` | **KEEP** | Kiro IDE hooks (docker-redeploy-on-commit.json) |
 | `Makefile` | **KEEP** | Local Docker workflow + auto-deploy targets |
@@ -78,7 +78,7 @@
 | `scripts/install-hooks.sh` | #38 | One-command git hook installer |
 | `scripts/git-hooks/post-commit` | #38 | Smart diff-based post-commit trigger |
 | `.kiro/hooks/docker-redeploy-on-commit.json` | #38 | Kiro IDE hook — surfaces deploy.log after commits |
-| `Makefile` | #38 | `deploy`, `deploy-app`, `deploy-worker`, `deploy-ml`, `deploy-log`, `watch-deploy`, `install-hooks` |
+| `Makefile` | #38 | `deploy`, `deploy-app`, `deploy-worker`, `deploy-ml` (guidance only — ml-service2.0 is standalone), `deploy-log`, `watch-deploy`, `install-hooks` |
 | `docs/AUTO_DEPLOY.md` | #38 | Auto-deploy system reference documentation |
 
 ## Live Data Fixes (PR #37 + #39)
@@ -94,7 +94,7 @@
 | Heatmap 30 s auto-refresh (was: load-once on mount) | `src/components/india/heatmap/india-heatmap.tsx` |
 | Cache-Control: `no-store` on all India API routes that were serving stale data | Multiple `src/app/api/in/` routes |
 | Docker `--chown` on COPY + AUTH_SECRET sync from `.env.local` | `Dockerfile.app` |
-| ta-lib compiled from source in ML service Dockerfile | `ml-service/Dockerfile` |
+| ta-lib compiled from source in ML service Dockerfile | `ml-service/Dockerfile` → now `ml-service2.0/Dockerfile` (standalone repo) |
 
 ## Current File Counts
 

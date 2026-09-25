@@ -55,11 +55,12 @@ The canonical market data platform. All live quotes, tick streams, option chains
 |---|---|---|
 | `alpha-forge-postgres` | `postgres:17` | `5433` |
 | `alpha-forge-redis` | `redis:7` | `6379` |
-| `alpha-forge-ml` | `alpha-forge-ml-service` | `8100` |
 | `alpha-forge-app` | `alpha-forge-app` | `3000` |
 | `alpha-forge-worker` | `alpha-forge-worker` | — |
 
 `app` and `worker` are under the `integration` profile — they require a Docker build and are not started by default with `docker compose up`.
+
+> **ml-service2.0** is a standalone service managed by its own repository and Docker Compose stack. AlphaForge connects to it via `ML_SERVICE_URL=http://localhost:8100` (local dev) or `http://host.docker.internal:8100` (Docker). See the [ml-service2.0 repo](../ml-service2.0) for its own `make up/down/rebuild` workflow.
 
 ---
 
@@ -71,7 +72,7 @@ You need **Node.js ≥ 20.9**, **Docker Desktop**, and the **data-service2.0** s
 # 1. Install dependencies
 npm install
 
-# 2. Start Postgres + Redis + ML service
+# 2. Start Postgres + Redis
 npm run docker:up
 
 # 3. Copy env template and fill in secrets
@@ -91,6 +92,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # →
 # SENTINEL_PULSE_URL=http://localhost:3001
 # SENTINEL_PULSE_API_KEY=<your-key>
 
+# 5b. (Optional) ml-service2.0 — managed by its own Docker Compose stack
+# Start it from the ml-service2.0 repo: cd ../ml-service2.0 && make up
+# Then set in .env.local:
+# ML_SERVICE_URL=http://localhost:8100
+# ML_SERVICE_API_KEY=<your-key>
+
 # 6. Run the first DB migration
 npm run db:migrate -- --name init
 
@@ -99,9 +106,6 @@ npm run dev
 
 # 8. Start the background worker (separate terminal)
 npm run worker:dev
-
-# 9. (Optional) Start the ML service if not already running
-docker compose up ml-service -d
 ```
 
 Or use the one-shot setup (installs deps + starts infra + migrates DB):
@@ -116,10 +120,10 @@ Open [http://localhost:3000](http://localhost:3000) and create an account at `/s
 
 ## Docker Commands
 
-### Infrastructure (Postgres · Redis · ML)
+### Infrastructure (Postgres · Redis)
 
 ```bash
-# Start Postgres, Redis, and ML service
+# Start Postgres and Redis
 npm run docker:up
 # equivalent to: docker compose up -d
 
@@ -139,7 +143,6 @@ docker compose logs -f
 
 # Live logs — specific services
 docker compose logs -f app worker
-docker compose logs -f ml-service
 
 # Live logs with timestamps
 docker compose logs -f -t
@@ -147,6 +150,10 @@ docker compose logs -f -t
 # Last 100 lines then follow
 docker compose logs -f --tail=100
 ```
+
+> **ml-service2.0** is a separate Docker Compose stack managed in its own repo.
+> Start/stop it with `cd ../ml-service2.0 && make up` / `make down`.
+> Logs: `cd ../ml-service2.0 && make logs-ml`
 
 ### App + Worker (integration profile)
 
@@ -320,7 +327,7 @@ npm run db:generate
 | `npm run test:coverage` | v8 coverage → `coverage/` |
 | `npm run db:migrate` | Create and apply a DB migration in dev |
 | `npm run db:studio` | Open Prisma Studio |
-| `npm run docker:up/down/reset` | Manage Postgres + Redis + ML containers |
+| `npm run docker:up/down/reset` | Manage Postgres + Redis containers |
 
 > **TDD is mandatory.** Write the failing test first, then the implementation. The `prebuild` hook enforces a green suite before every build. When building Docker images, `npx next build` is used directly to skip this hook (tests belong in CI, not image builds).
 
@@ -386,7 +393,7 @@ The worker connects to data-service2.0 using `DATA_SERVICE_URL` (resolved to `ht
 
 ### ML Microservice
 
-A FastAPI Python service (`ml-service/`, port 8100) implements a multi-model decision engine:
+A standalone FastAPI Python service (`ml-service2.0` — separate repository, port 8100) implements a multi-model decision engine:
 
 ```
 NSE Data (via data-service2.0) → Feature Engineering (150+ features)
@@ -562,8 +569,9 @@ After that, every commit triggers a smart diff that decides which services to re
 |---|---|
 | `src/**`, `public/**`, `Dockerfile.app`, `package*.json` | app + worker |
 | `worker/src/**`, `Dockerfile.worker` | worker |
-| `ml-service/**` | ml-service |
 | `docs/**`, `*.md` | *(nothing — skipped)* |
+
+> ml-service2.0 has its own repo, Makefile, and deploy workflow (`make rebuild` inside the ml-service2.0 repo). Running `make deploy-ml` from the alpha-forge Makefile will print guidance on how to do this.
 
 Manual deploy commands:
 
@@ -571,8 +579,8 @@ Manual deploy commands:
 make deploy           # rebuild + redeploy app & worker
 make deploy-app       # app only
 make deploy-worker    # worker only
-make deploy-ml        # ML service only
-make deploy-all       # all three
+make deploy-ml        # prints guidance (ml-service2.0 is managed in its own repo)
+make deploy-all       # app + worker
 make deploy-log       # tail the live deploy log
 make watch-deploy     # file-watcher mode (requires fswatch)
 ```
