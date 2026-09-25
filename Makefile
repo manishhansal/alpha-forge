@@ -5,8 +5,7 @@
 ##   make deploy          rebuild + redeploy app & worker right now
 ##   make deploy-app      rebuild + redeploy app only
 ##   make deploy-worker   rebuild + redeploy worker only
-##   make deploy-ml       rebuild + redeploy ml-service only
-##   make deploy-all      rebuild + redeploy every service
+##   make deploy-all      rebuild + redeploy app + worker
 ##   make deploy-log      tail the live deploy log
 ##   make watch-deploy    watch src/ and redeploy on any file change (fswatch)
 ##
@@ -20,6 +19,11 @@
 ##   make status          show running container health
 ##   make stop            stop app + worker (keeps infra running)
 ##   make start           start app + worker (after stop)
+##
+## ── ml-service2.0 (managed by its own repo) ──────────────────────────────────
+##   ml-service2.0 is a standalone service with its own docker-compose.yml.
+##   To manage it, run: cd ../ml-service2.0 && make up / make logs / etc.
+##   AlphaForge connects to it via http://host.docker.internal:8100.
 
 # ── Config ─────────────────────────────────────────────────────────────────
 APP_IMAGE      := alpha-forge-app-local
@@ -34,6 +38,9 @@ NETWORK        := alpha-forge_alphaforge
 #   3. Override a small set of Docker-specific values that .env.local gets wrong
 #      when run inside a container (localhost → host.docker.internal for
 #      DATA_SERVICE_URL, and strip the broken ALERT_EMAIL_FROM format).
+#
+# NOTE: ml-service2.0 is now a standalone service. ML_SERVICE_URL points to
+#       host.docker.internal:8100 — not the old internal ml-service container.
 ENV_FLAGS := \
 	--env-file .env.docker \
 	--env-file .env.local \
@@ -42,7 +49,7 @@ ENV_FLAGS := \
 	-e NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200 \
 	-e DATABASE_URL=postgresql://crypto:crypto@postgres:5432/crypto_dashboard \
 	-e REDIS_URL=redis://redis:6379 \
-	-e ML_SERVICE_URL=http://ml-service:8100 \
+	-e ML_SERVICE_URL=http://host.docker.internal:8100 \
 	-e ALERT_EMAIL_FROM=alerts@alphaforge.local
 
 DOCKER_RUN_BASE := docker run -d \
@@ -72,12 +79,16 @@ deploy-app:
 deploy-worker:
 	@bash scripts/deploy.sh worker
 
-## Rebuild + redeploy ml-service only
+## Rebuild + redeploy ml-service2.0 (delegates to ml-service2.0 repo)
+## ml-service2.0 is an independent service — managed by its own compose.
 .PHONY: deploy-ml
 deploy-ml:
-	@bash scripts/deploy.sh ml
+	@echo "ml-service2.0 is a standalone service."
+	@echo "To rebuild and restart it, run:"
+	@echo "  cd ../ml-service2.0 && make rebuild"
+	@echo "  docker compose up -d ml-service"
 
-## Rebuild + redeploy all services (app + worker + ml-service)
+## Rebuild + redeploy all AlphaForge services (app + worker)
 .PHONY: deploy-all
 deploy-all:
 	@bash scripts/deploy.sh all

@@ -229,6 +229,10 @@ export interface MLMetaDecision {
 
 // ─── HTTP layer ───────────────────────────────────────────────────────────────
 
+// Docker-aware URL resolution (mandate §24):
+// - When running inside Docker (ML_SERVICE_URL set to docker service name), use that.
+// - When running on host (dev/AlphaForge frontend), default to localhost:8100.
+// - Never hardcode localhost for inter-container communication.
 const ML_SERVICE_URL =
   (process.env.ML_SERVICE_URL ?? "http://localhost:8100").replace(/\/$/, "");
 

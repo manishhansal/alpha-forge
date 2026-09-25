@@ -143,11 +143,16 @@ The following were removed and must not be re-introduced:
 | `DATA_SERVICE_API_KEY` | data-service2.0 API key | Production |
 | `SENTINEL_PULSE_URL` | SentinelPulse news service URL | For news/AI signals |
 | `SENTINEL_PULSE_API_KEY` | SentinelPulse API key | For news/AI signals |
+| `ML_SERVICE_URL` | ml-service2.0 base URL (`http://localhost:8100` local, `http://host.docker.internal:8100` Docker) | For ML predictions |
+| `ML_SERVICE_API_KEY` | ml-service2.0 API key | For ML predictions |
+| `ML_MODE` | `fallback` (default) — silently degrades when ML is down; `required` — throws on failure | Optional |
 | `DATABASE_URL` | AlphaForge PostgreSQL | Yes |
 | `REDIS_URL` | AlphaForge Redis cache | Yes |
 | `AUTH_SECRET` | NextAuth.js secret | Yes |
 
 No market-data provider credentials (Angel One, Upstox, NSE) are required in AlphaForge.
+
+> **ml-service2.0** runs as a standalone Docker Compose stack in its own repository. It is not defined in `alpha-forge/docker-compose.yml`. To start it: `cd ../ml-service2.0 && make up`. AlphaForge's `ML_MODE=fallback` means all features degrade gracefully if ml-service2.0 is unavailable.
 
 ## Error Handling
 
