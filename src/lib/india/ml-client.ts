@@ -826,9 +826,23 @@ export interface MLForecastRecord {
   brier_delta?: number;
 }
 
+export interface MLSignalHistoryStats {
+  n_total: number;
+  n_resolved: number;
+  n_open: number;
+  n_won: number;
+  n_lost: number;
+  win_rate?: number;
+  mean_net?: number;
+  best_net?: number;
+  worst_net?: number;
+  brier_delta_mean?: number | null;
+}
+
 export interface MLSignalHistoryResponse {
   date: string;
   n: number;
+  stats: MLSignalHistoryStats;
   records: MLForecastRecord[];
 }
 

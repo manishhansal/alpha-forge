@@ -6,26 +6,36 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BrainCircuit,
+  Calendar,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
   Clock,
+  History,
   RefreshCw,
   TrendingDown,
   TrendingUp,
   AlertCircle,
-  ChevronUp,
-  ChevronDown,
-  ChevronsUpDown,
+  XCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { MLLatestSignalsResponse, MLSignalScore, MLConviction } from "@/lib/india/ml-client";
+import type {
+  MLLatestSignalsResponse,
+  MLSignalScore,
+  MLConviction,
+  MLForecastRecord,
+  MLSignalHistoryResponse,
+} from "@/lib/india/ml-client";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Filter = "all" | "long" | "short" | "tracked";
+type Filter  = "all" | "long" | "short" | "tracked";
 type SortKey = "conviction" | "symbol" | "pnl";
+type MainTab = "live" | "history";
 
 interface Props {
   initialData: MLLatestSignalsResponse | null;
@@ -111,7 +121,8 @@ export function MLSignalsBoard({
   endpoint = "/api/in/ml-signals",
   intervalMs = 30_000,
 }: Props) {
-  const [data, setData] = React.useState<MLLatestSignalsResponse | null>(initialData);
+  const [mainTab, setMainTab]  = React.useState<MainTab>("live");
+  const [data, setData]        = React.useState<MLLatestSignalsResponse | null>(initialData);
   const [loading, setLoading] = React.useState(false);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [sortKey, setSortKey] = React.useState<SortKey>("conviction");
@@ -228,7 +239,36 @@ export function MLSignalsBoard({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Stats bar ─────────────────────────────────────────────────────── */}
+      {/* ── Main tab switcher ─────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-surface-raised)] p-0.5">
+        {(
+          [
+            { key: "live",    label: "Live Signals", icon: <Activity className="h-3 w-3" /> },
+            { key: "history", label: "History",      icon: <History  className="h-3 w-3" /> },
+          ] as const
+        ).map(({ key, label, icon }) => (
+          <button
+            key={key}
+            onClick={() => setMainTab(key)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              mainTab === key
+                ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-fg)]"
+                : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+            )}
+          >
+            {icon}{label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── History tab ───────────────────────────────────────────────── */}
+      {mainTab === "history" && (
+        <HistoryPanel endpoint={endpoint} />
+      )}
+
+      {/* ── Live tab ──────────────────────────────────────────────────── */}
+      {mainTab === "live" && (<>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
         <StatCard
           label="Scored"
@@ -376,6 +416,7 @@ export function MLSignalsBoard({
           )}
         </CardContent>
       </Card>
+      </>)}
     </div>
   );
 }
@@ -484,11 +525,240 @@ function SignalRow({ sig, index }: { sig: MLSignalScore; index: number }) {
   );
 }
 
+// ── History panel ──────────────────────────────────────────────────────────────
+
+type HistoryFilter = "all" | "won" | "lost" | "open";
+
+function StatusBadge({ status }: { status: string }) {
+  const cfg: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
+    won:  { label: "Won",  cls: "text-[var(--color-bull)] bg-[color-mix(in_oklch,var(--color-bull)_12%,transparent)] ring-[color-mix(in_oklch,var(--color-bull)_25%,transparent)]", icon: <CheckCircle2 className="h-2.5 w-2.5" /> },
+    lost: { label: "Lost", cls: "text-[var(--color-bear)] bg-[color-mix(in_oklch,var(--color-bear)_12%,transparent)] ring-[color-mix(in_oklch,var(--color-bear)_25%,transparent)]", icon: <XCircle      className="h-2.5 w-2.5" /> },
+    open: { label: "Open", cls: "text-sky-400 bg-sky-400/10 ring-sky-400/25", icon: <Clock className="h-2.5 w-2.5" /> },
+  };
+  const c = cfg[status] ?? { label: status, cls: "text-[var(--color-fg-muted)] bg-transparent ring-[var(--color-border)]", icon: null };
+  return (
+    <span className={cn("inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset w-fit", c.cls)}>
+      {c.icon}{c.label}
+    </span>
+  );
+}
+
+function HistoryRow({ rec, index }: { rec: MLForecastRecord; index: number }) {
+  const isLong = rec.direction === 1;
+  const resolved = rec.net_pct != null;
+  return (
+    <motion.div
+      layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      transition={{ duration: 0.12 }}
+      className="grid grid-cols-[2rem_1fr_4.5rem_7rem_4.5rem_5rem_5.5rem] items-center gap-2 rounded-lg px-1 py-2 text-sm transition-colors hover:bg-[var(--color-surface-raised)]"
+    >
+      <span className="text-xs tabular-nums text-[var(--color-fg-muted)]">{index + 1}</span>
+
+      <span className="font-medium truncate" style={{ color: "var(--color-fg)" }}>{rec.symbol}</span>
+
+      <span className={cn(
+        "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset w-fit",
+        isLong
+          ? "bg-[color-mix(in_oklch,var(--color-bull)_12%,transparent)] text-[var(--color-bull)] ring-[color-mix(in_oklch,var(--color-bull)_25%,transparent)]"
+          : "bg-[color-mix(in_oklch,var(--color-bear)_12%,transparent)] text-[var(--color-bear)] ring-[color-mix(in_oklch,var(--color-bear)_25%,transparent)]",
+      )}>
+        {isLong ? <ArrowUpRight className="h-2.5 w-2.5" /> : <ArrowDownRight className="h-2.5 w-2.5" />}
+        {isLong ? "LONG" : "SHORT"}
+      </span>
+
+      <div className="flex items-center gap-2">
+        <ScoreBar score={rec.score} />
+        <span className="text-xs tabular-nums text-[var(--color-fg-muted)]">{rec.score.toFixed(3)}</span>
+      </div>
+
+      <StatusBadge status={rec.status} />
+
+      {/* Net P&L */}
+      {resolved ? (
+        <span className={cn("text-xs font-medium tabular-nums",
+          rec.net_pct! >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
+        )}>
+          {rec.net_pct! >= 0 ? "+" : ""}{rec.net_pct!.toFixed(2)}%
+        </span>
+      ) : (
+        <span className="text-xs text-[var(--color-fg-muted)]">—</span>
+      )}
+
+      {/* Brier delta — negative = model beats market prior */}
+      {rec.brier_delta != null ? (
+        <span className={cn("text-[11px] tabular-nums font-mono",
+          rec.brier_delta < 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"
+        )}>
+          {rec.brier_delta >= 0 ? "+" : ""}{rec.brier_delta.toFixed(4)}
+        </span>
+      ) : (
+        <span className="text-[11px] text-[var(--color-fg-muted)]">—</span>
+      )}
+    </motion.div>
+  );
+}
+
+function HistoryPanel({ endpoint }: { endpoint: string }) {
+  // Default to yesterday IST
+  const todayIST = React.useMemo(() => {
+    const d = new Date(Date.now() + 5.5 * 3600 * 1000);
+    return d.toISOString().slice(0, 10);
+  }, []);
+
+  const [date, setDate]       = React.useState(todayIST);
+  const [hFilter, setHFilter] = React.useState<HistoryFilter>("all");
+  const [data, setData]       = React.useState<MLSignalHistoryResponse | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError]     = React.useState<string | null>(null);
+
+  const load = React.useCallback(async (d: string) => {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch(`${endpoint}?view=history&date=${d}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json() as MLSignalHistoryResponse;
+      setData(json);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [endpoint]);
+
+  React.useEffect(() => { void load(date); }, [date, load]);
+
+  const records = React.useMemo(() => {
+    if (!data?.records) return [];
+    if (hFilter === "all") return data.records;
+    return data.records.filter(r => r.status === hFilter);
+  }, [data, hFilter]);
+
+  const stats = data?.stats;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Stats bar */}
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <StatCard label="Resolved" value={String(stats.n_resolved)} icon={<Activity className="h-4 w-4" />} />
+          <StatCard label="Won" value={String(stats.n_won)}
+            icon={<CheckCircle2 className="h-4 w-4 text-[var(--color-bull)]" />}
+            valueClass="text-[var(--color-bull)]" />
+          <StatCard label="Lost" value={String(stats.n_lost)}
+            icon={<XCircle className="h-4 w-4 text-[var(--color-bear)]" />}
+            valueClass="text-[var(--color-bear)]" />
+          {stats.win_rate != null && (
+            <StatCard label="Win rate" value={`${stats.win_rate.toFixed(0)}%`}
+              valueClass={stats.win_rate >= 50 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"} />
+          )}
+          {stats.mean_net != null && (
+            <StatCard label="Mean net P&L"
+              value={`${stats.mean_net >= 0 ? "+" : ""}${stats.mean_net.toFixed(2)}%`}
+              valueClass={stats.mean_net >= 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]"}
+              subLabel={stats.brier_delta_mean != null
+                ? `Brier Δ ${stats.brier_delta_mean >= 0 ? "+" : ""}${stats.brier_delta_mean.toFixed(4)}`
+                : undefined} />
+          )}
+        </div>
+      )}
+
+      <Card className="border-[var(--color-border)] bg-[var(--color-surface)]">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-0">
+          {/* Date picker */}
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-[var(--color-fg-muted)]" />
+            <input
+              type="date"
+              value={date}
+              max={todayIST}
+              onChange={e => setDate(e.target.value)}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1 text-xs text-[var(--color-fg)] focus:outline-none"
+            />
+            <span className="text-xs text-[var(--color-fg-muted)]">
+              {data ? `${data.n} symbols` : "—"}
+            </span>
+          </div>
+
+          {/* Status filter tabs */}
+          <div className="flex items-center gap-1 rounded-lg bg-[var(--color-surface-raised)] p-0.5">
+            {(["all", "won", "lost", "open"] as HistoryFilter[]).map(f => (
+              <button key={f} onClick={() => setHFilter(f)}
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium capitalize transition-colors",
+                  hFilter === f
+                    ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-fg)]"
+                    : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+                  f === "won"  && hFilter === f && "text-[var(--color-bull)]",
+                  f === "lost" && hFilter === f && "text-[var(--color-bear)]",
+                )}>
+                {f}
+                {stats && (
+                  <span className="ml-1.5 rounded-full bg-[var(--color-border)] px-1.5 py-0.5 text-[10px] tabular-nums">
+                    {f === "all" ? stats.n_total : f === "won" ? stats.n_won : f === "lost" ? stats.n_lost : stats.n_open}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </CardHeader>
+
+        <CardContent className="pt-3">
+          {/* Table header */}
+          <div className="mb-1 grid grid-cols-[2rem_1fr_4.5rem_7rem_4.5rem_5rem_5.5rem] items-center gap-2 border-b border-[var(--color-border)] pb-2 text-[11px] font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
+            <span>#</span>
+            <span>Symbol</span>
+            <span>Direction</span>
+            <span>Score</span>
+            <span>Status</span>
+            <span>Net P&L</span>
+            <span title="Brier delta: negative = model beats 50/50 baseline">Brier Δ</span>
+          </div>
+
+          {loading ? (
+            <div className="space-y-2 pt-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full rounded-lg" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="py-12 text-center text-sm text-[var(--color-bear)]">{error}</div>
+          ) : (
+            <div className="max-h-[calc(100vh-24rem)] overflow-y-auto">
+              <AnimatePresence initial={false}>
+                {records.length === 0 ? (
+                  <div className="py-12 text-center text-sm text-[var(--color-fg-muted)]">
+                    No records for this date / filter.
+                  </div>
+                ) : (
+                  records.map((rec, i) => <HistoryRow key={rec.id ?? rec.symbol} rec={rec} index={i} />)
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {records.length > 0 && (
+            <p className="mt-2 text-right text-[11px] text-[var(--color-fg-muted)]">
+              {records.length} records
+              {stats?.brier_delta_mean != null && (
+                <span className="ml-2">
+                  · Brier Δ mean: {stats.brier_delta_mean >= 0 ? "+" : ""}{stats.brier_delta_mean.toFixed(4)}
+                  {stats.brier_delta_mean < 0 ? " (model beats market ✓)" : ""}
+                </span>
+              )}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ── Loading skeleton ───────────────────────────────────────────────────────────
 
 export function MLSignalsBoardSkeleton() {
   return (
     <div className="flex flex-col gap-4">
+      <Skeleton className="h-9 w-48 rounded-lg" />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-[88px] w-full rounded-xl" />
