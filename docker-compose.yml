@@ -61,7 +61,7 @@ services:
       # ml-service2.0 is a standalone service managed by its own compose.
       # AlphaForge reaches it via host gateway — same pattern as data-service and SentinelPulse.
       ML_SERVICE_URL: http://host.docker.internal:8100
-      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-key-change-before-prod}
+      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-ml-service-local-dev-key}
       ML_MODE: ${ML_MODE:-fallback}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       SENTINEL_PULSE_URL: http://host.docker.internal:3001
@@ -103,7 +103,7 @@ services:
       REDIS_URL: redis://redis:6379
       # ml-service2.0 is a standalone service managed by its own compose.
       ML_SERVICE_URL: http://host.docker.internal:8100
-      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-key-change-before-prod}
+      ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-ml-service-local-dev-key}
       ML_MODE: ${ML_MODE:-fallback}
       WORKER_APP_BASE_URL: http://app:3000
       SENTINEL_PULSE_URL: http://host.docker.internal:3001
