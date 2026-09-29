@@ -731,3 +731,168 @@ export function metaDecisionRationale(
   const codes = meta.reason_codes.slice(0, 2).join(", ") || "model_consensus";
   return `${symbol}: ${meta.action} | conf=${meta.confidence.toFixed(2)} agree=${meta.agreement_ratio.toFixed(2)} | ${codes}`.slice(0, 200);
 }
+
+// ─── ML Signal Types (from GET /v2/signals/latest) ────────────────────────────
+
+/** Conviction grade based on LightGBM score distance from 0.5 neutral. */
+export type MLConviction = "S" | "A" | "B" | "C" | "D";
+
+/** Live P&L for a tracked forward-paper position. */
+export interface MLSignalLivePnl {
+  net_pct: number | null;
+  gross_pct: number | null;
+  entry: number | null;
+  ltp: number | null;
+  chg_today_pct: number | null;
+}
+
+/** A single scored symbol from the LightGBM model. */
+export interface MLSignalScore {
+  /** NSE ticker, e.g. "SBIN". */
+  symbol: string;
+  /**
+   * Raw LightGBM probability output [0.0, 1.0].
+   * Values < 0.5 → SHORT signal, values > 0.5 → LONG signal.
+   */
+  score: number;
+  /** +1 = LONG, -1 = SHORT */
+  direction: 1 | -1;
+  /** Date of the last OHLCV bar used for feature computation (YYYY-MM-DD). */
+  data_date: string;
+  /** Rank by conviction strength (1 = strongest signal). */
+  rank: number;
+  /**
+   * Conviction grade derived from |score − 0.5|:
+   *   S ≥ 0.40 | A ≥ 0.30 | B ≥ 0.20 | C ≥ 0.10 | D < 0.10
+   */
+  conviction: MLConviction;
+  /** Live P&L for this symbol if it is in the tracked forward-paper book. */
+  live_pnl?: MLSignalLivePnl;
+}
+
+/** Aggregated session P&L summary. */
+export interface MLSessionPnl {
+  mean_net: number | null;
+  win_rate: number | null;
+  n_positions: number;
+}
+
+/**
+ * Full response from GET /v2/signals/latest.
+ * Written by autorun_till_close.py every 5 minutes during a live session.
+ */
+export interface MLLatestSignalsResponse {
+  session_date: string | null;
+  generated_at: string | null;
+  market_open: boolean;
+  model_version: string | null;
+  n_scored: number;
+  n_long: number;
+  n_short: number;
+  nifty_chg: number | null;
+  nifty_ltp: number | null;
+  session_pnl: MLSessionPnl;
+  /** All scored symbols ranked by conviction (strongest first). */
+  signals: MLSignalScore[];
+  /** True when snapshot is > 15 min old or no session has run today. */
+  stale: boolean;
+  /** True when session_date matches today's IST date. */
+  is_today?: boolean;
+  /** Human-readable message when stale or no data. */
+  message?: string;
+}
+
+/** One ForecastLedger record from GET /v2/signals/history. */
+export interface MLForecastRecord {
+  id: string;
+  ts: string;
+  session_date: string;
+  symbol: string;
+  score: number;
+  direction: 1 | -1;
+  est_prob: number;
+  market_prior: number;
+  data_date: string;
+  nifty_chg_at_record: number;
+  model_version: string;
+  status: "open" | "won" | "lost" | "superseded";
+  supersedes: string | null;
+  // Resolution fields (present after EOD resolve):
+  realized?: number;
+  net_pct?: number;
+  resolved_at?: string;
+  brier_agent?: number;
+  brier_market?: number;
+  brier_delta?: number;
+}
+
+export interface MLSignalHistoryStats {
+  n_total: number;
+  n_resolved: number;
+  n_open: number;
+  n_won: number;
+  n_lost: number;
+  win_rate?: number;
+  mean_net?: number;
+  best_net?: number;
+  worst_net?: number;
+  brier_delta_mean?: number | null;
+}
+
+export interface MLSignalHistoryResponse {
+  date: string;
+  n: number;
+  stats: MLSignalHistoryStats;
+  records: MLForecastRecord[];
+}
+
+// ─── Fetch helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch the latest LightGBM scoring snapshot from ml-service2.0.
+ * Returns all scored symbols ranked by conviction (strongest signal first).
+ *
+ * Source: GET /v2/signals/latest
+ * Updated: every 5 minutes during a live session (autorun_till_close.py).
+ */
+export async function fetchMLLatestSignals(): Promise<MLLatestSignalsResponse | null> {
+  return mlGet<MLLatestSignalsResponse>("/v2/signals/latest");
+}
+
+/**
+ * Fetch today's ForecastLedger records (all 218 symbols, latest status).
+ *
+ * Source: GET /v2/signals/history
+ */
+export async function fetchMLSignalHistory(
+  date?: string,
+  status?: "open" | "won" | "lost",
+): Promise<MLSignalHistoryResponse | null> {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (status) params.set("status", status);
+  const qs = params.toString() ? `?${params}` : "";
+  return mlGet<MLSignalHistoryResponse>(`/v2/signals/history${qs}`);
+}
+
+/**
+ * Fetch the last N per-tick autorun samples (mini time-series for charts).
+ *
+ * Source: GET /v2/signals/autorun-log
+ */
+export async function fetchMLAutorunLog(lastN: number = 10): Promise<{
+  samples: Array<{
+    timestamp: string;
+    sample_n: number;
+    nifty_ltp: number | null;
+    nifty_chg: number;
+    n_scored: number;
+    n_long: number;
+    n_short: number;
+    top_long: MLSignalScore[];
+    top_short: MLSignalScore[];
+  }>;
+  n: number;
+} | null> {
+  return mlGet(`/v2/signals/autorun-log?last_n=${lastN}`);
+}
