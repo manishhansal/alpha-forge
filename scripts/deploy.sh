@@ -45,7 +45,7 @@ ENV_FLAGS=(
   -e NEXT_PUBLIC_DATA_SERVICE_URL=http://localhost:8200
   -e DATABASE_URL=postgresql://crypto:crypto@postgres:5432/crypto_dashboard
   -e REDIS_URL=redis://redis:6379
-  -e ML_SERVICE_URL=http://ml-service:8100
+  -e ML_SERVICE_URL=http://host.docker.internal:8100
   -e ALERT_EMAIL_FROM=alerts@alphaforge.local
 )
 

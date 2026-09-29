@@ -233,8 +233,15 @@ export interface MLMetaDecision {
 // - When running inside Docker (ML_SERVICE_URL set to docker service name), use that.
 // - When running on host (dev/AlphaForge frontend), default to localhost:8100.
 // - Never hardcode localhost for inter-container communication.
-const ML_SERVICE_URL =
-  (process.env.ML_SERVICE_URL ?? "http://localhost:8100").replace(/\/$/, "");
+const ML_SERVICE_URL = (() => {
+  const raw = (process.env.ML_SERVICE_URL ?? "http://localhost:8100").replace(/\/$/, "");
+  // Compatibility shim: old docker-compose used service name "ml-service" which
+  // no longer exists in the stack. Remap to host gateway so inter-container calls work.
+  if (raw.includes("://ml-service:")) {
+    return raw.replace("://ml-service:", "://host.docker.internal:");
+  }
+  return raw;
+})();
 
 /** API key sent in X-API-KEY header on every authenticated request. */
 const ML_API_KEY =
