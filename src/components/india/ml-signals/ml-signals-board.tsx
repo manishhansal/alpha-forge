@@ -269,6 +269,18 @@ export function MLSignalsBoard({
 
       {/* ── Live tab ──────────────────────────────────────────────────── */}
       {mainTab === "live" && (<>
+      {/* Market-closed notice */}
+      {!data?.market_open && hasData && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+          <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-info)]" />
+          <span>
+            <span className="font-medium" style={{ color: "var(--color-fg)" }}>Market closed.</span>
+            {" "}Showing model scores on latest EOD bars. For live intraday signals, run{" "}
+            <code className="rounded bg-[var(--color-surface)] px-1 font-mono text-[11px]">make session</code>
+            {" "}during market hours (9:15–15:30 IST).
+          </span>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
         <StatCard
           label="Scored"
@@ -599,7 +611,8 @@ function HistoryRow({ rec, index }: { rec: MLForecastRecord; index: number }) {
 }
 
 function HistoryPanel({ endpoint }: { endpoint: string }) {
-  // Default to yesterday IST
+  // Initialize to today IST; the backend will auto-fall-back to the most
+  // recent date with records if today has none (e.g. before first session).
   const todayIST = React.useMemo(() => {
     const d = new Date(Date.now() + 5.5 * 3600 * 1000);
     return d.toISOString().slice(0, 10);
@@ -616,8 +629,12 @@ function HistoryPanel({ endpoint }: { endpoint: string }) {
     try {
       const res = await fetch(`${endpoint}?view=history&date=${d}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json() as MLSignalHistoryResponse;
+      const json = await res.json() as MLSignalHistoryResponse & { is_fallback?: boolean };
       setData(json);
+      // If backend fell back to a different date, update the picker to reflect it
+      if (json.is_fallback && json.date && json.date !== d) {
+        setDate(json.date);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {

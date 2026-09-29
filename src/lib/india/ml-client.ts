@@ -841,9 +841,14 @@ export interface MLSignalHistoryStats {
 
 export interface MLSignalHistoryResponse {
   date: string;
+  requested_date?: string;
   n: number;
   stats: MLSignalHistoryStats;
   records: MLForecastRecord[];
+  /** True when the backend auto-fell back to the most recent date with records. */
+  is_fallback?: boolean;
+  /** All session dates that have records, newest first. */
+  available_dates?: string[];
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────

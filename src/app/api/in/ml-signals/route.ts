@@ -49,6 +49,8 @@ export async function GET(req: NextRequest) {
         { status: 503 },
       );
     }
+    // Pass through is_fallback and available_dates so the UI can update
+    // the date picker when the backend auto-falls-back to a previous session
     return NextResponse.json(data);
   }
 
