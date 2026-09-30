@@ -19,6 +19,7 @@ import {
   isMLServiceHealthy,
 } from "@/lib/india/ml-client";
 import { runScanner } from "@/services/india/scanner/engine";
+import { getQuotes } from "@/lib/data-service/client";
 import { cached } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
@@ -58,12 +59,27 @@ const TTL_HISTORY    = 60;
 const TTL_LOG        = 20;
 const TTL_CTX        = 60;
 
-// ── Context builder: calls scanner directly ─────────────────────────────────
+// ── Context builder: calls scanner + data-service directly ─────────────────
 
 async function buildContext() {
-  // Run scanner for stock-level data — it includes % changes even post-close
-  const scannerRes = await runScanner("momentum", 200).catch(() => null);
-  const hits = scannerRes?.hits ?? [];
+  // Run scanner + NIFTY quote in parallel
+  const [scannerRes, niftyQuotes] = await Promise.allSettled([
+    runScanner("momentum", 200).catch(() => null),
+    getQuotes(["NIFTY", "BANKNIFTY"], "NSE").catch(() => null),
+  ]);
+  const hits = (scannerRes.status === "fulfilled" ? scannerRes.value?.hits : null) ?? [];
+  const quotes = (niftyQuotes.status === "fulfilled" ? niftyQuotes.value : null) ?? [];
+
+  // ── NIFTY from direct data-service quote (most accurate) ────────────────
+  const niftyQ = quotes[0];
+  const niftyPrice = (niftyQ?.ltp && niftyQ.ltp > 0) ? niftyQ.ltp : null;
+  const niftyChg   = niftyQ?.changePct ?? null;
+  // Fallback: NIFTY from scanner hits if data-service quote unavailable
+  const niftyHit   = hits.find(h => /^NIFTY(-EQ|-IDX)?$/.test(h.symbol));
+  const nifty: { price: number | null; changePct: number | null } = {
+    price:     niftyPrice ?? niftyHit?.price     ?? null,
+    changePct: niftyChg   ?? niftyHit?.changePct ?? null,
+  };
 
   // ── Sector performance: average changePct of stocks per sector ──────────
   const sectorTotals: Record<string, { sum: number; count: number }> = {};
@@ -83,13 +99,6 @@ async function buildContext() {
       changePct: Math.round((sum / count) * 100) / 100,
     }))
     .sort((a, b) => b.changePct - a.changePct);
-
-  // ── NIFTY: derive from NIFTY symbol in scanner hits if available ────────
-  const niftyHit = hits.find(h => h.symbol === "NIFTY" || h.symbol === "NIFTY-IDX");
-  const nifty: { price: number | null; changePct: number | null } = {
-    price:     niftyHit?.price     ?? null,
-    changePct: niftyHit?.changePct ?? null,
-  };
 
   // ── Gainers / Losers — clean symbol names ────────────────────────────────
   const INDEX_SYMS = new Set(["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY"]);
