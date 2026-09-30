@@ -773,6 +773,8 @@ export interface MLSignalScore {
    *   S ≥ 0.40 | A ≥ 0.30 | B ≥ 0.20 | C ≥ 0.10 | D < 0.10
    */
   conviction: MLConviction;
+  /** Primary sector the symbol belongs to (Bank, IT, Pharma, etc.). */
+  sector?: string;
   /** Live P&L for this symbol if it is in the tracked forward-paper book. */
   live_pnl?: MLSignalLivePnl;
 }
@@ -907,4 +909,43 @@ export async function fetchMLAutorunLog(lastN: number = 10): Promise<{
   n: number;
 } | null> {
   return mlGet(`/v2/signals/autorun-log?last_n=${lastN}`);
+}
+
+// ─── ML Signals Context (NIFTY + sectors + gainers/losers) ───────────────────
+
+export interface MLContextNifty {
+  price: number | null;
+  changePct: number | null;
+}
+
+export interface MLContextSector {
+  name: string;
+  changePct: number | null;
+}
+
+export interface MLContextMover {
+  symbol: string;
+  price: number;
+  changePct: number;
+  volume?: number;
+}
+
+export interface MLContextGainersLosers {
+  gainers: MLContextMover[];
+  losers: MLContextMover[];
+}
+
+export interface MLContextSnapshot {
+  nifty: MLContextNifty;
+  sectors: MLContextSector[];
+}
+
+export interface MLSignalsContext {
+  snapshot: MLContextSnapshot | null;
+  gainersLosers: MLContextGainersLosers | null;
+  generatedAt?: number;
+}
+
+export async function fetchMLSignalsContext(): Promise<MLSignalsContext | null> {
+  return mlGet<MLSignalsContext>("/v2/signals/latest");  // unused — context is fetched via AF route
 }
