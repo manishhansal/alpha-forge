@@ -233,8 +233,15 @@ export interface MLMetaDecision {
 // - When running inside Docker (ML_SERVICE_URL set to docker service name), use that.
 // - When running on host (dev/AlphaForge frontend), default to localhost:8100.
 // - Never hardcode localhost for inter-container communication.
-const ML_SERVICE_URL =
-  (process.env.ML_SERVICE_URL ?? "http://localhost:8100").replace(/\/$/, "");
+const ML_SERVICE_URL = (() => {
+  const raw = (process.env.ML_SERVICE_URL ?? "http://localhost:8100").replace(/\/$/, "");
+  // Compatibility shim: old docker-compose used service name "ml-service" which
+  // no longer exists in the stack. Remap to host gateway so inter-container calls work.
+  if (raw.includes("://ml-service:")) {
+    return raw.replace("://ml-service:", "://host.docker.internal:");
+  }
+  return raw;
+})();
 
 /** API key sent in X-API-KEY header on every authenticated request. */
 const ML_API_KEY =
@@ -766,6 +773,8 @@ export interface MLSignalScore {
    *   S ≥ 0.40 | A ≥ 0.30 | B ≥ 0.20 | C ≥ 0.10 | D < 0.10
    */
   conviction: MLConviction;
+  /** Primary sector the symbol belongs to (Bank, IT, Pharma, etc.). */
+  sector?: string;
   /** Live P&L for this symbol if it is in the tracked forward-paper book. */
   live_pnl?: MLSignalLivePnl;
 }
@@ -841,9 +850,14 @@ export interface MLSignalHistoryStats {
 
 export interface MLSignalHistoryResponse {
   date: string;
+  requested_date?: string;
   n: number;
   stats: MLSignalHistoryStats;
   records: MLForecastRecord[];
+  /** True when the backend auto-fell back to the most recent date with records. */
+  is_fallback?: boolean;
+  /** All session dates that have records, newest first. */
+  available_dates?: string[];
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -895,4 +909,43 @@ export async function fetchMLAutorunLog(lastN: number = 10): Promise<{
   n: number;
 } | null> {
   return mlGet(`/v2/signals/autorun-log?last_n=${lastN}`);
+}
+
+// ─── ML Signals Context (NIFTY + sectors + gainers/losers) ───────────────────
+
+export interface MLContextNifty {
+  price: number | null;
+  changePct: number | null;
+}
+
+export interface MLContextSector {
+  name: string;
+  changePct: number | null;
+}
+
+export interface MLContextMover {
+  symbol: string;
+  price: number;
+  changePct: number;
+  volume?: number;
+}
+
+export interface MLContextGainersLosers {
+  gainers: MLContextMover[];
+  losers: MLContextMover[];
+}
+
+export interface MLContextSnapshot {
+  nifty: MLContextNifty;
+  sectors: MLContextSector[];
+}
+
+export interface MLSignalsContext {
+  snapshot: MLContextSnapshot | null;
+  gainersLosers: MLContextGainersLosers | null;
+  generatedAt?: number;
+}
+
+export async function fetchMLSignalsContext(): Promise<MLSignalsContext | null> {
+  return mlGet<MLSignalsContext>("/v2/signals/latest");  // unused — context is fetched via AF route
 }
