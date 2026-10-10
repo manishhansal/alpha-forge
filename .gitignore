@@ -104,3 +104,6 @@ data-service/reports/MEMORY_SOAK_*.json
 # NSE session cookie (sensitive — treat as credential, never commit)
 .nsit_cookie
 data-service/.nsit_cookie
+
+# Audit log (local append-only, never commit)
+audit.jsonl
