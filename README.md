@@ -352,6 +352,7 @@ src/app/(dashboard)/
     daily-picks/        Top-3-per-bucket frozen picks + history
     strategies/         9-strategy picker + live signal feed
     paper-trading/      Open positions + journal + performance
+    ml-signals/         Live LightGBM scores from ml-service2.0 — sector filter, NIFTY context, history tab (PRs #43/44)
     options-workbench/  Multi-leg options payoff builder
     portfolio/          Quant portfolio optimizer (HRP / CVaR)
     history/            Unified trade history (Picks + Scalper + FnO Trend)

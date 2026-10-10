@@ -3,6 +3,14 @@
 **Date:** 2026-09-02  
 **Purpose:** Pre-implementation baseline. Documents exactly what exists, what is wired, what is merely defined, and what is proven — before adding the new opportunity validation, signal quality, risk gating, and alpha optimization layer.
 
+> **UPDATE 2026-10-09:** This is an archived baseline document (pre-implementation snapshot from Sep 2, 2026).
+> Key changes since this baseline:
+> - **MetaDecisionEngine is now WIRED** as Stage 12 of the Opportunity Engine (PR #41, 2026-09-25). See `src/lib/india/ml-service2-integration.ts`.
+> - **`ml-service/` directory DELETED** — replaced by standalone `ml-service2.0` repo (external, port 8100).
+> - **Provider Priority chain removed** — all providers now go through `data-service2.0`; there is no TypeScript provider chain.
+> - **ML Signals page added** (`/in/ml-signals`) — live LightGBM scores from ml-service2.0 (PRs #43/44).
+> For current state, see `ARCHITECTURE.md` and `ALPHAFORGE_FINAL_CODEBASE_INVENTORY.md`.
+
 ---
 
 ## Audit Legend
@@ -587,7 +595,13 @@ No lifecycle state transitions recorded. No rejection reasons stored. No attribu
 🔶 Dynamic position sizing — not used by auto-trader
 🔶 Transaction cost accounting — not applied to live trades
 🔶 Slippage model — not applied to paper fills
-🔶 MetaDecisionEngine (Python) — never called from TypeScript pipeline
+✅ MetaDecisionEngine — WIRED as Stage 12 of Opportunity Engine (PR #41, 2026-09-25)
+   → src/lib/india/ml-service2-integration.ts: buildMLContext, buildModelOutputs,
+     sentinelToNewsContext, applyMetaDecision
+   → Calls /v2/meta/decide on ml-service2.0 with X-API-KEY
+   → If abstention=true → overrides pipeline decision to ABSTAIN
+   NOTE: The `ml-service/` directory referenced in this document no longer exists.
+   AlphaForge connects to the external standalone `ml-service2.0` repo (port 8100).
 🔶 Walk-forward validation — no strategy has passed it
 🔶 Champion/challenger framework — exists, not connected to live strategies
 🔶 Signal decay detection — not monitored automatically

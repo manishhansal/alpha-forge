@@ -1,6 +1,6 @@
 # AlphaForge Final Codebase Inventory
 
-**Date:** 2026-09-22 | **Branch:** `fix/bugs` | **HEAD Commit:** `3fe6281` (Merge PR #39)
+**Date:** 2026-10-09 | **Branch:** `fix/bugs` | **HEAD Commit:** `ffcaaab` (Merge PR #44)
 
 ## Directory Classification
 
@@ -12,6 +12,8 @@
 | `src/app/api/` | **KEEP** | All API routes |
 | `src/app/api/in/` | **KEEP** | Indian market API routes |
 | `src/app/api/in/news/` | **KEEP** | SentinelPulse news routes (latest, market-india, regime, context, high-impact) |
+| `src/app/api/in/ml-signals/` | **KEEP** | ML Signals API — 4 views (default, history, log, context) — **PR #43/44** |
+| `src/app/(dashboard)/in/ml-signals/` | **KEEP** | ML Signals page — live LightGBM scores + sector context — **PR #43/44** |
 | `src/app/api/v1/market/` | **KEEP** | Canonical v1 market data API (proxies to data-service2.0) |
 | `src/components/` | **KEEP** | All UI components |
 | `src/features/` | **KEEP** | Business logic features |
@@ -21,6 +23,9 @@
 | `src/lib/data-service/` | **KEEP** | Canonical data-service2.0 client + simulated fallback |
 | `src/lib/data-service/client.ts` | **KEEP** | Single market data entry point (server-only) |
 | `src/lib/data-service/simulated-india.ts` | **KEEP** | Realistic synthetic fallback for dev/staging |
+| `src/lib/india/ml-client.ts` | **KEEP** | ML service v2 client — all /v2/* endpoints, X-API-KEY auth (951 lines) — **PR #41/43/44** |
+| `src/lib/india/ml-service2-integration.ts` | **KEEP** | MetaDecisionEngine Stage 12 wiring (519 lines) — **PR #41** |
+| `src/components/india/ml-signals/ml-signals-board.tsx` | **KEEP** | ML Signals UI board component (849 lines) — **PR #43/44** |
 | `src/lib/backtesting-v2/` | **KEEP** | Backtesting engine |
 | `src/lib/signal-intelligence/` | **KEEP** | Signal intelligence engine |
 | `src/lib/market-data/` | **KEEP** (types only) | Market data type definitions (no provider implementations) |
@@ -66,6 +71,16 @@
 | `data-service/` (old scrapling service) | Deleted — replaced by data-service2.0 (separate stack) |
 | Stale root-level migration docs (12 files) | Deleted — superseded |
 | `STALE_ENV_VARS`: `NEXT_PUBLIC_BINANCE_WS`, `NEXT_PUBLIC_BYBIT_WS`, `NEXT_PUBLIC_DELTA_WS` | Removed from `env.ts` — never consumed post-centralization |
+| `ml-service/` directory (entire) | **Deleted PR #41** — 134,895 lines of Python source removed; replaced by standalone `ml-service2.0` repo |
+| `docs/ALPHA_RESEARCH_REPORT.md` | Deleted PR #41 — superseded by ml-service2.0 Phase 3/4 |
+| `docs/CHAMPION_CHALLENGER_REPORT.md` | Deleted PR #41 — superseded |
+| `docs/FEATURE_PARITY_REPORT.md` | Deleted PR #41 — superseded |
+| `docs/FINAL_ALPHA_VALIDATION_REPORT.md` | Deleted PR #41 — superseded |
+| `docs/V5_QUANT_GOVERNANCE_REPORT.md` | Deleted PR #41 — superseded |
+| `docs/ml-audit/` (45+ files) | Deleted PR #41 — all ml-service v1 audit docs removed |
+| `docs/ml-research/` methodology files | Deleted PR #41 — superseded |
+| `docs/runbooks/` (5 runbooks) | Deleted PR #41 — superseded |
+| `reports/*.md` (10 final reports) | Deleted PR #41 — superseded by ml-service2.0 reports |
 
 ## Key New Files (PR #37–#39)
 
@@ -78,8 +93,17 @@
 | `scripts/install-hooks.sh` | #38 | One-command git hook installer |
 | `scripts/git-hooks/post-commit` | #38 | Smart diff-based post-commit trigger |
 | `.kiro/hooks/docker-redeploy-on-commit.json` | #38 | Kiro IDE hook — surfaces deploy.log after commits |
-| `Makefile` | #38 | `deploy`, `deploy-app`, `deploy-worker`, `deploy-ml` (guidance only — ml-service2.0 is standalone), `deploy-log`, `watch-deploy`, `install-hooks` |
+| `Makefile` | #38 | `deploy`, `deploy-app`, `deploy-worker`, `deploy-log`, `watch-deploy`, `install-hooks` |
 | `docs/AUTO_DEPLOY.md` | #38 | Auto-deploy system reference documentation |
+
+## Key New Files (PR #40–#44)
+
+| File | PR | Purpose |
+|------|----|---------|
+| `src/lib/india/ml-service2-integration.ts` | #41 | MetaDecisionEngine Stage 12 wiring — `buildMLContext`, `buildModelOutputs`, `sentinelToNewsContext`, `applyMetaDecision` (519 lines) |
+| `src/app/(dashboard)/in/ml-signals/page.tsx` | #43 | ML Signals page — live LightGBM scores from ml-service2.0 |
+| `src/app/api/in/ml-signals/route.ts` | #43 | ML Signals API — 4 views (default/history/log/context), Redis caching |
+| `src/components/india/ml-signals/ml-signals-board.tsx` | #43/44 | ML Signals UI board component (849 lines, sector filter, NIFTY context, gainers/losers) |
 
 ## Live Data Fixes (PR #37 + #39)
 
