@@ -214,14 +214,14 @@ describe("GET /api/in/data/forensics/:tradeId — Requirement 16.3", () => {
     expect(body.paperTrade.dataProviderAtEntry).toBe("angel_one");
   });
 
-  it("signalRecord is populated when trade.signalId resolves to a SignalIntelligenceRecord", async () => {
+  it("signalRecord is null — SignalIntelligenceRecord table is never written to", async () => {
+    // The SignalIntelligenceRecord Prisma model exists in the schema but is never
+    // populated by any worker or API route in the current pipeline.
+    // The DB query was removed; signalRecord is always null.
     const res = await GET(makeRequest("trade-abc123"), makeParams("trade-abc123"));
-    const body = await res.json() as { signalRecord: Record<string, unknown> };
+    const body = await res.json() as { signalRecord: null };
 
-    expect(body.signalRecord).not.toBeNull();
-    expect(body.signalRecord?.signalId).toBe("sig-001");
-    expect(body.signalRecord?.grade).toBe("A");
-    expect(body.signalRecord?.score).toBe(88);
+    expect(body.signalRecord).toBeNull();
   });
 
   it("signalRecord is null when no SignalIntelligenceRecord matches the signalId", async () => {
@@ -255,11 +255,13 @@ describe("GET /api/in/data/forensics/:tradeId — Requirement 16.3", () => {
     }
   });
 
-  it("qualityAtSignalTime uses signalRecord.score + grade when a signal record is present", async () => {
+  it("qualityAtSignalTime falls back to confidence-derived grade (signalRecord always null)", async () => {
+    // signalRecord is always null — table never written. Falls back to dataConfidenceAtEntry.
     const res = await GET(makeRequest("trade-abc123"), makeParams("trade-abc123"));
     const body = await res.json() as { qualityAtSignalTime: { score: number; grade: string } };
 
-    expect(body.qualityAtSignalTime.score).toBe(88);
+    // dataConfidenceAtEntry = 85 → grade "A"
+    expect(body.qualityAtSignalTime.score).toBe(85);
     expect(body.qualityAtSignalTime.grade).toBe("A");
   });
 

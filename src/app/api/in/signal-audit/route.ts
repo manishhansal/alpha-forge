@@ -87,11 +87,8 @@ export async function GET(req: NextRequest) {
       select: { signalId: true, toState: true, strategyId: true, sourceType: true },
     });
 
-    // Fetch opportunity clusters
-    const clusters = await prisma.opportunityCluster.findMany({
-      where: { sessionDate },
-      select: { deduplicated: true },
-    });
+    // Fetch opportunity clusters (table is defined but never written to — always returns [])
+    const clusters: { deduplicated: boolean }[] = [];
 
     // Build per-strategy breakdown
     const byStrategyMap = new Map<string, {
