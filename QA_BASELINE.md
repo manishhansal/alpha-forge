@@ -1,6 +1,6 @@
 # AlphaForge QA Baseline
 
-**Last Updated:** 2026-09-22  
+**Last Updated:** 2026-10-09
 **Performed By:** Independent QA Agent (Kiro)
 
 ---
@@ -111,15 +111,50 @@
 
 ---
 
-## Current State (HEAD `3fe6281`)
+## Current State (HEAD `ffcaaab` — PR #44)
 
 | Metric | Value |
 |--------|-------|
 | TypeScript Errors | **0** |
 | Lint Errors | **0** |
 | Lint Warnings | **0** |
-| Tests | **2434 passed, 14 skipped, 0 failed** |
+| Tests | **2434 passed, 14 skipped, 0 failed** (last verified PR #39; PRs #40–44 are non-test changes) |
 | Build | **SUCCESS** |
+
+---
+
+## QA Cycle 4 — 2026-10-09 (PRs #40–44 — ML Integration)
+
+**Branch / Commit at start:** `fix/bugs` @ `ae09ec7` (PR #40 base)
+**HEAD at end:** `ffcaaab` (Merge PR #44)
+
+**Changes introduced (PRs #40–44):**
+
+| PR | Key Changes |
+|----|-------------|
+| #40 | Docs update for PRs #37–39 state |
+| #41 | MetaDecisionEngine wired as Stage 12 of Opportunity Engine; ml-client.ts upgraded to v2 endpoints with X-API-KEY; `ml-service/` directory deleted; stale ml-service v1 docs and reports deleted (~180 files) |
+| #42 | Docs update — README, ARCHITECTURE.md, ALPHAFORGE_FINAL_CODEBASE_INVENTORY.md updated for standalone ml-service2.0 |
+| #43 | ML Signals page (`/in/ml-signals`) — live LightGBM scores, history tab with date picker, autorun log view |
+| #44 | ML Signals enhancements: sector column + filter, NIFTY bias indicator, sector movers, F&O gainers/losers; deploy.sh fix |
+
+**Issues found and fixed (PRs #41–44):**
+
+| # | Issue | Fix | File(s) |
+|---|-------|-----|---------|
+| 1 | `/api/in/ml-predictions` calling `/models/status` without auth | Added `/v2/` prefix + `X-API-KEY` header | `api/in/ml-predictions/route.ts` |
+| 2 | ml-service Docker hostname: `ml-service:8100` not resolving in containers | Remapped to `host.docker.internal:8100` | `deploy.sh`, `.env.docker` |
+| 3 | ML Signals history tab: no fallback when market closed | Auto-fallback to last session + market-closed banner | `ml-signals/route.ts`, `ml-signals-board.tsx` |
+| 4 | Context NIFTY quote sourced from scanner hits (stale) | Direct `getQuotes()` call for NIFTY + parallel fetch | `ml-signals/route.ts` |
+
+**Architecture guards verified:**
+
+| Guard | Status |
+|-------|--------|
+| No direct broker/exchange imports | ✅ Active (`eslint.config.mjs`) |
+| ml-service2.0 calls all use X-API-KEY header | ✅ Verified in `ml-client.ts` |
+| ML_MODE=fallback — graceful degradation | ✅ All ML endpoints handle unavailability |
+| Redis cache keys for ML endpoints | ✅ `ml:signals:*` (30s–60s TTL) |
 
 ---
 

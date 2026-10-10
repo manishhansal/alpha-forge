@@ -1,12 +1,12 @@
 # AlphaForge Architecture
 
-> Last updated: 2026-09-22 | HEAD: `3fe6281` (Merge PR #39)
+> Last updated: 2026-10-09 | HEAD: `ffcaaab` (Merge PR #44)
 
 ## Core Principle
 
 AlphaForge is a **data consumer**, not a data collector.
 
-All market data comes exclusively from **data-service2.0**. AlphaForge does not connect to any market-data provider directly. News intelligence comes exclusively from **SentinelPulse**.
+All market data comes exclusively from **data-service2.0**. AlphaForge does not connect to any market-data provider directly. News intelligence comes exclusively from **SentinelPulse**. ML predictions and LightGBM signals come exclusively from **ml-service2.0**.
 
 ## Architecture Diagram
 
@@ -16,34 +16,34 @@ All market data comes exclusively from **data-service2.0**. AlphaForge does not 
                            v
                     ALPHAFORGE (Next.js)
                            |
-        +------------------+------------------+------------------+
-        |                  |                  |                  |
-        v                  v                  v                  v
-     Signals            Charts            Analytics           News / AI
-     Engine             (OHLCV)           (Options)           Signals
-        |                  |                  |                  |
-        +------------------+------------------+                  |
-                           |                                     |
-                           v                                     v
-              ┌─────────────────────────────┐     ┌─────────────────────────┐
-              │  src/lib/data-service/       │     │  src/features/india/    │
-              │  client.ts                   │     │  news/sentinel-client.ts│
-              │  (canonical HTTP client)     │     │  (SentinelPulse client) │
-              └─────────────┬───────────────┘     └────────────┬────────────┘
-                            │                                   │
-                            │ REST + WebSocket                  │ REST
-                            │ DATA_SERVICE_2_URL                │ SENTINEL_PULSE_URL
-                            v                                   v
-              ┌─────────────────────────────┐     ┌─────────────────────────┐
-              │      DATA-SERVICE 2.0        │     │      SENTINELPULSE       │
-              │      (port 8200)             │     │      (port 3001)         │
-              │                             │     │                          │
-              │  - Indian market data       │     │  - Latest news articles  │
-              │  - Crypto market data       │     │  - India market news     │
-              │  - Historical OHLCV         │     │  - Market regime         │
-              │  - Live tick streaming      │     │  - AlphaForge context    │
-              │  - Option chain analytics   │     │  - High-impact events    │
-              │  - F&O universe             │     │  - ML sentiment scores   │
+        +------------------+------------------+------------------+------------------+
+        |                  |                  |                  |                  |
+        v                  v                  v                  v                  v
+     Signals            Charts            Analytics           News / AI          ML Signals
+     Engine             (OHLCV)           (Options)           Signals             (LightGBM)
+        |                  |                  |                  |                  |
+        +------------------+------------------+                  |                  |
+                           |                                     |                  |
+                           v                                     v                  v
+              ┌─────────────────────────────┐     ┌─────────────────────────┐  ┌──────────────────┐
+              │  src/lib/data-service/       │     │  src/features/india/    │  │  src/lib/india/  │
+              │  client.ts                   │     │  news/sentinel-client.ts│  │  ml-client.ts    │
+              │  (canonical HTTP client)     │     │  (SentinelPulse client) │  │  (951 lines)     │
+              └─────────────┬───────────────┘     └────────────┬────────────┘  └────────┬─────────┘
+                            │                                   │                        │
+                            │ REST + WebSocket                  │ REST                   │ REST
+                            │ DATA_SERVICE_2_URL                │ SENTINEL_PULSE_URL     │ ML_SERVICE_URL
+                            v                                   v                        v
+              ┌─────────────────────────────┐     ┌─────────────────────────┐  ┌──────────────────────┐
+              │      DATA-SERVICE 2.0        │     │      SENTINELPULSE       │  │    ML-SERVICE 2.0    │
+              │      (port 8200)             │     │      (port 3001)         │  │    (port 8100)       │
+              │                             │     │                          │  │                      │
+              │  - Indian market data       │     │  - Latest news articles  │  │  - /v2/predict/*     │
+              │  - Crypto market data       │     │  - India market news     │  │  - /v2/meta/decide   │
+              │  - Historical OHLCV         │     │  - Market regime         │  │  - /v2/signals/*     │
+              │  - Live tick streaming      │     │  - AlphaForge context    │  │  - /v2/analytics/*   │
+              │  - Option chain analytics   │     │  - High-impact events    │  │  X-API-KEY on all    │
+              │  - F&O universe             │     │  - ML sentiment scores   │  └──────────────────────┘
               │  - Data quality gate        │     └─────────────────────────┘
               │  - Provider health          │
               └──────┬──────────────┬───────┘
@@ -60,7 +60,9 @@ All market data comes exclusively from **data-service2.0**. AlphaForge does not 
 - UI for trading signals, charts, and analytics
 - Paper trading (order simulation, no live execution)
 - Signal engine (generates buy/sell signals)
-- ML predictions (price forecasting)
+- ML predictions (price forecasting via ml-service2.0)
+- ML Signals page (`/in/ml-signals`) — live LightGBM scores, history, sector context
+- Opportunity Engine pipeline (12 stages, Stage 12 = MetaDecisionEngine gate)
 - Strategy lab (backtest and live paper-trade strategies)
 - India F&O scanner and daily picks
 - Options analytics and workbench
@@ -89,6 +91,37 @@ AlphaForge signal engine needs NIFTY candles:
   5. Signal engine processes candles
 
 AlphaForge does NOT know which provider supplied the data.
+```
+
+## Data Flow — ML Signals (LightGBM scores from ml-service2.0)
+
+```
+India ML Signals page (/in/ml-signals) needs latest LightGBM scores:
+
+  1. Calls: GET /api/in/ml-signals (or ?view=history&date=... / ?view=context)
+  2. → src/app/api/in/ml-signals/route.ts
+  3. → fetchMLLatestSignals() in src/lib/india/ml-client.ts
+  4. → GET http://ml-service:8100/v2/signals/latest  (X-API-KEY header)
+  5. ← ml-service2.0 returns MLLatestSignalsResponse (scores, conviction, sector)
+  6. Redis cache: ml:signals:latest:v2 (30s TTL)
+  7. Context view: parallel fetch of scanner hits + NIFTY quote
+
+AlphaForge does NOT run any ML models internally.
+```
+
+## Data Flow — MetaDecisionEngine (Stage 12 Opportunity Gate)
+
+```
+Every signal entering the Opportunity Engine:
+
+  1. Stages 1–11: signal evaluation, EV, risk check, sizing
+  2. Stage 12: buildMLContext() + buildModelOutputs()
+  3. → predictMetaDecision() in src/lib/india/ml-client.ts
+  4. → POST http://ml-service:8100/v2/meta/decide  (X-API-KEY header)
+  5.   Payload includes: model outputs + SentinelPulse news context
+  6.   (sentinelToNewsContext() in ml-service2-integration.ts)
+  7. ← MetaDecisionEngine returns: action, abstention flag, SHAP rationale
+  8. applyMetaDecision(): if abstention=true → override pipeline to ABSTAIN
 ```
 
 ## Data Flow — News Intelligence
@@ -180,8 +213,64 @@ The AI signal builder degrades gracefully: news factor defaults to neutral (0) w
 |------|------|
 | `src/lib/data-service/client.ts` | Canonical market data entry point (server-only) |
 | `src/lib/data-service/simulated-india.ts` | Synthetic fallback for dev/staging |
+| `src/lib/india/ml-client.ts` | ML service v2 client — all /v2/* endpoints, X-API-KEY auth (951 lines) |
+| `src/lib/india/ml-service2-integration.ts` | MetaDecisionEngine Stage 12 wiring — buildMLContext, buildModelOutputs, sentinelToNewsContext, applyMetaDecision (519 lines) |
+| `src/app/api/in/ml-signals/route.ts` | ML Signals API — 4 views: default, history, log, context |
+| `src/components/india/ml-signals/ml-signals-board.tsx` | ML Signals UI component (849 lines) |
 | `src/features/india/news/sentinel-client.ts` | Typed SentinelPulse HTTP client |
 | `src/features/india/news/index.ts` | News service (getIndiaNews, Redis caching) |
 | `src/app/api/in/news/route.ts` | News API routes (latest, market-india, regime, context) |
 | `src/services/brokers/client.ts` | Browser WebSocket factory (appends ?api_key= for WS auth) |
-| `eslint.config.mjs` | `no-restricted-imports` boundary — enforces data-service2.0 and SentinelPulse separation |
+| `eslint.config.mjs` | `no-restricted-imports` boundary — enforces service separation |
+
+## Opportunity Engine — 12-Stage Pipeline
+
+Every signal passes through `src/lib/opportunity-engine/pipeline.ts` before a paper trade is opened:
+
+1. Universe coverage validation
+2. Market context snapshot
+3. Multi-layer signal evaluation (12 layers; VETO from any = rejection)
+4. Derivatives intelligence (OI freshness, chain quality, flow labels)
+5. Signal quality vector (14 components)
+6. Expected value calculation (Platt-calibrated EV)
+7. Opportunity clustering (correlated signals → one cluster)
+8. Conflict resolution (BUY/SELL/WAIT/NO_TRADE)
+9. Abstention evaluation (15 explicit reasons)
+10. Risk check (PortfolioRiskEngine v2)
+11. Position sizing (dynamic: base × confidence × vol × correlation × drawdown)
+12. **MetaDecisionEngine gate (PR #41)** — calls `/v2/meta/decide`; if `meta.abstention=true` or `meta.action=NO_TRADE`, overrides decision to ABSTAIN
+
+Stage 12 is wired via `src/lib/india/ml-service2-integration.ts` (519 lines).
+
+## ML Signals Page (`/in/ml-signals`)
+
+Added in PR #43/44. Live LightGBM scoring dashboard from ml-service2.0:
+
+**API route:** `GET /api/in/ml-signals`
+
+| View | Query | Cache TTL | Description |
+|------|-------|-----------|-------------|
+| Default | (none) | 30s | Latest LightGBM scores for all symbols — score, conviction, direction, sector |
+| History | `?view=history&date=YYYY-MM-DD` | 60s | ForecastLedger records for a session date with resolved outcomes |
+| Log | `?view=log&n=10` | 15s | Last N autorun tick samples (mini time-series) |
+| Context | `?view=context` | 45s | NIFTY LTP + sector movers + F&O gainers/losers |
+
+**UI features (ml-signals-board.tsx):**
+- Live score table with sector column and sector filter dropdown
+- NIFTY bias indicator (live LTP + changePct)
+- Sector movers panel (average changePct per sector from scanner)
+- F&O gainers/losers panels (top momentum scanner hits)
+- History tab with date picker and outcome resolution (won/lost/open, Brier score delta)
+- Market-closed banner with auto-fallback to last known session
+
+**Key types** (`src/lib/india/ml-client.ts`):
+- `MLSignalScore` — symbol, score, conviction, direction, sector
+- `MLConviction` — STRONG_LONG | LONG | HOLD | SHORT | STRONG_SHORT
+- `MLLatestSignalsResponse` — signals[], sessionDate, nSignals, modelVersion
+- `MLForecastRecord` — symbol, score, direction, resolvedReturn, directionCorrect
+- `MLSignalHistoryResponse` — records[], stats (winRate, meanReturn, nResolved)
+- `MLSignalsContext` — niftyLtp, niftyChangePct, sectorMovers, gainers, losers
+
+**Redis cache keys:** `ml:signals:latest:v2` (30s), `ml:signals:history:{date}` (60s), `ml:signals:log` (15s), `ml:signals:context` (45s)
+
+> **ml-service2.0** runs as a standalone Docker Compose stack (`cd ../ml-service2.0 && make up`). AlphaForge's `ML_MODE=fallback` means all ML features degrade gracefully if ml-service2.0 is unavailable.

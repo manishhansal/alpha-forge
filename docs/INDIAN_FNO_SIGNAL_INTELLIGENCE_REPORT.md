@@ -65,9 +65,22 @@ A signal session report is **INVALID** when:
 | MISSING | Required data absent | Signal REJECTED |
 | ESTIMATED | Values interpolated | Marked in attribution |
 
-### Provider Priority (unchanged)
+### Provider Architecture (updated — data-service2.0 centralization)
 
-AngelOne (1) → Upstox (2) → NSE (3) → Yahoo (4)
+> **Architectural change (PR #37, Sep 2026):** The old TypeScript provider priority chain
+> (`AngelOne → Upstox → NSE → Yahoo`) was removed. All market data now flows exclusively
+> through **data-service2.0** (port 8200) via `src/lib/data-service/client.ts`.
+> AlphaForge has zero direct provider connections — no broker credentials in the TypeScript layer.
+
+```
+AlphaForge → DataServiceClient (src/lib/data-service/client.ts)
+           → GET/WS http://data-service:8200
+           → data-service2.0 (manages provider failover internally)
+                ├── Angel One (primary NSE)
+                ├── Upstox (fallback + F&O universe)
+                ├── Binance / Deribit (crypto)
+                └── Yahoo Finance (EOD fallback)
+```
 
 ---
 

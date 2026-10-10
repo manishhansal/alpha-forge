@@ -109,76 +109,12 @@ export async function GET(
     `${String(istDate.getUTCDate()).padStart(2, "0")}`;
 
   // ── 3. Fetch SignalIntelligenceRecord via signalId (when available) ───────
-  let signalRecord: {
-    id: string;
-    signalId: string;
-    strategyId: string;
-    sourceType: string;
-    instrument: string;
-    exchange: string;
-    sessionDate: string;
-    timeframe: string;
-    direction: string;
-    entry: number;
-    stopLoss: number;
-    target: number;
-    riskReward: number;
-    atr: number;
-    confidence: number;
-    qualityVector: unknown;
-    expectedValue: unknown;
-    grade: string;
-    score: number;
-    regime: string;
-    regimeFit: string;
-    dataQuality: unknown;
-    riskDecision: string;
-    paperDecision: string;
-    abstentionReason: string | null;
-    lifecycleState: string;
-    correlationId: string;
-    featureVersion: string | null;
-    rationale: string[];
-    detectedAt: Date;
-  } | null = null;
+  // Note: SignalIntelligenceRecord table is never written to in the current pipeline.
+  // The table will be dropped in a future schema migration.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let signalRecord: Record<string, any> | null = null;
 
-  if (trade.signalId) {
-    signalRecord = await prisma.signalIntelligenceRecord.findUnique({
-      where: { signalId: trade.signalId },
-      select: {
-        id: true,
-        signalId: true,
-        strategyId: true,
-        sourceType: true,
-        instrument: true,
-        exchange: true,
-        sessionDate: true,
-        timeframe: true,
-        direction: true,
-        entry: true,
-        stopLoss: true,
-        target: true,
-        riskReward: true,
-        atr: true,
-        confidence: true,
-        qualityVector: true,
-        expectedValue: true,
-        grade: true,
-        score: true,
-        regime: true,
-        regimeFit: true,
-        dataQuality: true,
-        riskDecision: true,
-        paperDecision: true,
-        abstentionReason: true,
-        lifecycleState: true,
-        correlationId: true,
-        featureVersion: true,
-        rationale: true,
-        detectedAt: true,
-      },
-    });
-  }
+  // trade.signalId may exist but SignalIntelligenceRecord table has no writes — always null.
 
   // ── 4. Fetch lineage entry from data-service2.0 ───────────────────────────
   // DataProvenance was removed from AlphaForge DB (data-service2.0 centralization
@@ -224,12 +160,7 @@ export async function GET(
     grade: null,
   };
 
-  if (signalRecord) {
-    qualityAtSignalTime = {
-      score: signalRecord.score,
-      grade: signalRecord.grade,
-    };
-  } else if (trade.dataConfidenceAtEntry !== null) {
+  if (trade.dataConfidenceAtEntry !== null) {
     const conf = trade.dataConfidenceAtEntry;
     const grade =
       conf >= 90 ? "A+"
@@ -281,41 +212,8 @@ export async function GET(
       featureVersion: trade.featureVersion ?? null,
     },
 
-    // ── SignalIntelligenceRecord ──────────────────────────────────────────
-    signalRecord: signalRecord
-      ? {
-          id: signalRecord.id,
-          signalId: signalRecord.signalId,
-          strategyId: signalRecord.strategyId,
-          sourceType: signalRecord.sourceType,
-          instrument: signalRecord.instrument,
-          exchange: signalRecord.exchange,
-          sessionDate: signalRecord.sessionDate,
-          timeframe: signalRecord.timeframe,
-          direction: signalRecord.direction,
-          entry: signalRecord.entry,
-          stopLoss: signalRecord.stopLoss,
-          target: signalRecord.target,
-          riskReward: signalRecord.riskReward,
-          atr: signalRecord.atr,
-          confidence: signalRecord.confidence,
-          qualityVector: signalRecord.qualityVector,
-          expectedValue: signalRecord.expectedValue,
-          grade: signalRecord.grade,
-          score: signalRecord.score,
-          regime: signalRecord.regime,
-          regimeFit: signalRecord.regimeFit,
-          dataQuality: signalRecord.dataQuality,
-          riskDecision: signalRecord.riskDecision,
-          paperDecision: signalRecord.paperDecision,
-          abstentionReason: signalRecord.abstentionReason ?? null,
-          lifecycleState: signalRecord.lifecycleState,
-          correlationId: signalRecord.correlationId,
-          featureVersion: signalRecord.featureVersion ?? null,
-          rationale: signalRecord.rationale,
-          detectedAt: signalRecord.detectedAt.toISOString(),
-        }
-      : null,
+    // SignalIntelligenceRecord: table is defined but never written to. Always null.
+    signalRecord: null,
 
     // ── Data Provenance (migrated to data-service2.0) ────────────────────
     // The DataProvenance table was removed from AlphaForge as part of the

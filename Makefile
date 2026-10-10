@@ -32,6 +32,12 @@ APP_CONTAINER  := alpha-forge-app
 WORKER_CONTAINER := alpha-forge-worker
 NETWORK        := alpha-forge_alphaforge
 
+# ── Docker Compose (for infra: postgres + redis) ──────────────────────────────
+# Always uses .env.docker so container URLs are correct.
+# Override: make infra-up ENV_FILE=.env.local
+ENV_FILE   ?= .env.docker
+DC         := docker compose --env-file $(ENV_FILE)
+
 # ENV strategy:
 #   1. Start with .env.docker  (Docker-internal service URLs, NODE_ENV=production)
 #   2. Layer .env.local on top (real API keys, secrets from your local config)
@@ -175,3 +181,25 @@ status:
 	@docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" \
 		--filter "name=alpha-forge" \
 		--filter "name=data-service"
+
+# ── Infrastructure (postgres + redis via docker compose) ─────────────────────
+.PHONY: infra-up
+infra-up: ## Start postgres + redis infrastructure containers (uses .env.docker)
+	$(DC) up -d postgres redis
+	@echo "✓  Infrastructure up — postgres:5433, redis:6379"
+
+.PHONY: infra-down
+infra-down: ## Stop infrastructure containers only (preserves volumes)
+	$(DC) stop postgres redis
+	@echo "✓  Infrastructure stopped"
+
+.PHONY: infra-reset
+infra-reset: ## Stop + remove infrastructure containers and volumes (destructive)
+	$(DC) down -v
+	@echo "✓  Infrastructure reset (volumes removed)"
+
+.PHONY: migrate
+migrate: ## Run Prisma migrations against DATABASE_URL in .env.docker
+	@echo "▶  Running Prisma migrations..."
+	npx prisma migrate deploy
+	@echo "✓  Migrations applied"
