@@ -949,3 +949,109 @@ export interface MLSignalsContext {
 export async function fetchMLSignalsContext(): Promise<MLSignalsContext | null> {
   return mlGet<MLSignalsContext>("/v2/signals/latest");  // unused — context is fetched via AF route
 }
+
+
+// ─── SMC Scanner types (GET /v2/scanners/registry) ────────────────────────────
+
+/** Which of the 5 SMC scanners produced this signal. */
+export type SMCScannerType =
+  | "order_block"
+  | "fvg"
+  | "supply_demand"
+  | "liquidity_sweep"
+  | "market_structure";
+
+/** A single entry from the live signal registry. */
+export interface SMCSignalRecord {
+  /** 12-hex stable ID — same signal has the same ID across re-scans. */
+  id: string;
+  scanner_type: SMCScannerType;
+  symbol: string;
+  /** e.g. "bearish" | "bullish" | "SUPPLY" | "DEMAND" | "BOS_BEARISH" */
+  direction: string;
+  entry: number | null;
+  target: number | null;
+  stop: number | null;
+  rr: number | null;
+  /** % distance from current close to entry level. */
+  proximity_pct: number | null;
+  /** True when price is within 2 % of entry — ready to trade. */
+  is_actionable: boolean;
+  /** True for ChoCh (Change of Character) Market Structure signals. */
+  is_choch: boolean;
+  lifecycle_state: string | null;
+  invalidated: boolean;
+  conviction_score: number | null;
+  /**
+   * ISO 8601 UTC — the ACTUAL candle date when this SMC pattern formed.
+   *   MS:    break_timestamp  (bar where BoS/ChoCh closed)
+   *   OB:    ob_timestamp     (the order block candle)
+   *   FVG:   fvg_timestamp    (3rd candle of the imbalance)
+   *   S&D:   departure_timestamp (impulsive departure candle)
+   *   Sweep: sweep_timestamp  (the sweep bar)
+   * For 1d data: a "Sep 29" candle has UTC = 2026-09-28T18:30:00Z
+   * → converts to IST midnight of that trading date.
+   */
+  signal_timestamp: string;
+  /** ISO 8601 UTC — when this signal was first inserted into the Redis registry. */
+  first_seen_at: string;
+  /** ISO 8601 UTC — when this signal was last confirmed in a re-scan. */
+  last_seen_at: string;
+  /** ISO 8601 UTC — when this signal was closed (null = still active). */
+  closed_at: string | null;
+  /** Why the signal closed: "expired" | "invalidated" | "eod" | null */
+  close_reason: string | null;
+}
+
+export interface SMCScannerRegistryResponse {
+  /** ISO 8601 UTC of the most recent scan run (null if never run). */
+  scanned_at: string | null;
+  n_active: number;
+  n_closed_today: number;
+  last_scan_meta: {
+    scanned_at: string;
+    n_symbols: number;
+    n_total_signals: number;
+  } | null;
+  active_signals: SMCSignalRecord[];
+  closed_signals: SMCSignalRecord[];
+}
+
+/**
+ * Fetch the live SMC scanner registry from ml-service2.0.
+ *
+ * Source: GET /v2/scanners/registry
+ * Updated: every 5 minutes during IST market hours (9:00–15:45, Mon–Fri).
+ * Outside market hours, the last scan's signals remain in the registry until
+ * the next market open or until the next end-of-day sweep at 15:30 IST.
+ */
+export async function fetchSMCScannerRegistry(params?: {
+  scanner_type?: SMCScannerType;
+  include_closed?: boolean;
+  date?: string;
+  limit?: number;
+}): Promise<SMCScannerRegistryResponse | null> {
+  const qs = new URLSearchParams();
+  if (params?.scanner_type) qs.set("scanner_type", params.scanner_type);
+  if (params?.include_closed) qs.set("include_closed", "true");
+  if (params?.date) qs.set("date", params.date);
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const query = qs.toString() ? `?${qs}` : "";
+  return mlGet<SMCScannerRegistryResponse>(`/v2/scanners/registry${query}`);
+}
+
+/**
+ * Fetch raw signals from a single SMC scanner (on-demand scan, not registry).
+ * Use ``fetchSMCScannerRegistry`` for live data with timestamps.
+ */
+export async function fetchSMCScannerRaw(
+  type: "order-blocks" | "fair-value-gaps" | "supply-demand" | "liquidity-sweeps" | "market-structure",
+  params?: { limit?: number; actionable_only?: boolean; direction?: string },
+): Promise<Record<string, unknown> | null> {
+  const qs = new URLSearchParams();
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.actionable_only) qs.set("actionable_only", "true");
+  if (params?.direction) qs.set("direction", params.direction);
+  const query = qs.toString() ? `?${qs}` : "";
+  return mlGet<Record<string, unknown>>(`/v2/scanners/${type}${query}`);
+}
